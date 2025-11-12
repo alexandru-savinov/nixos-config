@@ -1,0 +1,24 @@
+# Hardware configurations (machine-specific)
+hardware-configuration.nix
+
+# Build results
+result
+result-*
+
+# Secrets
+secrets.yaml
+*.key
+*.pem
+*.age
+.sops.yaml
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

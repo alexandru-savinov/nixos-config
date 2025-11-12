@@ -1,0 +1,33 @@
+name: NixOS Configuration Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Nix
+        uses: cachix/install-nix-action@v24
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      
+      - name: Check flake
+        run: nix flake check
+      
+      - name: Build all configurations
+        run: |
+          for host in sancta-choir; do
+            echo "Building $host..."
+            nix build .#nixosConfigurations.$host.config.system.build.toplevel
+          done
+      
+      - name: Check formatting
+        run: |
+          nix-shell -p nixpkgs-fmt --run "nixpkgs-fmt --check ."
