@@ -30,4 +30,4 @@ jobs:
       
       - name: Check formatting
         run: |
-          nix --extra-experimental-features 'nix-command flakes' develop --command nixpkgs-fmt --check .
+          nix fmt -- --check .
