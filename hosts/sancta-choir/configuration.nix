@@ -10,8 +10,8 @@
     ../../modules/services/copilot.nix
   ];
 
-  # Hostname
-  networking.hostName = "sancta-choir";
+  # Hostname - keep current production hostname
+  networking.hostName = "sancta-gw";
   networking.domain = "";
 
   # SSH authorized keys - NOTE: Store actual keys in secrets management

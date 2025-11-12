@@ -6,7 +6,7 @@
   networking.usePredictableInterfaceNames = lib.mkForce false;
   networking.dhcpcd.enable = false;
 
-  networking.nameservers = [ "185.12.64.1" "185.12.64.2" ];
+  networking.nameservers = [ "8.8.8.8" "185.12.64.1" "185.12.64.2" ];
 
   # Interface configuration for Hetzner Cloud
   networking.interfaces.eth0 = {
