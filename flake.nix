@@ -16,7 +16,7 @@
   outputs = { self, nixpkgs, home-manager, vscode-server, ... }@inputs: {
     # Formatter for `nix fmt`
     formatter.x86_64-linux = nixpkgs.legacyPackages.x86_64-linux.nixpkgs-fmt;
-    
+
     nixosConfigurations = {
       sancta-choir = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
