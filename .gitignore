@@ -1,5 +1,7 @@
 # Hardware configurations (machine-specific)
 hardware-configuration.nix
+# But allow the dummy one for CI
+!hosts/*/hardware-configuration.nix
 
 # Build results
 result
