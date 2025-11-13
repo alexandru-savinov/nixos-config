@@ -63,7 +63,7 @@ echo ""
 
 # Build configuration
 echo "🔨 Building configuration..."
-if $SUDO nixos-rebuild build --flake "$FLAKE_REF"; then
+if nixos-rebuild build --flake "$FLAKE_REF"; then
     echo "✅ Build successful!"
 else
     echo "❌ Build failed!"
