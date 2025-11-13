@@ -10,5 +10,13 @@
       enable = true;
       # Git config is already set via .gitconfig, just enable HM management
     };
+
+    # Bash configuration
+    programs.bash = {
+      enable = true;
+      shellAliases = {
+        copilot = "${pkgs.nodejs_22}/bin/node ~/.npm-global/lib/node_modules/@github/copilot/index.js";
+      };
+    };
   };
 }
