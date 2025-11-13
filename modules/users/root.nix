@@ -1,9 +1,14 @@
 { config, pkgs, lib, ... }:
 
 {
+  # Import Home Manager module
+  imports = [
+    <home-manager/nixos>
+  ];
+
   # Home Manager configuration for root user
   home-manager.users.root = {
-    home.stateVersion = "23.11";
+    home.stateVersion = "24.05";
 
     # Additional user-specific home-manager configs can go here
     programs.git = {

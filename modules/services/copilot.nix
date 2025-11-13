@@ -7,9 +7,9 @@
     home.file.".copilot/mcp-config.json".text = builtins.toJSON {
       mcpServers = {
         context7 = {
-          command = "${pkgs.nodejs}/bin/npx";
+          command = "${pkgs.nodejs_22}/bin/npx";
           args = [ "-y" "@context7/mcp-server" ];
-          tools = [ ];
+          tools = [];
         };
       };
     };
