@@ -1,11 +1,6 @@
 { config, pkgs, lib, ... }:
 
 {
-  # Import Home Manager module
-  imports = [
-    <home-manager/nixos>
-  ];
-
   # Home Manager configuration for root user
   home-manager.users.root = {
     home.stateVersion = "24.05";

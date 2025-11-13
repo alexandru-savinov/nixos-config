@@ -1,12 +1,6 @@
 { config, pkgs, lib, ... }:
 
 {
-  imports = [
-    (builtins.fetchTarball {
-      url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
-    })
-  ];
-
   # Allow unfree packages
   nixpkgs.config.allowUnfree = true;
 
