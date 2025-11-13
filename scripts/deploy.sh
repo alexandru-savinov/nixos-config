@@ -27,6 +27,18 @@ echo "  Hostname:    $HOSTNAME"
 echo "  Flake Path:  $FLAKE_PATH"
 echo ""
 
+# Determine privilege escalation requirements
+if [ "$EUID" -ne 0 ]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "❌ Error: This script must run as root or have sudo available"
+        exit 1
+    fi
+    SUDO="sudo"
+    echo "⚠️  Running privileged commands via sudo"
+else
+    SUDO=""
+fi
+
 # Check if flake path is local or remote
 if [[ "$FLAKE_PATH" =~ ^(github:|gitlab:|git\+) ]]; then
     FLAKE_REF="$FLAKE_PATH#$HOSTNAME"
@@ -66,7 +78,7 @@ echo ""
 
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "🚀 Applying configuration..."
-    if sudo nixos-rebuild switch --flake "$FLAKE_REF"; then
+    if $SUDO nixos-rebuild switch --flake "$FLAKE_REF"; then
         echo ""
         echo "✅ Deployment complete!"
         echo ""
