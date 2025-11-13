@@ -17,10 +17,10 @@
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
-      
+
       # Helper function to generate an attribute set for each system
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      
+
       # Import nixpkgs for each system
       nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; });
     in
@@ -52,8 +52,8 @@
           # Fresh system installation script
           install = pkgs.writeShellApplication {
             name = "nixos-install";
-            runtimeInputs = with pkgs; [ 
-              git 
+            runtimeInputs = with pkgs; [
+              git
               nixos-rebuild
               coreutils
             ];
@@ -63,8 +63,8 @@
           # Deployment script for updates
           deploy = pkgs.writeShellApplication {
             name = "nixos-deploy";
-            runtimeInputs = with pkgs; [ 
-              git 
+            runtimeInputs = with pkgs; [
+              git
               nixos-rebuild
               coreutils
               gnugrep
