@@ -40,9 +40,11 @@ fi
 
 # Check flake
 echo "🔍 Checking flake..."
-if nix flake check "$FLAKE_PATH" 2>&1 | head -20; then
+if FLAKE_CHECK_OUTPUT=$(nix flake check "$FLAKE_PATH" 2>&1); then
+    echo "$FLAKE_CHECK_OUTPUT" | head -20
     echo "✅ Flake check passed"
 else
+    echo "$FLAKE_CHECK_OUTPUT" | head -20
     echo "⚠️  Flake check had warnings (may be normal)"
 fi
 echo ""
