@@ -12,9 +12,13 @@
       url = "github:nix-community/nixos-vscode-server";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    tsidp = {
+      url = "github:tailscale/tsidp";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, tsidp, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -43,6 +47,7 @@
             ./hosts/sancta-choir/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
+            tsidp.nixosModules.default
           ];
         };
       };

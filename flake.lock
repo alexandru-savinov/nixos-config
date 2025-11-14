@@ -2,7 +2,7 @@
   "nodes": {
     "flake-utils": {
       "inputs": {
-        "systems": "systems"
+        "systems": "systems_2"
       },
       "locked": {
         "lastModified": 1681202837,
@@ -76,6 +76,7 @@
         "home-manager": "home-manager",
         "nixpkgs": "nixpkgs",
         "nixpkgs-unstable": "nixpkgs-unstable",
+        "tsidp": "tsidp",
         "vscode-server": "vscode-server"
       }
     },
@@ -91,6 +92,42 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_2": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "tsidp": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs-unstable"
+        ],
+        "systems": "systems"
+      },
+      "locked": {
+        "lastModified": 1761933221,
+        "narHash": "sha256-db4o4p0fnd72QnWjndmkoMIKaRNwULk3mzeCs71EHVo=",
+        "owner": "tailscale",
+        "repo": "tsidp",
+        "rev": "335dc100643e2cdc6ec06b1cece5d17907ebed1f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "tailscale",
+        "repo": "tsidp",
         "type": "github"
       }
     },
