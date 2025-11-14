@@ -8,7 +8,6 @@
     ../../modules/system/networking.nix
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
-    ../../modules/services/spec-kit.nix
     ../../modules/services/tailscale.nix
   ];
 
