@@ -61,6 +61,7 @@
     nodejs_22
     gh
     github-copilot-cli
+    uv
     # Nix development tools
     nixpkgs-fmt
     nil # Nix language server
