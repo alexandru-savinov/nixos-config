@@ -5,7 +5,7 @@
   nixpkgs.config.allowUnfree = true;
 
   # Networking
-  networking.hostName = lib.mkForce "sancta-gw";
+  networking.hostName = lib.mkForce "sancta-choir";
   networking.useDHCP = false;
   networking.interfaces.eth0 = {
     useDHCP = false;
@@ -36,7 +36,7 @@
 
   # Users - SSH key
   users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-gw"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
   ];
 
   # VSCode Server support
