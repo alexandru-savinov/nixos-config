@@ -179,3 +179,28 @@ The `ai-gateway` branch includes Open WebUI integration:
 - **LSP**: `nil` (Nix language server)
 - **Shell**: `shell.nix` provides `nixpkgs-fmt` and `nil` for non-flake environments
 - **Editor**: Helix configured by default, but VSCode server enabled for remote development
+
+## Branch Protection
+
+The `main` branch is protected and requires pull requests for all changes.
+
+### Standard Workflow
+```bash
+# Create feature branch
+git checkout -b feature/my-changes
+
+# Make changes and commit
+git add .
+git commit -m "feat: description"
+
+# Push branch
+git push origin feature/my-changes
+
+# Create PR
+gh pr create --title "Title" --body "Description"
+
+# Merge PR (self-approval allowed since required_approving_review_count=0)
+gh pr merge --merge  # or --squash or --rebase
+```
+
+**Note:** Direct pushes to `main` are blocked. All changes must go through pull requests.
