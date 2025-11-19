@@ -8,8 +8,8 @@
       mcpServers = {
         context7 = {
           command = "${pkgs.nodejs_22}/bin/npx";
-          args = [ "-y" "@context7/mcp-server" ];
-          tools = [ ];
+          args = [ "-y" "@upstash/context7-mcp" ];
+          tools = [ "resolve-library-id" "get-library-docs" ];
         };
       };
     };
