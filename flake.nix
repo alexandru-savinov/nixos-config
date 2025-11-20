@@ -17,7 +17,7 @@
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
     agenix = {
-      url = "github:ryantm/agenix/0.15.0";
+      url = "github:ryantm/agenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -55,7 +55,6 @@
             tsidp.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
-              nixpkgs.overlays = [ agenix.overlays.default ];
               environment.systemPackages = with pkgs; [
                 agenix
               ];

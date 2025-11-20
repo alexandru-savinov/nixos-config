@@ -163,9 +163,13 @@ cd /root/nixos-config/secrets
 nano secrets.nix
 ```
 
-Add the new secret:
+Add the new secret to the attribute set (before the closing `}`):
 ```nix
 {
+  # Existing secrets...
+  "existing-secret.age".publicKeys = allKeys;
+  
+  # Add your new secret:
   "new-secret.age".publicKeys = allKeys;
 }
 ```
@@ -179,12 +183,16 @@ echo -n "secret-value" | \
 ### 3. Update Configuration
 ```nix
 # In hosts/sancta-choir/configuration.nix
-age.secrets.new-secret = {
-  file = "${self}/secrets/new-secret.age";
-  owner = "root";
-  group = "root";
-  mode = "0400";
-};
+age.secrets.new-secret.file = "${self}/secrets/new-secret.age";
+# Defaults: owner=root, group=root, mode=0400
+
+# Only use extended syntax if you need non-default values:
+# age.secrets.new-secret = {
+#   file = "${self}/secrets/new-secret.age";
+#   owner = "myuser";
+#   group = "mygroup";
+#   mode = "0440";
+# };
 ```
 
 ### 4. Use in Service

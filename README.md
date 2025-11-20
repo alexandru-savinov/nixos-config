@@ -275,18 +275,15 @@ See [SECRETS-ROTATION.md](./SECRETS-ROTATION.md) for detailed rotation procedure
 ```bash
 cd /root/nixos-config/secrets
 
-# 1. Add to secrets.nix
-echo '"new-secret.age".publicKeys = allKeys;' >> secrets.nix
+# 1. Add to secrets.nix (edit the file manually, add before the closing '}')
+# "new-secret.age".publicKeys = allKeys;
 
 # 2. Encrypt the secret
 echo -n "secret-value" | nix run github:ryantm/agenix#agenix -- -e new-secret.age
 
 # 3. Add to configuration.nix
-age.secrets.new-secret = {
-  file = "${self}/secrets/new-secret.age";
-  owner = "root";
-  mode = "0400";
-};
+age.secrets.new-secret.file = "${self}/secrets/new-secret.age";
+# Defaults: owner=root, group=root, mode=0400
 
 # 4. Use in your service
 secretFile = config.age.secrets.new-secret.path;
@@ -296,7 +293,7 @@ secretFile = config.age.secrets.new-secret.path;
 - ⚠️ **Never commit plaintext secrets to git**
 - ✅ Encrypted `.age` files are safe to commit
 - 🔒 Secrets are decrypted at boot using host SSH key
-- 📝 See [AGENIX-IMPLEMENTATION-STATUS.md](./AGENIX-IMPLEMENTATION-STATUS.md) for implementation details
+- 📝 See [SECRETS-ROTATION.md](./SECRETS-ROTATION.md) for rotation procedures
 
 ### CI/CD Integration
 
@@ -359,7 +356,7 @@ jobs:
 ### No Secrets Management
 
 - ~~TODO: Implement sops-nix~~
-- **✅ RESOLVED: agenix implemented** (see [AGENIX-IMPLEMENTATION-STATUS.md](./AGENIX-IMPLEMENTATION-STATUS.md))
+- **✅ RESOLVED: agenix implemented**
 - All secrets now encrypted and managed via agenix
 - See [SECRETS-ROTATION.md](./SECRETS-ROTATION.md) for procedures
 
