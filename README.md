@@ -279,7 +279,7 @@ cd /root/nixos-config/secrets
 # "new-secret.age".publicKeys = allKeys;
 
 # 2. Encrypt the secret
-echo -n "secret-value" | nix run github:ryantm/agenix#agenix -- -e new-secret.age
+echo -n "secret-value" | nix run github:ryantm/agenix/0.15.0#agenix -- -e new-secret.age
 
 # 3. Add to configuration.nix
 age.secrets.new-secret.file = "${self}/secrets/new-secret.age";

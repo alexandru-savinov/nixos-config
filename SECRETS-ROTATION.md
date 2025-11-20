@@ -21,10 +21,10 @@ head -c 32 /dev/urandom | base64 | tr -d '\n' > /tmp/new-secret.txt
 cd /root/nixos-config/secrets
 
 # Encrypt the new secret
-cat /tmp/new-secret.txt | nix run github:ryantm/agenix#agenix -- -e secret-name.age
+cat /tmp/new-secret.txt | nix run github:ryantm/agenix/0.15.0#agenix -- -e secret-name.age
 
 # Verify decryption works
-nix run github:ryantm/agenix#agenix -- -d secret-name.age -i /etc/ssh/ssh_host_ed25519_key
+nix run github:ryantm/agenix/0.15.0#agenix -- -d secret-name.age -i /etc/ssh/ssh_host_ed25519_key
 
 # Clean up temporary file
 rm /tmp/new-secret.txt
@@ -54,7 +54,7 @@ cd /root/nixos-config/secrets
 
 # Generate new JWT secret
 head -c 32 /dev/urandom | base64 | tr -d '\n' | \
-  nix run github:ryantm/agenix#agenix -- -e open-webui-secret-key.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e open-webui-secret-key.age
 
 # Deploy
 cd /root/nixos-config
@@ -72,7 +72,7 @@ cd /root/nixos-config/secrets
 
 # Encrypt new API key
 echo -n "sk-or-v1-YOUR_NEW_KEY_HERE" | \
-  nix run github:ryantm/agenix#agenix -- -e openrouter-api-key.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e openrouter-api-key.age
 
 # Deploy
 cd /root/nixos-config
@@ -91,7 +91,7 @@ cd /root/nixos-config/secrets
 
 # Encrypt new client secret (get from tsidp configuration)
 echo -n "YOUR_NEW_CLIENT_SECRET" | \
-  nix run github:ryantm/agenix#agenix -- -e oidc-client-secret.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e oidc-client-secret.age
 
 # Deploy
 cd /root/nixos-config
@@ -107,7 +107,7 @@ cd /root/nixos-config/secrets
 
 # Encrypt new auth key
 echo -n "tskey-auth-xxxxx-yyyyyyyy" | \
-  nix run github:ryantm/agenix#agenix -- -e tailscale-auth-key.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e tailscale-auth-key.age
 
 # Deploy
 cd /root/nixos-config
@@ -125,24 +125,24 @@ cd /root/nixos-config/secrets
 
 # 1. Backup current secrets (optional)
 mkdir -p /tmp/secret-backup
-nix run github:ryantm/agenix#agenix -- -d open-webui-secret-key.age -i /etc/ssh/ssh_host_ed25519_key > /tmp/secret-backup/open-webui.txt
+nix run github:ryantm/agenix/0.15.0#agenix -- -d open-webui-secret-key.age -i /etc/ssh/ssh_host_ed25519_key > /tmp/secret-backup/open-webui.txt
 # ... repeat for other secrets
 
 # 2. Generate and encrypt new secrets
 head -c 32 /dev/urandom | base64 | tr -d '\n' | \
-  nix run github:ryantm/agenix#agenix -- -e open-webui-secret-key.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e open-webui-secret-key.age
 
 # Get new API key from OpenRouter
 echo -n "sk-or-v1-NEW_KEY" | \
-  nix run github:ryantm/agenix#agenix -- -e openrouter-api-key.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e openrouter-api-key.age
 
 # Generate new OIDC secret (if using OAuth)
 head -c 32 /dev/urandom | xxd -p -c 64 | \
-  nix run github:ryantm/agenix#agenix -- -e oidc-client-secret.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e oidc-client-secret.age
 
 # Get new Tailscale auth key
 echo -n "tskey-auth-NEW_KEY" | \
-  nix run github:ryantm/agenix#agenix -- -e tailscale-auth-key.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e tailscale-auth-key.age
 
 # 3. Deploy all at once
 cd /root/nixos-config
@@ -177,7 +177,7 @@ Add the new secret to the attribute set (before the closing `}`):
 ### 2. Create and Encrypt
 ```bash
 echo -n "secret-value" | \
-  nix run github:ryantm/agenix#agenix -- -e new-secret.age
+  nix run github:ryantm/agenix/0.15.0#agenix -- -e new-secret.age
 ```
 
 ### 3. Update Configuration
@@ -210,7 +210,7 @@ secretFile = config.age.secrets.new-secret.path;
 cat /root/nixos-config/secrets/secrets.nix
 
 # Try decrypting manually with host key
-nix run github:ryantm/agenix#agenix -- -d secrets/secret-name.age -i /etc/ssh/ssh_host_ed25519_key
+nix run github:ryantm/agenix/0.15.0#agenix -- -d secrets/secret-name.age -i /etc/ssh/ssh_host_ed25519_key
 
 # Check agenix service logs
 journalctl -u agenix.service -n 50
