@@ -13,37 +13,15 @@
     ../../modules/services/open-webui.nix
   ];
 
-  # Agenix secrets - Phase 2, 3 & 4
-  age.secrets.test-secret = {
-    file = "${self}/secrets/test-secret.age";
-  };
-  
-  age.secrets.open-webui-secret-key = {
-    file = "${self}/secrets/open-webui-secret-key.age";
-    owner = "root";
-    group = "root";
-    mode = "0400";
-  };
-  
-  age.secrets.openrouter-api-key = {
-    file = "${self}/secrets/openrouter-api-key.age";
-    owner = "root";
-    group = "root";
-    mode = "0400";
-  };
-  
-  age.secrets.oidc-client-secret = {
-    file = "${self}/secrets/oidc-client-secret.age";
-    owner = "root";
-    group = "root";
-    mode = "0400";
-  };
-  
-  age.secrets.tailscale-auth-key = {
-    file = "${self}/secrets/tailscale-auth-key.age";
-    owner = "root";
-    group = "root";
-    mode = "0400";
+  # Agenix secrets (defaults: owner=root, group=root, mode=0400)
+  age.secrets = {
+    # Open-WebUI secrets
+    open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
+    openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
+    oidc-client-secret.file = "${self}/secrets/oidc-client-secret.age";
+    
+    # Tailscale
+    tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
   };
 
   # Open-WebUI with OpenRouter and Tailscale OAuth
@@ -70,7 +48,7 @@
   networking.hostName = "sancta-choir";
   networking.domain = "";
 
-  # SSH authorized keys - NOTE: Store actual keys in secrets management
+  # SSH authorized keys for remote access
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
   ];

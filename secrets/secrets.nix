@@ -16,10 +16,7 @@ let
   allKeys = users ++ systems;
 in
 {
-  # Test secret first (Phase 2)
-  "test-secret.age".publicKeys = allKeys;
-  
-  # Production secrets (Phase 4)
+  # Production secrets
   "open-webui-secret-key.age".publicKeys = allKeys;
   "openrouter-api-key.age".publicKeys = allKeys;
   "oidc-client-secret.age".publicKeys = allKeys;
