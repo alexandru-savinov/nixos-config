@@ -253,14 +253,47 @@ nix run github:alexandru-savinov/nixos-config/pull/123/head -- sancta-choir
 
 ### Secrets Management
 
-⚠️ **Never commit secrets to git!**
+**✅ Implemented with agenix**
 
-TODO: Implement sops-nix for secret management
+This repository uses [agenix](https://github.com/ryantm/agenix) for encrypted secrets management.
 
-For now:
-- Use separate secrets file (not in git)
-- Manage SSH keys manually
-- Use environment variables where appropriate
+#### Current Secrets
+- JWT signing key (Open-WebUI)
+- OpenRouter API key
+- OAuth client secret
+- Tailscale auth key
+
+All secrets are encrypted and stored in `secrets/*.age` files.
+
+#### Using Existing Secrets
+Secrets are automatically decrypted on boot to `/run/agenix/`. No manual setup required after deployment.
+
+#### Rotating Secrets
+See [SECRETS-ROTATION.md](./SECRETS-ROTATION.md) for detailed rotation procedures.
+
+#### Adding New Secrets
+```bash
+cd /root/nixos-config/secrets
+
+# 1. Add to secrets.nix (edit the file manually, add before the closing '}')
+# "new-secret.age".publicKeys = allKeys;
+
+# 2. Encrypt the secret
+echo -n "secret-value" | nix run github:ryantm/agenix/0.15.0#agenix -- -e new-secret.age
+
+# 3. Add to configuration.nix
+age.secrets.new-secret.file = "${self}/secrets/new-secret.age";
+# Defaults: owner=root, group=root, mode=0400
+
+# 4. Use in your service
+secretFile = config.age.secrets.new-secret.path;
+```
+
+#### Important Notes
+- ⚠️ **Never commit plaintext secrets to git**
+- ✅ Encrypted `.age` files are safe to commit
+- 🔒 Secrets are decrypted at boot using host SSH key
+- 📝 See [SECRETS-ROTATION.md](./SECRETS-ROTATION.md) for rotation procedures
 
 ### CI/CD Integration
 
@@ -321,9 +354,11 @@ jobs:
 - Remote execution via `nix run` works independently
 
 ### No Secrets Management
-- TODO: Implement sops-nix
-- SSH keys must be managed manually
-- Don't commit secrets to git
+
+- ~~TODO: Implement sops-nix~~
+- **✅ RESOLVED: agenix implemented**
+- All secrets now encrypted and managed via agenix
+- See [SECRETS-ROTATION.md](./SECRETS-ROTATION.md) for procedures
 
 ## Performance Notes
 
@@ -352,8 +387,11 @@ nix run --offline github:alexandru-savinov/nixos-config -- sancta-choir
 ## Security Notes
 
 - Hardware configurations are excluded from git (machine-specific)
-- SSH keys should be managed via secrets management (TODO: add sops-nix)
-- Never commit secrets directly to this repository
+- **Secrets managed with agenix** - all secrets encrypted with age encryption
+- SSH host keys used for automatic secret decryption
+- Secrets decrypted to `/run/agenix/` (tmpfs) at boot
+- Never commit plaintext secrets - only `.age` encrypted files
+- See [SECRETS-ROTATION.md](./SECRETS-ROTATION.md) for rotation procedures
 
 ## Tested Scenarios
 

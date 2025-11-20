@@ -17,16 +17,8 @@
     # Open firewall for Tailscale UDP traffic
     openFirewall = true;
 
-    # Declarative authentication with auth key file
-    # Setup instructions:
-    # 1. Generate reusable auth key at https://login.tailscale.com/admin/settings/keys
-    #    - Check "Reusable" option
-    #    - Set appropriate expiration (90 days, 180 days, or never)
-    # 2. On the server, run:
-    #    echo "tskey-auth-xxxxx-yyyyyyyy" | sudo tee /var/lib/tailscale/auth-key
-    #    sudo chmod 600 /var/lib/tailscale/auth-key
-    # 3. Deploy this configuration
-    authKeyFile = "/var/lib/tailscale/auth-key";
+    # Declarative authentication with auth key from agenix
+    authKeyFile = config.age.secrets.tailscale-auth-key.path;
 
     # Extra flags for 'tailscale up' command
     extraUpFlags = [

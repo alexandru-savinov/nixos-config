@@ -46,12 +46,9 @@
   networking.firewall.enable = true;
   networking.firewall.allowedTCPPorts = [ 22 ];
 
-  # System packages
+  # System packages (basic utilities in common.nix)
   environment.systemPackages = with pkgs; [
     helix
-    git
-    curl
-    wget
     tmux
     htop
     tree

@@ -16,9 +16,13 @@
       url = "github:tailscale/tsidp";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
+    agenix = {
+      url = "github:ryantm/agenix/0.15.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, tsidp, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, tsidp, agenix, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -42,12 +46,19 @@
               system = "x86_64-linux";
               config.allowUnfree = true;
             };
+            inherit self; # Pass self for accessing flake root
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             tsidp.nixosModules.default
+            agenix.nixosModules.default
+            ({ pkgs, ... }: {
+              environment.systemPackages = with pkgs; [
+                agenix
+              ];
+            })
           ];
         };
       };
