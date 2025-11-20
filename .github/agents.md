@@ -1,6 +1,8 @@
 # Custom Agents
 
-This file defines specialized AI agents for the NixOS configuration repository. Each agent has domain expertise and should be consulted for specific tasks.
+This file defines conceptual areas of expertise relevant to the NixOS configuration repository. The @ mentions below are used for organizational purposes to categorize domain knowledge and do not correspond to actual callable GitHub Copilot agents. As of January 2025, GitHub Copilot does not support custom agent definitions via an `agents.md` file.
+
+Use this file as a reference guide to understand the different domains of expertise within this repository and to help structure requests when working with AI assistants.
 
 ---
 
