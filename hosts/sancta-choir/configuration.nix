@@ -19,7 +19,7 @@
     open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
     openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
     oidc-client-secret.file = "${self}/secrets/oidc-client-secret.age";
-    
+
     # Tailscale
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
   };

@@ -46,7 +46,7 @@
               system = "x86_64-linux";
               config.allowUnfree = true;
             };
-            inherit self;  # Pass self for accessing flake root
+            inherit self; # Pass self for accessing flake root
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix
