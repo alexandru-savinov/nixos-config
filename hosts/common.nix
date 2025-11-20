@@ -13,6 +13,14 @@
   # Nix settings
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
+  # System packages available on all hosts
+  environment.systemPackages = with pkgs; [
+    vim
+    git
+    curl
+    wget
+  ];
+
   # Default state version (override per host if needed)
   system.stateVersion = "23.11";
 }
