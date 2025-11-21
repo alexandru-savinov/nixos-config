@@ -1,4 +1,9 @@
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 
 with lib;
 
@@ -88,6 +93,21 @@ in
       };
     };
 
+    tavilySearch = {
+      enable = mkEnableOption "Tavily Search for RAG web search";
+
+      apiKeyFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        example = "/run/secrets/tavily-api-key";
+        description = ''
+          Path to file containing the Tavily API key.
+          Use agenix or sops-nix for secret management.
+          Get your API key from https://app.tavily.com
+        '';
+      };
+    };
+
     enableSignup = mkOption {
       type = types.bool;
       default = false;
@@ -95,13 +115,19 @@ in
     };
 
     defaultUserRole = mkOption {
-      type = types.enum [ "pending" "user" "admin" ];
+      type = types.enum [
+        "pending"
+        "user"
+        "admin"
+      ];
       default = "pending";
       description = "Default role for new users.";
     };
 
     tailscaleServe = {
-      enable = mkEnableOption "Tailscale Serve for HTTPS access" // { default = true; };
+      enable = mkEnableOption "Tailscale Serve for HTTPS access" // {
+        default = true;
+      };
 
       httpsPort = mkOption {
         type = types.port;
@@ -166,6 +192,12 @@ in
           # WebUI URL for OAuth callbacks
           WEBUI_URL = cfg.webuiUrl;
         }
+        (mkIf cfg.tavilySearch.enable {
+          ENABLE_RAG_WEB_SEARCH = "True";
+          RAG_WEB_SEARCH_ENGINE = "tavily";
+          RAG_WEB_SEARCH_RESULT_COUNT = "3";
+          RAG_WEB_SEARCH_CONCURRENT_REQUESTS = "10";
+        })
         (mkIf cfg.oidc.enable {
           # OIDC Configuration
           OAUTH_PROVIDER_NAME = "Tailscale";
@@ -179,31 +211,73 @@ in
 
     # Load secrets from files at runtime
     systemd.services.open-webui = {
-      serviceConfig = {
-        # Load secret key from file if provided
-        EnvironmentFile = mkIf (cfg.secretKeyFile != null || cfg.openai.apiKeyFile != null || cfg.oidc.clientSecretFile != null)
-          (pkgs.writeText "open-webui-secrets-loader" ''
-            ${optionalString (cfg.secretKeyFile != null) ''WEBUI_SECRET_KEY=$(cat ${cfg.secretKeyFile})''}
-            ${optionalString (cfg.openai.apiKeyFile != null) ''OPENAI_API_KEY=$(cat ${cfg.openai.apiKeyFile})''}
-            ${optionalString (cfg.oidc.clientSecretFile != null) ''OAUTH_CLIENT_SECRET=$(cat ${cfg.oidc.clientSecretFile})''}
-          '');
+      preStart =
+        mkIf
+          (
+            cfg.secretKeyFile != null
+            || cfg.openai.apiKeyFile != null
+            || cfg.oidc.clientSecretFile != null
+            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
+          )
+          ''
+            SECRETS_FILE="/run/open-webui/secrets.env"
+            : > "$SECRETS_FILE"
 
-        # Systemd hardening
-        DynamicUser = lib.mkForce false;
-        StateDirectory = "open-webui";
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        PrivateTmp = true;
-        NoNewPrivileges = true;
-      };
+            ${optionalString (cfg.secretKeyFile != null) ''
+              echo "WEBUI_SECRET_KEY=$(cat ${cfg.secretKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.openai.apiKeyFile != null) ''
+              echo "OPENAI_API_KEY=$(cat ${cfg.openai.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.oidc.clientSecretFile != null) ''
+              echo "OAUTH_CLIENT_SECRET=$(cat ${cfg.oidc.clientSecretFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
+              echo "TAVILY_API_KEY=$(cat ${cfg.tavilySearch.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+
+            chmod 600 "$SECRETS_FILE"
+          '';
+
+      serviceConfig = mkMerge [
+        {
+          # Systemd hardening
+          DynamicUser = lib.mkForce false;
+          StateDirectory = "open-webui";
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          PrivateTmp = true;
+          NoNewPrivileges = true;
+        }
+        (mkIf
+          (
+            cfg.secretKeyFile != null
+            || cfg.openai.apiKeyFile != null
+            || cfg.oidc.clientSecretFile != null
+            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
+          )
+          {
+            RuntimeDirectory = "open-webui";
+            # Use - prefix to make EnvironmentFile optional (won't fail if missing)
+            EnvironmentFile = "-/run/open-webui/secrets.env";
+          }
+        )
+      ];
     };
 
     # Tailscale Serve configuration
     systemd.services.tailscale-serve-open-webui = mkIf cfg.tailscaleServe.enable {
       description = "Configure Tailscale Serve for Open-WebUI";
-      after = [ "network-online.target" "tailscaled.service" "open-webui.service" ];
+      after = [
+        "network-online.target"
+        "tailscaled.service"
+        "open-webui.service"
+      ];
       wants = [ "network-online.target" ];
-      requires = [ "tailscaled.service" "open-webui.service" ];
+      requires = [
+        "tailscaled.service"
+        "open-webui.service"
+      ];
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
