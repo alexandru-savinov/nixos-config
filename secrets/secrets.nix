@@ -21,4 +21,5 @@ in
   "openrouter-api-key.age".publicKeys = allKeys;
   "oidc-client-secret.age".publicKeys = allKeys;
   "tailscale-auth-key.age".publicKeys = allKeys;
+  "tavily-api-key.age".publicKeys = allKeys;
 }
