@@ -177,7 +177,7 @@ in
           ANONYMIZED_TELEMETRY = "False";
           DO_NOT_TRACK = "True";
           SCARF_NO_ANALYTICS = "True";
-          ENABLE_PERSISTENT_CONFIG = "False"; # Force env vars to override UI config
+          ENABLE_PERSISTENT_CONFIG = "True"; # Allow config from env vars but persist UI changes
 
           # JWT Configuration
           JWT_EXPIRES_IN = cfg.jwtExpiresIn;
@@ -237,6 +237,18 @@ in
             ''}
 
             chmod 600 "$SECRETS_FILE"
+            
+            # Initialize config.json with Tavily settings if enabled and config exists
+            ${optionalString cfg.tavilySearch.enable ''
+              CONFIG_FILE="${cfg.stateDir}/config.json"
+              if [ -f "$CONFIG_FILE" ]; then
+                TAVILY_KEY=$(cat ${cfg.tavilySearch.apiKeyFile})
+                ${pkgs.gnused}/bin/sed -i \
+                  -e 's/"engine": "[^"]*"/"engine": "tavily"/' \
+                  -e "s/\"tavily_api_key\": \"[^\"]*\"/\"tavily_api_key\": \"$TAVILY_KEY\"/" \
+                  "$CONFIG_FILE"
+              fi
+            ''}
           '';
 
       serviceConfig = mkMerge [
