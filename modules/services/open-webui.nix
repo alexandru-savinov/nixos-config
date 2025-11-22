@@ -237,7 +237,7 @@ in
             ''}
 
             chmod 600 "$SECRETS_FILE"
-            
+
             # Initialize config.json with Tavily settings if enabled and config exists
             ${optionalString cfg.tavilySearch.enable ''
               CONFIG_FILE="${cfg.stateDir}/config.json"
