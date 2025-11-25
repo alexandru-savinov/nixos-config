@@ -1,4 +1,4 @@
-{ config, pkgs, lib, ... }:
+{ config, pkgs, pkgs-unstable, lib, ... }:
 
 {
   # Home Manager configuration for root user
@@ -14,9 +14,8 @@
     # Bash configuration
     programs.bash = {
       enable = true;
-      shellAliases = {
-        copilot = "${pkgs.nodejs_22}/bin/node ~/.npm-global/lib/node_modules/@github/copilot/index.js";
-      };
+      # Note: 'copilot' command is available directly from pkgs-unstable.github-copilot-cli
+      # No alias needed as it's in PATH via environment.systemPackages
     };
   };
 }
