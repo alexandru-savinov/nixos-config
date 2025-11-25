@@ -204,3 +204,21 @@ gh pr merge --merge  # or --squash or --rebase
 ```
 
 **Note:** Direct pushes to `main` are blocked. All changes must go through pull requests.
+
+## Domain Expertise Reference
+
+When requesting AI assistance, consider these domain categories:
+
+| Domain | Scope | Key Files |
+|--------|-------|-----------|
+| **NixOS Configuration** | Flake management, modules, packages | `flake.nix`, `modules/` |
+| **Deployment/CI** | GitHub Actions, deployment scripts | `.github/workflows/`, `scripts/` |
+| **Infrastructure** | Networking, firewall, Tailscale | `modules/system/networking.nix` |
+| **AI Gateway** | Open WebUI, Ollama, OAuth | `modules/services/open-webui.nix` |
+| **Security** | Secrets, SSH, firewall rules | `secrets/`, SSH configs |
+| **Documentation** | README, guides, comments | `README.md`, `.github/` |
+
+**Complex tasks** often span multiple domains. For example:
+- Adding a new service: NixOS Config + Infrastructure
+- Deploying AI gateway: AI Gateway + Deployment
+- Security hardening: Security + Infrastructure
