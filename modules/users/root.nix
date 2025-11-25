@@ -14,8 +14,11 @@
     # Bash configuration
     programs.bash = {
       enable = true;
-      # Note: 'copilot' command is available directly from pkgs-unstable.github-copilot-cli
-      # No alias needed as it's in PATH via environment.systemPackages
+      # Use NixOS-managed copilot instead of VS Code's older bundled version
+      # VS Code adds its shim to PATH first, so we override with an alias
+      shellAliases = {
+        copilot = "${pkgs-unstable.github-copilot-cli}/bin/copilot";
+      };
     };
   };
 }
