@@ -1,4 +1,9 @@
-{ config, pkgs, lib, self, ... }:
+{ config
+, pkgs
+, lib
+, self
+, ...
+}:
 
 {
   imports = [
@@ -19,6 +24,7 @@
     open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
     openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
     oidc-client-secret.file = "${self}/secrets/oidc-client-secret.age";
+    tavily-api-key.file = "${self}/secrets/tavily-api-key.age";
 
     # Tailscale
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
@@ -31,6 +37,12 @@
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
     openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
     webuiUrl = "https://sancta-choir.tail4249a9.ts.net";
+
+    # Tavily Search API
+    tavilySearch = {
+      enable = true;
+      apiKeyFile = config.age.secrets.tavily-api-key.path;
+    };
 
     # Tailscale OIDC authentication - DISABLED
     # Note: tsidp OAuth doesn't work when both services run on same host
