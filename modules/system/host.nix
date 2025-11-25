@@ -1,4 +1,4 @@
-{ config, pkgs, lib, ... }:
+{ config, pkgs, pkgs-unstable, lib, ... }:
 
 {
   # Allow unfree packages
@@ -57,7 +57,7 @@
     btop
     nodejs_22
     gh
-    github-copilot-cli
+    pkgs-unstable.github-copilot-cli # Use unstable for latest @github/copilot package
     # Nix development tools
     nixpkgs-fmt
     nil # Nix language server
