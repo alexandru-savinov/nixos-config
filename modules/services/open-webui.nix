@@ -237,17 +237,8 @@ in
 
             chmod 600 "$SECRETS_FILE"
 
-            # Initialize config.json with Tavily settings if enabled and config exists
-            ${optionalString cfg.tavilySearch.enable ''
-              CONFIG_FILE="${cfg.stateDir}/config.json"
-              if [ -f "$CONFIG_FILE" ]; then
-                TAVILY_KEY=$(cat ${cfg.tavilySearch.apiKeyFile})
-                ${pkgs.gnused}/bin/sed -i \
-                  -e 's/"engine": "[^"]*"/"engine": "tavily"/' \
-                  -e "s/\"tavily_api_key\": \"[^\"]*\"/\"tavily_api_key\": \"$TAVILY_KEY\"/" \
-                  "$CONFIG_FILE"
-              fi
-            ''}
+            # Tavily integration is handled via environment variable TAVILY_API_KEY
+            # No imperative config.json mutation required - Open WebUI reads from env vars
           '';
 
       serviceConfig = mkMerge [
