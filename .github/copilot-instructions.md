@@ -1,6 +1,6 @@
 # NixOS Configuration Repository - AI Agent Guide
 
-**Last Updated:** 2025-11-15
+**Last Updated:** 2025-11-26
 
 ## Project Architecture
 
@@ -13,13 +13,21 @@ flake.nix          # Central flake with nixosConfigurations, packages, and apps 
 ├── hosts/         # Per-machine configurations
 │   ├── common.nix # Shared settings (flakes, SSH, zram, boot cleanup)
 │   └── sancta-choir/
-│       ├── configuration.nix        # Host-specific imports and SSH keys
+│       ├── configuration.nix        # Host-specific imports, agenix secrets, SSH keys
 │       └── hardware-configuration.nix  # Auto-generated hardware config
 ├── modules/       # Reusable NixOS modules
 │   ├── services/  # Service configs (open-webui, tailscale, tsidp, copilot MCP server)
 │   ├── system/    # System configs (networking, packages, firewall)
 │   └── users/     # Home-manager user configurations
-└── scripts/       # Deployment scripts (shebangs removed, wrapped by writeShellApplication)
+├── scripts/       # Deployment scripts (shebangs removed, wrapped by writeShellApplication)
+├── secrets/       # Agenix-encrypted secrets (.age files)
+│   ├── secrets.nix              # Public key definitions for encryption
+│   ├── open-webui-secret-key.age
+│   ├── openrouter-api-key.age
+│   ├── tailscale-auth-key.age
+│   ├── tavily-api-key.age
+│   └── oidc-client-secret.age
+└── tests/         # NixOS test modules
 ```
 
 ### Key Architectural Decisions
@@ -28,7 +36,9 @@ flake.nix          # Central flake with nixosConfigurations, packages, and apps 
 - **Multi-system support**: Scripts packaged for `x86_64-linux` and `aarch64-linux` via `forAllSystems`
 - **Home-manager integration**: Loaded as NixOS module (not standalone), configuration in `modules/users/`
 - **Remote deployment**: `packages` and `apps` outputs enable `nix run github:alexandru-savinov/nixos-config#install`
-- **AI Gateway**: Open WebUI integrated with Tailscale Serve and optional tsidp OAuth authentication
+- **AI Gateway**: Open WebUI integrated with Tailscale Serve and Tavily Search API
+- **Secrets Management**: Uses agenix for encrypted secrets (`.age` files in `secrets/`)
+- **tsidp**: Currently disabled due to tsnet same-host isolation limitation
 
 ## Critical Workflows
 
@@ -87,6 +97,7 @@ The system uses **manual networking configuration** (no DHCP):
 - User configs in `modules/users/<username>.nix`
 - Use `home-manager.users.<user>` attribute set
 - Always set `home.stateVersion` matching NixOS version (currently `24.05`)
+- Note: `system.stateVersion` in `hosts/common.nix` is `23.11` (original install version, should not change)
 
 ### VSCode Server Support
 
@@ -103,8 +114,9 @@ The system uses **manual networking configuration** (no DHCP):
 3. Set `networking.hostName` and SSH keys
 4. Generate `hardware-configuration.nix` with `nixos-generate-config`
 5. Add to `flake.nix` in `nixosConfigurations` with correct system architecture
-6. Pass `nixpkgs-unstable` in specialArgs if needed for certain packages
-7. Update CI workflow to build new host
+6. Pass `pkgs-unstable` in specialArgs if needed for certain packages
+7. Configure agenix secrets in `age.secrets` attribute set
+8. Update CI workflow to build new host
 
 ### Adding System Packages
 
@@ -121,6 +133,7 @@ Edit `modules/system/host.nix` → `environment.systemPackages`:
 3. Import in host's `configuration.nix`
 4. For containerized services: use `virtualisation.docker` or `virtualisation.podman`
 5. For Tailscale-exposed services: configure `tailscale serve` in service module
+6. For secrets: add `.age` file to `secrets/`, update `secrets/secrets.nix`, reference via `config.age.secrets.<name>.path`
 
 ### Modifying Flake Dependencies
 
@@ -130,48 +143,70 @@ Edit `modules/system/host.nix` → `environment.systemPackages`:
 4. For home-manager: ensure `.follows = "nixpkgs"` to avoid version mismatches
 5. For unstable packages: use `nixpkgs-unstable` input and pass via specialArgs
 
+### Managing Secrets with Agenix
+
+1. Define public keys in `secrets/secrets.nix`:
+   - User keys (SSH keys authorized in configs)
+   - System keys (from `/etc/ssh/ssh_host_ed25519_key.pub`)
+2. Create encrypted secrets:
+   ```bash
+   cd secrets
+   agenix -e <secret-name>.age  # Edit/create secret
+   ```
+3. Reference in host configuration:
+   ```nix
+   age.secrets.<name>.file = "${self}/secrets/<name>.age";
+   ```
+4. Use secret path in service configs:
+   ```nix
+   someService.apiKeyFile = config.age.secrets.<name>.path;
+   ```
+
 ## External Dependencies
 
 - **NixOS 24.05 stable**: Main nixpkgs channel
-- **nixpkgs-unstable**: For bleeding-edge packages (tsidp)
+- **nixpkgs-unstable**: For bleeding-edge packages (github-copilot-cli)
 - **home-manager release-24.05**: User environment management
 - **nixos-vscode-server**: Remote VSCode support (main branch)
-- **tsidp**: Tailscale Identity Provider for OAuth (follows nixpkgs-unstable)
-- **GitHub Copilot CLI**: Installed as system package, MCP server config in `.copilot/mcp-config.json`
+- **tsidp**: Tailscale Identity Provider for OAuth (follows nixpkgs-unstable) - currently disabled
+- **agenix**: Secret management with age encryption
+- **GitHub Copilot CLI**: Installed from unstable as system package
 
 ## AI Gateway Services
 
-The `ai-gateway` branch includes Open WebUI integration:
+The configuration includes Open WebUI integration:
 
 ### Open WebUI
 - **Module**: `modules/services/open-webui.nix`
-- **Port**: 8080 (internal)
-- **Tailscale Serve**: Exposed as HTTPS via Tailscale (port 443)
-- **Authentication**: Optional tsidp OAuth integration
-- **Container**: Running via Docker/Podman with Ollama backend support
-- **Access**: Via `https://<tailscale-hostname>` when Tailscale Serve is enabled
+- **Port**: 8080 (internal, localhost only)
+- **Tailscale Serve**: Exposed as HTTPS via Tailscale at `https://sancta-choir.tail4249a9.ts.net`
+- **OpenRouter**: OpenAI-compatible API backend at `https://openrouter.ai/api/v1`
+- **Tavily Search**: Web search RAG integration enabled
+- **Authentication**: OIDC disabled (tsidp same-host limitation), signup disabled
+- **Secrets**: JWT key, OpenRouter API key, Tavily API key managed via agenix
 
 ### Tailscale
 - **Module**: `modules/services/tailscale.nix`
-- **Features**: Declarative auth with authkey, automatic serve configuration
-- **Serve Config**: Configured to expose Open WebUI on port 443
-- **Network**: Provides secure private network access to services
+- **Features**: Declarative auth with authkey, SSH enabled, accepts routes
+- **Interface**: `tailscale0` (trusted in firewall)
+- **Port**: 41641 (UDP)
 
 ### tsidp (Tailscale Identity Provider)
-- **Module**: `modules/services/tsidp.nix` (optional)
-- **Purpose**: OAuth authentication for Open WebUI
-- **Integration**: Works with Tailscale network for identity verification
+- **Module**: `modules/services/tsidp.nix`
+- **Status**: DISABLED
+- **Reason**: tsnet isolation prevents same-host communication
+- **Future**: Deploy on separate machine when needed
 
 ## Security Considerations
 
 - SSH keys stored directly in config (consider secrets management for production)
 - Root login disabled except with SSH keys (`PermitRootLogin = "prohibit-password"`)
-- Firewall enabled by default, only port 22 (SSH) open
+- Firewall enabled by default, only port 22 (SSH) open on public interface
 - Actual hostname is `sancta-choir` (matches directory name and flake configuration)
 - **Tailscale**: Provides encrypted network layer for services
 - **Open WebUI**: Exposed only via Tailscale network (not public internet)
-- **tsidp OAuth**: Optional additional authentication layer for Open WebUI
-- **Secrets Management**: Tailscale authkey should be managed via secrets (currently in config)
+- **Tailscale interface** (`tailscale0`) is trusted in firewall
+- **Secrets Management**: All sensitive data (API keys, auth tokens) encrypted with agenix
 
 ## Development Environment
 
@@ -214,7 +249,7 @@ When requesting AI assistance, consider these domain categories:
 | **NixOS Configuration** | Flake management, modules, packages | `flake.nix`, `modules/` |
 | **Deployment/CI** | GitHub Actions, deployment scripts | `.github/workflows/`, `scripts/` |
 | **Infrastructure** | Networking, firewall, Tailscale | `modules/system/networking.nix` |
-| **AI Gateway** | Open WebUI, Ollama, OAuth | `modules/services/open-webui.nix` |
+| **AI Gateway** | Open WebUI, OpenRouter, Tavily Search | `modules/services/open-webui.nix` |
 | **Security** | Secrets, SSH, firewall rules | `secrets/`, SSH configs |
 | **Documentation** | README, guides, comments | `README.md`, `.github/` |
 
