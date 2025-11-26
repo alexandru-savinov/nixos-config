@@ -234,11 +234,14 @@ git push origin feature/my-changes
 # Create PR
 gh pr create --title "Title" --body "Description"
 
-# Merge PR (self-approval allowed since required_approving_review_count=0)
-gh pr merge --merge  # or --squash or --rebase
+# Wait for CI checks to pass, then merge
+gh pr merge --squash --delete-branch
+
+# Or enable auto-merge (merges automatically when checks pass)
+gh pr merge --squash --delete-branch --auto
 ```
 
-**Note:** Direct pushes to `main` are blocked. All changes must go through pull requests.
+**Note:** Direct pushes to `main` are blocked. All changes must go through pull requests. CI checks must pass before merging. Do not use `--admin` flag to bypass checks.
 
 ## Domain Expertise Reference
 
