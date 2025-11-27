@@ -16,6 +16,7 @@
     ../../modules/services/tailscale.nix
     ../../modules/services/tsidp.nix
     ../../modules/services/open-webui.nix
+    ../../modules/services/uptime-kuma.nix
   ];
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
@@ -54,6 +55,13 @@
       clientId = "open-webui";
       clientSecretFile = config.age.secrets.oidc-client-secret.path;
     };
+  };
+
+  # Uptime Kuma - Status monitoring
+  # Access via Tailscale: http://sancta-choir.tail4249a9.ts.net:3001
+  services.uptime-kuma-tailscale = {
+    enable = true;
+    port = 3001;
   };
 
   # Hostname
