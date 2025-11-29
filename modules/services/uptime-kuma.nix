@@ -78,7 +78,7 @@ in
           
           # Backup database if it exists
           if [ -f "$DB_FILE" ]; then
-            ${pkgs.coreutils}/bin/cp "$DB_FILE" "$BACKUP_DIR/kuma-$TIMESTAMP.db"
+            ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" ".backup '$BACKUP_DIR/kuma-$TIMESTAMP.db'"
             echo "Backup created: kuma-$TIMESTAMP.db"
             
             # Clean up old backups
@@ -127,7 +127,7 @@ in
         done
 
         # Check if serve is already configured for this port
-        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | ${pkgs.gnugrep}/bin/grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
+        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
           echo "Configuring Tailscale Serve for Uptime Kuma..."
           ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://127.0.0.1:${toString cfg.port}
         else
@@ -136,13 +136,13 @@ in
       '';
 
       preStop = ''
-        echo "Resetting Tailscale Serve configuration for Uptime Kuma..."
-        ${pkgs.tailscale}/bin/tailscale serve reset || true
+        echo "Removing Tailscale Serve configuration for Uptime Kuma..."
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
       '';
     };
 
     # Access Uptime Kuma via Tailscale:
-    #   Without HTTPS: http://sancta-choir.tail4249a9.ts.net:3001 or http://100.77.249.31:3001
-    #   With HTTPS (if tailscaleServe.enable = true): https://sancta-choir.tail4249a9.ts.net:3001
+    #   Without HTTPS: http://<hostname>.<tailnet>.ts.net:3001 or http://<tailscale-ip>:3001
+    #   With HTTPS (if tailscaleServe.enable = true): https://<hostname>.<tailnet>.ts.net:3001
   };
 }
