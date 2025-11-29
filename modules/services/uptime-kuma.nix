@@ -32,6 +32,6 @@ in
 
     # Access Uptime Kuma directly via Tailscale:
     #   http://sancta-choir.tail4249a9.ts.net:3001
-    #   or http://100.77.249.31:3001
+    #   or http://<current Tailscale IP>:3001 (e.g., http://100.77.249.31:3001; IP may change)
   };
 }
