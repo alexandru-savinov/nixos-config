@@ -1,33 +1,52 @@
 name: NixOS Configuration Check
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Nix
-        uses: cachix/install-nix-action@v24
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      
-      - name: Check flake
-        run: nix flake check
-      
-      - name: Build all configurations
-        run: |
-          for host in sancta-choir; do
-            echo "Building $host..."
-            nix build .#nixosConfigurations.$host.config.system.build.toplevel
-          done
-      
-      - name: Check formatting
-        run: |
-          nix fmt -- --check .
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v24
+              with:
+                  extra_nix_config: |
+                      experimental-features = nix-command flakes
+                      # Enable emulation for aarch64
+                      extra-platforms = aarch64-linux
+
+            - name: Set up QEMU for aarch64 emulation
+              uses: docker/setup-qemu-action@v3
+              with:
+                  platforms: arm64
+
+            - name: Check flake
+              run: nix flake check --all-systems
+
+            - name: Check formatting
+              run: nix fmt -- --check .
+
+            - name: Build x86_64-linux configurations
+              run: |
+                  echo "Building sancta-choir (x86_64-linux)..."
+                  nix build .#nixosConfigurations.sancta-choir.config.system.build.toplevel
+
+            - name: Evaluate aarch64-linux configurations
+              run: |
+                  # Full build of aarch64 on x86_64 is slow, so we just evaluate
+                  echo "Evaluating rpi5 (aarch64-linux)..."
+                  nix eval .#nixosConfigurations.rpi5.config.system.build.toplevel.drvPath
+
+            - name: Build scripts/packages
+              run: |
+                  echo "Building install script..."
+                  nix build .#packages.x86_64-linux.install
+                  echo "Building deploy script..."
+                  nix build .#packages.x86_64-linux.deploy
+                  echo "Building bootstrap script..."
+                  nix build .#packages.x86_64-linux.bootstrap
