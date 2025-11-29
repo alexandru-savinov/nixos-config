@@ -36,8 +36,7 @@ For deploying to a Raspberry Pi 5 from another machine:
 ssh pi@<pi-ip>
 
 # Run the bootstrap script
-sudo su -
-curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | bash -s -- rpi5
+curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | sudo bash -s -- rpi5
 ```
 
 See [hosts/rpi5/README.md](./hosts/rpi5/README.md) for detailed RPi5 setup instructions.

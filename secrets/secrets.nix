@@ -10,7 +10,7 @@ let
   # IMPORTANT: Replace this placeholder after first boot!
   # Get the key with: ssh-keyscan -t ed25519 <rpi5-ip> 2>/dev/null | awk '{print $2 " " $3}'
   # Or on the Pi: cat /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1 " " $2}'
-  rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA_PLACEHOLDER_REPLACE_AFTER_FIRST_BOOT root@rpi5";
+  rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa root@rpi5-placeholder";
 
   # Combine users who can edit
   users = [ root-sancta-choir ];

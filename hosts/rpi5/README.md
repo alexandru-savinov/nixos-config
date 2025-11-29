@@ -35,8 +35,7 @@ This directory contains the NixOS configuration for a Raspberry Pi 5.
 
 4. **Run the bootstrap script**
    ```bash
-   sudo su -
-   curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | bash -s -- rpi5
+   curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | sudo bash -s -- rpi5
    ```
 
 ### Method 2: Infect Existing Raspberry Pi OS
@@ -53,8 +52,7 @@ This directory contains the NixOS configuration for a Raspberry Pi 5.
 
 3. **Run the bootstrap script**
    ```bash
-   sudo su -
-   curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | bash -s -- rpi5
+   curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | sudo bash -s -- rpi5
    ```
 
 4. **Follow the nixos-infect prompts**

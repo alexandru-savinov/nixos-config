@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 set -euo pipefail
 
 # NixOS Bootstrap/Infect Script
@@ -213,36 +212,6 @@ install_nixos_infect() {
     # Download and run nixos-infect
     curl -L https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | \
         NIX_CHANNEL="$NIX_CHANNEL" bash -x
-}
-
-# Install NixOS using nixos-anywhere (for fresh installs)
-install_nixos_anywhere() {
-    log_info "Installing NixOS using nixos-anywhere..."
-
-    FLAKE_REF="$REPO_FLAKE/$BRANCH#$HOSTNAME"
-
-    # Build and apply using nixos-rebuild
-    nix run nixpkgs#nixos-rebuild -- switch --flake "$FLAKE_REF"
-}
-
-# Clone the configuration repository
-clone_config() {
-    log_info "Cloning NixOS configuration repository..."
-
-    CONFIG_DIR="/etc/nixos-config"
-
-    if [ -d "$CONFIG_DIR" ]; then
-        log_warning "Config directory exists, updating..."
-        cd "$CONFIG_DIR"
-        git fetch origin
-        git checkout "$BRANCH"
-        git pull origin "$BRANCH"
-    else
-        git clone -b "$BRANCH" "$REPO_URL" "$CONFIG_DIR"
-        cd "$CONFIG_DIR"
-    fi
-
-    log_success "Configuration cloned to $CONFIG_DIR"
 }
 
 # Generate hardware configuration

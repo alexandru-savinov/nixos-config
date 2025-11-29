@@ -18,9 +18,12 @@
   imports = [
     ./hardware-configuration.nix
     ../common.nix
-    # Note: We don't import host.nix as it has sancta-choir specific settings
+    # Note: We don't import host.nix or networking.nix because they contain sancta-choir-specific settings:
+    # - Hetzner Cloud networking with hardcoded static IPs
+    # - MAC address binding for eth0
+    # - sancta-choir hostname
     # ../../modules/system/host.nix
-    ../../modules/system/networking.nix
+    # ../../modules/system/networking.nix  # Hetzner Cloud specific, incompatible with RPi5
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
     ../../modules/services/tailscale.nix
@@ -110,11 +113,15 @@
   # Or use NetworkManager:
   # networking.networkmanager.enable = true;
 
-  # SSH authorized keys for remote access
-  # IMPORTANT: Replace with your actual SSH public key!
+  # ============================================================
+  # CRITICAL: SSH ACCESS WILL BE DISABLED IF THIS IS NOT UPDATED!
+  # You MUST replace the placeholder below with your actual SSH public key
+  # BEFORE deploying this system, or you will be locked out.
+  # Example:
+  #   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... your-key-comment"
+  # ============================================================
   users.users.root.openssh.authorizedKeys.keys = [
-    # Add your SSH public key here
-    # "ssh-ed25519 AAAA... your-key-comment"
+    "REPLACE_ME_WITH_YOUR_SSH_PUBLIC_KEY"
   ];
 
   # Optimize for RPi5 (limited resources)
@@ -149,6 +156,7 @@
   # Timezone (adjust as needed)
   time.timeZone = "UTC";
 
-  # System state version (override common.nix)
+  # System state version (override common.nix default)
+  # This should match the NixOS version used for initial installation
   system.stateVersion = lib.mkForce "24.05";
 }
