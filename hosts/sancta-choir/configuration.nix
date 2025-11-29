@@ -57,11 +57,24 @@
     };
   };
 
-  # Uptime Kuma - Status monitoring
-  # Access via Tailscale: http://sancta-choir.tail4249a9.ts.net:3001
+  # Uptime Kuma - Status monitoring with automatic backups and HTTPS
+  # Access via Tailscale HTTPS: https://sancta-choir.tail4249a9.ts.net:3001
   services.uptime-kuma-tailscale = {
     enable = true;
     port = 3001;
+
+    # Automatic database backups (daily, kept for 7 days)
+    backup = {
+      enable = true;
+      schedule = "daily";
+      retention = 7;
+    };
+
+    # HTTPS access via Tailscale Serve
+    tailscaleServe = {
+      enable = true;
+      httpsPort = 3001;
+    };
   };
 
   # Hostname
