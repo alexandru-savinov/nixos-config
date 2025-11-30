@@ -1,9 +1,8 @@
 # Raspberry Pi 5 Hardware Configuration
-# This file contains hardware-specific settings for the Raspberry Pi 5
+# Uses raspberry-pi-nix for proper kernel, firmware, and device tree support
+# See: https://github.com/nix-community/raspberry-pi-nix
 #
-# NOTE: After first boot, you should regenerate this with:
-#   nixos-generate-config --show-hardware-config
-# and update the UUIDs/device paths accordingly.
+# This configuration works with the SD image built by raspberry-pi-nix
 
 { config, lib, pkgs, modulesPath, ... }:
 
@@ -12,83 +11,44 @@
     (modulesPath + "/installer/scan/not-detected.nix")
   ];
 
-  # Raspberry Pi 5 boot configuration
-  # Uses UEFI boot via the Pi's firmware
-  boot.loader = {
-    # Use systemd-boot for UEFI boot (works with RPi5's UEFI firmware)
-    systemd-boot.enable = true;
-    efi.canTouchEfiVariables = false;
+  # ============================================================
+  # RASPBERRY PI 5 BOARD CONFIGURATION
+  # ============================================================
+  # bcm2711 for rpi 3, 3+, 4, zero 2 w
+  # bcm2712 for rpi 5
+  raspberry-pi-nix.board = "bcm2712";
 
-    # Alternative: Use generic extlinux (more compatible with RPi)
-    # generic-extlinux-compatible.enable = true;
+  # ============================================================
+  # FILESYSTEM CONFIGURATION
+  # ============================================================
+  # raspberry-pi-nix SD image uses NIXOS_SD label for root
+  # The firmware partition is managed automatically
 
-    # Timeout for boot menu
-    timeout = 3;
-  };
-
-  # Kernel configuration for RPi5
-  boot.initrd.availableKernelModules = [
-    "xhci_pci"
-    "usbhid"
-    "usb_storage"
-    "sd_mod"
-    "sdhci_pci"
-  ];
-
-  boot.initrd.kernelModules = [ ];
-  boot.kernelModules = [ ];
-  boot.extraModulePackages = [ ];
-
-  # RPi5 specific kernel parameters
-  boot.kernelParams = [
-    # Console output
-    "console=tty1"
-    # Reduce GPU memory for headless operation (16MB minimum)
-    "cma=64M"
-  ];
-
-  # Filesystem configuration
-  # IMPORTANT: Update these device paths/UUIDs after installation!
-  # Use `lsblk -f` or `blkid` to find correct values
   fileSystems."/" = {
-    # For SD card: typically /dev/mmcblk0p2
-    # For NVMe (via HAT): typically /dev/nvme0n1p2
-    # For USB drive: typically /dev/sda2
-    device = "/dev/disk/by-label/NIXOS_ROOT";
+    device = "/dev/disk/by-label/NIXOS_SD";
     fsType = "ext4";
     options = [ "noatime" "nodiratime" ];
   };
 
-  fileSystems."/boot" = {
-    device = "/dev/disk/by-label/NIXOS_BOOT";
-    fsType = "vfat";
-    options = [ "fmask=0022" "dmask=0022" ];
-  };
+  # Firmware partition is managed by raspberry-pi-nix
+  # It automatically updates firmware and config.txt
 
-  # Swap configuration (recommended for RPi with limited RAM)
-  swapDevices = [
-    # Swap file (more flexible than partition)
-    # { device = "/swapfile"; size = 2048; }
-  ];
+  # ============================================================
+  # SWAP CONFIGURATION
+  # ============================================================
+  # Swap file is configured in configuration.nix
+  # zram is also enabled there
+  swapDevices = [ ];
 
-  # Enable zram for better memory management (already in common.nix but can override)
-  zramSwap = {
-    enable = true;
-    memoryPercent = 50; # Use up to 50% of RAM for compressed swap
-  };
-
-  # Hardware-specific settings
+  # ============================================================
+  # HARDWARE SETTINGS
+  # ============================================================
   hardware = {
-    # Enable hardware video acceleration (opengl for NixOS 24.05)
+    # Enable GPU drivers (opengl for NixOS 24.05)
     opengl.enable = true;
 
-    # Enable firmware for RPi
+    # Enable firmware for RPi (handled by raspberry-pi-nix)
     enableRedistributableFirmware = true;
-
-    # Raspberry Pi specific firmware
-    firmware = with pkgs; [
-      raspberrypiWirelessFirmware
-    ];
   };
 
   # CPU frequency scaling for power management
@@ -96,4 +56,52 @@
 
   # Platform specification
   nixpkgs.hostPlatform = lib.mkDefault "aarch64-linux";
+
+  # ============================================================
+  # RASPBERRY PI CONFIG.TXT SETTINGS
+  # ============================================================
+  # These settings are managed by raspberry-pi-nix and written to config.txt
+  # on the firmware partition
+
+  hardware.raspberry-pi.config = {
+    all = {
+      options = {
+        # 64-bit mode
+        arm_64bit = {
+          enable = true;
+          value = true;
+        };
+        # Enable UART for serial console debugging
+        enable_uart = {
+          enable = true;
+          value = true;
+        };
+        # Disable warning overlays
+        avoid_warnings = {
+          enable = true;
+          value = true;
+        };
+        # Disable overscan
+        disable_overscan = {
+          enable = true;
+          value = true;
+        };
+      };
+      # Device tree parameters
+      base-dt-params = {
+        # Enable Bluetooth
+        krnbt = {
+          enable = true;
+          value = "on";
+        };
+      };
+      # GPU overlay for headless operation
+      dt-overlays = {
+        vc4-kms-v3d = {
+          enable = true;
+          params = { };
+        };
+      };
+    };
+  };
 }
