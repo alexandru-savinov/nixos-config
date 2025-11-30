@@ -2,6 +2,13 @@
 
 Multi-machine NixOS configuration with shared modules. Deploy locally or remotely via `nix run` from GitHub.
 
+## Hosts
+
+| Host | Architecture | Description |
+|------|--------------|-------------|
+| `sancta-choir` | x86_64-linux | Primary VPS server (Hetzner Cloud) |
+| `rpi5` | aarch64-linux | Raspberry Pi 5 |
+
 ## Quick Start
 
 ### Fresh System Installation
@@ -15,7 +22,24 @@ echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
 
 # Install configuration directly from GitHub
 nix run github:alexandru-savinov/nixos-config -- sancta-choir
+
+# Or for Raspberry Pi 5
+nix run github:alexandru-savinov/nixos-config -- rpi5
 ```
+
+### Raspberry Pi 5 Bootstrap (via SSH)
+
+For deploying to a Raspberry Pi 5 from another machine:
+
+```bash
+# SSH into your Pi (running Raspberry Pi OS or NixOS)
+ssh pi@<pi-ip>
+
+# Run the bootstrap script
+curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | sudo bash -s -- rpi5
+```
+
+See [hosts/rpi5/README.md](./hosts/rpi5/README.md) for detailed RPi5 setup instructions.
 
 ### Alternative Installation Methods
 
@@ -38,12 +62,17 @@ cd /etc/nixos-config
 ├── flake.nix              # Flake definition
 ├── hosts/
 │   ├── common.nix         # Shared configuration
-│   └── sancta-choir/      # Host-specific configs
+│   ├── sancta-choir/      # x86_64 VPS configuration
+│   └── rpi5/              # Raspberry Pi 5 configuration
 ├── modules/
 │   ├── services/          # Service modules
 │   ├── users/             # User configurations
 │   └── system/            # System configurations
-└── scripts/               # Deployment helpers
+├── scripts/
+│   ├── install.sh         # Fresh installation script
+│   ├── deploy.sh          # Deployment script
+│   └── bootstrap.sh       # Remote bootstrap/infect script
+└── secrets/               # Encrypted secrets (agenix)
 ```
 
 ## Usage Examples
@@ -316,9 +345,18 @@ jobs:
       - run: nix build .#nixosConfigurations.sancta-choir.config.system.build.toplevel
 ```
 
-## Hosts
+## Available Apps
 
-- **sancta-choir**: Primary server (Hetzner Cloud)
+```bash
+# Fresh installation
+nix run github:alexandru-savinov/nixos-config#install -- <hostname>
+
+# Deploy updates
+nix run github:alexandru-savinov/nixos-config#deploy -- <hostname>
+
+# Bootstrap remote system (RPi5, etc.)
+nix run github:alexandru-savinov/nixos-config#bootstrap -- <hostname>
+```
 
 ## Known Limitations
 
@@ -420,8 +458,18 @@ nix run --offline github:alexandru-savinov/nixos-config -- sancta-choir
 
 ## Adding New Hosts
 
-1. Create `hosts/<hostname>/configuration.nix`
-2. Import `common.nix` and relevant modules
-3. Add hardware configuration (not committed)
+1. Create `hosts/<hostname>/` directory
+2. Create `configuration.nix` importing `common.nix` and relevant modules
+3. Create `hardware-configuration.nix` (generate with `nixos-generate-config`)
 4. Add to `flake.nix` nixosConfigurations
-5. Test and deploy
+5. Update `secrets/secrets.nix` with the new host's SSH key
+6. Re-encrypt secrets: `cd secrets && agenix -r`
+7. Test and deploy
+
+### For Raspberry Pi 5
+
+See [hosts/rpi5/README.md](./hosts/rpi5/README.md) for detailed setup instructions including:
+- Flashing NixOS or Raspberry Pi OS
+- SSH bootstrap process
+- Hardware configuration specifics
+- Performance optimization tips

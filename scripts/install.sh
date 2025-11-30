@@ -23,7 +23,8 @@ if [ -z "$HOSTNAME" ]; then
     echo "  $0 sancta-choir abc123       # Install from specific commit"
     echo ""
     echo "Available hosts:"
-    echo "  - sancta-choir"
+    echo "  - sancta-choir  (x86_64-linux VPS)"
+    echo "  - rpi5          (aarch64-linux Raspberry Pi 5)"
     exit 1
 fi
 
@@ -69,7 +70,7 @@ echo "  Repository:   $REPO_URL"
 echo ""
 
 # Check if running as root or with sudo
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo "⚠️  Warning: Not running as root. Will need sudo for nixos-rebuild."
     SUDO="sudo"
 else

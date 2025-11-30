@@ -39,6 +39,7 @@
 
       # NixOS system configurations
       nixosConfigurations = {
+        # x86_64 VPS server
         sancta-choir = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           specialArgs = {
@@ -53,6 +54,29 @@
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             tsidp.nixosModules.default
+            agenix.nixosModules.default
+            ({ pkgs, ... }: {
+              environment.systemPackages = with pkgs; [
+                agenix
+              ];
+            })
+          ];
+        };
+
+        # Raspberry Pi 5 (aarch64)
+        rpi5 = nixpkgs.lib.nixosSystem {
+          system = "aarch64-linux";
+          specialArgs = {
+            pkgs-unstable = import nixpkgs-unstable {
+              system = "aarch64-linux";
+              config.allowUnfree = true;
+            };
+            inherit self; # Pass self for accessing flake root
+          };
+          modules = [
+            ./hosts/rpi5/configuration.nix
+            home-manager.nixosModules.home-manager
+            vscode-server.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
               environment.systemPackages = with pkgs; [
@@ -95,6 +119,17 @@
             ];
             text = builtins.readFile ./scripts/deploy.sh;
           };
+
+          # Bootstrap script for remote infection
+          bootstrap = pkgs.writeShellApplication {
+            name = "nixos-bootstrap";
+            runtimeInputs = with pkgs; [
+              curl
+              git
+              coreutils
+            ];
+            text = builtins.readFile ./scripts/bootstrap.sh;
+          };
         });
 
       # Apps - makes packages runnable with `nix run`
@@ -112,6 +147,12 @@
         deploy = {
           type = "app";
           program = "${self.packages.${system}.deploy}/bin/nixos-deploy";
+        };
+
+        # Bootstrap for remote systems
+        bootstrap = {
+          type = "app";
+          program = "${self.packages.${system}.bootstrap}/bin/nixos-bootstrap";
         };
       });
     };
