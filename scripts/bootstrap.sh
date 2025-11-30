@@ -125,7 +125,15 @@ detect_os() {
     if [ -f /etc/os-release ]; then
         # shellcheck disable=SC1091
         . /etc/os-release
-        echo "$ID"
+        # Normalize Raspberry Pi OS variants to debian
+        case "$ID" in
+            raspbian|raspberry-pi-os)
+                echo "debian"
+                ;;
+            *)
+                echo "$ID"
+                ;;
+        esac
     elif [ -f /etc/debian_version ]; then
         echo "debian"
     else
@@ -155,9 +163,12 @@ install_nix() {
 
     # Install dependencies
     case "$CURRENT_OS" in
-        debian|ubuntu|raspbian)
+        debian|ubuntu)
             apt-get update
             apt-get install -y curl xz-utils sudo
+            ;;
+        alpine)
+            apk add xz curl sudo bash shadow
             ;;
         fedora|centos|rhel)
             dnf install -y curl xz sudo
