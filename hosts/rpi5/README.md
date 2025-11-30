@@ -1,202 +1,289 @@
 # Raspberry Pi 5 NixOS Configuration
 
-This directory contains the NixOS configuration for a Raspberry Pi 5.
+This directory contains the NixOS configuration for a Raspberry Pi 5 running **Open-WebUI** with OpenRouter backend.
+
+## Features
+
+- 🌐 **Open-WebUI** with OpenRouter API integration
+- 🔍 **Tavily Search** for RAG web search capabilities
+- 🔒 **Tailscale** for secure remote access (HTTPS via Tailscale Serve)
+- 💾 **Resource optimizations** for RPi5's limited RAM/storage
+- 🔐 **Agenix** for encrypted secrets management
 
 ## Prerequisites
 
-- Raspberry Pi 5 (4GB or 8GB recommended)
-- MicroSD card (32GB+) or NVMe SSD via M.2 HAT
+- Raspberry Pi 5 (8GB recommended for Open-WebUI)
+- MicroSD card (32GB+) or NVMe SSD via M.2 HAT (recommended)
 - Network connectivity (Ethernet recommended for initial setup)
 - Another computer to SSH from
 
-## Installation Methods
+## Migration from Raspberry Pi OS
 
-### Method 1: Using Pre-built NixOS Image (Recommended)
+The easiest way to migrate is using the **bootstrap script** which leverages `nixos-infect`:
 
-1. **Download NixOS ARM image**
-   ```bash
-   # Download the latest NixOS aarch64 SD image
-   curl -L -o nixos-sd.img.zst https://hydra.nixos.org/job/nixos/release-24.05/nixos.sd_image.aarch64-linux/latest/download-by-type/file/sd-image
-   zstd -d nixos-sd.img.zst
-   ```
+### Quick Start (From Raspberry Pi OS)
 
-2. **Flash to SD card**
-   ```bash
-   # Replace /dev/sdX with your SD card device
-   sudo dd if=nixos-sd.img of=/dev/sdX bs=4M status=progress conv=fsync
-   ```
+```bash
+# 1. Flash Raspberry Pi OS Lite (64-bit) to your SD card
+#    - Use Raspberry Pi Imager
+#    - Enable SSH in the imager settings
+#    - Set hostname, username, and password
 
-3. **Boot and SSH into the Pi**
-   ```bash
-   # Find the Pi's IP (check router or use nmap)
-   ssh nixos@<pi-ip>
-   # Default password: nixos
-   ```
+# 2. Boot the Pi and SSH into it
+ssh pi@<pi-ip>
 
-4. **Run the bootstrap script**
-   ```bash
-   curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | sudo bash -s -- rpi5
-   ```
+# 3. Run the bootstrap script
+curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | sudo bash -s -- rpi5
+```
 
-### Method 2: Infect Existing Raspberry Pi OS
+The script will:
+1. Install Nix package manager
+2. Enable flakes
+3. Optionally run `nixos-infect` to convert your system to NixOS
+4. Generate hardware configuration
+5. Apply the rpi5 configuration
 
-1. **Flash Raspberry Pi OS Lite (64-bit)**
-   - Use Raspberry Pi Imager
-   - Enable SSH in the imager settings
-   - Set hostname, username, and password
+### What the Bootstrap Script Does
 
-2. **SSH into the Pi**
-   ```bash
-   ssh pi@<pi-ip>
-   ```
+```
+┌─────────────────────────────────────────────────────────────┐
+│  NixOS Bootstrap/Infect Script                              │
+│  For Raspberry Pi 5 and other aarch64/x86_64 systems        │
+└─────────────────────────────────────────────────────────────┘
 
-3. **Run the bootstrap script**
-   ```bash
-   curl -L https://raw.githubusercontent.com/alexandru-savinov/nixos-config/main/scripts/bootstrap.sh | sudo bash -s -- rpi5
-   ```
+Step 1/5: Checking Nix installation...
+Step 2/5: Enabling flakes...
+Step 3/5: Checking if NixOS is installed...
+         → Offers nixos-infect option
+Step 4/5: Generating hardware configuration...
+Step 5/5: Applying configuration...
+```
 
-4. **Follow the nixos-infect prompts**
-   - The script will convert Raspberry Pi OS to NixOS
-   - System will reboot automatically
+## Alternative: Fresh NixOS Installation
 
-### Method 3: Manual Installation
+### Method 1: Using Pre-built NixOS Image
 
-1. **Boot NixOS image and SSH in**
+```bash
+# Download the latest NixOS aarch64 SD image
+curl -L -o nixos-sd.img.zst https://hydra.nixos.org/job/nixos/release-24.05/nixos.sd_image.aarch64-linux/latest/download-by-type/file/sd-image
+zstd -d nixos-sd.img.zst
 
-2. **Partition the drive**
-   ```bash
-   # For SD card
-   sudo parted /dev/mmcblk0 -- mklabel gpt
-   sudo parted /dev/mmcblk0 -- mkpart ESP fat32 1MB 512MB
-   sudo parted /dev/mmcblk0 -- set 1 esp on
-   sudo parted /dev/mmcblk0 -- mkpart primary ext4 512MB 100%
-   
-   # Format
-   sudo mkfs.fat -F 32 -n NIXOS_BOOT /dev/mmcblk0p1
-   sudo mkfs.ext4 -L NIXOS_ROOT /dev/mmcblk0p2
-   
-   # Mount
-   sudo mount /dev/disk/by-label/NIXOS_ROOT /mnt
-   sudo mkdir -p /mnt/boot
-   sudo mount /dev/disk/by-label/NIXOS_BOOT /mnt/boot
-   ```
+# Flash to SD card (replace /dev/sdX with your device!)
+sudo dd if=nixos-sd.img of=/dev/sdX bs=4M status=progress conv=fsync
 
-3. **Generate hardware configuration**
-   ```bash
-   sudo nixos-generate-config --root /mnt
-   ```
+# Boot the Pi, SSH in (default: nixos/nixos)
+ssh nixos@<pi-ip>
 
-4. **Apply this configuration**
-   ```bash
-   sudo nixos-install --flake github:alexandru-savinov/nixos-config#rpi5
-   ```
+# Apply configuration
+sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
+```
+
+### Method 2: Manual Partitioning
+
+```bash
+# For SD card
+sudo parted /dev/mmcblk0 -- mklabel gpt
+sudo parted /dev/mmcblk0 -- mkpart ESP fat32 1MB 512MB
+sudo parted /dev/mmcblk0 -- set 1 esp on
+sudo parted /dev/mmcblk0 -- mkpart primary ext4 512MB 100%
+
+# Format
+sudo mkfs.fat -F 32 -n NIXOS_BOOT /dev/mmcblk0p1
+sudo mkfs.ext4 -L NIXOS_ROOT /dev/mmcblk0p2
+
+# Mount and install
+sudo mount /dev/disk/by-label/NIXOS_ROOT /mnt
+sudo mkdir -p /mnt/boot
+sudo mount /dev/disk/by-label/NIXOS_BOOT /mnt/boot
+
+sudo nixos-install --flake github:alexandru-savinov/nixos-config#rpi5
+```
 
 ## Post-Installation Setup
 
 ### 1. Update Hardware Configuration
 
-After first boot, generate and update the hardware configuration:
+After first boot, verify the hardware configuration matches your setup:
 
 ```bash
 nixos-generate-config --show-hardware-config > /tmp/hw.nix
+diff /tmp/hw.nix /etc/nixos/hosts/rpi5/hardware-configuration.nix
 ```
 
-Update `hardware-configuration.nix` with the correct UUIDs/device paths.
+Update `hardware-configuration.nix` with correct UUIDs if needed.
 
-### 2. Add Your SSH Key
+### 2. Update Secrets for RPi5
 
-Edit `configuration.nix` and add your SSH public key:
-
-```nix
-users.users.root.openssh.authorizedKeys.keys = [
-  "ssh-ed25519 AAAA... your-key"
-];
-```
-
-### 3. Update Secrets Configuration
-
-Get the Pi's host key and update `secrets/secrets.nix`:
+Get the Pi's SSH host key and update the secrets:
 
 ```bash
-# On the Pi
-cat /etc/ssh/ssh_host_ed25519_key.pub
+# On the Pi - get the host key
+cat /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1 " " $2}'
+# Output: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
 ```
 
-Replace the placeholder in `secrets/secrets.nix` with the actual key.
-
-### 4. Re-encrypt Secrets
-
-On your development machine with agenix:
-
+On your development machine:
 ```bash
+# Edit secrets/secrets.nix - replace the rpi5 placeholder key
+vim secrets/secrets.nix
+
+# Re-encrypt all secrets with the new key
 cd secrets
-agenix -r  # Re-encrypt all secrets with new key
+agenix -r
+
+# Commit and push
+git add -A && git commit -m "Add real rpi5 host key" && git push
 ```
 
-### 5. Rebuild
+### 3. Rebuild to Apply Secrets
 
 ```bash
 sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
 ```
 
-## Tailscale Access
+## Resource Optimizations
 
-Once configured, you can access the Pi via Tailscale:
+The RPi5 configuration includes several optimizations for running Open-WebUI on limited hardware:
 
-```bash
-# SSH via Tailscale (no port forwarding needed)
-ssh root@rpi5
+### Memory Management
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| zram | 50% of RAM | Compressed swap in memory |
+| Swap file | 4GB | Disk swap for heavy workloads |
+| vm.swappiness | 60 | Balanced swap usage |
+| vm.min_free_kbytes | 64MB | Reserve for system stability |
+
+### Open-WebUI Limits
+
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| MemoryMax | 2GB | Prevent runaway memory usage |
+| MemoryHigh | 1.5GB | Trigger memory pressure earlier |
+| CPUQuota | 300% | Max 3 cores |
+| Nice | 5 | Lower priority during builds |
+
+### Nix Build Optimization
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| max-jobs | 2 | Limit concurrent builds |
+| cores | 2 | Cores per build job |
+| GC trigger | 1GB free | Auto garbage collection |
+| GC retention | 3 days | Aggressive cleanup |
+
+### Storage Optimization
+
+- Documentation disabled (except man pages)
+- Journal limited to 100MB
+- Daily garbage collection
+- Auto-optimize nix store
+
+## Accessing Open-WebUI
+
+Once deployed, Open-WebUI is accessible via Tailscale:
+
+```
+https://rpi5.tail4249a9.ts.net
 ```
 
-## Hardware Notes
-
-### Performance Optimization
-
-- Use NVMe SSD via M.2 HAT for better performance
-- The configuration uses zram for memory compression
-- Build jobs are limited to avoid OOM issues
-
-### Power Management
-
-- CPU governor is set to "ondemand" for power efficiency
-- Consider active cooling for sustained workloads
-
-### GPIO and Hardware Access
-
-If you need GPIO access, add to configuration:
-
-```nix
-users.users.root.extraGroups = [ "gpio" ];
-hardware.raspberry-pi."5".gpio.enable = true;
-```
+Features enabled:
+- OpenRouter API (access to Claude, GPT-4, etc.)
+- Tavily web search for RAG
+- Tailscale HTTPS certificates (automatic)
 
 ## Troubleshooting
 
-### Boot Issues
+### Memory Issues During Build
 
-1. Check the SD card/NVMe is properly formatted
-2. Verify boot partition has correct files
-3. Connect a monitor to see boot messages
-
-### Network Issues
-
-1. Check Ethernet cable connection
-2. Verify DHCP is working: `ip addr`
-3. For WiFi, ensure firmware is loaded: `dmesg | grep wifi`
-
-### Build Failures
-
-If builds fail due to memory:
+If builds fail with OOM:
 
 ```bash
-# Add swap temporarily
-sudo fallocate -l 4G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
+# Temporarily add more swap
+sudo fallocate -l 4G /tmp/swapfile
+sudo chmod 600 /tmp/swapfile
+sudo mkswap /tmp/swapfile
+sudo swapon /tmp/swapfile
 
 # Then rebuild
 sudo nixos-rebuild switch --flake .#rpi5
+
+# Remove temporary swap
+sudo swapoff /tmp/swapfile
+rm /tmp/swapfile
+```
+
+### Open-WebUI Not Starting
+
+```bash
+# Check service status
+systemctl status open-webui
+
+# View logs
+journalctl -u open-webui -f
+
+# Check memory usage
+free -h
+htop
+```
+
+### Tailscale Issues
+
+```bash
+# Check Tailscale status
+tailscale status
+
+# Re-authenticate if needed
+tailscale up --ssh
+
+# Check serve configuration
+tailscale serve status
+```
+
+### chromadb Build Issues
+
+The configuration includes `allowBroken = true` because chromadb is marked as broken on aarch64.
+This is a known issue with NixOS 24.05. The package still works, just not officially supported.
+
+### Secrets Not Decrypting
+
+```bash
+# Verify host key matches secrets.nix
+cat /etc/ssh/ssh_host_ed25519_key.pub
+
+# Check agenix status
+ls -la /run/agenix/
+
+# Manual decryption test
+agenix -d open-webui-secret-key.age
+```
+
+## Performance Tips
+
+### Use NVMe Instead of SD Card
+
+For significantly better performance:
+1. Get an M.2 HAT for RPi5
+2. Install NVMe SSD
+3. Flash NixOS to NVMe
+4. Update hardware-configuration.nix
+
+### Active Cooling
+
+For sustained workloads, use active cooling:
+- Official RPi5 Active Cooler
+- Or case with built-in fan
+
+### Reduce Build Load
+
+For faster rebuilds, use a remote builder:
+
+```nix
+nix.buildMachines = [{
+  hostName = "sancta-choir";
+  system = "x86_64-linux";
+  # ... remote build config
+}];
 ```
 
 ## Useful Commands
@@ -208,8 +295,13 @@ systemctl status
 # View logs
 journalctl -f
 
-# Check Tailscale status
+# Check Open-WebUI
+systemctl status open-webui
+curl -s http://127.0.0.1:8080/health
+
+# Tailscale status
 tailscale status
+tailscale serve status
 
 # Rebuild configuration
 sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
@@ -217,6 +309,43 @@ sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
 # Update flake inputs
 nix flake update
 
-# Garbage collect old generations
+# Garbage collect
 sudo nix-collect-garbage -d
+
+# Check disk usage
+df -h
+du -sh /nix/store
+
+# Monitor resources
+htop
+btop
 ```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Raspberry Pi 5                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────┐    ┌─────────────────┐    ┌────────────┐  │
+│  │  Tailscale  │───▶│   Open-WebUI    │───▶│ OpenRouter │  │
+│  │   (HTTPS)   │    │  (port 8080)    │    │    API     │  │
+│  └─────────────┘    └─────────────────┘    └────────────┘  │
+│        │                    │                              │
+│        ▼                    ▼                              │
+│  ┌─────────────┐    ┌─────────────────┐                    │
+│  │  Tailscale  │    │  Tavily Search  │                    │
+│  │    Serve    │    │   (RAG Web)     │                    │
+│  └─────────────┘    └─────────────────┘                    │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Files in This Directory
+
+| File | Purpose |
+|------|---------|
+| `configuration.nix` | Main RPi5 NixOS configuration |
+| `hardware-configuration.nix` | Hardware-specific settings (UUIDs, boot) |
+| `README.md` | This documentation |
