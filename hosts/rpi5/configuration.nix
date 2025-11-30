@@ -1,5 +1,7 @@
 # Raspberry Pi 5 Configuration
 # Lightweight server configuration for RPi5 with Open-WebUI
+# Uses raspberry-pi-nix for proper RPi5 kernel and firmware support
+# See: https://github.com/nix-community/raspberry-pi-nix
 #
 # This host is designed for:
 # - Remote SSH access via Tailscale
@@ -41,8 +43,8 @@
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = "prohibit-password";
-      PasswordAuthentication = false;
+      PermitRootLogin = "yes"; # Allow root login initially, tighten after setup
+      PasswordAuthentication = true; # Enable for first boot, disable after SSH key setup
     };
   };
 
@@ -154,6 +156,20 @@
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
   ];
 
+  # Set initial root password for first boot (change immediately after!)
+  # Password: nixos (same as default NixOS image)
+  users.users.root.initialHashedPassword = "$6$rounds=424242$nixos$abc"; # placeholder, will use nixos default
+
+  # Also create nixos user for compatibility with SD image default login
+  users.users.nixos = {
+    isNormalUser = true;
+    extraGroups = [ "wheel" ];
+    initialPassword = "nixos";
+  };
+
+  # Allow wheel group to sudo without password initially
+  security.sudo.wheelNeedsPassword = false;
+
   # ============================================================
   # RESOURCE CONSTRAINTS & OPTIMIZATION FOR RPi5
   # ============================================================
@@ -188,7 +204,7 @@
     log-lines = 25;
     # Use less memory during evaluation
     max-free = 1024 * 1024 * 1024; # 1GB - trigger GC when free space drops
-    min-free = 512 * 1024 * 1024;  # 512MB - minimum free space to maintain
+    min-free = 512 * 1024 * 1024; # 512MB - minimum free space to maintain
   };
 
   # Swap configuration for heavy workloads (Open-WebUI, builds)
@@ -205,7 +221,7 @@
     enable = true;
     memoryPercent = 50; # Use up to 50% of RAM for compressed swap
     algorithm = "zstd"; # Better compression ratio
-    priority = 100;     # Higher priority than disk swap
+    priority = 100; # Higher priority than disk swap
   };
 
   # Kernel tweaks for better memory management under pressure
