@@ -1,7 +1,7 @@
 # Raspberry Pi 5 Configuration
 # Lightweight server configuration for RPi5 with Open-WebUI
-# Uses nixpkgs-unstable with linuxPackages_rpi4 for RPi5 support
-# See: https://nixos.wiki/wiki/NixOS_on_ARM/Raspberry_Pi_5
+# Uses raspberry-pi-nix for proper RPi5 kernel and firmware support
+# See: https://github.com/nix-community/raspberry-pi-nix
 #
 # This host is designed for:
 # - Remote SSH access via Tailscale
@@ -39,9 +39,6 @@
   nixpkgs.config.allowUnfree = true;
   nixpkgs.config.allowBroken = true;
 
-  # Ensure we allow password auth initially for first boot setup
-  # (will be disabled after first successful SSH key login)
-
   # SSH configuration
   services.openssh = {
     enable = true;
@@ -69,8 +66,7 @@
     fd
     nodejs_22
     gh
-    # Note: github-copilot-cli may need to come from pkgs on unstable
-    github-copilot-cli
+    pkgs-unstable.github-copilot-cli
 
     # Nix development tools
     nixpkgs-fmt
@@ -244,11 +240,10 @@
   # Systemd tweaks for resource-constrained environment
   systemd = {
     # Default timeout for services (faster failure detection)
-    # Note: Use systemd.settings.Manager on nixos-unstable
-    settings.Manager = {
-      DefaultTimeoutStartSec = "90s";
-      DefaultTimeoutStopSec = "90s";
-    };
+    extraConfig = ''
+      DefaultTimeoutStartSec=90s
+      DefaultTimeoutStopSec=90s
+    '';
 
     # Open-WebUI specific optimizations
     services.open-webui = {
@@ -270,6 +265,6 @@
   # Timezone (adjust as needed)
   time.timeZone = "UTC";
 
-  # System state version - use unstable version
-  system.stateVersion = lib.mkForce "24.11";
+  # System state version
+  system.stateVersion = lib.mkForce "24.05";
 }

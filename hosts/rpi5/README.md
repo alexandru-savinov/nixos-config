@@ -2,8 +2,7 @@
 
 This directory contains the NixOS configuration for a Raspberry Pi 5 running **Open-WebUI** with OpenRouter backend.
 
-> ⚠️ **Important:** NixOS support for RPi5 is experimental. This configuration uses `nixpkgs-unstable` with `linuxPackages_rpi4` (generic aarch64 kernel for RPi 3/4/5).
-> See: https://nixos.wiki/wiki/NixOS_on_ARM/Raspberry_Pi_5
+> ⚠️ **Important:** This configuration uses [raspberry-pi-nix](https://github.com/nix-community/raspberry-pi-nix) for proper RPi5 kernel, firmware, and device tree support. The standard NixOS aarch64 image has limited RPi5 compatibility.
 
 ## Features
 
@@ -12,111 +11,148 @@ This directory contains the NixOS configuration for a Raspberry Pi 5 running **O
 - 🔒 **Tailscale** for secure remote access (HTTPS via Tailscale Serve)
 - 💾 **Resource optimizations** for RPi5's limited RAM/storage
 - 🔐 **Agenix** for encrypted secrets management
-- 🐧 **linuxPackages_rpi4** kernel for RPi5 compatibility
+- 🐧 **raspberry-pi-nix** with BCM2712 kernel for full RPi5 hardware support
 
 ## Prerequisites
 
 - Raspberry Pi 5 (8GB recommended for Open-WebUI)
-- MicroSD card (32GB+) or NVMe SSD via M.2 HAT (recommended)
+- MicroSD card (32GB+) or NVMe SSD via M.2 HAT
 - Network connectivity (Ethernet recommended for initial setup)
-- Another computer for flashing and SSH
+- Another computer for building the SD image
 
-## Installation (Fresh NixOS)
+## Installation
 
-Since RPi5 requires special kernel support, we recommend flashing a fresh NixOS image rather than using nixos-infect.
+### Option A: Build Custom SD Image (Recommended)
 
-### Step 1: Download NixOS Image
+This builds a complete SD image with your configuration pre-installed.
 
-**On Windows:**
-1. Download from: https://hydra.nixos.org/job/nixos/release-24.05/nixos.sd_image.aarch64-linux/latest/download-by-type/file/sd-image
-2. Extract the `.img.zst` file using 7-Zip (https://7-zip.org/)
+**On a Linux machine with Nix (or use the nix-community cachix for faster builds):**
 
-**On Linux/macOS:**
 ```bash
-curl -L -o nixos-sd.img.zst https://hydra.nixos.org/job/nixos/release-24.05/nixos.sd_image.aarch64-linux/latest/download-by-type/file/sd-image
-zstd -d nixos-sd.img.zst
+# Clone the repository
+git clone https://github.com/alexandru-savinov/nixos-config.git
+cd nixos-config
+
+# Optional: Use cachix for pre-built kernels (saves hours of compile time)
+nix-shell -p cachix --run "cachix use nix-community"
+
+# Build the SD image (requires aarch64 emulation or native aarch64)
+nix build '.#nixosConfigurations.rpi5.config.system.build.sdImage'
+
+# The image will be at: result/sd-image/nixos-rpi5.img.zst
 ```
 
-### Step 2: Flash to SD Card
+**If you need aarch64 emulation on x86_64:**
 
-**Using Raspberry Pi Imager (Recommended):**
-1. Download: https://www.raspberrypi.com/software/
-2. Open Raspberry Pi Imager
-3. Choose OS → Scroll down → **Use custom** → Select your `.img` file
+```bash
+# Add to your /etc/nixos/configuration.nix
+boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
+```
+
+**Flash the image:**
+
+```bash
+# Decompress and flash (Linux/macOS)
+zstdcat result/sd-image/nixos-rpi5.img.zst | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+
+# Or on Windows: use 7-Zip to extract, then Raspberry Pi Imager to flash
+```
+
+### Option B: Flash Generic NixOS, Then Apply Config
+
+If you can't build the custom image, use the generic NixOS aarch64 image:
+
+1. **Download NixOS image:**
+   - https://hydra.nixos.org/job/nixos/release-24.05/nixos.sd_image.aarch64-linux/latest/download-by-type/file/sd-image
+
+2. **Flash and boot** (see Windows/Linux instructions below)
+
+3. **SSH in and apply config:**
+   ```bash
+   ssh nixos@<pi-ip>  # password: nixos
+   sudo -i
+   
+   # Enable flakes
+   mkdir -p ~/.config/nix
+   echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+   
+   # Apply configuration
+   nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
+   ```
+
+> ⚠️ **Note:** The generic image may have limited hardware support. The custom SD image (Option A) is strongly recommended.
+
+## Flashing Instructions
+
+### Windows
+
+1. Download and extract the `.img.zst` file using [7-Zip](https://7-zip.org/)
+2. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+3. Choose OS → Scroll down → **Use custom** → Select the `.img` file
 4. Choose Storage → Select your SD card
 5. Click **Write**
 
-**Using dd (Linux/macOS):**
+### Linux/macOS
+
 ```bash
-# Replace /dev/sdX with your actual SD card device!
+# For custom image
+zstdcat nixos-rpi5.img.zst | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+
+# For generic NixOS image
+zstd -d nixos-sd.img.zst
 sudo dd if=nixos-sd.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
-### Step 3: First Boot & SSH
+## First Boot
 
 1. Insert SD card into RPi5
 2. Connect Ethernet cable
-3. Power on and wait ~2 minutes
-4. Find the Pi's IP address (check your router's DHCP clients or use `nmap -sn 192.168.1.0/24`)
+3. Power on and wait ~2-3 minutes
+4. Find the Pi's IP (check router DHCP or `nmap -sn 192.168.1.0/24`)
 5. SSH in:
+   ```bash
+   # Custom image: root with your SSH key
+   ssh root@<pi-ip>
+   
+   # Generic image: nixos / nixos
+   ssh nixos@<pi-ip>
+   ```
+
+## Post-Installation: Update Secrets
+
+After first boot, you need to update the agenix secrets with the real host key:
 
 ```bash
-# Default credentials: nixos / nixos
-ssh nixos@<pi-ip>
-```
-
-### Step 4: Apply Configuration
-
-```bash
-# Become root
-sudo -i
-
-# Enable flakes (if not already)
-mkdir -p ~/.config/nix
-echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
-
-# Apply the RPi5 configuration
-nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
-```
-
-This will take a while as it downloads and builds the configuration.
-
-### Step 5: Get Host Key & Update Secrets
-
-After the rebuild completes, get the SSH host key:
-
-```bash
+# On the Pi - get the SSH host key
 cat /etc/ssh/ssh_host_ed25519_key.pub
 # Output: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... root@rpi5
 ```
 
 Then on your development machine:
+
 1. Edit `secrets/secrets.nix` - replace the `rpi5` placeholder with the real key
-2. Re-encrypt secrets: `cd secrets && agenix -r`
+2. Re-encrypt secrets:
+   ```bash
+   cd secrets
+   agenix -r
+   ```
 3. Commit and push
-4. On the Pi: `nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5`
-
-### Step 6: Harden SSH (After Setup)
-
-Once you've verified SSH key access works, edit the configuration to disable password auth:
-
-```nix
-services.openssh.settings = {
-  PermitRootLogin = "prohibit-password";
-  PasswordAuthentication = false;
-};
-```
+4. On the Pi, rebuild:
+   ```bash
+   nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
+   ```
 
 ## Technical Details
 
-### Kernel Configuration
-
-This configuration uses `linuxPackages_rpi4` from nixpkgs-unstable, which provides a generic aarch64 kernel compatible with Raspberry Pi 3, 4, and 5.
+### raspberry-pi-nix Configuration
 
 ```nix
-boot.kernelPackages = pkgs.linuxPackages_rpi4;
-boot.loader.grub.enable = false;
-boot.loader.generic-extlinux-compatible.enable = true;
+# Board selection (BCM2712 = RPi5)
+raspberry-pi-nix.board = "bcm2712";
+
+# Kernel: Uses official Raspberry Pi Linux fork
+# Firmware: Managed automatically with config.txt generation
+# Boot: U-Boot with proper device tree support
 ```
 
 ### Resource Optimizations
@@ -164,8 +200,9 @@ Features enabled:
 ### Boot Issues
 
 1. Connect a monitor to see boot messages
-2. Verify SD card is properly formatted
-3. Try a fresh flash of the NixOS image
+2. Verify SD card is properly flashed
+3. Try rebuilding the SD image
+4. Check if the RPi5 power supply is adequate (5V/5A recommended)
 
 ### Memory Issues During Build
 
@@ -174,7 +211,8 @@ Features enabled:
 free -h
 htop
 
-# If builds fail with OOM, add temporary swap
+# If builds fail with OOM, the config already includes 4GB swap
+# You can add more temporarily:
 sudo fallocate -l 4G /tmp/swapfile
 sudo chmod 600 /tmp/swapfile
 sudo mkswap /tmp/swapfile
@@ -182,9 +220,6 @@ sudo swapon /tmp/swapfile
 
 # Rebuild
 sudo nixos-rebuild switch --flake .#rpi5
-
-# Remove temporary swap
-sudo swapoff /tmp/swapfile && rm /tmp/swapfile
 ```
 
 ### Open-WebUI Not Starting
@@ -211,14 +246,40 @@ tailscale up --ssh
 tailscale serve status
 ```
 
-### Network Issues
+### Secrets Not Decrypting
 
 ```bash
-# Check interface
-ip addr show end0
+# Verify host key matches secrets.nix
+cat /etc/ssh/ssh_host_ed25519_key.pub
 
-# Test connectivity
-ping -c 3 1.1.1.1
+# Check agenix status
+ls -la /run/agenix/
+
+# Try manual decryption
+agenix -d tailscale-auth-key.age
+```
+
+## Using the nix-community Cache
+
+The raspberry-pi-nix project pushes kernel builds to cachix. To avoid compiling the Linux kernel yourself (which takes hours on RPi5):
+
+```bash
+# Install cachix
+nix-shell -p cachix
+
+# Use the nix-community cache
+cachix use nix-community
+```
+
+Or add to your NixOS configuration:
+
+```nix
+nix.settings = {
+  substituters = [ "https://nix-community.cachix.org" ];
+  trusted-public-keys = [
+    "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+  ];
+};
 ```
 
 ## Useful Commands
@@ -261,7 +322,7 @@ btop
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Raspberry Pi 5                         │
-│                  (nixpkgs-unstable + rpi4 kernel)           │
+│              (raspberry-pi-nix + BCM2712 kernel)            │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌─────────────┐    ┌─────────────────┐    ┌────────────┐  │
@@ -283,5 +344,11 @@ btop
 | File | Purpose |
 |------|---------|
 | `configuration.nix` | Main RPi5 NixOS configuration |
-| `hardware-configuration.nix` | Hardware-specific settings (kernel, boot, filesystems) |
+| `hardware-configuration.nix` | raspberry-pi-nix board config and settings |
 | `README.md` | This documentation |
+
+## References
+
+- [raspberry-pi-nix](https://github.com/nix-community/raspberry-pi-nix) - RPi NixOS support
+- [NixOS on ARM/Raspberry Pi 5](https://nixos.wiki/wiki/NixOS_on_ARM/Raspberry_Pi_5) - Wiki page
+- [nixpkgs#260754](https://github.com/NixOS/nixpkgs/issues/260754) - RPi5 support issue

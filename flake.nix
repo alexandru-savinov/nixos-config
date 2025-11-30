@@ -24,9 +24,15 @@
       url = "github:ryantm/agenix/0.15.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Raspberry Pi 5 support - provides proper kernel, firmware, and config.txt management
+    # Archived but still functional and recommended for RPi5
+    # See: https://github.com/nix-community/raspberry-pi-nix
+    raspberry-pi-nix = {
+      url = "github:nix-community/raspberry-pi-nix/v0.4.1";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, raspberry-pi-nix, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -68,9 +74,9 @@
         };
 
         # Raspberry Pi 5 (aarch64)
-        # Uses nixpkgs-unstable for better RPi5 hardware support
-        # See: https://nixos.wiki/wiki/NixOS_on_ARM/Raspberry_Pi_5
-        rpi5 = nixpkgs-unstable.lib.nixosSystem {
+        # Uses raspberry-pi-nix for proper RPi5 kernel and firmware support
+        # See: https://github.com/nix-community/raspberry-pi-nix
+        rpi5 = nixpkgs.lib.nixosSystem {
           system = "aarch64-linux";
           specialArgs = {
             pkgs-unstable = import nixpkgs-unstable {
@@ -80,17 +86,29 @@
             inherit self; # Pass self for accessing flake root
           };
           modules = [
+            # raspberry-pi-nix provides kernel, firmware, and config.txt management
+            raspberry-pi-nix.nixosModules.raspberry-pi
             ./hosts/rpi5/configuration.nix
-            home-manager-unstable.nixosModules.home-manager
+            home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
-            ({ pkgs, ... }: {
+            ({ pkgs, lib, ... }: {
               environment.systemPackages = with pkgs; [
                 agenix
               ];
+              # Enable SD image build
+              # Build with: nix build .#nixosConfigurations.rpi5.config.system.build.sdImage
+              sdImage.compressImage = true;
+              sdImage.imageName = "nixos-rpi5.img";
             })
           ];
         };
+      };
+
+      # SD Image for Raspberry Pi 5
+      # Build with: nix build .#rpi5-sd-image
+      images = {
+        rpi5-sd-image = self.nixosConfigurations.rpi5.config.system.build.sdImage;
       };
 
       # Packages - scripts that can be built and run

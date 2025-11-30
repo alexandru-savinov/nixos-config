@@ -1,11 +1,8 @@
 # Raspberry Pi 5 Hardware Configuration
-# Uses linuxPackages_rpi4 (generic aarch64 kernel for RPi 3/4/5)
-# See: https://nixos.wiki/wiki/NixOS_on_ARM/Raspberry_Pi_5
+# Uses raspberry-pi-nix for proper kernel, firmware, and device tree support
+# See: https://github.com/nix-community/raspberry-pi-nix
 #
-# NOTE: After first boot, verify filesystem UUIDs with:
-#   lsblk -f
-#   blkid
-# and update device paths if needed.
+# This configuration works with the SD image built by raspberry-pi-nix
 
 { config, lib, pkgs, modulesPath, ... }:
 
@@ -15,68 +12,26 @@
   ];
 
   # ============================================================
-  # KERNEL CONFIGURATION FOR RPi5
+  # RASPBERRY PI 5 BOARD CONFIGURATION
   # ============================================================
-  # Use the RPi4 kernel package which supports RPi 3/4/5
-  # This is the recommended approach for nixos-unstable
-  boot.kernelPackages = pkgs.linuxPackages_rpi4;
-
-  # Raspberry Pi 5 boot configuration
-  boot.loader = {
-    # Use generic extlinux for RPi compatibility
-    grub.enable = false;
-    generic-extlinux-compatible.enable = true;
-
-    # Timeout for boot menu
-    timeout = 3;
-  };
-
-  # Kernel modules
-  boot.initrd.availableKernelModules = [
-    "xhci_pci"
-    "xhci_hcd"
-    "usbhid"
-    "usb_storage"
-    "sd_mod"
-    "sdhci_pci"
-    # RPi5 specific
-    "vc4"
-    "bcm2835_dma"
-    "i2c_bcm2835"
-  ];
-
-  boot.initrd.kernelModules = [ ];
-  boot.kernelModules = [ ];
-  boot.extraModulePackages = [ ];
-
-  # RPi5 kernel parameters
-  boot.kernelParams = [
-    # Console output
-    "console=ttyS0,115200"
-    "console=tty1"
-    # Reduce GPU memory for headless operation
-    "cma=64M"
-  ];
+  # bcm2711 for rpi 3, 3+, 4, zero 2 w
+  # bcm2712 for rpi 5
+  raspberry-pi-nix.board = "bcm2712";
 
   # ============================================================
   # FILESYSTEM CONFIGURATION
   # ============================================================
-  # IMPORTANT: Update these device paths/UUIDs after installation!
-  # The NixOS SD image uses labels, but you may want to switch to UUIDs
+  # raspberry-pi-nix SD image uses NIXOS_SD label for root
+  # The firmware partition is managed automatically
 
   fileSystems."/" = {
-    # Standard NixOS SD image label
     device = "/dev/disk/by-label/NIXOS_SD";
     fsType = "ext4";
     options = [ "noatime" "nodiratime" ];
   };
 
-  # Firmware partition (managed by NixOS SD image)
-  fileSystems."/boot/firmware" = {
-    device = "/dev/disk/by-label/FIRMWARE";
-    fsType = "vfat";
-    options = [ "fmask=0022" "dmask=0022" "nofail" ];
-  };
+  # Firmware partition is managed by raspberry-pi-nix
+  # It automatically updates firmware and config.txt
 
   # ============================================================
   # SWAP CONFIGURATION
@@ -89,16 +44,11 @@
   # HARDWARE SETTINGS
   # ============================================================
   hardware = {
-    # Enable GPU drivers (for potential future GUI use)
-    graphics.enable = true;
+    # Enable GPU drivers (opengl for NixOS 24.05)
+    opengl.enable = true;
 
-    # Enable firmware for RPi
+    # Enable firmware for RPi (handled by raspberry-pi-nix)
     enableRedistributableFirmware = true;
-
-    # Raspberry Pi wireless firmware
-    firmware = with pkgs; [
-      raspberrypiWirelessFirmware
-    ];
   };
 
   # CPU frequency scaling for power management
@@ -108,14 +58,50 @@
   nixpkgs.hostPlatform = lib.mkDefault "aarch64-linux";
 
   # ============================================================
-  # RPi5 SPECIFIC SETTINGS
+  # RASPBERRY PI CONFIG.TXT SETTINGS
   # ============================================================
-  # These may need adjustment based on your specific hardware
+  # These settings are managed by raspberry-pi-nix and written to config.txt
+  # on the firmware partition
 
-  # Enable hardware RNG for better entropy
-  hardware.cpu.amd.updateMicrocode = lib.mkDefault false;
-  hardware.cpu.intel.updateMicrocode = lib.mkDefault false;
-
-  # Network interface - RPi5 uses end0 for ethernet
-  networking.interfaces.end0.useDHCP = lib.mkDefault true;
+  hardware.raspberry-pi.config = {
+    all = {
+      options = {
+        # 64-bit mode
+        arm_64bit = {
+          enable = true;
+          value = true;
+        };
+        # Enable UART for serial console debugging
+        enable_uart = {
+          enable = true;
+          value = true;
+        };
+        # Disable warning overlays
+        avoid_warnings = {
+          enable = true;
+          value = true;
+        };
+        # Disable overscan
+        disable_overscan = {
+          enable = true;
+          value = true;
+        };
+      };
+      # Device tree parameters
+      base-dt-params = {
+        # Enable Bluetooth
+        krnbt = {
+          enable = true;
+          value = "on";
+        };
+      };
+      # GPU overlay for headless operation
+      dt-overlays = {
+        vc4-kms-v3d = {
+          enable = true;
+          params = { };
+        };
+      };
+    };
+  };
 }
