@@ -18,22 +18,21 @@ let
   # Systems that can decrypt
   systems = [ sancta-choir rpi5 ];
 
-  # All keys (for most secrets)
+  # All keys (for secrets shared across all hosts)
   allKeys = users ++ systems;
 
-  # Keys for sancta-choir only (excluding rpi5)
+  # Keys for sancta-choir only
   sanctaChoirKeys = users ++ [ sancta-choir ];
-
-  # Keys for rpi5 only
-  rpi5Keys = users ++ [ rpi5 ];
 in
 {
-  # Production secrets - shared across all hosts
+  # Tailscale - shared across all hosts
   "tailscale-auth-key.age".publicKeys = allKeys;
 
-  # Secrets for sancta-choir only
-  "open-webui-secret-key.age".publicKeys = sanctaChoirKeys;
-  "openrouter-api-key.age".publicKeys = sanctaChoirKeys;
+  # Open-WebUI secrets - shared across sancta-choir and rpi5
+  "open-webui-secret-key.age".publicKeys = allKeys;
+  "openrouter-api-key.age".publicKeys = allKeys;
+  "tavily-api-key.age".publicKeys = allKeys;
+
+  # OIDC client secret - sancta-choir only (tsidp not on rpi5)
   "oidc-client-secret.age".publicKeys = sanctaChoirKeys;
-  "tavily-api-key.age".publicKeys = sanctaChoirKeys;
 }
