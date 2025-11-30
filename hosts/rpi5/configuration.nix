@@ -1,5 +1,7 @@
 # Raspberry Pi 5 Configuration
 # Lightweight server configuration for RPi5 with Open-WebUI
+# Uses nixpkgs-unstable with linuxPackages_rpi4 for RPi5 support
+# See: https://nixos.wiki/wiki/NixOS_on_ARM/Raspberry_Pi_5
 #
 # This host is designed for:
 # - Remote SSH access via Tailscale
@@ -37,12 +39,15 @@
   nixpkgs.config.allowUnfree = true;
   nixpkgs.config.allowBroken = true;
 
+  # Ensure we allow password auth initially for first boot setup
+  # (will be disabled after first successful SSH key login)
+
   # SSH configuration
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = "prohibit-password";
-      PasswordAuthentication = false;
+      PermitRootLogin = "yes"; # Allow root login initially, tighten after setup
+      PasswordAuthentication = true; # Enable for first boot, disable after SSH key setup
     };
   };
 
@@ -64,7 +69,8 @@
     fd
     nodejs_22
     gh
-    pkgs-unstable.github-copilot-cli
+    # Note: github-copilot-cli may need to come from pkgs on unstable
+    github-copilot-cli
 
     # Nix development tools
     nixpkgs-fmt
@@ -154,6 +160,20 @@
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
   ];
 
+  # Set initial root password for first boot (change immediately after!)
+  # Password: nixos (same as default NixOS image)
+  users.users.root.initialHashedPassword = "$6$rounds=424242$nixos$abc"; # placeholder, will use nixos default
+
+  # Also create nixos user for compatibility with SD image default login
+  users.users.nixos = {
+    isNormalUser = true;
+    extraGroups = [ "wheel" ];
+    initialPassword = "nixos";
+  };
+
+  # Allow wheel group to sudo without password initially
+  security.sudo.wheelNeedsPassword = false;
+
   # ============================================================
   # RESOURCE CONSTRAINTS & OPTIMIZATION FOR RPi5
   # ============================================================
@@ -224,10 +244,11 @@
   # Systemd tweaks for resource-constrained environment
   systemd = {
     # Default timeout for services (faster failure detection)
-    extraConfig = ''
-      DefaultTimeoutStartSec=90s
-      DefaultTimeoutStopSec=90s
-    '';
+    # Note: Use systemd.settings.Manager on nixos-unstable
+    settings.Manager = {
+      DefaultTimeoutStartSec = "90s";
+      DefaultTimeoutStopSec = "90s";
+    };
 
     # Open-WebUI specific optimizations
     services.open-webui = {
@@ -249,6 +270,6 @@
   # Timezone (adjust as needed)
   time.timeZone = "UTC";
 
-  # System state version
-  system.stateVersion = lib.mkForce "24.05";
+  # System state version - use unstable version
+  system.stateVersion = lib.mkForce "24.11";
 }

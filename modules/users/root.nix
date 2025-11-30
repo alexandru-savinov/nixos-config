@@ -5,6 +5,9 @@
   home-manager.users.root = {
     home.stateVersion = "24.05";
 
+    # Disable version check for unstable nixpkgs compatibility
+    home.enableNixpkgsReleaseCheck = false;
+
     # Additional user-specific home-manager configs can go here
     programs.git = {
       enable = true;

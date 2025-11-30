@@ -8,6 +8,10 @@
       url = "github:nix-community/home-manager/release-24.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    home-manager-unstable = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
     vscode-server = {
       url = "github:nix-community/nixos-vscode-server";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -22,7 +26,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, tsidp, agenix, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -64,7 +68,9 @@
         };
 
         # Raspberry Pi 5 (aarch64)
-        rpi5 = nixpkgs.lib.nixosSystem {
+        # Uses nixpkgs-unstable for better RPi5 hardware support
+        # See: https://nixos.wiki/wiki/NixOS_on_ARM/Raspberry_Pi_5
+        rpi5 = nixpkgs-unstable.lib.nixosSystem {
           system = "aarch64-linux";
           specialArgs = {
             pkgs-unstable = import nixpkgs-unstable {
@@ -75,7 +81,7 @@
           };
           modules = [
             ./hosts/rpi5/configuration.nix
-            home-manager.nixosModules.home-manager
+            home-manager-unstable.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
