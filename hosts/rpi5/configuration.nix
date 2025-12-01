@@ -29,7 +29,10 @@
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
     ../../modules/services/tailscale.nix
-    ../../modules/services/open-webui.nix
+    # Open-WebUI disabled for SD image build (chromadb fails under QEMU emulation)
+    # Re-enable after first boot and rebuild natively on the Pi:
+    #   sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
+    # ../../modules/services/open-webui.nix
     # Add more services as needed:
     # ../../modules/services/tsidp.nix
     # ../../modules/services/uptime-kuma.nix
@@ -92,41 +95,44 @@
     # Tailscale authentication
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
 
-    # Open-WebUI secrets
-    open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
-    openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
-    tavily-api-key.file = "${self}/secrets/tavily-api-key.age";
+    # Open-WebUI secrets - commented out until open-webui module is re-enabled
+    # open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
+    # openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
+    # tavily-api-key.file = "${self}/secrets/tavily-api-key.age";
 
     # OIDC (disabled for now, but secret available if needed)
     # oidc-client-secret.file = "${self}/secrets/oidc-client-secret.age";
   };
 
   # Open-WebUI with OpenRouter backend
+  # DISABLED for SD image build - chromadb fails under QEMU emulation
+  # Re-enable after first boot by uncommenting the import above and secrets,
+  # then rebuild natively on the Pi
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
-  services.open-webui-tailscale = {
-    enable = true;
-    enableSignup = false; # Closed signup - admin only
-    secretKeyFile = config.age.secrets.open-webui-secret-key.path;
-    openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
-    webuiUrl = "https://rpi5.tail4249a9.ts.net";
-
-    # Tavily Search API for RAG web search
-    tavilySearch = {
-      enable = true;
-      apiKeyFile = config.age.secrets.tavily-api-key.path;
-    };
-
-    # OIDC authentication - disabled (same issue as sancta-choir with tsidp on same host)
-    oidc = {
-      enable = false;
-    };
-
-    # Tailscale Serve for HTTPS
-    tailscaleServe = {
-      enable = true;
-      httpsPort = 443;
-    };
-  };
+  # services.open-webui-tailscale = {
+  #   enable = true;
+  #   enableSignup = false; # Closed signup - admin only
+  #   secretKeyFile = config.age.secrets.open-webui-secret-key.path;
+  #   openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
+  #   webuiUrl = "https://rpi5.tail4249a9.ts.net";
+  #
+  #   # Tavily Search API for RAG web search
+  #   tavilySearch = {
+  #     enable = true;
+  #     apiKeyFile = config.age.secrets.tavily-api-key.path;
+  #   };
+  #
+  #   # OIDC authentication - disabled (same issue as sancta-choir with tsidp on same host)
+  #   oidc = {
+  #     enable = false;
+  #   };
+  #
+  #   # Tailscale Serve for HTTPS
+  #   tailscaleServe = {
+  #     enable = true;
+  #     httpsPort = 443;
+  #   };
+  # };
 
   # Hostname
   networking.hostName = "rpi5";
@@ -204,7 +210,7 @@
     log-lines = 25;
     # Use less memory during evaluation
     max-free = 1024 * 1024 * 1024; # 1GB - trigger GC when free space drops
-    min-free = 512 * 1024 * 1024; # 512MB - minimum free space to maintain
+    min-free = 512 * 1024 * 1024;  # 512MB - minimum free space to maintain
   };
 
   # Swap configuration for heavy workloads (Open-WebUI, builds)
@@ -221,7 +227,7 @@
     enable = true;
     memoryPercent = 50; # Use up to 50% of RAM for compressed swap
     algorithm = "zstd"; # Better compression ratio
-    priority = 100; # Higher priority than disk swap
+    priority = 100;     # Higher priority than disk swap
   };
 
   # Kernel tweaks for better memory management under pressure
@@ -245,21 +251,21 @@
       DefaultTimeoutStopSec=90s
     '';
 
-    # Open-WebUI specific optimizations
-    services.open-webui = {
-      serviceConfig = {
-        # Memory limits to prevent runaway usage
-        MemoryMax = "2G";
-        MemoryHigh = "1536M";
-        # CPU limits during peak usage
-        CPUQuota = "300%"; # 3 cores max
-        # Nice value for lower priority during builds
-        Nice = 5;
-        # IO priority
-        IOSchedulingClass = "best-effort";
-        IOSchedulingPriority = 4;
-      };
-    };
+    # Open-WebUI specific optimizations - uncomment when open-webui is re-enabled
+    # services.open-webui = {
+    #   serviceConfig = {
+    #     # Memory limits to prevent runaway usage
+    #     MemoryMax = "2G";
+    #     MemoryHigh = "1536M";
+    #     # CPU limits during peak usage
+    #     CPUQuota = "300%"; # 3 cores max
+    #     # Nice value for lower priority during builds
+    #     Nice = 5;
+    #     # IO priority
+    #     IOSchedulingClass = "best-effort";
+    #     IOSchedulingPriority = 4;
+    #   };
+    # };
   };
 
   # Timezone (adjust as needed)

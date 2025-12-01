@@ -1,8 +1,6 @@
 # Raspberry Pi 5 Hardware Configuration
-# Uses raspberry-pi-nix for proper kernel, firmware, and device tree support
-# See: https://github.com/nix-community/raspberry-pi-nix
-#
-# This configuration works with the SD image built by raspberry-pi-nix
+# Simplified version using generic aarch64 kernel (no raspberry-pi-nix)
+# Works with nixos-infect from Raspberry Pi OS
 
 { config, lib, pkgs, modulesPath, ... }:
 
@@ -12,17 +10,27 @@
   ];
 
   # ============================================================
-  # RASPBERRY PI 5 BOARD CONFIGURATION
+  # BOOT CONFIGURATION
   # ============================================================
-  # bcm2711 for rpi 3, 3+, 4, zero 2 w
-  # bcm2712 for rpi 5
-  raspberry-pi-nix.board = "bcm2712";
+  # Use the extlinux bootloader (works with RPi firmware)
+  boot.loader.grub.enable = false;
+  boot.loader.generic-extlinux-compatible.enable = true;
+
+  # Use the generic aarch64 kernel (or rpi4 kernel for better Pi support)
+  # The rpi4 kernel also works on Pi 5 and has better hardware support
+  boot.kernelPackages = pkgs.linuxPackages_rpi4;
+
+  # Kernel parameters for Raspberry Pi
+  boot.kernelParams = [
+    "console=ttyAMA0,115200"
+    "console=tty1"
+  ];
 
   # ============================================================
   # FILESYSTEM CONFIGURATION
   # ============================================================
-  # raspberry-pi-nix SD image uses NIXOS_SD label for root
-  # The firmware partition is managed automatically
+  # nixos-infect will set this up based on the existing partitions
+  # These are placeholders - nixos-infect will generate the real ones
 
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIXOS_SD";
@@ -30,78 +38,31 @@
     options = [ "noatime" "nodiratime" ];
   };
 
-  # Firmware partition is managed by raspberry-pi-nix
-  # It automatically updates firmware and config.txt
+  fileSystems."/boot" = {
+    device = "/dev/disk/by-label/NIXOS_BOOT";
+    fsType = "vfat";
+  };
 
   # ============================================================
   # SWAP CONFIGURATION
   # ============================================================
-  # Swap file is configured in configuration.nix
-  # zram is also enabled there
   swapDevices = [ ];
 
   # ============================================================
   # HARDWARE SETTINGS
   # ============================================================
   hardware = {
-    # Enable GPU drivers (opengl for NixOS 24.05)
+    # Enable GPU (OpenGL)
     opengl.enable = true;
 
-    # Enable firmware for RPi (handled by raspberry-pi-nix)
+    # Enable firmware for WiFi, Bluetooth, etc.
     enableRedistributableFirmware = true;
+    firmware = [ pkgs.raspberrypiWirelessFirmware ];
   };
 
-  # CPU frequency scaling for power management
+  # CPU frequency scaling
   powerManagement.cpuFreqGovernor = lib.mkDefault "ondemand";
 
   # Platform specification
   nixpkgs.hostPlatform = lib.mkDefault "aarch64-linux";
-
-  # ============================================================
-  # RASPBERRY PI CONFIG.TXT SETTINGS
-  # ============================================================
-  # These settings are managed by raspberry-pi-nix and written to config.txt
-  # on the firmware partition
-
-  hardware.raspberry-pi.config = {
-    all = {
-      options = {
-        # 64-bit mode
-        arm_64bit = {
-          enable = true;
-          value = true;
-        };
-        # Enable UART for serial console debugging
-        enable_uart = {
-          enable = true;
-          value = true;
-        };
-        # Disable warning overlays
-        avoid_warnings = {
-          enable = true;
-          value = true;
-        };
-        # Disable overscan
-        disable_overscan = {
-          enable = true;
-          value = true;
-        };
-      };
-      # Device tree parameters
-      base-dt-params = {
-        # Enable Bluetooth
-        krnbt = {
-          enable = true;
-          value = "on";
-        };
-      };
-      # GPU overlay for headless operation
-      dt-overlays = {
-        vc4-kms-v3d = {
-          enable = true;
-          params = { };
-        };
-      };
-    };
-  };
 }

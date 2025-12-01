@@ -74,8 +74,8 @@
         };
 
         # Raspberry Pi 5 (aarch64)
-        # Uses raspberry-pi-nix for proper RPi5 kernel and firmware support
-        # See: https://github.com/nix-community/raspberry-pi-nix
+        # Simplified config using generic aarch64 kernel (no raspberry-pi-nix)
+        # Works with nixos-infect from Raspberry Pi OS
         rpi5 = nixpkgs.lib.nixosSystem {
           system = "aarch64-linux";
           specialArgs = {
@@ -86,8 +86,7 @@
             inherit self; # Pass self for accessing flake root
           };
           modules = [
-            # raspberry-pi-nix provides kernel, firmware, and config.txt management
-            raspberry-pi-nix.nixosModules.raspberry-pi
+            # Using generic aarch64 kernel - no raspberry-pi-nix (avoids kernel compile)
             ./hosts/rpi5/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
@@ -96,10 +95,6 @@
               environment.systemPackages = with pkgs; [
                 agenix
               ];
-              # Enable SD image build
-              # Build with: nix build .#nixosConfigurations.rpi5.config.system.build.sdImage
-              sdImage.compressImage = true;
-              sdImage.imageName = "nixos-rpi5.img";
             })
           ];
         };
