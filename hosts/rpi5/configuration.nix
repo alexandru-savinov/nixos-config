@@ -210,7 +210,7 @@
     log-lines = 25;
     # Use less memory during evaluation
     max-free = 1024 * 1024 * 1024; # 1GB - trigger GC when free space drops
-    min-free = 512 * 1024 * 1024;  # 512MB - minimum free space to maintain
+    min-free = 512 * 1024 * 1024; # 512MB - minimum free space to maintain
   };
 
   # Swap configuration for heavy workloads (Open-WebUI, builds)
@@ -227,7 +227,7 @@
     enable = true;
     memoryPercent = 50; # Use up to 50% of RAM for compressed swap
     algorithm = "zstd"; # Better compression ratio
-    priority = 100;     # Higher priority than disk swap
+    priority = 100; # Higher priority than disk swap
   };
 
   # Kernel tweaks for better memory management under pressure
