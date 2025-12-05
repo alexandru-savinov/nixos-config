@@ -17,7 +17,7 @@
 
   # Kernel parameters for Raspberry Pi
   boot.kernelParams = [
-    "console=ttyAMA10,115200"  # Pi 5 uses ttyAMA10 for serial
+    "console=ttyAMA10,115200" # Pi 5 uses ttyAMA10 for serial
     "console=tty1"
   ];
 

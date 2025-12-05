@@ -1,5 +1,6 @@
 { config
 , pkgs
+, pkgs-unstable
 , lib
 , ...
 }:
@@ -12,6 +13,16 @@ in
 {
   options.services.open-webui-tailscale = {
     enable = mkEnableOption "Open-WebUI with Tailscale Serve";
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs-unstable.open-webui;
+      defaultText = literalExpression "pkgs-unstable.open-webui";
+      description = ''
+        The Open-WebUI package to use.
+        Defaults to unstable (0.6.36+) which fixes alembic.ini lookup issues.
+      '';
+    };
 
     host = mkOption {
       type = types.str;
@@ -167,11 +178,15 @@ in
     # Open-WebUI service configuration
     services.open-webui = {
       enable = true;
+      package = cfg.package;
       inherit (cfg) host port stateDir;
       openFirewall = false; # Accessed via Tailscale only
 
       environment = mkMerge [
         {
+          # Database - explicit path for 0.6.x compatibility (uses data/ subdirectory)
+          DATABASE_URL = "sqlite:///${cfg.stateDir}/data/webui.db";
+
           # Security
           ANONYMIZED_TELEMETRY = "False";
           DO_NOT_TRACK = "True";
@@ -245,8 +260,10 @@ in
         {
           # Systemd hardening
           DynamicUser = lib.mkForce false;
+          PrivateUsers = lib.mkForce false; # Required for database write access
           StateDirectory = "open-webui";
           ProtectSystem = "strict";
+          ReadWritePaths = [ cfg.stateDir ];
           ProtectHome = true;
           PrivateTmp = true;
           NoNewPrivileges = true;

@@ -8,11 +8,21 @@
     # Add ~/.local/bin to PATH for user-installed binaries (e.g., opencode)
     home.sessionPath = [ "$HOME/.local/bin" ];
 
+    # Opencode wrapper: always runs the latest available binary installed by Zed
+    # This handles version changes automatically when Zed updates the agent
+    home.file.".local/bin/opencode" = {
+      executable = true;
+      text = ''
+        #!/bin/sh
+        exec "$(find "$HOME/.local/share/zed/external_agents/opencode/opencode" -name opencode -type f -executable 2>/dev/null | sort -V | tail -n1)" "$@"
+      '';
+    };
+
     # OpenCode configuration - uses Open WebUI as LLM gateway
     # API key is read from agenix-managed secret at runtime via {file:...} syntax
     xdg.configFile."opencode/opencode.json".text = builtins.toJSON {
       "$schema" = "https://opencode.ai/config.json";
-      autoupdate = false;  # Managed by Zed or manual updates
+      autoupdate = false; # Managed by Zed or manual updates
       provider = {
         openwebui = {
           npm = "@ai-sdk/openai-compatible";
@@ -22,22 +32,22 @@
             apiKey = "{file:/run/agenix/opencode-api-key}";
           };
           models = {
-            "openrouter/anthropic/claude-sonnet-4" = {
-              name = "Claude Sonnet 4 (via OpenRouter)";
+            "anthropic/claude-sonnet-4" = {
+              name = "Claude Sonnet 4";
               limit = {
                 context = 200000;
                 output = 16384;
               };
             };
-            "openrouter/anthropic/claude-opus-4" = {
-              name = "Claude Opus 4 (via OpenRouter)";
+            "anthropic/claude-opus-4" = {
+              name = "Claude Opus 4";
               limit = {
                 context = 200000;
                 output = 32000;
               };
             };
-            "openrouter/google/gemini-2.5-pro" = {
-              name = "Gemini 2.5 Pro (via OpenRouter)";
+            "google/gemini-2.5-pro-preview" = {
+              name = "Gemini 2.5 Pro";
               limit = {
                 context = 1000000;
                 output = 65536;
@@ -46,7 +56,7 @@
           };
         };
       };
-      model = "openwebui/openrouter/anthropic/claude-sonnet-4";
+      model = "openwebui/anthropic/claude-sonnet-4";
     };
 
     # Additional user-specific home-manager configs can go here
