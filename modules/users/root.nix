@@ -5,6 +5,9 @@
   home-manager.users.root = {
     home.stateVersion = "24.05";
 
+    # Add ~/.local/bin to PATH for user-installed binaries (e.g., opencode)
+    home.sessionPath = [ "$HOME/.local/bin" ];
+
     # Additional user-specific home-manager configs can go here
     programs.git = {
       enable = true;

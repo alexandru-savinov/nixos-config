@@ -26,6 +26,7 @@
     ../common.nix
     ../../modules/system/host.nix
     ../../modules/system/networking.nix
+    ../../modules/system/nix-ld.nix
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
     ../../modules/services/tailscale.nix
