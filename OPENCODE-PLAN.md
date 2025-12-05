@@ -109,35 +109,68 @@ curl -fsSL https://opencode.ai/install | bash
 
 The installer auto-adds to PATH via .bashrc.
 
-### Step 6: Configure OpenCode (Optional)
+### Step 6: Configure OpenCode with Open WebUI Gateway
 
-If using with Open WebUI as gateway, manage `~/.config/opencode/config.json` declaratively (e.g., via Home Manager or an activation script). Example contents:
+OpenCode is configured declaratively via Home Manager in `modules/users/root.nix`. The config uses Open WebUI as an OpenAI-compatible LLM gateway.
+
+**Config file**: `~/.config/opencode/opencode.json` (managed by home-manager)
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
   "provider": {
-    "owui": {
+    "openwebui": {
+      "npm": "@ai-sdk/openai-compatible",
       "name": "Open WebUI",
       "options": {
-        "baseURL": "https://sancta-choir.tail4249a9.ts.net/api/v1"
+        "baseURL": "https://sancta-choir.tail4249a9.ts.net/api",
+        "apiKey": "{file:/run/agenix/opencode-api-key}"
+      },
+      "models": {
+        "openrouter/anthropic/claude-sonnet-4": {
+          "name": "Claude Sonnet 4 (via OpenRouter)",
+          "limit": { "context": 200000, "output": 16384 }
+        },
+        "openrouter/anthropic/claude-opus-4": {
+          "name": "Claude Opus 4 (via OpenRouter)",
+          "limit": { "context": 200000, "output": 32000 }
+        },
+        "openrouter/google/gemini-2.5-pro": {
+          "name": "Gemini 2.5 Pro (via OpenRouter)",
+          "limit": { "context": 1000000, "output": 65536 }
+        }
       }
     }
   },
-  "model": "owui/openrouter/anthropic/claude-sonnet-4"
+  "model": "openwebui/openrouter/anthropic/claude-sonnet-4"
 }
 ```
 
+**API Key Setup** (one-time):
 
-Authentication should be injected via your secrets management flow (e.g., `sops-nix`, agenix) so that the API key lands in `~/.local/share/opencode/auth.json` with 0600 permissions.
+1. Go to https://sancta-choir.tail4249a9.ts.net
+2. Settings → Account → API Keys → Create new secret key
+3. Create the encrypted secret:
+   ```bash
+   cd /root/nixos-config/secrets
+   agenix -e opencode-api-key.age
+   # Paste the API key and save
+   ```
+4. Deploy: `nixos-rebuild switch --flake .#sancta-choir`
+
+The `{file:/run/agenix/opencode-api-key}` syntax tells OpenCode to read the API key from the agenix-decrypted secret at runtime.
 
 
 ## File Changes Summary
 
 | File | Action |
 |------|--------|
-| `modules/system/nix-ld.nix` | Create new module |
-| `hosts/sancta-choir/configuration.nix` | Add import |
+| `modules/system/nix-ld.nix` | ✅ Created - nix-ld module with library set |
+| `modules/users/root.nix` | ✅ Updated - OpenCode config via home-manager |
+| `hosts/sancta-choir/configuration.nix` | ✅ Updated - nix-ld import + opencode-api-key secret |
+| `secrets/secrets.nix` | ✅ Updated - opencode-api-key.age definition |
+| `secrets/opencode-api-key.age` | ⏳ Pending - needs API key from Open WebUI |
 | `hosts/rpi5/configuration.nix` | Add import (if needed on Pi) |
 
 ## Considerations
@@ -179,7 +212,8 @@ Or remove the import and rebuild.
 - [x] `ldd /root/.local/share/zed/external_agents/opencode/opencode/v_*/opencode` shows no "not found" entries with `nix-ld` enabled — ✅ all libs resolved
 - [x] `/root/.local/share/zed/external_agents/opencode/opencode/v_*/opencode --version` runs under the root shell — ✅ reports 1.0.61
 - [x] `opencode` command is available in terminal (after Step 5) and `which opencode` points to the expected path — ✅ symlinked to `~/.local/bin`, PATH set via home-manager sessionPath
-- [ ] Declarative deployment surfaces `~/.config/opencode/config.json` with the expected provider settings
+- [ ] Declarative deployment surfaces `~/.config/opencode/opencode.json` with Open WebUI provider settings
+- [ ] `secrets/opencode-api-key.age` created with Open WebUI API key
 - [x] OpenCode can start a session in a project directory and open/edit a file — ✅ `opencode --help` and `opencode models` work in nixos-config directory
 - [x] (Optional) OpenCode connects to the configured provider and lists available models — ✅ lists opencode/big-pickle, opencode/grok-code
 - [ ] (Optional) A second dynamically linked binary (e.g., a VS Code language server) runs successfully via `nix-ld`

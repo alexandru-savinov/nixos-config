@@ -1,6 +1,6 @@
 # Raspberry Pi 5 Hardware Configuration
-# Simplified version using generic aarch64 kernel (no raspberry-pi-nix)
-# Works with nixos-infect from Raspberry Pi OS
+# Uses raspberry-pi-nix for proper Pi 5 kernel with RP1 SD controller support
+# See: https://github.com/nix-community/raspberry-pi-nix
 
 { config, lib, pkgs, modulesPath, ... }:
 
@@ -12,25 +12,20 @@
   # ============================================================
   # BOOT CONFIGURATION
   # ============================================================
-  # Use the extlinux bootloader (works with RPi firmware)
-  boot.loader.grub.enable = false;
-  boot.loader.generic-extlinux-compatible.enable = true;
-
-  # Use the generic aarch64 kernel (or rpi4 kernel for better Pi support)
-  # The rpi4 kernel also works on Pi 5 and has better hardware support
-  boot.kernelPackages = pkgs.linuxPackages_rpi4;
+  # raspberry-pi-nix handles boot configuration automatically
+  # It sets up the correct kernel, firmware, and device trees for Pi 5
 
   # Kernel parameters for Raspberry Pi
   boot.kernelParams = [
-    "console=ttyAMA0,115200"
+    "console=ttyAMA10,115200"  # Pi 5 uses ttyAMA10 for serial
     "console=tty1"
   ];
 
   # ============================================================
   # FILESYSTEM CONFIGURATION
   # ============================================================
-  # nixos-infect will set this up based on the existing partitions
-  # These are placeholders - nixos-infect will generate the real ones
+  # raspberry-pi-nix SD image will set these up automatically
+  # These are defaults that work with the generated SD image
 
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIXOS_SD";
@@ -38,10 +33,8 @@
     options = [ "noatime" "nodiratime" ];
   };
 
-  fileSystems."/boot" = {
-    device = "/dev/disk/by-label/NIXOS_BOOT";
-    fsType = "vfat";
-  };
+  # Boot partition is managed by raspberry-pi-nix
+  # It handles firmware, kernel, and config.txt automatically
 
   # ============================================================
   # SWAP CONFIGURATION
@@ -52,12 +45,9 @@
   # HARDWARE SETTINGS
   # ============================================================
   hardware = {
-    # Enable GPU (OpenGL)
-    opengl.enable = true;
-
-    # Enable firmware for WiFi, Bluetooth, etc.
+    # raspberry-pi-nix handles GPU and firmware automatically
+    # Enable redistributable firmware for WiFi, Bluetooth, etc.
     enableRedistributableFirmware = true;
-    firmware = [ pkgs.raspberrypiWirelessFirmware ];
   };
 
   # CPU frequency scaling

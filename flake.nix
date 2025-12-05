@@ -74,8 +74,8 @@
         };
 
         # Raspberry Pi 5 (aarch64)
-        # Simplified config using generic aarch64 kernel (no raspberry-pi-nix)
-        # Works with nixos-infect from Raspberry Pi OS
+        # Uses raspberry-pi-nix for proper Pi 5 kernel with RP1 SD controller support
+        # Build SD image with: nix build .#images.rpi5-sd-image
         rpi5 = nixpkgs.lib.nixosSystem {
           system = "aarch64-linux";
           specialArgs = {
@@ -86,7 +86,8 @@
             inherit self; # Pass self for accessing flake root
           };
           modules = [
-            # Using generic aarch64 kernel - no raspberry-pi-nix (avoids kernel compile)
+            # raspberry-pi-nix provides proper Pi 5 kernel with RP1 drivers
+            raspberry-pi-nix.nixosModules.raspberry-pi
             ./hosts/rpi5/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
@@ -95,6 +96,8 @@
               environment.systemPackages = with pkgs; [
                 agenix
               ];
+              # Configure for Raspberry Pi 5 (BCM2712)
+              raspberry-pi-nix.board = "bcm2712";
             })
           ];
         };
