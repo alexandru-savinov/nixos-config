@@ -7,10 +7,7 @@ let
   sancta-choir = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILkqRZZKLsSV7L67Rzh38UDU6F2GeMmgyiVLlQgS70zP root@sancta-choir";
 
   # Raspberry Pi 5 host key
-  # IMPORTANT: Replace this placeholder after first boot!
-  # Get the key with: ssh-keyscan -t ed25519 <rpi5-ip> 2>/dev/null | awk '{print $2 " " $3}'
-  # Or on the Pi: cat /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1 " " $2}'
-  rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa root@rpi5-placeholder";
+  rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIONeeV4HZKWxt/N4MPIj7Cwj5u7wJIu4Biul5n9kW57 root@rpi5";
 
   # Combine users who can edit
   users = [ root-sancta-choir ];
