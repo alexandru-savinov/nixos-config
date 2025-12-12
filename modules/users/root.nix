@@ -1,34 +1,29 @@
-{ config, pkgs, lib, systemAccount ? true, ... }:
+{ pkgs, ... }: {
+  programs = {
+    opencode = {
+      enable = true;
+      package = pkgs.writeShellApplication {
+        name = "opencode";
+        runtimeInputs = with pkgs; [
+          ripgrep
+          fzf
+          bat
+        ];
+        text = ''
+          FOUND=$(rg "^OPENAI_API_KEY=" "$HOME/.bashrc" > /dev/null 2>&1; echo $?)
+          if [[ "''${FOUND}" -eq 0 ]]; then
+            FOUND=$(rg "OPENAI_API_KEY" "$HOME/.config/zsh/zshrc" > /dev/null 2>&1; echo $?)
+            if [[ "''${FOUND}" -eq 0 ]]; then
+              echo "Can't find OPENAI_API_KEY"
+              exit 2
+            fi
+          fi
 
-let
-  rootWrapper = pkgs.writeShellScriptBin "opencode" ''
-    set -eu
+          export OPENAI_API_KEY=$(rg "^OPENAI_API_KEY=" "$HOME/.bashrc" | cut -d'=' -f2)
 
-    FOUND=""
-    for p in $PATH; do
-      if [ -x "$p/opencode" ]; then
-        FOUND="$p/opencode"
-        break
-      fi
-    done
-
-    if [ -z "${FOUND}" ]; then
-      echo "opencode: could not find an executable 'opencode' in PATH" >&2
-      exit 127
-    fi
-
-    exec -a opencode "${FOUND}" "$@"
-  '';
-
-in
-{
-  users.users.root = {
-    isNormalUser = false;
-    isSystemUser = systemAccount;
-    shell = pkgs.zsh;
-
-    packages = with pkgs; [
-      rootWrapper
-    ];
+          ${pkgs.opencode}/bin/opencode "$@"
+        '';
+      };
+    };
   };
 }
