@@ -66,8 +66,8 @@
             tsidp.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
-              environment.systemPackages = with pkgs; [
-                agenix
+              environment.systemPackages = [
+                agenix.packages.${pkgs.system}.default
               ];
             })
           ];
@@ -93,8 +93,8 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, lib, ... }: {
-              environment.systemPackages = with pkgs; [
-                agenix
+              environment.systemPackages = [
+                agenix.packages.${pkgs.system}.default
               ];
               # Configure for Raspberry Pi 5 (BCM2712)
               raspberry-pi-nix.board = "bcm2712";
