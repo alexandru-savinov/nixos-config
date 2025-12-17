@@ -39,9 +39,10 @@
   # ============================================================
 
   # Root filesystem - NVMe SSD (NOT the SD card!)
+  # Use label for portability (consistent with FIRMWARE partition)
   # Use mkForce to override raspberry-pi-nix sd-image.nix defaults
   fileSystems."/" = lib.mkForce {
-    device = "/dev/disk/by-uuid/344d4f56-d1a1-4df3-a0d3-aa22cab48ffc";
+    device = "/dev/disk/by-label/NIXOS";
     fsType = "ext4";
     options = [ "noatime" "nodiratime" ];
   };
@@ -57,10 +58,8 @@
   # ============================================================
   # SWAP CONFIGURATION
   # ============================================================
-  # Swap file on NVMe for better performance
-  swapDevices = lib.mkForce [
-    { device = "/var/swapfile"; }
-  ];
+  # Swap is configured in configuration.nix with size parameter
+  # No swapDevices here to avoid duplication and maintain single source of truth
 
   # ============================================================
   # HARDWARE SETTINGS

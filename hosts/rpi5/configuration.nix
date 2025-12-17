@@ -219,7 +219,7 @@
 
   # Swap configuration for heavy workloads (Open-WebUI, builds)
   # Using a swap file instead of zram alone for better stability
-  swapDevices = [
+  swapDevices = lib.mkForce [
     {
       device = "/var/swapfile";
       size = 4096; # 4GB swap file
