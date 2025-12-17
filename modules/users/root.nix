@@ -12,7 +12,7 @@
     # API key is read from agenix-managed secret at runtime via {file:...} syntax
     xdg.configFile."opencode/opencode.json".text = builtins.toJSON {
       "$schema" = "https://opencode.ai/config.json";
-      autoupdate = false;  # Managed by Zed or manual updates
+      autoupdate = false; # Managed by Zed or manual updates
       provider = {
         openwebui = {
           npm = "@ai-sdk/openai-compatible";
