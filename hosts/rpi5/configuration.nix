@@ -50,8 +50,8 @@
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = "yes"; # Allow root login initially, tighten after setup
-      PasswordAuthentication = true; # Enable for first boot, disable after SSH key setup
+      PermitRootLogin = "prohibit-password"; # Allow root login only via SSH keys
+      PasswordAuthentication = false; # Disable password auth, use SSH keys
     };
   };
 
