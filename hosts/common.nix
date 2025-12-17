@@ -7,8 +7,16 @@
   boot.tmp.cleanOnBoot = true;
   zramSwap.enable = true;
 
-  # SSH is enabled by default for all hosts
-  services.openssh.enable = true;
+  # SSH is enabled by default for all hosts with keepalive settings
+  services.openssh = {
+    enable = true;
+    settings = {
+      # Keepalive settings to prevent connection drops (especially for Zed/VSCode remote)
+      ClientAliveInterval = 60; # Send keepalive every 60 seconds
+      ClientAliveCountMax = 3; # Disconnect after 3 missed probes (180s total)
+      TCPKeepAlive = true; # Enable TCP-level keepalives
+    };
+  };
 
   # Nix settings
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
