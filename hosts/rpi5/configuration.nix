@@ -52,6 +52,10 @@
     settings = {
       PermitRootLogin = "yes"; # Allow root login initially, tighten after setup
       PasswordAuthentication = true; # Enable for first boot, disable after SSH key setup
+      # Keepalive settings to prevent connection drops (especially for Zed remote)
+      ClientAliveInterval = 60; # Send keepalive every 60 seconds
+      ClientAliveCountMax = 3; # Disconnect after 3 missed probes (180s total)
+      TCPKeepAlive = true; # Enable TCP-level keepalives
     };
   };
 
