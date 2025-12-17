@@ -39,6 +39,10 @@
   ];
 
   # Allow unfree and broken packages (chromadb is marked broken on aarch64)
+  # Keep using standard NixOS kernel instead of raspberry-pi-nix kernel
+  # This preserves the current working kernel (6.6.68) rather than downgrading to 6.6.54
+  boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
+
   nixpkgs.config.allowUnfree = true;
   nixpkgs.config.allowBroken = true;
 
@@ -215,7 +219,7 @@
 
   # Swap configuration for heavy workloads (Open-WebUI, builds)
   # Using a swap file instead of zram alone for better stability
-  swapDevices = [
+  swapDevices = lib.mkForce [
     {
       device = "/var/swapfile";
       size = 4096; # 4GB swap file

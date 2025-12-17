@@ -1,6 +1,14 @@
 # Raspberry Pi 5 Hardware Configuration
-# Uses raspberry-pi-nix for proper Pi 5 kernel with RP1 SD controller support
-# See: https://github.com/nix-community/raspberry-pi-nix
+# Corrected for NVMe SSD root + SD card boot (hybrid setup)
+#
+# This replaces the repo's hosts/rpi5/hardware-configuration.nix
+# which incorrectly uses NIXOS_SD label (SD card partition)
+#
+# Current setup:
+#   - Boot/Firmware: SD card (mmcblk0p1, label FIRMWARE)
+#   - Root filesystem: NVMe SSD (nvme0n1p2, label NIXOS)
+#
+# Uses lib.mkForce to override raspberry-pi-nix defaults from sd-image.nix
 
 { config, lib, pkgs, modulesPath, ... }:
 
@@ -12,46 +20,60 @@
   # ============================================================
   # BOOT CONFIGURATION
   # ============================================================
-  # raspberry-pi-nix handles boot configuration automatically
-  # It sets up the correct kernel, firmware, and device trees for Pi 5
+  # raspberry-pi-nix handles kernel and device trees
+  # but we need to preserve the hybrid boot setup
 
-  # Kernel parameters for Raspberry Pi
+  boot.initrd.availableKernelModules = [ "nvme" "usbhid" ];
+  boot.initrd.kernelModules = [ ];
+  boot.kernelModules = [ ];
+  boot.extraModulePackages = [ ];
+
+  # Kernel parameters for Raspberry Pi 5
   boot.kernelParams = [
-    "console=ttyAMA10,115200"  # Pi 5 uses ttyAMA10 for serial
+    "console=ttyAMA10,115200" # Pi 5 uses ttyAMA10 for serial
     "console=tty1"
   ];
 
   # ============================================================
   # FILESYSTEM CONFIGURATION
   # ============================================================
-  # raspberry-pi-nix SD image will set these up automatically
-  # These are defaults that work with the generated SD image
 
-  fileSystems."/" = {
-    device = "/dev/disk/by-label/NIXOS_SD";
+  # Root filesystem - NVMe SSD (NOT the SD card!)
+  # Use label for portability (consistent with FIRMWARE partition)
+  # Use mkForce to override raspberry-pi-nix sd-image.nix defaults
+  fileSystems."/" = lib.mkForce {
+    device = "/dev/disk/by-label/NIXOS";
     fsType = "ext4";
     options = [ "noatime" "nodiratime" ];
   };
 
-  # Boot partition is managed by raspberry-pi-nix
-  # It handles firmware, kernel, and config.txt automatically
+  # Boot/Firmware partition - SD card (hybrid boot setup)
+  # Pi 5 boots from SD card, then pivots to NVMe root
+  fileSystems."/boot/firmware" = lib.mkForce {
+    device = "/dev/disk/by-label/FIRMWARE";
+    fsType = "vfat";
+    options = [ "defaults" ];
+  };
 
   # ============================================================
   # SWAP CONFIGURATION
   # ============================================================
-  swapDevices = [ ];
+  # Swap is configured in configuration.nix with size parameter
+  # No swapDevices here to avoid duplication and maintain single source of truth
 
   # ============================================================
   # HARDWARE SETTINGS
   # ============================================================
   hardware = {
-    # raspberry-pi-nix handles GPU and firmware automatically
     # Enable redistributable firmware for WiFi, Bluetooth, etc.
     enableRedistributableFirmware = true;
   };
 
   # CPU frequency scaling
   powerManagement.cpuFreqGovernor = lib.mkDefault "ondemand";
+
+  # DHCP enabled by default
+  networking.useDHCP = lib.mkDefault true;
 
   # Platform specification
   nixpkgs.hostPlatform = lib.mkDefault "aarch64-linux";
