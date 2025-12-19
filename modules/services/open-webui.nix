@@ -11,6 +11,9 @@ let
 in
 {
   options.services.open-webui-tailscale = {
+      zdrModelsOnly = {
+        enable = mkEnableOption "ZDR-only models via auto-provisioned Pipe Function";
+      };
     enable = mkEnableOption "Open-WebUI with Tailscale Serve";
 
     host = mkOption {
@@ -155,7 +158,121 @@ in
     };
   };
 
-  config = mkIf cfg.enable {
+  # The Open-WebUI service configuration is defined once below (after the duplicate block removal).
+
+    # Load secrets from files at runtime
+    systemd.services.open-webui = {
+      preStart =
+        mkIf
+          (
+            cfg.secretKeyFile != null
+            || cfg.openai.apiKeyFile != null
+            || cfg.oidc.clientSecretFile != null
+            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
+          )
+          ''
+            SECRETS_FILE="/run/open-webui/secrets.env"
+            : > "$SECRETS_FILE"
+
+            ${optionalString (cfg.secretKeyFile != null) ''
+              echo "WEBUI_SECRET_KEY=$(cat ${cfg.secretKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.openai.apiKeyFile != null) ''
+              echo "OPENAI_API_KEY=$(cat ${cfg.openai.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.oidc.clientSecretFile != null) ''
+              echo "OAUTH_CLIENT_SECRET=$(cat ${cfg.oidc.clientSecretFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
+              echo "TAVILY_API_KEY=$(cat ${cfg.tavilySearch.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+
+            chmod 600 "$SECRETS_FILE"
+
+            # Tavily integration is handled via environment variable TAVILY_API_KEY
+            # No imperative config.json mutation required - Open WebUI reads from env vars
+          '';
+
+      serviceConfig = mkMerge [
+        {
+          # Systemd hardening
+          DynamicUser = lib.mkForce false;
+          StateDirectory = "open-webui";
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          PrivateTmp = true;
+          NoNewPrivileges = true;
+        }
+        (mkIf
+          (
+            cfg.secretKeyFile != null
+            || cfg.openai.apiKeyFile != null
+            || cfg.oidc.clientSecretFile != null
+            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
+          )
+          {
+            RuntimeDirectory = "open-webui";
+            # Use - prefix to make EnvironmentFile optional (won't fail if missing)
+            EnvironmentFile = "-/run/open-webui/secrets.env";
+          }
+        )
+      ];
+    };
+
+    # Provision ZDR pipe function if enabled
+    systemd.services.open-webui-zdr-function = mkIf cfg.zdrModelsOnly.enable {
+      description = "Provision OpenRouter ZDR Pipe Function";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.python3}/bin/python3 ${./open-webui-functions/provision.py} ${cfg.stateDir}/data/webui.db ${./open-webui-functions/openrouter_zdr_pipe.py}";
+      };
+    };
+
+    # Tailscale Serve configuration
+    systemd.services.tailscale-serve-open-webui = mkIf cfg.tailscaleServe.enable {
+      description = "Configure Tailscale Serve for Open-WebUI";
+      after = [
+        "network-online.target"
+        "tailscaled.service"
+        "open-webui.service"
+      ];
+      wants = [ "network-online.target" ];
+      requires = [
+        "tailscaled.service"
+        "open-webui.service"
+      ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+
+      # Idempotent configuration - only configure if not already set
+      script = ''
+        # Wait for tailscaled to be ready
+        until ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+          sleep 1
+        done
+
+        # Check if serve is already configured for this port
+        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
+          echo "Configuring Tailscale Serve for Open-WebUI..."
+          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://${cfg.host}:${toString cfg.port}
+        else
+          echo "Tailscale Serve already configured for Open-WebUI"
+        fi
+      '';
+
+      # Reset serve configuration on service stop
+      preStop = ''
+        echo "Resetting Tailscale Serve configuration..."
+        ${pkgs.tailscale}/bin/tailscale serve reset || true
+      '';
+    };
+  };
     # Warn if no secret key file is provided
     warnings = optional (cfg.secretKeyFile == null) ''
       services.open-webui-tailscale.secretKeyFile is not set!
@@ -164,7 +281,7 @@ in
       Store it with agenix or sops-nix.
     '';
 
-    # Open-WebUI service configuration
+    # Open-WebUI service configuration (single definition)
     services.open-webui = {
       enable = true;
       inherit (cfg) host port stateDir;
