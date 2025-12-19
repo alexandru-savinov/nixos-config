@@ -47,7 +47,8 @@
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
 
     # OpenCode API key (Open WebUI API key for LLM gateway)
-    opencode-api-key.file = "${self}/secrets/opencode-api-key.age";
+    # TEMPORARILY DISABLED due to missing secret file
+    # opencode-api-key.file = "${self}/secrets/opencode-api-key.age";
   };
 
   # Open-WebUI with OpenRouter and Tailscale OAuth
