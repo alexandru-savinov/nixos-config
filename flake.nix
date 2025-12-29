@@ -27,12 +27,18 @@
     # Raspberry Pi 5 support - provides proper kernel, firmware, and config.txt management
     # Archived but still functional and recommended for RPi5
     # See: https://github.com/nix-community/raspberry-pi-nix
+    # Claude Code - auto-updated hourly from npm
+    # See: https://github.com/sadjow/claude-code-nix
+    claude-code = {
+      url = "github:sadjow/claude-code-nix";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
     raspberry-pi-nix = {
       url = "github:nix-community/raspberry-pi-nix/v0.4.1";
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, raspberry-pi-nix, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, raspberry-pi-nix, claude-code, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -58,6 +64,7 @@
               config.allowUnfree = true;
             };
             inherit self; # Pass self for accessing flake root
+            inherit claude-code; # Pass claude-code flake
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix
@@ -84,6 +91,7 @@
               config.allowUnfree = true;
             };
             inherit self; # Pass self for accessing flake root
+            inherit claude-code; # Pass claude-code flake
           };
           modules = [
             # raspberry-pi-nix provides proper Pi 5 kernel with RP1 drivers
