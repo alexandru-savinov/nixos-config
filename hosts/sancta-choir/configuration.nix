@@ -2,6 +2,7 @@
 , pkgs
 , lib
 , self
+, claude-code
 , ...
 }:
 
@@ -10,14 +11,17 @@
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
 
   # Add nix-community cache for pre-built RPi5 kernels
+  # Also add claude-code cachix for pre-built Claude Code binaries
   nix.settings = {
     substituters = [
       "https://cache.nixos.org"
       "https://nix-community.cachix.org"
+      "https://claude-code.cachix.org"
     ];
     trusted-public-keys = [
       "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+      "claude-code.cachix.org-1:p3pMxGi7K+xT7I3dLghdlrUijD8s+wfQlmWp8gQ/TJA="
     ];
   };
 
@@ -29,6 +33,7 @@
     ../../modules/system/nix-ld.nix
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
+    ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/tsidp.nix
     ../../modules/services/open-webui.nix
