@@ -195,7 +195,8 @@ in
         # When ZDR-only mode is enabled, use a dummy URL so base connection
         # returns no models. The pipe function provides ZDR models only.
         {
-          OPENAI_API_BASE_URL = if cfg.zdrModelsOnly.enable
+          OPENAI_API_BASE_URL =
+            if cfg.zdrModelsOnly.enable
             then "http://127.0.0.1:1"  # Unreachable - no models from base
             else cfg.openai.apiBaseUrl;
         }
@@ -275,155 +276,155 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "open-webui.service" ];
       requires = [ "open-webui.service" ];
-      
+
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
       };
 
       script = ''
-        # Wait for Open WebUI to be ready
-        sleep 5
+                # Wait for Open WebUI to be ready
+                sleep 5
 
-        FUNCTIONS_DIR="${cfg.stateDir}/functions"
-        DB_FILE="${cfg.stateDir}/webui.db"
-        FUNCTION_ID="openrouter_zdr_only_models"
-        FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
+                FUNCTIONS_DIR="${cfg.stateDir}/functions"
+                DB_FILE="${cfg.stateDir}/webui.db"
+                FUNCTION_ID="openrouter_zdr_only_models"
+                FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
 
-        # Read API key from agenix secret
-        API_KEY=$(cat ${cfg.openai.apiKeyFile})
+                # Read API key from agenix secret
+                API_KEY=$(cat ${cfg.openai.apiKeyFile})
 
-        # Create valves JSON with API key
-        VALVES_JSON=$(${pkgs.jq}/bin/jq -n \
-          --arg api_key "$API_KEY" \
-          '{
-            "NAME_PREFIX": "ZDR/",
-            "OPENROUTER_API_BASE_URL": "https://openrouter.ai/api/v1",
-            "OPENROUTER_API_KEY": $api_key,
-            "ZDR_CACHE_TTL": 3600,
-            "ENABLE_ZDR_ENFORCEMENT": true
-          }')
+                # Create valves JSON with API key
+                VALVES_JSON=$(${pkgs.jq}/bin/jq -n \
+                  --arg api_key "$API_KEY" \
+                  '{
+                    "NAME_PREFIX": "ZDR/",
+                    "OPENROUTER_API_BASE_URL": "https://openrouter.ai/api/v1",
+                    "OPENROUTER_API_KEY": $api_key,
+                    "ZDR_CACHE_TTL": 3600,
+                    "ENABLE_ZDR_ENFORCEMENT": true
+                  }')
 
-        # Create functions directory if it doesn't exist
-        mkdir -p "$FUNCTIONS_DIR"
+                # Create functions directory if it doesn't exist
+                mkdir -p "$FUNCTIONS_DIR"
 
-        # Copy the function file
-        cp "$FUNCTION_FILE" "$FUNCTIONS_DIR/$FUNCTION_ID.py"
-        chmod 600 "$FUNCTIONS_DIR/$FUNCTION_ID.py"
+                # Copy the function file
+                cp "$FUNCTION_FILE" "$FUNCTIONS_DIR/$FUNCTION_ID.py"
+                chmod 600 "$FUNCTIONS_DIR/$FUNCTION_ID.py"
 
-        # Read function content for database
-        FUNCTION_CONTENT=$(cat "$FUNCTION_FILE")
+                # Read function content for database
+                FUNCTION_CONTENT=$(cat "$FUNCTION_FILE")
 
-        # Wait for database to exist
-        for i in $(seq 1 30); do
-          if [ -f "$DB_FILE" ]; then
-            break
-          fi
-          echo "Waiting for database... ($i/30)"
-          sleep 1
-        done
+                # Wait for database to exist
+                for i in $(seq 1 30); do
+                  if [ -f "$DB_FILE" ]; then
+                    break
+                  fi
+                  echo "Waiting for database... ($i/30)"
+                  sleep 1
+                done
 
-        if [ ! -f "$DB_FILE" ]; then
-          echo "Database not found at $DB_FILE"
-          exit 1
-        fi
+                if [ ! -f "$DB_FILE" ]; then
+                  echo "Database not found at $DB_FILE"
+                  exit 1
+                fi
 
-        # Check if function already exists
-        EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM function WHERE id='$FUNCTION_ID';")
+                # Check if function already exists
+                EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM function WHERE id='$FUNCTION_ID';")
 
-        if [ "$EXISTS" = "0" ]; then
-          # Get admin user ID
-          ADMIN_ID=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT id FROM user WHERE role='admin' LIMIT 1;")
+                if [ "$EXISTS" = "0" ]; then
+                  # Get admin user ID
+                  ADMIN_ID=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT id FROM user WHERE role='admin' LIMIT 1;")
 
-          if [ -z "$ADMIN_ID" ]; then
-            echo "No admin user found, using empty user_id"
-            ADMIN_ID=""
-          fi
+                  if [ -z "$ADMIN_ID" ]; then
+                    echo "No admin user found, using empty user_id"
+                    ADMIN_ID=""
+                  fi
 
-          NOW=$(date +%s)
+                  NOW=$(date +%s)
 
-          # Write valves JSON to temp file for Python to read
-          VALVES_FILE=$(mktemp)
-          echo "$VALVES_JSON" > "$VALVES_FILE"
+                  # Write valves JSON to temp file for Python to read
+                  VALVES_FILE=$(mktemp)
+                  echo "$VALVES_JSON" > "$VALVES_FILE"
 
-          # Insert the function with content and valves
-          ${pkgs.python3}/bin/python3 << PYTHON
-import sqlite3
-import json
-import os
+                  # Insert the function with content and valves
+                  ${pkgs.python3}/bin/python3 << PYTHON
+        import sqlite3
+        import json
+        import os
 
-db_file = "$DB_FILE"
-function_file = "$FUNCTION_FILE"
-valves_file = "$VALVES_FILE"
-function_id = "$FUNCTION_ID"
-admin_id = "$ADMIN_ID" or None
-now = $NOW
+        db_file = "$DB_FILE"
+        function_file = "$FUNCTION_FILE"
+        valves_file = "$VALVES_FILE"
+        function_id = "$FUNCTION_ID"
+        admin_id = "$ADMIN_ID" or None
+        now = $NOW
 
-conn = sqlite3.connect(db_file)
-cursor = conn.cursor()
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
 
-content = open(function_file).read()
-valves = json.load(open(valves_file))
-meta = {"description": "Only shows OpenRouter models with Zero Data Retention policy"}
+        content = open(function_file).read()
+        valves = json.load(open(valves_file))
+        meta = {"description": "Only shows OpenRouter models with Zero Data Retention policy"}
 
-cursor.execute("""
-    INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-""", (
-    function_id,
-    admin_id,
-    "OpenRouter ZDR-Only Models",
-    "pipe",
-    content,
-    json.dumps(meta),
-    now,
-    now,
-    json.dumps(valves),
-    1,
-    1
-))
+        cursor.execute("""
+            INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            function_id,
+            admin_id,
+            "OpenRouter ZDR-Only Models",
+            "pipe",
+            content,
+            json.dumps(meta),
+            now,
+            now,
+            json.dumps(valves),
+            1,
+            1
+        ))
 
-conn.commit()
-conn.close()
-print("Function inserted into database")
-PYTHON
-          rm -f "$VALVES_FILE"
-        else
-          # Write valves JSON to temp file for Python to read
-          VALVES_FILE=$(mktemp)
-          echo "$VALVES_JSON" > "$VALVES_FILE"
+        conn.commit()
+        conn.close()
+        print("Function inserted into database")
+        PYTHON
+                  rm -f "$VALVES_FILE"
+                else
+                  # Write valves JSON to temp file for Python to read
+                  VALVES_FILE=$(mktemp)
+                  echo "$VALVES_JSON" > "$VALVES_FILE"
 
-          # Update valves to ensure API key is current
-          ${pkgs.python3}/bin/python3 << PYTHON
-import sqlite3
-import json
-import time
+                  # Update valves to ensure API key is current
+                  ${pkgs.python3}/bin/python3 << PYTHON
+        import sqlite3
+        import json
+        import time
 
-db_file = "$DB_FILE"
-function_file = "$FUNCTION_FILE"
-valves_file = "$VALVES_FILE"
-function_id = "$FUNCTION_ID"
+        db_file = "$DB_FILE"
+        function_file = "$FUNCTION_FILE"
+        valves_file = "$VALVES_FILE"
+        function_id = "$FUNCTION_ID"
 
-conn = sqlite3.connect(db_file)
-cursor = conn.cursor()
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
 
-valves = json.load(open(valves_file))
-content = open(function_file).read()
+        valves = json.load(open(valves_file))
+        content = open(function_file).read()
 
-cursor.execute("""
-    UPDATE function
-    SET valves = ?, content = ?, updated_at = ?
-    WHERE id = ?
-""", (json.dumps(valves), content, int(time.time()), function_id))
+        cursor.execute("""
+            UPDATE function
+            SET valves = ?, content = ?, updated_at = ?
+            WHERE id = ?
+        """, (json.dumps(valves), content, int(time.time()), function_id))
 
-conn.commit()
-conn.close()
-print("Function valves and content updated")
-PYTHON
-          rm -f "$VALVES_FILE"
-        fi
+        conn.commit()
+        conn.close()
+        print("Function valves and content updated")
+        PYTHON
+                  rm -f "$VALVES_FILE"
+                fi
 
-        echo "ZDR function provisioning complete"
+                echo "ZDR function provisioning complete"
       '';
     };
 
