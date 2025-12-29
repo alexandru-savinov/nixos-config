@@ -8,6 +8,9 @@ on:
     paths:
       - "root/nixos-config/**"
 
+permissions:
+  contents: read
+
 jobs:
   python-tests:
     name: Run Python tests (root/nixos-config)
