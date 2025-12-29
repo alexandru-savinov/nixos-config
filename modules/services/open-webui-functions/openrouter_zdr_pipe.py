@@ -68,7 +68,12 @@ class Pipe:
             response.raise_for_status()
 
             data = response.json()
-            zdr_models = [item["model"] for item in data.get("data", [])]
+            # ZDR endpoint returns {"name": "Provider | model-id", ...}
+            # Extract the model ID from the name field
+            zdr_models = [
+                item["name"].split(" | ")[1] if " | " in item["name"] else item["name"]
+                for item in data.get("data", [])
+            ]
 
             self._zdr_cache = zdr_models
             self._zdr_cache_time = now

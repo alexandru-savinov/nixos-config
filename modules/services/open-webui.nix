@@ -11,10 +11,11 @@ let
 in
 {
   options.services.open-webui-tailscale = {
-      zdrModelsOnly = {
-        enable = mkEnableOption "ZDR-only models via auto-provisioned Pipe Function";
-      };
     enable = mkEnableOption "Open-WebUI with Tailscale Serve";
+
+    zdrModelsOnly = {
+      enable = mkEnableOption "ZDR-only models via auto-provisioned Pipe Function (disables direct OpenRouter connection)";
+    };
 
     host = mkOption {
       type = types.str;
@@ -158,121 +159,7 @@ in
     };
   };
 
-  # The Open-WebUI service configuration is defined once below (after the duplicate block removal).
-
-    # Load secrets from files at runtime
-    systemd.services.open-webui = {
-      preStart =
-        mkIf
-          (
-            cfg.secretKeyFile != null
-            || cfg.openai.apiKeyFile != null
-            || cfg.oidc.clientSecretFile != null
-            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
-          )
-          ''
-            SECRETS_FILE="/run/open-webui/secrets.env"
-            : > "$SECRETS_FILE"
-
-            ${optionalString (cfg.secretKeyFile != null) ''
-              echo "WEBUI_SECRET_KEY=$(cat ${cfg.secretKeyFile})" >> "$SECRETS_FILE"
-            ''}
-            ${optionalString (cfg.openai.apiKeyFile != null) ''
-              echo "OPENAI_API_KEY=$(cat ${cfg.openai.apiKeyFile})" >> "$SECRETS_FILE"
-            ''}
-            ${optionalString (cfg.oidc.clientSecretFile != null) ''
-              echo "OAUTH_CLIENT_SECRET=$(cat ${cfg.oidc.clientSecretFile})" >> "$SECRETS_FILE"
-            ''}
-            ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
-              echo "TAVILY_API_KEY=$(cat ${cfg.tavilySearch.apiKeyFile})" >> "$SECRETS_FILE"
-            ''}
-
-            chmod 600 "$SECRETS_FILE"
-
-            # Tavily integration is handled via environment variable TAVILY_API_KEY
-            # No imperative config.json mutation required - Open WebUI reads from env vars
-          '';
-
-      serviceConfig = mkMerge [
-        {
-          # Systemd hardening
-          DynamicUser = lib.mkForce false;
-          StateDirectory = "open-webui";
-          ProtectSystem = "strict";
-          ProtectHome = true;
-          PrivateTmp = true;
-          NoNewPrivileges = true;
-        }
-        (mkIf
-          (
-            cfg.secretKeyFile != null
-            || cfg.openai.apiKeyFile != null
-            || cfg.oidc.clientSecretFile != null
-            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
-          )
-          {
-            RuntimeDirectory = "open-webui";
-            # Use - prefix to make EnvironmentFile optional (won't fail if missing)
-            EnvironmentFile = "-/run/open-webui/secrets.env";
-          }
-        )
-      ];
-    };
-
-    # Provision ZDR pipe function if enabled
-    systemd.services.open-webui-zdr-function = mkIf cfg.zdrModelsOnly.enable {
-      description = "Provision OpenRouter ZDR Pipe Function";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "open-webui.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${pkgs.python3}/bin/python3 ${./open-webui-functions/provision.py} ${cfg.stateDir}/data/webui.db ${./open-webui-functions/openrouter_zdr_pipe.py}";
-      };
-    };
-
-    # Tailscale Serve configuration
-    systemd.services.tailscale-serve-open-webui = mkIf cfg.tailscaleServe.enable {
-      description = "Configure Tailscale Serve for Open-WebUI";
-      after = [
-        "network-online.target"
-        "tailscaled.service"
-        "open-webui.service"
-      ];
-      wants = [ "network-online.target" ];
-      requires = [
-        "tailscaled.service"
-        "open-webui.service"
-      ];
-      wantedBy = [ "multi-user.target" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-
-      # Idempotent configuration - only configure if not already set
-      script = ''
-        # Wait for tailscaled to be ready
-        until ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
-          sleep 1
-        done
-
-        # Check if serve is already configured for this port
-        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
-          echo "Configuring Tailscale Serve for Open-WebUI..."
-          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://${cfg.host}:${toString cfg.port}
-        else
-          echo "Tailscale Serve already configured for Open-WebUI"
-        fi
-      '';
-
-      # Reset serve configuration on service stop
-      preStop = ''
-        echo "Resetting Tailscale Serve configuration..."
-        ${pkgs.tailscale}/bin/tailscale serve reset || true
-      '';
-    };
-  };
+  config = mkIf cfg.enable {
     # Warn if no secret key file is provided
     warnings = optional (cfg.secretKeyFile == null) ''
       services.open-webui-tailscale.secretKeyFile is not set!
@@ -281,7 +168,7 @@ in
       Store it with agenix or sops-nix.
     '';
 
-    # Open-WebUI service configuration (single definition)
+    # Open-WebUI service configuration
     services.open-webui = {
       enable = true;
       inherit (cfg) host port stateDir;
@@ -293,7 +180,7 @@ in
           ANONYMIZED_TELEMETRY = "False";
           DO_NOT_TRACK = "True";
           SCARF_NO_ANALYTICS = "True";
-          ENABLE_PERSISTENT_CONFIG = "True"; # Allow config from env vars but persist UI changes
+          ENABLE_PERSISTENT_CONFIG = "True";
 
           # JWT Configuration
           JWT_EXPIRES_IN = cfg.jwtExpiresIn;
@@ -302,11 +189,15 @@ in
           ENABLE_SIGNUP = if cfg.enableSignup then "True" else "False";
           DEFAULT_USER_ROLE = cfg.defaultUserRole;
 
-          # OpenAI-compatible API
-          OPENAI_API_BASE_URL = cfg.openai.apiBaseUrl;
-
           # WebUI URL for OAuth callbacks
           WEBUI_URL = cfg.webuiUrl;
+        }
+        # When ZDR-only mode is enabled, use a dummy URL so base connection
+        # returns no models. The pipe function provides ZDR models only.
+        {
+          OPENAI_API_BASE_URL = if cfg.zdrModelsOnly.enable
+            then "http://127.0.0.1:1"  # Unreachable - no models from base
+            else cfg.openai.apiBaseUrl;
         }
         (mkIf cfg.tavilySearch.enable {
           ENABLE_RAG_WEB_SEARCH = "True";
@@ -315,7 +206,6 @@ in
           RAG_WEB_SEARCH_CONCURRENT_REQUESTS = "10";
         })
         (mkIf cfg.oidc.enable {
-          # OIDC Configuration
           OAUTH_PROVIDER_NAME = "Tailscale";
           OPENID_PROVIDER_URL = "${cfg.oidc.issuerUrl}/.well-known/openid-configuration";
           OAUTH_CLIENT_ID = cfg.oidc.clientId;
@@ -353,14 +243,10 @@ in
             ''}
 
             chmod 600 "$SECRETS_FILE"
-
-            # Tavily integration is handled via environment variable TAVILY_API_KEY
-            # No imperative config.json mutation required - Open WebUI reads from env vars
           '';
 
       serviceConfig = mkMerge [
         {
-          # Systemd hardening
           DynamicUser = lib.mkForce false;
           StateDirectory = "open-webui";
           ProtectSystem = "strict";
@@ -377,11 +263,92 @@ in
           )
           {
             RuntimeDirectory = "open-webui";
-            # Use - prefix to make EnvironmentFile optional (won't fail if missing)
             EnvironmentFile = "-/run/open-webui/secrets.env";
           }
         )
       ];
+    };
+
+    # Provision ZDR pipe function if enabled
+    systemd.services.open-webui-zdr-function = mkIf cfg.zdrModelsOnly.enable {
+      description = "Provision OpenRouter ZDR Pipe Function";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" ];
+      requires = [ "open-webui.service" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+
+      script = ''
+        # Wait for Open WebUI to be ready
+        sleep 5
+        
+        FUNCTIONS_DIR="${cfg.stateDir}/functions"
+        DB_FILE="${cfg.stateDir}/webui.db"
+        FUNCTION_ID="openrouter_zdr_only_models"
+        FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
+        
+        # Create functions directory if it doesn't exist
+        mkdir -p "$FUNCTIONS_DIR"
+        
+        # Copy the function file
+        cp "$FUNCTION_FILE" "$FUNCTIONS_DIR/$FUNCTION_ID.py"
+        chmod 600 "$FUNCTIONS_DIR/$FUNCTION_ID.py"
+        
+        # Wait for database to exist
+        for i in $(seq 1 30); do
+          if [ -f "$DB_FILE" ]; then
+            break
+          fi
+          echo "Waiting for database... ($i/30)"
+          sleep 1
+        done
+        
+        if [ ! -f "$DB_FILE" ]; then
+          echo "Database not found at $DB_FILE"
+          exit 1
+        fi
+        
+        # Check if function already exists
+        EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM function WHERE id='$FUNCTION_ID';")
+        
+        if [ "$EXISTS" = "0" ]; then
+          # Get admin user ID
+          ADMIN_ID=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT id FROM user WHERE role='admin' LIMIT 1;")
+          
+          if [ -z "$ADMIN_ID" ]; then
+            echo "No admin user found, using empty user_id"
+            ADMIN_ID=""
+          fi
+          
+          NOW=$(date +%s)
+          
+          # Insert the function
+          ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "
+            INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
+            VALUES (
+              '$FUNCTION_ID',
+              '$ADMIN_ID',
+              'OpenRouter ZDR-Only Models',
+              '''pipe''',
+              '''''',
+              '{\"description\": \"Only shows OpenRouter models with Zero Data Retention policy\"}',
+              $NOW,
+              $NOW,
+              NULL,
+              1,
+              1
+            );
+          "
+          echo "Function inserted into database"
+        else
+          echo "Function already exists in database"
+        fi
+        
+        echo "ZDR function provisioning complete"
+      '';
     };
 
     # Tailscale Serve configuration
@@ -404,14 +371,11 @@ in
         RemainAfterExit = true;
       };
 
-      # Idempotent configuration - only configure if not already set
       script = ''
-        # Wait for tailscaled to be ready
         until ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
           sleep 1
         done
 
-        # Check if serve is already configured for this port
         if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
           echo "Configuring Tailscale Serve for Open-WebUI..."
           ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://${cfg.host}:${toString cfg.port}
@@ -420,7 +384,6 @@ in
         fi
       '';
 
-      # Reset serve configuration on service stop
       preStop = ''
         echo "Resetting Tailscale Serve configuration..."
         ${pkgs.tailscale}/bin/tailscale serve reset || true
