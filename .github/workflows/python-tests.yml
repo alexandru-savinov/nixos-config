@@ -1,0 +1,49 @@
+name: Python Tests
+
+on:
+  push:
+    paths:
+      - "root/nixos-config/**"
+  pull_request:
+    paths:
+      - "root/nixos-config/**"
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    name: Run Python tests (root/nixos-config)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install test dependencies
+        run: |
+          # If the repository provides a requirements.txt under root/nixos-config, use it.
+          if [ -f "root/nixos-config/requirements.txt" ]; then
+            python -m pip install --upgrade pip
+            python -m pip install -r root/nixos-config/requirements.txt
+          else
+            python -m pip install --upgrade pip
+            python -m pip install pytest flask werkzeug requests pydantic
+          fi
+
+      - name: Run pytest
+        working-directory: root/nixos-config
+        run: |
+          pytest -q

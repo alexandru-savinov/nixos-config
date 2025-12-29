@@ -64,6 +64,9 @@
     openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
     webuiUrl = "https://sancta-choir.tail4249a9.ts.net";
 
+    # Only show ZDR (Zero Data Retention) models from OpenRouter
+    zdrModelsOnly.enable = true;
+
     # Tavily Search API
     tavilySearch = {
       enable = true;
