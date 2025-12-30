@@ -4,6 +4,7 @@
 # - Agenix secret management for N8N_ENCRYPTION_KEY
 # - Tailscale-only network access (no public internet)
 # - SQLite storage (default, no PostgreSQL setup needed)
+# - Security hardening (execution pruning, env access blocking, concurrency limits)
 #
 # Usage in host configuration:
 #   services.n8n-tailscale = {
@@ -60,6 +61,54 @@ in
       '';
       description = "Additional n8n settings (see n8n documentation).";
     };
+
+    # ===================
+    # Hardening Options
+    # ===================
+
+    executionsPrune = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Enable automatic pruning of old execution data.
+          CRITICAL for SQLite: Without this, the database grows unbounded
+          and will eventually fill up disk space.
+        '';
+      };
+
+      maxAge = mkOption {
+        type = types.int;
+        default = 168;
+        description = "Hours to keep execution data before pruning (default: 7 days).";
+      };
+
+      maxCount = mkOption {
+        type = types.int;
+        default = 1000;
+        description = "Maximum number of executions to retain regardless of age.";
+      };
+    };
+
+    blockEnvAccessInCode = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Prevent Code nodes from accessing environment variables.
+        SECURITY: When enabled, process.env cannot be read from Code nodes,
+        protecting secrets like N8N_ENCRYPTION_KEY from being exfiltrated.
+      '';
+    };
+
+    concurrencyLimit = mkOption {
+      type = types.int;
+      default = 5;
+      description = ''
+        Maximum number of concurrent workflow executions.
+        Set lower (e.g., 2) for resource-constrained hosts like Raspberry Pi.
+        Set to -1 for unlimited (not recommended).
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -96,22 +145,38 @@ in
       ];
     };
 
-    # Load encryption key from file at runtime
+    # Configure systemd service with environment variables
     # Uses ExecStartPre with "+" prefix to run as root before DynamicUser kicks in
-    systemd.services.n8n = mkIf (cfg.encryptionKeyFile != null) {
+    systemd.services.n8n = {
       serviceConfig = {
         RuntimeDirectory = "n8n";
         RuntimeDirectoryMode = "0700";
-        EnvironmentFile = "-/run/n8n/secrets.env";
-        # Run secret setup as root (+ prefix), then main process as DynamicUser
+        EnvironmentFile = "-/run/n8n/env";
+        # Run setup as root (+ prefix), then main process as DynamicUser
         # The file is made world-readable briefly, but /run/n8n dir is 0700 (DynamicUser only)
         ExecStartPre = [
-          ("+" + pkgs.writeShellScript "n8n-setup-secrets" ''
-            SECRETS_FILE="/run/n8n/secrets.env"
-            : > "$SECRETS_FILE"
-            echo "N8N_ENCRYPTION_KEY=$(cat ${cfg.encryptionKeyFile})" >> "$SECRETS_FILE"
+          ("+" + pkgs.writeShellScript "n8n-setup-env" ''
+            ENV_FILE="/run/n8n/env"
+            : > "$ENV_FILE"
+
+            # Encryption key (if provided)
+            ${optionalString (cfg.encryptionKeyFile != null) ''
+              echo "N8N_ENCRYPTION_KEY=$(cat ${cfg.encryptionKeyFile})" >> "$ENV_FILE"
+            ''}
+
+            # Execution pruning settings
+            echo "EXECUTIONS_DATA_PRUNE=${boolToString cfg.executionsPrune.enable}" >> "$ENV_FILE"
+            echo "EXECUTIONS_DATA_MAX_AGE=${toString cfg.executionsPrune.maxAge}" >> "$ENV_FILE"
+            echo "EXECUTIONS_DATA_PRUNE_MAX_COUNT=${toString cfg.executionsPrune.maxCount}" >> "$ENV_FILE"
+
+            # Security: Block env access in Code nodes
+            echo "N8N_BLOCK_ENV_ACCESS_IN_NODE=${boolToString cfg.blockEnvAccessInCode}" >> "$ENV_FILE"
+
+            # Concurrency limit
+            echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
+
             # Make readable by DynamicUser (directory already restricts access)
-            chmod 644 "$SECRETS_FILE"
+            chmod 644 "$ENV_FILE"
           '')
         ];
       };

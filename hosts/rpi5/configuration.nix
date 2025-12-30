@@ -148,6 +148,8 @@
   services.n8n-tailscale = {
     enable = true;
     encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
+    # Lower concurrency for RPi5's limited resources (4GB RAM)
+    concurrencyLimit = 2;
   };
 
   # Hostname
