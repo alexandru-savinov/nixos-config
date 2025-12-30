@@ -49,16 +49,16 @@ in
       description = "Directory for n8n data (SQLite database, files, etc).";
     };
 
-    extraEnvironment = mkOption {
-      type = types.attrsOf types.str;
+    extraSettings = mkOption {
+      type = types.attrs;
       default = { };
       example = literalExpression ''
         {
-          N8N_LOG_LEVEL = "info";
-          N8N_METRICS = "true";
+          log.level = "info";
+          metrics.enable = true;
         }
       '';
-      description = "Additional environment variables for n8n.";
+      description = "Additional n8n settings (see n8n documentation).";
     };
   };
 
@@ -77,21 +77,22 @@ in
       enable = true;
       openFirewall = false; # We manage firewall ourselves for Tailscale
 
-      # n8n configuration via environment variables
-      environment = mkMerge [
+      # n8n configuration via settings (maps to environment variables)
+      # See: https://docs.n8n.io/hosting/environment-variables/
+      settings = mkMerge [
         {
           # Core settings
-          N8N_PORT = toString cfg.port;
-          N8N_USER_FOLDER = cfg.stateDir;
+          port = cfg.port;
+          userFolder = cfg.stateDir;
 
           # Privacy settings
-          N8N_DIAGNOSTICS_ENABLED = "false";
-          N8N_VERSION_NOTIFICATIONS_ENABLED = "false";
+          diagnostics.enabled = false;
+          versionNotifications.enabled = false;
 
           # Security: disable public API by default (access via UI)
-          N8N_PUBLIC_API_DISABLED = "true";
+          publicApi.disabled = true;
         }
-        cfg.extraEnvironment
+        cfg.extraSettings
       ];
     };
 
