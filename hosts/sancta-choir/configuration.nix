@@ -38,6 +38,7 @@
     ../../modules/services/tsidp.nix
     ../../modules/services/open-webui.nix
     ../../modules/services/uptime-kuma.nix
+    ../../modules/services/n8n.nix
   ];
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
@@ -50,6 +51,9 @@
 
     # Tailscale
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
+
+    # n8n workflow automation
+    n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
 
     # OpenCode API key (Open WebUI API key for LLM gateway)
     # TEMPORARILY DISABLED due to missing secret file
@@ -103,6 +107,14 @@
       enable = true;
       httpsPort = 3001;
     };
+  };
+
+  # n8n Workflow Automation
+  # Access via Tailscale HTTP: http://sancta-choir.tail4249a9.ts.net:5678
+  # Used as AI agent orchestration platform with Open-WebUI as LLM gateway
+  services.n8n-tailscale = {
+    enable = true;
+    encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
   };
 
   # Hostname
