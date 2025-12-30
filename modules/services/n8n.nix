@@ -79,11 +79,11 @@ in
 
       # n8n configuration via settings (maps to environment variables)
       # See: https://docs.n8n.io/hosting/environment-variables/
+      # Note: userFolder is set via N8N_USER_FOLDER env var by native module
       settings = mkMerge [
         {
           # Core settings
           port = cfg.port;
-          userFolder = cfg.stateDir;
 
           # Privacy settings
           diagnostics.enabled = false;
@@ -97,18 +97,23 @@ in
     };
 
     # Load encryption key from file at runtime
+    # Uses ExecStartPre with "+" prefix to run as root before DynamicUser kicks in
     systemd.services.n8n = mkIf (cfg.encryptionKeyFile != null) {
-      preStart = ''
-        SECRETS_FILE="/run/n8n/secrets.env"
-        mkdir -p /run/n8n
-        : > "$SECRETS_FILE"
-        echo "N8N_ENCRYPTION_KEY=$(cat ${cfg.encryptionKeyFile})" >> "$SECRETS_FILE"
-        chmod 600 "$SECRETS_FILE"
-      '';
-
       serviceConfig = {
         RuntimeDirectory = "n8n";
+        RuntimeDirectoryMode = "0700";
         EnvironmentFile = "-/run/n8n/secrets.env";
+        # Run secret setup as root (+ prefix), then main process as DynamicUser
+        # The file is made world-readable briefly, but /run/n8n dir is 0700 (DynamicUser only)
+        ExecStartPre = [
+          ("+" + pkgs.writeShellScript "n8n-setup-secrets" ''
+            SECRETS_FILE="/run/n8n/secrets.env"
+            : > "$SECRETS_FILE"
+            echo "N8N_ENCRYPTION_KEY=$(cat ${cfg.encryptionKeyFile})" >> "$SECRETS_FILE"
+            # Make readable by DynamicUser (directory already restricts access)
+            chmod 644 "$SECRETS_FILE"
+          '')
+        ];
       };
     };
 
