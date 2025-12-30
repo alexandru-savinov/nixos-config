@@ -29,6 +29,7 @@
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
     ../../modules/services/tailscale.nix
+    ../../modules/services/n8n.nix
     # Open-WebUI disabled for SD image build (chromadb fails under QEMU emulation)
     # Re-enable after first boot and rebuild natively on the Pi:
     #   sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
@@ -99,6 +100,9 @@
     # Tailscale authentication
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
 
+    # n8n workflow automation
+    n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
+
     # Open-WebUI secrets - commented out until open-webui module is re-enabled
     # open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
     # openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
@@ -137,6 +141,14 @@
   #     httpsPort = 443;
   #   };
   # };
+
+  # n8n Workflow Automation
+  # Access via Tailscale HTTP: http://rpi5.tail4249a9.ts.net:5678
+  # Used as AI agent orchestration platform with Open-WebUI as LLM gateway
+  services.n8n-tailscale = {
+    enable = true;
+    encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
+  };
 
   # Hostname
   networking.hostName = "rpi5";
