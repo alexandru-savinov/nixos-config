@@ -30,6 +30,9 @@ in
   "openrouter-api-key.age".publicKeys = allKeys;
   "tavily-api-key.age".publicKeys = allKeys;
 
+  # n8n workflow automation - shared across all hosts
+  "n8n-encryption-key.age".publicKeys = allKeys;
+
   # OIDC client secret - sancta-choir only (tsidp not on rpi5)
   "oidc-client-secret.age".publicKeys = sanctaChoirKeys;
 
