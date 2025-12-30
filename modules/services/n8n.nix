@@ -44,12 +44,6 @@ in
       '';
     };
 
-    stateDir = mkOption {
-      type = types.path;
-      default = "/var/lib/n8n";
-      description = "Directory for n8n data (SQLite database, files, etc).";
-    };
-
     extraSettings = mkOption {
       type = types.attrs;
       default = { };
@@ -175,8 +169,8 @@ in
             # Concurrency limit
             echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
 
-            # Make readable by DynamicUser (directory already restricts access)
-            chmod 644 "$ENV_FILE"
+            # Make readable only by DynamicUser (600 + dir 0700 = secure)
+            chmod 600 "$ENV_FILE"
           '')
         ];
       };
