@@ -28,8 +28,9 @@ jobs:
               uses: DeterminateSystems/magic-nix-cache-action@v8
               with:
                   # Only upload cache from main branch to avoid slow post-build on PRs
-                  # PRs still READ from main's cache but don't waste time uploading
+                  # PRs still READ from caches but don't waste time uploading
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: false
 
             - name: Check flake
               run: nix flake check --all-systems
@@ -59,6 +60,7 @@ jobs:
               uses: DeterminateSystems/magic-nix-cache-action@v8
               with:
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: false
 
             - name: Build sancta-choir (x86_64-linux)
               run: nix build .#nixosConfigurations.sancta-choir.config.system.build.toplevel
@@ -88,6 +90,7 @@ jobs:
               uses: DeterminateSystems/magic-nix-cache-action@v8
               with:
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: false
 
             - name: Build ${{ matrix.script }} script
               run: nix build .#packages.x86_64-linux.${{ matrix.script }}
@@ -115,6 +118,7 @@ jobs:
               uses: DeterminateSystems/magic-nix-cache-action@v8
               with:
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: false
 
             - name: Set up QEMU for aarch64 emulation
               uses: docker/setup-qemu-action@v3
