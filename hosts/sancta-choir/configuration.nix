@@ -58,6 +58,9 @@
     # OpenCode API key (Open WebUI API key for LLM gateway)
     # TEMPORARILY DISABLED due to missing secret file
     # opencode-api-key.file = "${self}/secrets/opencode-api-key.age";
+
+    # Azure Speech Services (for voice TTS)
+    azure-speech-api-key.file = "${self}/secrets/azure-speech-api-key.age";
   };
 
   # Open-WebUI with OpenRouter and Tailscale OAuth
@@ -86,6 +89,35 @@
       issuerUrl = "http://100.68.185.44";
       clientId = "open-webui";
       clientSecretFile = config.age.secrets.oidc-client-secret.path;
+    };
+
+    # Voice Support - Seamless hands-free voice conversations for children
+    # STT: Browser WebAPI (free, client-side)
+    # TTS: Azure Speech Services (best Russian/Romanian/English voices)
+    voice = {
+      enable = true;
+
+      stt.engine = "browser"; # Free, runs in browser, no server resources
+
+      tts = {
+        engine = "azure";
+        azure = {
+          apiKeyFile = config.age.secrets.azure-speech-api-key.path;
+          region = "westeurope"; # Closest to Eastern Europe for low latency
+          outputFormat = "audio-24khz-96kbitrate-mono-mp3"; # Good quality, reasonable bandwidth
+        };
+      };
+
+      # Child-friendly voice mode prompt
+      voiceModePrompt = ''
+        You are a helpful, patient, and friendly assistant speaking with children.
+        Use simple language appropriate for children.
+        Be encouraging and supportive.
+        Keep responses concise (1-2 sentences) for voice conversations.
+        If speaking Russian, use child-friendly Russian.
+        If speaking Romanian, use child-friendly Romanian.
+        Always be kind and positive.
+      '';
     };
   };
 
