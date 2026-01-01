@@ -92,12 +92,12 @@
     };
 
     # Voice Support - Seamless hands-free voice conversations for children
-    # STT: Browser WebAPI (free, client-side)
+    # STT: Local Whisper (works with Call mode, uses CPU)
     # TTS: Azure Speech Services (best Russian/Romanian/English voices)
     voice = {
       enable = true;
 
-      stt.engine = "browser"; # Free, runs in browser, no server resources
+      stt.engine = "whisper"; # Local Whisper - works with Call mode (phone icon)
 
       tts = {
         engine = "azure";
@@ -142,11 +142,14 @@
   };
 
   # n8n Workflow Automation
-  # Access via Tailscale HTTP: http://sancta-choir.tail4249a9.ts.net:5678
+  # Access via Tailscale HTTPS: https://sancta-choir.tail4249a9.ts.net:5678
   # Used as AI agent orchestration platform with Open-WebUI as LLM gateway
   services.n8n-tailscale = {
     enable = true;
     encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
+
+    # HTTPS access via Tailscale Serve (service binds to localhost only)
+    tailscaleServe.enable = true;
   };
 
   # Hostname

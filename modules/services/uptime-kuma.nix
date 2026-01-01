@@ -46,17 +46,15 @@ in
 
   config = mkIf cfg.enable {
     # Enable Uptime Kuma service using native NixOS module
-    # Bind to 0.0.0.0 but firewall restricts to Tailscale interface only
+    # Bind to localhost only - access is via Tailscale Serve (HTTPS)
+    # Note: No firewall rule needed - service only accessible via localhost
     services.uptime-kuma = {
       enable = true;
       settings = {
-        HOST = "0.0.0.0";
+        HOST = "127.0.0.1";
         PORT = toString cfg.port;
       };
     };
-
-    # Allow access only via Tailscale interface (no public internet access)
-    networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ cfg.port ];
 
     # Automatic database backups
     systemd.services.uptime-kuma-backup = mkIf cfg.backup.enable {
@@ -141,8 +139,8 @@ in
       '';
     };
 
-    # Access Uptime Kuma via Tailscale:
-    #   Without HTTPS: http://<hostname>.<tailnet>.ts.net:3001 or http://<tailscale-ip>:3001
-    #   With HTTPS (if tailscaleServe.enable = true): https://<hostname>.<tailnet>.ts.net:3001
+    # Access Uptime Kuma via Tailscale HTTPS (requires tailscaleServe.enable = true):
+    #   https://<hostname>.<tailnet>.ts.net:3001
+    # Service binds to localhost only for security - no direct network access possible
   };
 }

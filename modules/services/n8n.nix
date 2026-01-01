@@ -5,14 +5,16 @@
 # - Tailscale-only network access (no public internet)
 # - SQLite storage (default, no PostgreSQL setup needed)
 # - Security hardening (execution pruning, env access blocking, concurrency limits)
+# - HTTPS via Tailscale Serve (automatic TLS certificates)
 #
 # Usage in host configuration:
 #   services.n8n-tailscale = {
 #     enable = true;
 #     encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
+#     tailscaleServe.enable = true;
 #   };
 #
-# Access via Tailscale: http://<tailscale-ip>:5678 or http://<hostname>.tail<hex>.ts.net:5678
+# Access via Tailscale HTTPS: https://<hostname>.tail<hex>.ts.net:5678
 
 { config, pkgs, lib, ... }:
 
@@ -103,6 +105,16 @@ in
         Set to -1 for unlimited (not recommended).
       '';
     };
+
+    tailscaleServe = {
+      enable = mkEnableOption "Tailscale Serve for HTTPS access";
+
+      httpsPort = mkOption {
+        type = types.port;
+        default = 5678;
+        description = "HTTPS port for Tailscale Serve to expose.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -169,6 +181,9 @@ in
             # Concurrency limit
             echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
 
+            # Bind to localhost only - access is via Tailscale Serve (HTTPS)
+            echo "N8N_LISTEN_ADDRESS=127.0.0.1" >> "$ENV_FILE"
+
             # Make readable only by DynamicUser (600 + dir 0700 = secure)
             chmod 600 "$ENV_FILE"
           '')
@@ -176,7 +191,49 @@ in
       };
     };
 
-    # Allow access only via Tailscale interface
-    networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ cfg.port ];
+    # Tailscale Serve configuration for HTTPS access
+    systemd.services.tailscale-serve-n8n = mkIf cfg.tailscaleServe.enable {
+      description = "Configure Tailscale Serve for n8n HTTPS access";
+      after = [
+        "network-online.target"
+        "tailscaled.service"
+        "n8n.service"
+      ];
+      wants = [ "network-online.target" ];
+      requires = [
+        "tailscaled.service"
+        "n8n.service"
+      ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+
+      script = ''
+        # Wait for tailscaled to be ready
+        until ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+          sleep 1
+        done
+
+        # Check if serve is already configured for this port
+        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
+          echo "Configuring Tailscale Serve for n8n..."
+          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://127.0.0.1:${toString cfg.port}
+        else
+          echo "Tailscale Serve already configured for n8n"
+        fi
+      '';
+
+      preStop = ''
+        echo "Removing Tailscale Serve configuration for n8n..."
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+      '';
+    };
+
+    # Access n8n via Tailscale HTTPS (requires tailscaleServe.enable = true):
+    #   https://<hostname>.<tailnet>.ts.net:5678
+    # Service binds to localhost only for security - no direct network access possible
   };
 }
