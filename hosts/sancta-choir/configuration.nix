@@ -59,10 +59,7 @@
     # TEMPORARILY DISABLED due to missing secret file
     # opencode-api-key.file = "${self}/secrets/opencode-api-key.age";
 
-    # Azure Speech Services (for voice TTS)
-    azure-speech-api-key.file = "${self}/secrets/azure-speech-api-key.age";
-
-    # OpenAI API key (for TTS - separate from OpenRouter)
+    # OpenAI API key (for TTS/STT - separate from OpenRouter)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
   };
 

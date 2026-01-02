@@ -196,13 +196,17 @@ in
 
       tts = {
         engine = mkOption {
-          type = types.enum [ "azure" "openai" "browser" ];
-          default = "azure";
+          type = types.enum [ "openai" "elevenlabs" "azure" "browser" ];
+          default = "openai";
           description = ''
             Text-to-Speech engine:
-            - azure: Azure Speech Services (best multi-language support)
-            - openai: OpenAI TTS (good quality, English-optimized)
+            - openai: OpenAI TTS (high quality, multi-language) [recommended]
+            - elevenlabs: ElevenLabs TTS (premium quality)
+            - azure: Azure Speech Services (requires Open-WebUI v0.4+)
             - browser: Browser's native TTS (free, quality varies)
+
+            Note: Azure TTS is NOT supported in Open-WebUI v0.3.12. Use openai
+            or elevenlabs for TTS in this version.
           '';
         };
 

@@ -39,9 +39,6 @@ in
   # OpenCode API key (Open WebUI API key for LLM gateway)
   "opencode-api-key.age".publicKeys = sanctaChoirKeys;
 
-  # Azure Speech Services API key (for voice TTS)
-  "azure-speech-api-key.age".publicKeys = allKeys;
-
-  # OpenAI API key (for TTS - separate from OpenRouter)
+  # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
 }
