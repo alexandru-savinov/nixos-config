@@ -41,4 +41,11 @@ in
 
   # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
+
+  # Home Assistant secrets - shared across all hosts (for zigbee2mqtt on rpi5)
+  "mqtt-password.age".publicKeys = allKeys;
+
+  # Home Assistant location (optional, for privacy)
+  "home-latitude.age".publicKeys = sanctaChoirKeys;
+  "home-longitude.age".publicKeys = sanctaChoirKeys;
 }

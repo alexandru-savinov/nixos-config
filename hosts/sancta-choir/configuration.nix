@@ -39,6 +39,7 @@
     ../../modules/services/open-webui.nix
     ../../modules/services/uptime-kuma.nix
     ../../modules/services/n8n.nix
+    ../../modules/services/home-assistant.nix
   ];
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
@@ -150,6 +151,142 @@
 
     # HTTPS access via Tailscale Serve (service binds to localhost only)
     tailscaleServe.enable = true;
+  };
+
+  # Home Assistant with Tailscale and Declarative Configuration
+  # Access via Tailscale HTTPS: https://sancta-choir.tail4249a9.ts.net:8123
+  # DISABLED by default - enable after creating mqtt-password.age secret:
+  #   cd secrets && echo "your-mqtt-password" | agenix -e mqtt-password.age && agenix -r
+  services.home-assistant-tailscale = {
+    enable = false; # Set to true after creating secrets
+
+    # Declarative Home Assistant configuration
+    # All automations, scripts, and scenes defined in Nix
+    config = {
+      # Core settings
+      homeassistant = {
+        name = "Home";
+        unit_system = "metric";
+        time_zone = "Europe/Bucharest";
+        # Location stored as secrets for privacy
+        # latitude = "!secret home_latitude";
+        # longitude = "!secret home_longitude";
+      };
+
+      # Enable default integrations
+      default_config = { };
+
+      # MQTT integration for zigbee2mqtt (running on RPi5)
+      # Replace with your RPi5's Tailscale IP
+      # mqtt = {
+      #   broker = "100.x.x.x";  # RPi5 Tailscale IP
+      #   port = 1883;
+      #   username = "homeassistant";
+      #   password = "!secret mqtt_password";
+      #   discovery = true;
+      #   discovery_prefix = "homeassistant";
+      # };
+
+      # Example: Declarative automations
+      automation = [
+        {
+          id = "motion_light_on";
+          alias = "Turn on light when motion detected";
+          trigger = {
+            platform = "state";
+            entity_id = "binary_sensor.motion_sensor";
+            to = "on";
+          };
+          condition = {
+            condition = "state";
+            entity_id = "sun.sun";
+            state = "below_horizon";
+          };
+          action = {
+            service = "light.turn_on";
+            target.entity_id = "light.living_room";
+            data.brightness_pct = 80;
+          };
+        }
+        {
+          id = "motion_light_off";
+          alias = "Turn off light when no motion";
+          trigger = {
+            platform = "state";
+            entity_id = "binary_sensor.motion_sensor";
+            to = "off";
+            for = "00:05:00"; # 5 minutes
+          };
+          action = {
+            service = "light.turn_off";
+            target.entity_id = "light.living_room";
+          };
+        }
+      ];
+
+      # Example: Declarative scripts
+      script = {
+        bedtime_routine = {
+          alias = "Bedtime Routine";
+          sequence = [
+            { service = "light.turn_off"; target.entity_id = "all"; }
+            { delay.seconds = 5; }
+            { service = "climate.set_temperature"; data.temperature = 18; }
+          ];
+        };
+        good_morning = {
+          alias = "Good Morning";
+          sequence = [
+            { service = "light.turn_on"; target.entity_id = "light.bedroom"; data.brightness_pct = 30; }
+            { delay.seconds = 10; }
+            { service = "light.turn_on"; target.entity_id = "light.bedroom"; data.brightness_pct = 100; }
+          ];
+        };
+      };
+
+      # Example: Declarative scenes
+      scene = [
+        {
+          id = "movie_time";
+          name = "Movie Time";
+          entities = {
+            "light.living_room" = { state = "on"; brightness = 50; };
+            "light.tv_backlight" = { state = "on"; brightness = 30; };
+          };
+        }
+        {
+          id = "work_mode";
+          name = "Work Mode";
+          entities = {
+            "light.office" = { state = "on"; brightness = 255; color_temp = 350; };
+          };
+        }
+      ];
+    };
+
+    # Agenix secrets for Home Assistant
+    # secrets = {
+    #   mqtt_password.file = config.age.secrets.mqtt-password.path;
+    #   home_latitude.file = config.age.secrets.home-latitude.path;
+    #   home_longitude.file = config.age.secrets.home-longitude.path;
+    # };
+
+    # Components needed for setup (auto-discovered from config, add any missing)
+    extraComponents = [
+      "esphome"
+      "mqtt"
+      "met" # Weather
+      "radio_browser"
+    ];
+
+    # Build-time config validation (catches errors before deployment)
+    validateConfig = true;
+
+    # HTTPS access via Tailscale Serve
+    tailscaleServe = {
+      enable = true;
+      httpsPort = 8123;
+    };
   };
 
   # Hostname

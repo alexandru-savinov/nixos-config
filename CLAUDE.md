@@ -49,6 +49,7 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.open-webui-tailscale` | 8080 | AI gateway (OpenRouter + Tavily Search) |
 | `services.n8n-tailscale` | 5678 | Workflow automation with execution pruning |
 | `services.uptime-kuma-tailscale` | 3001 | Status monitoring with auto-backups |
+| `services.home-assistant-tailscale` | 8123 | Home automation with declarative config + build-time validation |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. No firewall rules needed - localhost binding provides defense-in-depth.
@@ -57,6 +58,7 @@ Access URLs (HTTPS only):
 - Open-WebUI: `https://sancta-choir.tail4249a9.ts.net`
 - Uptime Kuma: `https://sancta-choir.tail4249a9.ts.net:3001`
 - n8n: `https://sancta-choir.tail4249a9.ts.net:5678`
+- Home Assistant: `https://sancta-choir.tail4249a9.ts.net:8123`
 
 ## Secrets (Agenix)
 
@@ -68,7 +70,7 @@ age.secrets.my-secret.file = "${self}/secrets/my-secret.age";
 someService.secretFile = config.age.secrets.my-secret.path;
 ```
 
-Current secrets: `openrouter-api-key`, `tavily-api-key`, `n8n-encryption-key`, `tailscale-auth-key`, `open-webui-secret-key`
+Current secrets: `openrouter-api-key`, `tavily-api-key`, `n8n-encryption-key`, `tailscale-auth-key`, `open-webui-secret-key`, `mqtt-password`, `home-latitude`, `home-longitude`
 
 ## CI/CD
 
@@ -85,6 +87,7 @@ Each service has its own environment variable for binding:
 | Open-WebUI | `host` option | `127.0.0.1` (default) |
 | Uptime Kuma | `HOST` setting | `127.0.0.1` |
 | n8n | `N8N_LISTEN_ADDRESS` env | `127.0.0.1` |
+| Home Assistant | `http.server_host` in config | `127.0.0.1` (forced by wrapper) |
 
 **Note:** n8n uses `N8N_LISTEN_ADDRESS`, not `N8N_HOST`. Always check official docs for correct variable names.
 
