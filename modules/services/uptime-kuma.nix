@@ -130,6 +130,18 @@ in
           sleep 1
         done
 
+        # Wait for uptime-kuma to be listening (timeout: 60 seconds)
+        # The 'after' directive only waits for service start, not port availability
+        timeout=60
+        while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${toString cfg.port} 2>/dev/null; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: uptime-kuma not listening on port ${toString cfg.port} after 60 seconds"
+            exit 1
+          fi
+          sleep 1
+        done
+
         # Check if serve is already configured for this port
         if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
           echo "Configuring Tailscale Serve for Uptime Kuma..."
