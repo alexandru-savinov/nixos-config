@@ -157,6 +157,121 @@ in
       '';
       description = "Additional environment variables for Open-WebUI.";
     };
+
+    # Voice Support Configuration
+    voice = {
+      enable = mkEnableOption "Voice support (TTS/STT) for seamless voice conversations";
+
+      stt = {
+        engine = mkOption {
+          type = types.enum [ "whisper" "openai" "deepgram" ];
+          default = "whisper";
+          description = ''
+            Speech-to-Text engine:
+            - whisper: Local Whisper model (default, works with Call mode, uses CPU/RAM)
+            - openai: Uses OpenAI Whisper API (fast, requires API key)
+            - deepgram: Uses Deepgram Nova (very fast, requires API key)
+            Note: Browser WebAPI only works for microphone button, NOT Call mode.
+          '';
+        };
+
+        openai = {
+          apiKeyFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            example = "/run/secrets/openai-api-key";
+            description = "Path to file containing OpenAI API key for Whisper STT.";
+          };
+        };
+
+        deepgram = {
+          apiKeyFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            example = "/run/secrets/deepgram-api-key";
+            description = "Path to file containing Deepgram API key for STT.";
+          };
+        };
+      };
+
+      tts = {
+        engine = mkOption {
+          type = types.enum [ "azure" "openai" "browser" ];
+          default = "azure";
+          description = ''
+            Text-to-Speech engine:
+            - azure: Azure Speech Services (best multi-language support)
+            - openai: OpenAI TTS (good quality, English-optimized)
+            - browser: Browser's native TTS (free, quality varies)
+          '';
+        };
+
+        azure = {
+          apiKeyFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            example = "/run/secrets/azure-speech-api-key";
+            description = ''
+              Path to file containing the Azure Speech Services API key.
+              Get your API key from https://portal.azure.com
+              Create a Speech Services resource in your preferred region.
+            '';
+          };
+
+          region = mkOption {
+            type = types.str;
+            default = "westeurope";
+            example = "eastus";
+            description = "Azure Speech Services region (e.g., westeurope, eastus).";
+          };
+
+          outputFormat = mkOption {
+            type = types.str;
+            default = "audio-24khz-96kbitrate-mono-mp3";
+            example = "audio-48khz-192kbitrate-mono-mp3";
+            description = ''
+              Audio output format for Azure TTS.
+              - audio-24khz-96kbitrate-mono-mp3 (balanced quality/bandwidth)
+              - audio-48khz-192kbitrate-mono-mp3 (HD quality)
+              - audio-16khz-64kbitrate-mono-mp3 (low bandwidth)
+            '';
+          };
+        };
+
+        openai = {
+          apiKeyFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            example = "/run/secrets/openai-api-key";
+            description = "Path to file containing the OpenAI API key for TTS.";
+          };
+
+          model = mkOption {
+            type = types.enum [ "tts-1" "tts-1-hd" ];
+            default = "tts-1";
+            description = "OpenAI TTS model (tts-1 for speed, tts-1-hd for quality).";
+          };
+
+          voice = mkOption {
+            type = types.enum [ "alloy" "echo" "fable" "onyx" "nova" "shimmer" ];
+            default = "nova";
+            description = "OpenAI TTS voice.";
+          };
+        };
+      };
+
+      # Child-friendly voice mode prompt
+      voiceModePrompt = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "You are a helpful, patient, and friendly assistant speaking with children.";
+        description = ''
+          Custom system prompt for voice conversations.
+          Leave null to use OpenWebUI's default.
+          For children, consider using simple language and encouraging responses.
+        '';
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -212,6 +327,35 @@ in
           OAUTH_CLIENT_ID = cfg.oidc.clientId;
           OPENID_REDIRECT_URI = "${cfg.webuiUrl}/oauth/oidc/callback";
         })
+        # Voice Support - STT Configuration
+        (mkIf cfg.voice.enable (
+          if cfg.voice.stt.engine == "whisper" then {
+            # Empty/unset = use local Whisper model (default, works with Call mode)
+          } else if cfg.voice.stt.engine == "openai" then {
+            AUDIO_STT_ENGINE = "openai";
+            AUDIO_STT_MODEL = "whisper-1";
+          } else if cfg.voice.stt.engine == "deepgram" then {
+            AUDIO_STT_ENGINE = "deepgram";
+          } else { }
+        ))
+        # Voice Support - TTS Configuration
+        (mkIf (cfg.voice.enable && cfg.voice.tts.engine == "azure") {
+          AUDIO_TTS_ENGINE = "azure";
+          AUDIO_TTS_AZURE_SPEECH_REGION = cfg.voice.tts.azure.region;
+          AUDIO_TTS_AZURE_SPEECH_OUTPUT_FORMAT = cfg.voice.tts.azure.outputFormat;
+        })
+        (mkIf (cfg.voice.enable && cfg.voice.tts.engine == "openai") {
+          AUDIO_TTS_ENGINE = "openai";
+          AUDIO_TTS_MODEL = cfg.voice.tts.openai.model;
+          AUDIO_TTS_VOICE = cfg.voice.tts.openai.voice;
+        })
+        (mkIf (cfg.voice.enable && cfg.voice.tts.engine == "browser") {
+          AUDIO_TTS_ENGINE = "";
+        })
+        # Voice Mode Prompt (for child-friendly conversations)
+        (mkIf (cfg.voice.enable && cfg.voice.voiceModePrompt != null) {
+          VOICE_MODE_PROMPT_TEMPLATE = cfg.voice.voiceModePrompt;
+        })
         cfg.extraEnvironment
       ];
     };
@@ -225,6 +369,10 @@ in
             || cfg.openai.apiKeyFile != null
             || cfg.oidc.clientSecretFile != null
             || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
           )
           ''
             SECRETS_FILE="/run/open-webui/secrets.env"
@@ -241,6 +389,18 @@ in
             ''}
             ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
               echo "TAVILY_API_KEY=$(cat ${cfg.tavilySearch.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
+              echo "AUDIO_TTS_API_KEY=$(cat ${cfg.voice.tts.azure.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
+              echo "AUDIO_TTS_OPENAI_API_KEY=$(cat ${cfg.voice.tts.openai.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
+              echo "AUDIO_STT_OPENAI_API_KEY=$(cat ${cfg.voice.stt.openai.apiKeyFile})" >> "$SECRETS_FILE"
+            ''}
+            ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
+              echo "DEEPGRAM_API_KEY=$(cat ${cfg.voice.stt.deepgram.apiKeyFile})" >> "$SECRETS_FILE"
             ''}
 
             chmod 600 "$SECRETS_FILE"
@@ -261,6 +421,10 @@ in
             || cfg.openai.apiKeyFile != null
             || cfg.oidc.clientSecretFile != null
             || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null)
+            || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
           )
           {
             RuntimeDirectory = "open-webui";

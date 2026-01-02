@@ -51,13 +51,13 @@ def mock_requests_get(monkeypatch):
     def _mock_get(url, headers=None, timeout=None):
         # Determine which endpoint is being called
         if url.endswith("/endpoints/zdr"):
-            # Return a list of ZDR-compliant model IDs
+            # Return a list of ZDR-compliant models (format: "Provider | model-id")
             return mock.Mock(
                 status_code=200,
                 json=lambda: {
                     "data": [
-                        {"model": "openrouter/gpt-4o-mini"},
-                        {"model": "openrouter/gpt-4o"},
+                        {"name": "OpenAI | openrouter/gpt-4o-mini"},
+                        {"name": "OpenAI | openrouter/gpt-4o"},
                     ]
                 },
             )

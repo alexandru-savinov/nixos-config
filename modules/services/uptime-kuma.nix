@@ -46,17 +46,15 @@ in
 
   config = mkIf cfg.enable {
     # Enable Uptime Kuma service using native NixOS module
-    # Bind to 0.0.0.0 but firewall restricts to Tailscale interface only
+    # Bind to localhost only - access is via Tailscale Serve (HTTPS)
+    # Note: No firewall rule needed - service only accessible via localhost
     services.uptime-kuma = {
       enable = true;
       settings = {
-        HOST = "0.0.0.0";
+        HOST = "127.0.0.1";
         PORT = toString cfg.port;
       };
     };
-
-    # Allow access only via Tailscale interface (no public internet access)
-    networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ cfg.port ];
 
     # Automatic database backups
     systemd.services.uptime-kuma-backup = mkIf cfg.backup.enable {
@@ -121,8 +119,26 @@ in
       };
 
       script = ''
-        # Wait for tailscaled to be ready
-        until ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+        # Wait for tailscaled to be ready (timeout: 60 seconds)
+        timeout=60
+        while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: tailscaled not ready after 60 seconds"
+            exit 1
+          fi
+          sleep 1
+        done
+
+        # Wait for uptime-kuma to be listening (timeout: 60 seconds)
+        # The 'after' directive only waits for service start, not port availability
+        timeout=60
+        while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${toString cfg.port} 2>/dev/null; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: uptime-kuma not listening on port ${toString cfg.port} after 60 seconds"
+            exit 1
+          fi
           sleep 1
         done
 
@@ -141,8 +157,8 @@ in
       '';
     };
 
-    # Access Uptime Kuma via Tailscale:
-    #   Without HTTPS: http://<hostname>.<tailnet>.ts.net:3001 or http://<tailscale-ip>:3001
-    #   With HTTPS (if tailscaleServe.enable = true): https://<hostname>.<tailnet>.ts.net:3001
+    # Access Uptime Kuma via Tailscale HTTPS (requires tailscaleServe.enable = true):
+    #   https://<hostname>.<tailnet>.ts.net:3001
+    # Service binds to localhost only for security - no direct network access possible
   };
 }
