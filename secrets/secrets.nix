@@ -39,6 +39,6 @@ in
   # OpenCode API key (Open WebUI API key for LLM gateway)
   "opencode-api-key.age".publicKeys = sanctaChoirKeys;
 
-  # OpenAI API key (for TTS - separate from OpenRouter)
+  # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
 }
