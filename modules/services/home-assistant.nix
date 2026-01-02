@@ -32,11 +32,6 @@ let
   # Format for YAML generation
   format = pkgs.formats.yaml { };
 
-  # Generate secrets.yaml content from secrets option
-  secretsYaml = format.generate "secrets.yaml" (
-    mapAttrs (name: _: "PLACEHOLDER_${toUpper (replaceStrings ["-"] ["_"] name)}") cfg.secrets
-  );
-
   # Generate configuration.yaml from config option
   configWithHttp = cfg.config // {
     http = (cfg.config.http or { }) // {
@@ -302,9 +297,8 @@ in
           echo "# Auto-generated secrets - do not edit" > "$SECRETS_FILE"
 
           ${concatStringsSep "\n" (mapAttrsToList (name: secretCfg: ''
-            # Read secret, strip trailing newline, and quote for YAML safety
-            SECRET_VALUE=$(cat ${secretCfg.file} | tr -d '\n')
-            # Use printf with %q-style escaping via single quotes for YAML
+            # Read secret, strip trailing newline, escape double quotes for YAML safety
+            SECRET_VALUE=$(cat ${secretCfg.file} | tr -d '\n' | sed 's/"/\\"/g')
             printf '%s: "%s"\n' "${name}" "$SECRET_VALUE" >> "$SECRETS_FILE"
           '') cfg.secrets)}
 
