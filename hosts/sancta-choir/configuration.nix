@@ -61,6 +61,9 @@
 
     # Azure Speech Services (for voice TTS)
     azure-speech-api-key.file = "${self}/secrets/azure-speech-api-key.age";
+
+    # OpenAI API key (for TTS - separate from OpenRouter)
+    openai-api-key.file = "${self}/secrets/openai-api-key.age";
   };
 
   # Open-WebUI with OpenRouter and Tailscale OAuth
@@ -93,18 +96,18 @@
 
     # Voice Support - Seamless hands-free voice conversations for children
     # STT: Local Whisper (works with Call mode, uses CPU)
-    # TTS: Azure Speech Services (best Russian/Romanian/English voices)
+    # TTS: OpenAI TTS (high quality, supports multiple languages)
     voice = {
       enable = true;
 
       stt.engine = "whisper"; # Local Whisper - works with Call mode (phone icon)
 
       tts = {
-        engine = "azure";
-        azure = {
-          apiKeyFile = config.age.secrets.azure-speech-api-key.path;
-          region = "westeurope"; # Closest to Eastern Europe for low latency
-          outputFormat = "audio-24khz-96kbitrate-mono-mp3"; # Good quality, reasonable bandwidth
+        engine = "openai";
+        openai = {
+          apiKeyFile = config.age.secrets.openai-api-key.path;
+          model = "tts-1"; # tts-1 for speed, tts-1-hd for quality
+          voice = "nova"; # Options: alloy, echo, fable, onyx, nova, shimmer
         };
       };
 
