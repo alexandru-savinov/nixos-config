@@ -164,13 +164,14 @@ in
 
       stt = {
         engine = mkOption {
-          type = types.enum [ "browser" "openai" "deepgram" ];
-          default = "browser";
+          type = types.enum [ "whisper" "openai" "deepgram" ];
+          default = "whisper";
           description = ''
             Speech-to-Text engine:
-            - browser: Uses browser's Web Speech API (free, client-side, no server resources)
-            - openai: Uses OpenAI Whisper API (requires API key)
-            - deepgram: Uses Deepgram Nova (requires API key)
+            - whisper: Local Whisper model (default, works with Call mode, uses CPU/RAM)
+            - openai: Uses OpenAI Whisper API (fast, requires API key)
+            - deepgram: Uses Deepgram Nova (very fast, requires API key)
+            Note: Browser WebAPI only works for microphone button, NOT Call mode.
           '';
         };
 
@@ -328,9 +329,8 @@ in
         })
         # Voice Support - STT Configuration
         (mkIf cfg.voice.enable (
-          if cfg.voice.stt.engine == "browser" then {
-            # Empty string = use browser Web Speech API (no server-side config needed)
-            AUDIO_STT_ENGINE = "";
+          if cfg.voice.stt.engine == "whisper" then {
+            # Empty/unset = use local Whisper model (default, works with Call mode)
           } else if cfg.voice.stt.engine == "openai" then {
             AUDIO_STT_ENGINE = "openai";
             AUDIO_STT_MODEL = "whisper-1";
