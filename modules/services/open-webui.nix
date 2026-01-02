@@ -630,8 +630,8 @@ in
       '';
 
       preStop = ''
-        echo "Resetting Tailscale Serve configuration..."
-        ${pkgs.tailscale}/bin/tailscale serve reset || true
+        echo "Removing Tailscale Serve configuration for Open-WebUI..."
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
       '';
     };
   };
