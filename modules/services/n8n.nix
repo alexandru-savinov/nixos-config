@@ -212,8 +212,14 @@ in
       };
 
       script = ''
-        # Wait for tailscaled to be ready
-        until ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+        # Wait for tailscaled to be ready (timeout: 60 seconds)
+        timeout=60
+        while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: tailscaled not ready after 60 seconds"
+            exit 1
+          fi
           sleep 1
         done
 
