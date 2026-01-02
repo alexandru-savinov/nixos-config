@@ -201,7 +201,12 @@ class Pipe:
                 def generate():
                     for line in response.iter_lines():
                         if line:
-                            yield line.decode("utf-8") + "\n"
+                            decoded = line.decode("utf-8")
+                            # Filter out SSE comments (lines starting with ':')
+                            # These are status messages like ": OPENROUTER PROCESSING"
+                            if decoded.startswith(":"):
+                                continue
+                            yield decoded + "\n"
 
                 return generate()
             else:
