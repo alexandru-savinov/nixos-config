@@ -83,11 +83,11 @@ let
     }
 
     # Check for ERROR in output (not just non-zero exit)
-    if echo "$CHECK_OUTPUT" | grep -q "^ERROR"; then
+    if echo "$CHECK_OUTPUT" | grep -qi "ERROR"; then
       echo "============================================"
       echo "Configuration errors found:"
       echo "============================================"
-      echo "$CHECK_OUTPUT" | grep "^ERROR"
+      echo "$CHECK_OUTPUT" | grep -i "ERROR"
       exit 1
     fi
 
