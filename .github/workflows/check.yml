@@ -25,11 +25,13 @@ jobs:
                   name: nix-community
 
             - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v8
+              uses: DeterminateSystems/magic-nix-cache-action@v13
               with:
                   # Only upload cache from main branch to avoid slow post-build on PRs
                   # PRs still READ from main's cache but don't waste time uploading
+                  # IMPORTANT: Must disable BOTH backends - GHA cache AND FlakeHub
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
 
             - name: Check flake
               run: nix flake check --all-systems
@@ -56,9 +58,11 @@ jobs:
                   name: nix-community
 
             - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v8
+              uses: DeterminateSystems/magic-nix-cache-action@v13
               with:
+                  # Only upload cache from main branch to avoid slow post-build on PRs
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
 
             - name: Build sancta-choir (x86_64-linux)
               run: nix build .#nixosConfigurations.sancta-choir.config.system.build.toplevel
@@ -85,9 +89,11 @@ jobs:
                   name: nix-community
 
             - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v8
+              uses: DeterminateSystems/magic-nix-cache-action@v13
               with:
+                  # Only upload cache from main branch to avoid slow post-build on PRs
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
 
             - name: Build ${{ matrix.script }} script
               run: nix build .#packages.x86_64-linux.${{ matrix.script }}
@@ -112,9 +118,11 @@ jobs:
                   name: nix-community
 
             - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v8
+              uses: DeterminateSystems/magic-nix-cache-action@v13
               with:
+                  # Only upload cache from main branch to avoid slow post-build on PRs
                   use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
+                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
 
             - name: Set up QEMU for aarch64 emulation
               uses: docker/setup-qemu-action@v3
