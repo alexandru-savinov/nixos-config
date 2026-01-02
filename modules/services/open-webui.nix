@@ -617,10 +617,30 @@ in
       };
 
       script = ''
+        # Wait for tailscaled to be ready (timeout: 60 seconds)
+        timeout=60
         until ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: tailscaled not ready after 60 seconds"
+            exit 1
+          fi
           sleep 1
         done
 
+        # Wait for Open-WebUI to be listening (timeout: 60 seconds)
+        # The 'after' directive only waits for service start, not port availability
+        timeout=60
+        while ! ${pkgs.netcat}/bin/nc -z ${cfg.host} ${toString cfg.port} 2>/dev/null; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: Open-WebUI not listening on port ${toString cfg.port} after 60 seconds"
+            exit 1
+          fi
+          sleep 1
+        done
+
+        # Check if serve is already configured for this port
         if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
           echo "Configuring Tailscale Serve for Open-WebUI..."
           ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://${cfg.host}:${toString cfg.port}
