@@ -24,14 +24,20 @@ jobs:
               with:
                   name: nix-community
 
-            - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v13
+            - name: Cache Nix Store
+              uses: nix-community/cache-nix-action@v6
               with:
-                  # Only upload cache from main branch to avoid slow post-build on PRs
-                  # PRs still READ from main's cache but don't waste time uploading
-                  # IMPORTANT: Must disable BOTH backends - GHA cache AND FlakeHub
-                  use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
-                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
+                  # Cache key based on flake.lock - changes when dependencies update
+                  primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}
+                  # Restore from partial matches if exact key not found
+                  restore-prefixes-all-matches: |
+                      nix-${{ runner.os }}-check-
+                      nix-${{ runner.os }}-
+                  # Only SAVE cache on main branch - PRs read but don't upload
+                  # This is the key fix: PRs benefit from cache but skip slow uploads
+                  save: ${{ github.ref == 'refs/heads/main' }}
+                  # Limit cache size to 5GB to avoid bloat
+                  gc-max-store-size: 5G
 
             - name: Check flake
               run: nix flake check --all-systems
@@ -57,12 +63,15 @@ jobs:
               with:
                   name: nix-community
 
-            - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v13
+            - name: Cache Nix Store
+              uses: nix-community/cache-nix-action@v6
               with:
-                  # Only upload cache from main branch to avoid slow post-build on PRs
-                  use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
-                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
+                  primary-key: nix-${{ runner.os }}-build-x86-${{ hashFiles('flake.lock') }}
+                  restore-prefixes-all-matches: |
+                      nix-${{ runner.os }}-build-x86-
+                      nix-${{ runner.os }}-
+                  save: ${{ github.ref == 'refs/heads/main' }}
+                  gc-max-store-size: 5G
 
             - name: Build sancta-choir (x86_64-linux)
               run: nix build .#nixosConfigurations.sancta-choir.config.system.build.toplevel
@@ -88,12 +97,16 @@ jobs:
               with:
                   name: nix-community
 
-            - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v13
+            - name: Cache Nix Store
+              uses: nix-community/cache-nix-action@v6
               with:
-                  # Only upload cache from main branch to avoid slow post-build on PRs
-                  use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
-                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
+                  primary-key: nix-${{ runner.os }}-scripts-${{ matrix.script }}-${{ hashFiles('flake.lock') }}
+                  restore-prefixes-all-matches: |
+                      nix-${{ runner.os }}-scripts-${{ matrix.script }}-
+                      nix-${{ runner.os }}-scripts-
+                      nix-${{ runner.os }}-
+                  save: ${{ github.ref == 'refs/heads/main' }}
+                  gc-max-store-size: 5G
 
             - name: Build ${{ matrix.script }} script
               run: nix build .#packages.x86_64-linux.${{ matrix.script }}
@@ -117,12 +130,15 @@ jobs:
               with:
                   name: nix-community
 
-            - name: Magic Nix Cache
-              uses: DeterminateSystems/magic-nix-cache-action@v13
+            - name: Cache Nix Store
+              uses: nix-community/cache-nix-action@v6
               with:
-                  # Only upload cache from main branch to avoid slow post-build on PRs
-                  use-gha-cache: ${{ github.ref == 'refs/heads/main' }}
-                  use-flakehub: ${{ github.ref == 'refs/heads/main' }}
+                  primary-key: nix-${{ runner.os }}-aarch64-${{ hashFiles('flake.lock') }}
+                  restore-prefixes-all-matches: |
+                      nix-${{ runner.os }}-aarch64-
+                      nix-${{ runner.os }}-
+                  save: ${{ github.ref == 'refs/heads/main' }}
+                  gc-max-store-size: 5G
 
             - name: Set up QEMU for aarch64 emulation
               uses: docker/setup-qemu-action@v3
