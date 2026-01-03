@@ -81,7 +81,7 @@
           ];
         };
 
-        # Raspberry Pi 5 (aarch64)
+        # Raspberry Pi 5 (aarch64) - Minimal config for SD image builds
         # Uses nvmd/nixos-raspberrypi for kernel 6.12.34 (same as pre-built SD image)
         # Cache: nixos-raspberrypi.cachix.org
         # Build SD image with: nix build .#images.rpi5-sd-image
@@ -99,6 +99,36 @@
             # nixos-raspberrypi modules for RPi5 with kernel 6.12.34
             nixos-raspberrypi.nixosModules.raspberry-pi-5.base
             ./hosts/rpi5/configuration.nix
+            home-manager.nixosModules.home-manager
+            vscode-server.nixosModules.default
+            agenix.nixosModules.default
+            ({ pkgs, lib, ... }: {
+              environment.systemPackages = with pkgs; [
+                agenix
+              ];
+            })
+          ];
+        };
+
+        # Raspberry Pi 5 (aarch64) - Full config with all services
+        # IMPORTANT: Only build this NATIVELY on the RPi5, not via QEMU emulation
+        # chromadb/Open-WebUI fail under QEMU - use rpi5 config for SD image builds
+        #
+        # After first boot with minimal SD image, rebuild natively:
+        #   sudo nixos-rebuild switch --flake github:user/nixos-config#rpi5-full
+        rpi5-full = nixos-raspberrypi.lib.nixosSystem {
+          specialArgs = {
+            inherit nixos-raspberrypi;
+            pkgs-unstable = import nixpkgs-unstable {
+              system = "aarch64-linux";
+              config.allowUnfree = true;
+            };
+            inherit self;
+            inherit claude-code;
+          };
+          modules = [
+            nixos-raspberrypi.nixosModules.raspberry-pi-5.base
+            ./hosts/rpi5-full/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
