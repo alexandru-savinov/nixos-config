@@ -42,7 +42,7 @@
   # Use label for portability (consistent with FIRMWARE partition)
   # Use mkForce to override raspberry-pi-nix sd-image.nix defaults
   fileSystems."/" = lib.mkForce {
-    device = "/dev/disk/by-label/NIXOS";
+    device = "/dev/disk/by-label/NIXOS_SD";
     fsType = "ext4";
     options = [ "noatime" "nodiratime" ];
   };

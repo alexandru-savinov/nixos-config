@@ -28,8 +28,9 @@
     # ../../modules/system/networking.nix  # Hetzner Cloud specific, incompatible with RPi5
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
+    ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
-    ../../modules/services/n8n.nix
+    # ../../modules/services/n8n.nix  # Disabled for initial migration
     # Open-WebUI disabled for SD image build (chromadb fails under QEMU emulation)
     # Re-enable after first boot and rebuild natively on the Pi:
     #   sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
@@ -40,9 +41,9 @@
   ];
 
   # Allow unfree and broken packages (chromadb is marked broken on aarch64)
-  # Keep using standard NixOS kernel instead of raspberry-pi-nix kernel
-  # This preserves the current working kernel (6.6.68) rather than downgrading to 6.6.54
-  boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
+  # CRITICAL: Do NOT override boot.kernelPackages - raspberry-pi-nix provides
+  # the correct kernel for RPi5 via flake.nix module configuration.
+  # The current system runs 6.12.34 from raspberry-pi-nix.
 
   nixpkgs.config.allowUnfree = true;
   nixpkgs.config.allowBroken = true;
@@ -52,7 +53,9 @@
     enable = true;
     settings = {
       PermitRootLogin = "prohibit-password"; # Allow root login only via SSH keys
-      PasswordAuthentication = false; # Disable password auth, use SSH keys
+      # MIGRATION: Keep password auth enabled until key-based access is verified
+      # Change to 'false' after confirming SSH key login works
+      PasswordAuthentication = lib.mkForce true;
     };
   };
 
@@ -100,8 +103,8 @@
     # Tailscale authentication
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
 
-    # n8n workflow automation
-    n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
+    # n8n workflow automation - disabled for initial migration
+    # n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
 
     # Open-WebUI secrets - commented out until open-webui module is re-enabled
     # open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
@@ -142,15 +145,13 @@
   #   };
   # };
 
-  # n8n Workflow Automation
-  # Access via Tailscale HTTP: http://rpi5.tail4249a9.ts.net:5678
-  # Used as AI agent orchestration platform with Open-WebUI as LLM gateway
-  services.n8n-tailscale = {
-    enable = true;
-    encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
-    # Lower concurrency for RPi5's limited resources (4GB RAM)
-    concurrencyLimit = 2;
-  };
+  # n8n Workflow Automation - disabled for initial migration
+  # Re-enable by uncommenting the import and secrets above, then:
+  # services.n8n-tailscale = {
+  #   enable = true;
+  #   encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
+  #   concurrencyLimit = 2;
+  # };
 
   # Hostname
   networking.hostName = "rpi5";
@@ -229,14 +230,23 @@
     # Use less memory during evaluation
     max-free = 1024 * 1024 * 1024; # 1GB - trigger GC when free space drops
     min-free = 512 * 1024 * 1024; # 512MB - minimum free space to maintain
+    # Binary caches - nixos-raspberrypi has kernel 6.12.34 builds
+    substituters = [
+      "https://cache.nixos.org"
+      "https://nixos-raspberrypi.cachix.org"
+    ];
+    trusted-public-keys = [
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+      "nixos-raspberrypi.cachix.org-1:4iMO9LXa8BqhU+Rpg6LQKiGa2lsNh/j2oiYLNOQ5sPI="
+    ];
   };
 
   # Swap configuration for heavy workloads (Open-WebUI, builds)
   # Using a swap file instead of zram alone for better stability
   swapDevices = lib.mkForce [
     {
-      device = "/var/swapfile";
-      size = 4096; # 4GB swap file
+      device = "/swapfile";
+      size = 8192; # 8GB swap file - needed for nix builds on 4GB RAM
     }
   ];
 
@@ -264,10 +274,10 @@
   # Systemd tweaks for resource-constrained environment
   systemd = {
     # Default timeout for services (faster failure detection)
-    extraConfig = ''
-      DefaultTimeoutStartSec=90s
-      DefaultTimeoutStopSec=90s
-    '';
+    settings.Manager = {
+      DefaultTimeoutStartSec = "90s";
+      DefaultTimeoutStopSec = "90s";
+    };
 
     # Open-WebUI specific optimizations - uncomment when open-webui is re-enabled
     # services.open-webui = {
@@ -289,6 +299,6 @@
   # Timezone (adjust as needed)
   time.timeZone = "UTC";
 
-  # System state version
-  system.stateVersion = lib.mkForce "24.05";
+  # System state version - matches current running system
+  system.stateVersion = lib.mkForce "25.05";
 }
