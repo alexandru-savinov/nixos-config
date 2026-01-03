@@ -46,18 +46,6 @@ in
       '';
     };
 
-    extraSettings = mkOption {
-      type = types.attrs;
-      default = { };
-      example = literalExpression ''
-        {
-          log.level = "info";
-          metrics.enable = true;
-        }
-      '';
-      description = "Additional n8n settings (see n8n documentation).";
-    };
-
     # ===================
     # Hardening Options
     # ===================
@@ -131,24 +119,6 @@ in
     services.n8n = {
       enable = true;
       openFirewall = false; # We manage firewall ourselves for Tailscale
-
-      # n8n configuration via settings (maps to environment variables)
-      # See: https://docs.n8n.io/hosting/environment-variables/
-      # Note: userFolder is set via N8N_USER_FOLDER env var by native module
-      settings = mkMerge [
-        {
-          # Core settings
-          port = cfg.port;
-
-          # Privacy settings
-          diagnostics.enabled = false;
-          versionNotifications.enabled = false;
-
-          # Security: disable public API by default (access via UI)
-          publicApi.disabled = true;
-        }
-        cfg.extraSettings
-      ];
     };
 
     # Configure systemd service with environment variables
@@ -157,17 +127,43 @@ in
       serviceConfig = {
         RuntimeDirectory = "n8n";
         RuntimeDirectoryMode = "0700";
+        # Dash prefix: don't fail if file missing (allows service to start during initial setup)
+        # ExecStartPre with set -euo pipefail ensures file is created with proper error handling
         EnvironmentFile = "-/run/n8n/env";
         # Run setup as root (+ prefix), then main process as DynamicUser
         # The file is made world-readable briefly, but /run/n8n dir is 0700 (DynamicUser only)
         ExecStartPre = [
           ("+" + pkgs.writeShellScript "n8n-setup-env" ''
+            set -euo pipefail
+
             ENV_FILE="/run/n8n/env"
             : > "$ENV_FILE"
 
+            # Port configuration
+            echo "N8N_PORT=${toString cfg.port}" >> "$ENV_FILE"
+
+            # Bind to localhost only - access is via Tailscale Serve (HTTPS)
+            echo "N8N_LISTEN_ADDRESS=127.0.0.1" >> "$ENV_FILE"
+
+            # Privacy settings
+            echo "N8N_DIAGNOSTICS_ENABLED=false" >> "$ENV_FILE"
+            echo "N8N_VERSION_NOTIFICATIONS_ENABLED=false" >> "$ENV_FILE"
+
+            # Security: disable public API by default (access via UI)
+            echo "N8N_PUBLIC_API_DISABLED=true" >> "$ENV_FILE"
+
             # Encryption key (if provided)
             ${optionalString (cfg.encryptionKeyFile != null) ''
-              echo "N8N_ENCRYPTION_KEY=$(cat ${cfg.encryptionKeyFile})" >> "$ENV_FILE"
+              if [[ ! -f "${cfg.encryptionKeyFile}" ]]; then
+                echo "ERROR: Encryption key file not found: ${cfg.encryptionKeyFile}" >&2
+                exit 1
+              fi
+              ENCRYPTION_KEY=$(cat "${cfg.encryptionKeyFile}")
+              if [[ -z "$ENCRYPTION_KEY" ]]; then
+                echo "ERROR: Encryption key file is empty: ${cfg.encryptionKeyFile}" >&2
+                exit 1
+              fi
+              echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
             ''}
 
             # Execution pruning settings
@@ -180,9 +176,6 @@ in
 
             # Concurrency limit
             echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
-
-            # Bind to localhost only - access is via Tailscale Serve (HTTPS)
-            echo "N8N_LISTEN_ADDRESS=127.0.0.1" >> "$ENV_FILE"
 
             # Make readable only by DynamicUser (600 + dir 0700 = secure)
             chmod 600 "$ENV_FILE"

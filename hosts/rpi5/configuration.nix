@@ -1,12 +1,20 @@
-# Raspberry Pi 5 Configuration
-# Lightweight server configuration for RPi5 with Open-WebUI
-# Uses raspberry-pi-nix for proper RPi5 kernel and firmware support
-# See: https://github.com/nix-community/raspberry-pi-nix
+# Raspberry Pi 5 Configuration - MINIMAL (for SD image builds)
+# Uses nvmd/nixos-raspberrypi for kernel 6.12.34 and firmware support
+# See: https://github.com/nvmd/nixos-raspberrypi
 #
-# This host is designed for:
-# - Remote SSH access via Tailscale
-# - Running Open-WebUI with OpenRouter backend
-# - Headless operation with optimized resources
+# This is the MINIMAL config for SD image builds. For full services, use rpi5-full.
+#
+# Workflow:
+#   1. Build SD image:  nix build .#images.rpi5-sd-image
+#   2. Flash to SD card and boot the Pi
+#   3. Switch to full config:  sudo nixos-rebuild switch --flake .#rpi5-full
+#
+# This minimal config includes:
+# - SSH access via Tailscale
+# - Basic development tools (helix, neovim, nodejs, etc.)
+# - Claude Code CLI
+#
+# For Open-WebUI, n8n, Uptime Kuma → use rpi5-full after first boot
 
 { config
 , pkgs
@@ -30,23 +38,14 @@
     ../../modules/services/copilot.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
-    # ../../modules/services/n8n.nix  # Disabled for initial migration
-    # Open-WebUI disabled for SD image build (chromadb fails under QEMU emulation)
-    # Re-enable after first boot and rebuild natively on the Pi:
-    #   sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#rpi5
-    # ../../modules/services/open-webui.nix
-    # Add more services as needed:
-    # ../../modules/services/tsidp.nix
-    # ../../modules/services/uptime-kuma.nix
+    # Additional services are in rpi5-full config:
+    # - open-webui, n8n, uptime-kuma
   ];
 
-  # Allow unfree and broken packages (chromadb is marked broken on aarch64)
+  # Allow unfree packages (Open-WebUI license changed in v0.6+)
   # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides
   # the correct kernel for RPi5 via flake.nix module configuration.
-  # The current system runs 6.12.34 from nixos-raspberrypi.cachix.org.
-
   nixpkgs.config.allowUnfree = true;
-  nixpkgs.config.allowBroken = true;
 
   # SSH configuration
   services.openssh = {
@@ -98,60 +97,11 @@
     lm_sensors
   ];
 
-  # Agenix secrets
+  # Agenix secrets (minimal - only Tailscale for this config)
+  # Additional secrets for Open-WebUI, n8n, etc. are in rpi5-full
   age.secrets = {
-    # Tailscale authentication
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-
-    # n8n workflow automation - disabled for initial migration
-    # n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
-
-    # Open-WebUI secrets - commented out until open-webui module is re-enabled
-    # open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
-    # openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
-    # tavily-api-key.file = "${self}/secrets/tavily-api-key.age";
-
-    # OIDC (disabled for now, but secret available if needed)
-    # oidc-client-secret.file = "${self}/secrets/oidc-client-secret.age";
   };
-
-  # Open-WebUI with OpenRouter backend
-  # DISABLED for SD image build - chromadb fails under QEMU emulation
-  # Re-enable after first boot by uncommenting the import above and secrets,
-  # then rebuild natively on the Pi
-  # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
-  # services.open-webui-tailscale = {
-  #   enable = true;
-  #   enableSignup = false; # Closed signup - admin only
-  #   secretKeyFile = config.age.secrets.open-webui-secret-key.path;
-  #   openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
-  #   webuiUrl = "https://rpi5.tail4249a9.ts.net";
-  #
-  #   # Tavily Search API for RAG web search
-  #   tavilySearch = {
-  #     enable = true;
-  #     apiKeyFile = config.age.secrets.tavily-api-key.path;
-  #   };
-  #
-  #   # OIDC authentication - disabled (same issue as sancta-choir with tsidp on same host)
-  #   oidc = {
-  #     enable = false;
-  #   };
-  #
-  #   # Tailscale Serve for HTTPS
-  #   tailscaleServe = {
-  #     enable = true;
-  #     httpsPort = 443;
-  #   };
-  # };
-
-  # n8n Workflow Automation - disabled for initial migration
-  # Re-enable by uncommenting the import and secrets above, then:
-  # services.n8n-tailscale = {
-  #   enable = true;
-  #   encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
-  #   concurrencyLimit = 2;
-  # };
 
   # Hostname
   networking.hostName = "rpi5";
@@ -272,28 +222,9 @@
   };
 
   # Systemd tweaks for resource-constrained environment
-  systemd = {
-    # Default timeout for services (faster failure detection)
-    settings.Manager = {
-      DefaultTimeoutStartSec = "90s";
-      DefaultTimeoutStopSec = "90s";
-    };
-
-    # Open-WebUI specific optimizations - uncomment when open-webui is re-enabled
-    # services.open-webui = {
-    #   serviceConfig = {
-    #     # Memory limits to prevent runaway usage
-    #     MemoryMax = "2G";
-    #     MemoryHigh = "1536M";
-    #     # CPU limits during peak usage
-    #     CPUQuota = "300%"; # 3 cores max
-    #     # Nice value for lower priority during builds
-    #     Nice = 5;
-    #     # IO priority
-    #     IOSchedulingClass = "best-effort";
-    #     IOSchedulingPriority = 4;
-    #   };
-    # };
+  systemd.settings.Manager = {
+    DefaultTimeoutStartSec = "90s";
+    DefaultTimeoutStopSec = "90s";
   };
 
   # Timezone (adjust as needed)
