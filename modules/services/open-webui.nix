@@ -379,32 +379,51 @@ in
             || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
           )
           ''
+            set -euo pipefail
+
             SECRETS_FILE="/run/open-webui/secrets.env"
             : > "$SECRETS_FILE"
 
+            # Helper function to safely read a secret file
+            read_secret() {
+              local file="$1"
+              local var_name="$2"
+              if [[ ! -f "$file" ]]; then
+                echo "ERROR: Secret file not found: $file" >&2
+                exit 1
+              fi
+              local value
+              value=$(cat "$file")
+              if [[ -z "$value" ]]; then
+                echo "ERROR: Secret file is empty: $file" >&2
+                exit 1
+              fi
+              echo "$var_name=$value" >> "$SECRETS_FILE"
+            }
+
             ${optionalString (cfg.secretKeyFile != null) ''
-              echo "WEBUI_SECRET_KEY=$(cat ${cfg.secretKeyFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
             ''}
             ${optionalString (cfg.openai.apiKeyFile != null) ''
-              echo "OPENAI_API_KEY=$(cat ${cfg.openai.apiKeyFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
             ''}
             ${optionalString (cfg.oidc.clientSecretFile != null) ''
-              echo "OAUTH_CLIENT_SECRET=$(cat ${cfg.oidc.clientSecretFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
             ''}
             ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
-              echo "TAVILY_API_KEY=$(cat ${cfg.tavilySearch.apiKeyFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
             ''}
             ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
-              echo "AUDIO_TTS_API_KEY=$(cat ${cfg.voice.tts.azure.apiKeyFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
             ''}
             ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
-              echo "AUDIO_TTS_OPENAI_API_KEY=$(cat ${cfg.voice.tts.openai.apiKeyFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
             ''}
             ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
-              echo "AUDIO_STT_OPENAI_API_KEY=$(cat ${cfg.voice.stt.openai.apiKeyFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
             ''}
             ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
-              echo "DEEPGRAM_API_KEY=$(cat ${cfg.voice.stt.deepgram.apiKeyFile})" >> "$SECRETS_FILE"
+              read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
             ''}
 
             chmod 600 "$SECRETS_FILE"
