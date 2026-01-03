@@ -25,6 +25,11 @@
     ];
   };
 
+  # Allow insecure n8n package (CVE-2025-68613 - evaluate risk for your use case)
+  nixpkgs.config.permittedInsecurePackages = [
+    "n8n-1.91.3"
+  ];
+
   imports = [
     ./hardware-configuration.nix
     ../common.nix

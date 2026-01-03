@@ -2,10 +2,10 @@
   description = "NixOS configurations for multiple machines";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     home-manager = {
-      url = "github:nix-community/home-manager/release-24.05";
+      url = "github:nix-community/home-manager/release-25.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     home-manager-unstable = {
@@ -24,21 +24,22 @@
       url = "github:ryantm/agenix/0.15.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Raspberry Pi 5 support - provides proper kernel, firmware, and config.txt management
-    # Archived but still functional and recommended for RPi5
-    # See: https://github.com/nix-community/raspberry-pi-nix
+    # Raspberry Pi 5 support - provides kernel 6.12.34, firmware, and config.txt management
+    # Uses nvmd/nixos-raspberrypi which has the same kernel as the pre-built SD image
+    # Cache: nixos-raspberrypi.cachix.org
+    # See: https://github.com/nvmd/nixos-raspberrypi
+    nixos-raspberrypi = {
+      url = "github:nvmd/nixos-raspberrypi";
+    };
     # Claude Code - auto-updated hourly from npm
     # See: https://github.com/sadjow/claude-code-nix
     claude-code = {
       url = "github:sadjow/claude-code-nix";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
-    raspberry-pi-nix = {
-      url = "github:nix-community/raspberry-pi-nix/v0.4.1";
-    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, raspberry-pi-nix, claude-code, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -81,11 +82,12 @@
         };
 
         # Raspberry Pi 5 (aarch64)
-        # Uses raspberry-pi-nix for proper Pi 5 kernel with RP1 SD controller support
+        # Uses nvmd/nixos-raspberrypi for kernel 6.12.34 (same as pre-built SD image)
+        # Cache: nixos-raspberrypi.cachix.org
         # Build SD image with: nix build .#images.rpi5-sd-image
-        rpi5 = nixpkgs.lib.nixosSystem {
-          system = "aarch64-linux";
+        rpi5 = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
+            inherit nixos-raspberrypi; # Required by nixos-raspberrypi.lib.nixosSystem
             pkgs-unstable = import nixpkgs-unstable {
               system = "aarch64-linux";
               config.allowUnfree = true;
@@ -94,8 +96,8 @@
             inherit claude-code; # Pass claude-code flake
           };
           modules = [
-            # raspberry-pi-nix provides proper Pi 5 kernel with RP1 drivers
-            raspberry-pi-nix.nixosModules.raspberry-pi
+            # nixos-raspberrypi modules for RPi5 with kernel 6.12.34
+            nixos-raspberrypi.nixosModules.raspberry-pi-5.base
             ./hosts/rpi5/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
@@ -104,8 +106,6 @@
               environment.systemPackages = with pkgs; [
                 agenix
               ];
-              # Configure for Raspberry Pi 5 (BCM2712)
-              raspberry-pi-nix.board = "bcm2712";
             })
           ];
         };

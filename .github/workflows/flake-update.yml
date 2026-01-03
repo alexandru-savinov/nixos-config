@@ -1,0 +1,113 @@
+name: Flake Update
+
+on:
+  schedule:
+    # Weekly on Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      update_all:
+        description: "Update all inputs (true) or only nixpkgs (false)"
+        required: false
+        default: "true"
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-flake:
+    name: Update Flake Inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-community
+
+      - name: Get current flake.lock hash
+        id: before
+        run: echo "hash=$(sha256sum flake.lock | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Update flake inputs
+        run: |
+          if [ "${{ inputs.update_all }}" = "false" ]; then
+            echo "Updating nixpkgs inputs only..."
+            nix flake update nixpkgs nixpkgs-unstable
+          else
+            echo "Updating all flake inputs..."
+            nix flake update
+          fi
+
+      - name: Get updated flake.lock hash
+        id: after
+        run: echo "hash=$(sha256sum flake.lock | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ "${{ steps.before.outputs.hash }}" != "${{ steps.after.outputs.hash }}" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate update summary
+        if: steps.changes.outputs.changed == 'true'
+        id: summary
+        run: |
+          {
+            echo 'summary<<EOF'
+            echo "## Flake Input Updates"
+            echo ""
+            echo "### Changed Inputs"
+            echo '```diff'
+            git diff flake.lock | head -60
+            echo '```'
+            echo ""
+            echo "### Verification Checklist"
+            echo ""
+            echo "- [ ] CI builds pass"
+            echo "- [ ] No breaking changes in upstream changelogs"
+            echo "- [ ] Test deployment if concerned"
+            echo EOF
+          } >> $GITHUB_OUTPUT
+
+      - name: Verify flake still builds
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          echo "Checking flake validity..."
+          nix flake check --all-systems
+
+          echo "Evaluating sancta-choir configuration..."
+          nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel.drvPath
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore(deps): update flake inputs"
+          title: "chore(deps): Update Nix flake inputs"
+          body: |
+            ${{ steps.summary.outputs.summary }}
+
+            ---
+            *Automatically created by flake-update workflow*
+          branch: flake-updates
+          delete-branch: true
+          labels: |
+            dependencies
+            automated

@@ -7,7 +7,7 @@ let
   sancta-choir = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILkqRZZKLsSV7L67Rzh38UDU6F2GeMmgyiVLlQgS70zP root@sancta-choir";
 
   # Raspberry Pi 5 host key
-  rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIONeeV4HZKWxt/N4MPIj7Cwj5u7wJIu4Biul5n9kW57 root@rpi5";
+  rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjZXKDY8Ve/wfMHpjsJGR7guDQFndGoNxDZKXegEfjr root@rpi5";
 
   # Combine users who can edit
   users = [ root-sancta-choir ];
