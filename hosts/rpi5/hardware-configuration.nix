@@ -1,12 +1,12 @@
 # Raspberry Pi 5 Hardware Configuration
-# Corrected for NVMe SSD root + SD card boot (hybrid setup)
-#
-# This replaces the repo's hosts/rpi5/hardware-configuration.nix
-# which incorrectly uses NIXOS_SD label (SD card partition)
+# NVMe SSD root with SD card boot firmware (hybrid setup)
 #
 # Current setup:
 #   - Boot/Firmware: SD card (mmcblk0p1, label FIRMWARE)
-#   - Root filesystem: NVMe SSD (nvme0n1p2, label NIXOS)
+#   - Root filesystem: NVMe SSD (nvme0n1p2, label NIXOS_SD)
+#
+# Note: NVMe partition labeled NIXOS_SD (not NIXOS) to match
+# nixos-raspberrypi defaults, allowing SD-free boot after initial setup.
 #
 # Uses lib.mkForce to override raspberry-pi-nix defaults from sd-image.nix
 

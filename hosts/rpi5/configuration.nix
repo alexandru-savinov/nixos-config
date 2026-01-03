@@ -41,9 +41,9 @@
   ];
 
   # Allow unfree and broken packages (chromadb is marked broken on aarch64)
-  # CRITICAL: Do NOT override boot.kernelPackages - raspberry-pi-nix provides
+  # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides
   # the correct kernel for RPi5 via flake.nix module configuration.
-  # The current system runs 6.12.34 from raspberry-pi-nix.
+  # The current system runs 6.12.34 from nixos-raspberrypi.cachix.org.
 
   nixpkgs.config.allowUnfree = true;
   nixpkgs.config.allowBroken = true;
@@ -299,6 +299,6 @@
   # Timezone (adjust as needed)
   time.timeZone = "UTC";
 
-  # System state version - matches current running system
-  system.stateVersion = lib.mkForce "25.05";
+  # System state version - do NOT change on existing systems
+  system.stateVersion = lib.mkForce "24.05";
 }
