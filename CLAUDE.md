@@ -85,6 +85,25 @@ Current secrets: `openrouter-api-key`, `tavily-api-key`, `n8n-encryption-key`, `
 
 GitHub Actions on push/PR: `nix flake check`, build all hosts, format check. Main branch protected - use PRs.
 
+## Git Workflow
+
+**IMPORTANT:** Always use git worktrees when making code changes. Never commit directly to main.
+
+```bash
+# Create worktree for new feature/fix
+git worktree add ../nixos-config-<branch-name> -b <branch-name>
+cd ../nixos-config-<branch-name>
+
+# After PR is merged, clean up
+git worktree remove ../nixos-config-<branch-name>
+```
+
+Branch naming:
+- `feat/<name>` - New features
+- `fix/<name>` - Bug fixes
+- `docs/<name>` - Documentation changes
+- `refactor/<name>` - Code refactoring
+
 ## Nix Code Style
 
 - Use `lib.mkIf` for conditional options, not inline `if`
