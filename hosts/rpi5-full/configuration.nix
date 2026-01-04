@@ -48,11 +48,15 @@
   # Open-WebUI with OpenRouter backend
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
   #
-  # DISABLED: Open-WebUI crashes on ARM due to chromadb/onnxruntime compatibility issues.
+  # DISABLED: SIGBUS crash on ARM64 during Python module import (Issue #64)
+  # Investigation findings:
+  # - Crash occurs in libblas.so.3 / NumPy _umath_linalg during import
+  # - OMP_NUM_THREADS=1 and similar env vars don't help (crash is in init code)
+  # - Root cause: OpenBLAS memory alignment issues on aarch64
+  # - Requires either upstream BLAS fix or complete package rebuild with reference BLAS
   # See: https://github.com/NixOS/nixpkgs/issues/312068
-  # TODO: Re-enable when upstream fixes ARM compatibility
   services.open-webui-tailscale = {
-    enable = false;  # Disabled on ARM - crashes with SIGBUS
+    enable = false;  # Disabled - SIGBUS crash during NumPy/BLAS init on ARM64
     enableSignup = false;
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
     openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
@@ -69,6 +73,20 @@
 
     # Extra environment variables for ARM compatibility
     extraEnvironment = {
+      # ============================================================
+      # ARM FIX (Issue #64): Force single-threaded numeric libraries
+      # SIGBUS crash occurs during ML model init due to alignment issues
+      # in multi-threaded BLAS/OpenMP operations on aarch64
+      # ============================================================
+      OMP_NUM_THREADS = "1";           # OpenMP (used by PyTorch, NumPy)
+      OPENBLAS_NUM_THREADS = "1";      # OpenBLAS threading
+      MKL_NUM_THREADS = "1";           # Intel MKL (if present)
+      NUMEXPR_NUM_THREADS = "1";       # NumExpr threading
+      TOKENIZERS_PARALLELISM = "false"; # HuggingFace tokenizers
+
+      # Disable CUDA detection (not available on ARM, but prevents probing)
+      CUDA_VISIBLE_DEVICES = "";
+
       # Disable document RAG features on ARM (requires chromadb)
       ENABLE_RAG_LOCAL_WEB_FETCH = "False";
       ENABLE_RAG_WEB_LOADER_SSL_VERIFICATION = "False";

@@ -21,6 +21,12 @@
   # Nix settings
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
+  # FHS compatibility: create /bin/bash symlink for scripts with hardcoded shebangs
+  # Required for tools like Claude Code plugins that use #!/bin/bash
+  system.activationScripts.binbash = lib.stringAfter [ "stdio" ] ''
+    ln -sfn ${pkgs.bash}/bin/bash /bin/bash
+  '';
+
   # System packages available on all hosts
   environment.systemPackages = with pkgs; [
     vim
