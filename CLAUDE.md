@@ -124,6 +124,18 @@ git worktree remove ../nixos-config-<branch-name>
 - `docs/<name>` - Documentation changes
 - `refactor/<name>` - Code refactoring
 
+## Slash Commands
+
+Use these plugin commands when working on this project:
+
+| Command | When to Use |
+|---------|-------------|
+| `/commit` | When asked to commit changes |
+| `/commit-push-pr` | When asked to commit, push, and create a PR in one step |
+| `/clean_gone` | After merging PRs to clean up stale local branches |
+| `/review-pr` | Before creating pull requests to catch issues early |
+| `/feature-dev` | For complex feature implementations requiring architecture planning |
+
 ## Nix Code Style
 
 - Use `lib.mkIf` for conditional options, not inline `if`
