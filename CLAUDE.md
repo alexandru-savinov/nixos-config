@@ -40,6 +40,17 @@ modules/system/                  # Networking, packages
 secrets/                         # Agenix .age files
 ```
 
+### Where to Put Things
+
+| What | Where |
+|------|-------|
+| New service module | `modules/services/<name>.nix` |
+| System-wide packages | `modules/system/packages.nix` |
+| Host-specific config | `hosts/<hostname>/configuration.nix` |
+| Shared across all hosts | `hosts/common.nix` |
+| New secret | `secrets/<name>.age` + `secrets/secrets.nix` |
+| Flake input | `flake.nix` inputs section |
+
 ## Services
 
 Custom NixOS modules wrap upstream services with Tailscale integration and agenix secrets:
@@ -73,6 +84,55 @@ Current secrets: `openrouter-api-key`, `tavily-api-key`, `n8n-encryption-key`, `
 ## CI/CD
 
 GitHub Actions on push/PR: `nix flake check`, build all hosts, format check. Main branch protected - use PRs.
+
+## Nix Code Style
+
+- Use `lib.mkIf` for conditional options, not inline `if`
+- Prefer `lib.mkDefault` for overridable defaults
+- Module options: use `lib.mkEnableOption` for boolean enables
+- Imports: group by type (modules, services, system)
+- Secrets: always use `age.secrets.<name>.path`, never hardcode paths
+
+## Adding New Services
+
+1. Create module in `modules/services/<name>.nix`
+2. Follow the Tailscale wrapper pattern:
+   - Bind to `127.0.0.1` only
+   - Create `<name>-tailscale-serve.service` for HTTPS proxy
+   - Use `age.secrets` for sensitive config
+3. Add to host configuration
+4. Add secret to `secrets/secrets.nix` if needed
+
+## Troubleshooting
+
+### Build Failures
+
+```bash
+# Clear evaluation cache
+rm -rf ~/.cache/nix/eval-cache*
+
+# Check specific host (fast, catches config errors without building)
+nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel
+nix eval .#nixosConfigurations.rpi5.config.system.build.toplevel
+```
+
+### Service Issues
+
+```bash
+# Check service status
+ssh sancta-choir "systemctl status <service>"
+ssh rpi5 "systemctl status <service>"
+
+# View logs
+ssh sancta-choir "journalctl -u <service> -f"
+```
+
+### Tailscale Issues
+
+```bash
+tailscale status
+tailscale serve status
+```
 
 ## Service Configuration Notes
 
