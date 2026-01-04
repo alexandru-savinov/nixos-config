@@ -1,0 +1,12 @@
+{
+  "enabledPlugins": {
+    "context7@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "ralph-wiggum@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "error-diagnostics@claude-code-workflows": true,
+    "cicd-automation@claude-code-workflows": true
+  }
+}
