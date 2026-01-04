@@ -89,6 +89,26 @@ GitHub Actions on push/PR: `nix flake check`, build all hosts, format check. Mai
 
 **IMPORTANT:** Always use git worktrees when making code changes. Never commit directly to main.
 
+### Pre-Switch Validation
+
+**Before creating or switching to a worktree**, validate the current work:
+
+```bash
+# 1. Format check
+nix fmt
+
+# 2. Flake validation + tests
+nix flake check
+
+# 3. Build current host (architecture-specific)
+nixos-rebuild build --flake .#sancta-choir  # x86_64 only
+nixos-rebuild build --flake .#rpi5          # aarch64 only
+```
+
+This ensures broken code isn't left behind when context-switching.
+
+### Worktree Commands
+
 ```bash
 # Create worktree for new feature/fix
 git worktree add ../nixos-config-<branch-name> -b <branch-name>
@@ -98,7 +118,7 @@ cd ../nixos-config-<branch-name>
 git worktree remove ../nixos-config-<branch-name>
 ```
 
-Branch naming:
+### Branch Naming
 - `feat/<name>` - New features
 - `fix/<name>` - Bug fixes
 - `docs/<name>` - Documentation changes
