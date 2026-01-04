@@ -22,6 +22,9 @@
     # Import the base rpi5 configuration
     ../rpi5/configuration.nix
 
+    # ARM compatibility fix for Open-WebUI (removes chromadb on aarch64-linux)
+    ../../modules/system/open-webui-arm-fix.nix
+
     # Additional services for full deployment
     ../../modules/services/open-webui.nix
     ../../modules/services/uptime-kuma.nix
@@ -44,8 +47,12 @@
 
   # Open-WebUI with OpenRouter backend
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
+  #
+  # DISABLED: Open-WebUI crashes on ARM due to chromadb/onnxruntime compatibility issues.
+  # See: https://github.com/NixOS/nixpkgs/issues/312068
+  # TODO: Re-enable when upstream fixes ARM compatibility
   services.open-webui-tailscale = {
-    enable = true;
+    enable = false;  # Disabled on ARM - crashes with SIGBUS
     enableSignup = false;
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
     openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
@@ -54,10 +61,22 @@
     # Only show ZDR (Zero Data Retention) models from OpenRouter
     zdrModelsOnly.enable = true;
 
-    # Tavily Search API for RAG web search
+    # Tavily Search API for web search (works without chromadb; document embedding requires it)
     tavilySearch = {
       enable = true;
       apiKeyFile = config.age.secrets.tavily-api-key.path;
+    };
+
+    # Extra environment variables for ARM compatibility
+    extraEnvironment = {
+      # Disable document RAG features on ARM (requires chromadb)
+      ENABLE_RAG_LOCAL_WEB_FETCH = "False";
+      ENABLE_RAG_WEB_LOADER_SSL_VERIFICATION = "False";
+
+      # Note: If you need document RAG, set up external vector DB:
+      # VECTOR_DB = "qdrant";  # or "milvus", "opensearch", "pgvector"
+      # QDRANT_URI = "http://localhost:6333";
+      # See: https://docs.openwebui.com/getting-started/env-configuration/
     };
 
     # OIDC authentication - disabled (same issue as sancta-choir with tsidp on same host)
