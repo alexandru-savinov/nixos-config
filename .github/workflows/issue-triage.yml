@@ -27,37 +27,31 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
-            Triage GitHub issue #${{ github.event.issue.number }}.
+            You MUST triage GitHub issue #${{ github.event.issue.number }} by applying labels and adding a comment.
 
-            ## Analysis Steps
+            ## Step 1: Read the issue
+            Run: gh issue view ${{ github.event.issue.number }}
 
-            1. **Legitimacy Check**: Is this a real, actionable issue?
-               - Valid: Clear bug report, feature request, or question about NixOS config
-               - Invalid: Spam, off-topic, test issue, or completely unclear
+            ## Step 2: Determine labels
+            Pick ONE category label:
+            - `bug` - Something broken
+            - `enhancement` - New feature request
+            - `question` - Help needed
+            - `documentation` - Docs improvement
+            - `invalid` - Spam or off-topic
 
-            2. **Categorization**: What type of issue is this?
-               - `bug`: Something broken or not working as expected
-               - `enhancement`: New feature or improvement request
-               - `question`: Help or clarification needed
-               - `documentation`: Docs improvements needed
-               - `invalid`: Not a real issue (spam, test, off-topic)
+            Pick ONE priority label (skip for invalid):
+            - `priority:critical` - Security/data loss
+            - `priority:high` - Major breakage
+            - `priority:medium` - Important, has workaround
+            - `priority:low` - Minor/nice-to-have
 
-            3. **Priority Assessment** (skip for invalid issues):
-               - `priority:critical`: Security vulnerability, data loss risk
-               - `priority:high`: Major functionality broken, blocks deployment
-               - `priority:medium`: Important but workaround exists
-               - `priority:low`: Minor issue, nice-to-have improvement
+            ## Step 3: Apply labels (REQUIRED)
+            Run: gh issue edit ${{ github.event.issue.number }} --add-label "category,priority:level"
 
-            ## Actions
+            ## Step 4: Add triage comment (REQUIRED)
+            Run: gh issue comment ${{ github.event.issue.number }} --body "**Triage:** Brief assessment here"
 
-            Based on your analysis:
-            1. Add labels: `gh issue edit ${{ github.event.issue.number }} --add-label "label1,label2"`
-            2. Add a brief triage comment with your assessment
-
-            ## Guidelines
-
-            - Be concise - one short paragraph for the comment
-            - For spam/invalid: just label `invalid` and add a brief note
-            - For valid issues: add category + priority labels
-            - This is a NixOS configuration repo - issues should relate to NixOS, flakes, services, or deployment
+            You MUST complete steps 3 and 4. Do not stop after just reading the issue.
