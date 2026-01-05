@@ -27,7 +27,7 @@
   nixpkgs.overlays = [
     # Fix 1: Override Python packages that fail on ARM due to jemalloc/16KB pages
     # polars has jemalloc statically linked (compiled for 4KB pages)
-    # deepdiff depends on polars, so its import check fails
+    # deepdiff: Disable checks as precaution (may be transitively affected via unstructured)
     (final: prev:
       let
         isArm = prev.stdenv.isAarch64 && prev.stdenv.isLinux;

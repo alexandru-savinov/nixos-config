@@ -48,9 +48,9 @@
   # Open-WebUI with OpenRouter backend
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
   #
-  # ARM Fix (Issue #64): Using reference BLAS instead of OpenBLAS
-  # - OpenBLAS has memory alignment issues causing SIGBUS on aarch64
-  # - Reference BLAS is slower but compatible
+  # ARM Fix (Issue #64): jemalloc page size + onnxruntime crashes
+  # - Polars has jemalloc compiled for 4KB pages; RPi5 kernel 6.12+ uses 16KB
+  # - chromadb/onnxruntime crashes on aarch64-linux during import
   # - See: modules/system/open-webui-arm-fix.nix
   services.open-webui-tailscale = {
     enable = true;
@@ -71,9 +71,9 @@
     # Extra environment variables for ARM compatibility
     extraEnvironment = {
       # ============================================================
-      # ARM FIX (Issue #64): Force single-threaded numeric libraries
-      # SIGBUS crash occurs during ML model init due to alignment issues
-      # in multi-threaded BLAS/OpenMP operations on aarch64
+      # ARM precautions: Limit threading for resource-constrained RPi5
+      # Note: These do NOT fix the SIGBUS issue (see open-webui-arm-fix.nix)
+      # They reduce resource contention on the quad-core ARM device
       # ============================================================
       OMP_NUM_THREADS = "1";           # OpenMP (used by PyTorch, NumPy)
       OPENBLAS_NUM_THREADS = "1";      # OpenBLAS threading
@@ -174,8 +174,8 @@
     IOSchedulingClass = "best-effort";
     IOSchedulingPriority = 4;
 
-    # Allow fchown syscall - SQLite needs it for database file ownership
-    # The default @system-service filter with ~@privileged blocks fchown
+    # Allow fchown syscalls - SQLite WAL mode needs these for database operations
+    # Open-WebUI's systemd hardening blocks @chown group; re-allow fchown here
     SystemCallFilter = [ "fchown" "fchown32" ];
   };
 }
