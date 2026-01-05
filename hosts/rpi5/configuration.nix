@@ -142,6 +142,14 @@
     initialPassword = "nixos";
   };
 
+  # Claude YOLO mode user (runs claude --dangerously-skip-permissions)
+  users.users.claude-yolo = {
+    isNormalUser = true;
+    extraGroups = [ "wheel" ];
+    initialPassword = "yolo";
+    description = "Claude Code YOLO mode user";
+  };
+
   # Allow wheel group to sudo without password initially
   security.sudo.wheelNeedsPassword = false;
 

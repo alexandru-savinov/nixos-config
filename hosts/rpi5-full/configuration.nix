@@ -48,15 +48,12 @@
   # Open-WebUI with OpenRouter backend
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
   #
-  # DISABLED: SIGBUS crash on ARM64 during Python module import (Issue #64)
-  # Investigation findings:
-  # - Crash occurs in libblas.so.3 / NumPy _umath_linalg during import
-  # - OMP_NUM_THREADS=1 and similar env vars don't help (crash is in init code)
-  # - Root cause: OpenBLAS memory alignment issues on aarch64
-  # - Requires either upstream BLAS fix or complete package rebuild with reference BLAS
-  # See: https://github.com/NixOS/nixpkgs/issues/312068
+  # ARM Fix (Issue #64): Using reference BLAS instead of OpenBLAS
+  # - OpenBLAS has memory alignment issues causing SIGBUS on aarch64
+  # - Reference BLAS is slower but compatible
+  # - See: modules/system/open-webui-arm-fix.nix
   services.open-webui-tailscale = {
-    enable = false;  # Disabled - SIGBUS crash during NumPy/BLAS init on ARM64
+    enable = true;
     enableSignup = false;
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
     openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
@@ -176,5 +173,9 @@
     Nice = 5;
     IOSchedulingClass = "best-effort";
     IOSchedulingPriority = 4;
+
+    # Allow fchown syscall - SQLite needs it for database file ownership
+    # The default @system-service filter with ~@privileged blocks fchown
+    SystemCallFilter = [ "fchown" "fchown32" ];
   };
 }

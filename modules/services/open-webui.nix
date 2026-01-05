@@ -474,7 +474,7 @@ in
                 sleep 5
 
                 FUNCTIONS_DIR="${cfg.stateDir}/functions"
-                DB_FILE="${cfg.stateDir}/webui.db"
+                DB_FILE="${cfg.stateDir}/data/webui.db"
                 FUNCTION_ID="openrouter_zdr_only_models"
                 FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
 
