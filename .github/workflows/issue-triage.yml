@@ -61,5 +61,3 @@ jobs:
             - For spam/invalid: just label `invalid` and add a brief note
             - For valid issues: add category + priority labels
             - This is a NixOS configuration repo - issues should relate to NixOS, flakes, services, or deployment
-          allowed_tools: |
-            Bash(gh issue:*)
