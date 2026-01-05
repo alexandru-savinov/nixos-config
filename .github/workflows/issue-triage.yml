@@ -1,0 +1,65 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  triage:
+    # Skip issues from bots
+    if: ${{ !github.event.issue.user.bot }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    # Prevent concurrent triage on the same issue
+    concurrency:
+      group: issue-triage-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Triage issue with Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Triage GitHub issue #${{ github.event.issue.number }}.
+
+            ## Analysis Steps
+
+            1. **Legitimacy Check**: Is this a real, actionable issue?
+               - Valid: Clear bug report, feature request, or question about NixOS config
+               - Invalid: Spam, off-topic, test issue, or completely unclear
+
+            2. **Categorization**: What type of issue is this?
+               - `bug`: Something broken or not working as expected
+               - `enhancement`: New feature or improvement request
+               - `question`: Help or clarification needed
+               - `documentation`: Docs improvements needed
+               - `invalid`: Not a real issue (spam, test, off-topic)
+
+            3. **Priority Assessment** (skip for invalid issues):
+               - `priority:critical`: Security vulnerability, data loss risk
+               - `priority:high`: Major functionality broken, blocks deployment
+               - `priority:medium`: Important but workaround exists
+               - `priority:low`: Minor issue, nice-to-have improvement
+
+            ## Actions
+
+            Based on your analysis:
+            1. Add labels: `gh issue edit ${{ github.event.issue.number }} --add-label "label1,label2"`
+            2. Add a brief triage comment with your assessment
+
+            ## Guidelines
+
+            - Be concise - one short paragraph for the comment
+            - For spam/invalid: just label `invalid` and add a brief note
+            - For valid issues: add category + priority labels
+            - This is a NixOS configuration repo - issues should relate to NixOS, flakes, services, or deployment
+          allowed_tools: |
+            Bash(gh issue:*)
