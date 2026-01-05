@@ -48,15 +48,12 @@
   # Open-WebUI with OpenRouter backend
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
   #
-  # DISABLED: SIGBUS crash on ARM64 during Python module import (Issue #64)
-  # Investigation findings:
-  # - Crash occurs in libblas.so.3 / NumPy _umath_linalg during import
-  # - OMP_NUM_THREADS=1 and similar env vars don't help (crash is in init code)
-  # - Root cause: OpenBLAS memory alignment issues on aarch64
-  # - Requires either upstream BLAS fix or complete package rebuild with reference BLAS
-  # See: https://github.com/NixOS/nixpkgs/issues/312068
+  # ARM Fix (Issue #64): jemalloc page size + onnxruntime crashes
+  # - Polars has jemalloc compiled for 4KB pages; RPi5 kernel 6.12+ uses 16KB
+  # - chromadb/onnxruntime crashes on aarch64-linux during import
+  # - See: modules/system/open-webui-arm-fix.nix
   services.open-webui-tailscale = {
-    enable = false;  # Disabled - SIGBUS crash during NumPy/BLAS init on ARM64
+    enable = true;
     enableSignup = false;
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
     openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
@@ -74,14 +71,14 @@
     # Extra environment variables for ARM compatibility
     extraEnvironment = {
       # ============================================================
-      # ARM FIX (Issue #64): Force single-threaded numeric libraries
-      # SIGBUS crash occurs during ML model init due to alignment issues
-      # in multi-threaded BLAS/OpenMP operations on aarch64
+      # ARM precautions: Limit threading for resource-constrained RPi5
+      # Note: These do NOT fix the SIGBUS issue (see open-webui-arm-fix.nix)
+      # They reduce resource contention on the quad-core ARM device
       # ============================================================
-      OMP_NUM_THREADS = "1";           # OpenMP (used by PyTorch, NumPy)
-      OPENBLAS_NUM_THREADS = "1";      # OpenBLAS threading
-      MKL_NUM_THREADS = "1";           # Intel MKL (if present)
-      NUMEXPR_NUM_THREADS = "1";       # NumExpr threading
+      OMP_NUM_THREADS = "1"; # OpenMP (used by PyTorch, NumPy)
+      OPENBLAS_NUM_THREADS = "1"; # OpenBLAS threading
+      MKL_NUM_THREADS = "1"; # Intel MKL (if present)
+      NUMEXPR_NUM_THREADS = "1"; # NumExpr threading
       TOKENIZERS_PARALLELISM = "false"; # HuggingFace tokenizers
 
       # Disable CUDA detection (not available on ARM, but prevents probing)
@@ -176,5 +173,9 @@
     Nice = 5;
     IOSchedulingClass = "best-effort";
     IOSchedulingPriority = 4;
+
+    # Allow fchown syscalls - SQLite WAL mode needs these for database operations
+    # Open-WebUI's systemd hardening blocks @chown group; re-allow fchown here
+    SystemCallFilter = [ "fchown" "fchown32" ];
   };
 }
