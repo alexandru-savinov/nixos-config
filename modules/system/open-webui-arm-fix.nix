@@ -32,19 +32,20 @@
       let
         isArm = prev.stdenv.isAarch64 && prev.stdenv.isLinux;
         python3Packages = prev.python313Packages;
-      in lib.optionalAttrs isArm {
+      in
+      lib.optionalAttrs isArm {
         python313Packages = python3Packages.overrideScope (pyFinal: pyPrev: {
           # Skip all checks for packages that use polars (jemalloc crash)
           # polars has jemalloc statically linked, compiled for 4KB pages
           deepdiff = pyPrev.deepdiff.overridePythonAttrs (oldAttrs: {
-            pythonImportsCheck = [];
+            pythonImportsCheck = [ ];
             doCheck = false;
             doInstallCheck = false;
           });
 
           # Skip all checks for chromadb (onnxruntime crash)
           chromadb = pyPrev.chromadb.overridePythonAttrs (oldAttrs: {
-            pythonImportsCheck = [];
+            pythonImportsCheck = [ ];
             doCheck = false;
             doInstallCheck = false;
           });
@@ -56,23 +57,26 @@
     (final: prev:
       let isArm = prev.stdenv.isAarch64 && prev.stdenv.isLinux;
       in {
-        open-webui = if isArm
-          then prev.open-webui.overridePythonAttrs (oldAttrs: {
-            # Remove chromadb from propagatedBuildInputs on ARM (onnxruntime crash)
-            propagatedBuildInputs = builtins.filter
-              (dep: (dep.pname or "") != "chromadb")
-              (oldAttrs.propagatedBuildInputs or []);
+        open-webui =
+          if isArm
+          then
+            prev.open-webui.overridePythonAttrs
+              (oldAttrs: {
+                # Remove chromadb from propagatedBuildInputs on ARM (onnxruntime crash)
+                propagatedBuildInputs = builtins.filter
+                  (dep: (dep.pname or "") != "chromadb")
+                  (oldAttrs.propagatedBuildInputs or [ ]);
 
-            # Skip import check for chromadb
-            pythonImportsCheck = builtins.filter
-              (check: check != "chromadb")
-              (oldAttrs.pythonImportsCheck or []);
+                # Skip import check for chromadb
+                pythonImportsCheck = builtins.filter
+                  (check: check != "chromadb")
+                  (oldAttrs.pythonImportsCheck or [ ]);
 
-            # Add metadata about the ARM fix
-            meta = (oldAttrs.meta or {}) // {
-              description = (oldAttrs.meta.description or "") + " (ARM: no chromadb)";
-            };
-          })
+                # Add metadata about the ARM fix
+                meta = (oldAttrs.meta or { }) // {
+                  description = (oldAttrs.meta.description or "") + " (ARM: no chromadb)";
+                };
+              })
           else prev.open-webui;
       }
     )

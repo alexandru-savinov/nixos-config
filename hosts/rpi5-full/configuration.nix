@@ -75,10 +75,10 @@
       # Note: These do NOT fix the SIGBUS issue (see open-webui-arm-fix.nix)
       # They reduce resource contention on the quad-core ARM device
       # ============================================================
-      OMP_NUM_THREADS = "1";           # OpenMP (used by PyTorch, NumPy)
-      OPENBLAS_NUM_THREADS = "1";      # OpenBLAS threading
-      MKL_NUM_THREADS = "1";           # Intel MKL (if present)
-      NUMEXPR_NUM_THREADS = "1";       # NumExpr threading
+      OMP_NUM_THREADS = "1"; # OpenMP (used by PyTorch, NumPy)
+      OPENBLAS_NUM_THREADS = "1"; # OpenBLAS threading
+      MKL_NUM_THREADS = "1"; # Intel MKL (if present)
+      NUMEXPR_NUM_THREADS = "1"; # NumExpr threading
       TOKENIZERS_PARALLELISM = "false"; # HuggingFace tokenizers
 
       # Disable CUDA detection (not available on ARM, but prevents probing)
