@@ -10,6 +10,7 @@ Tests are marked with @pytest.mark.search and can be skipped with:
 """
 
 import pytest
+import requests
 
 from .models import SearchResponse, SearchResult
 from .owui_client import OpenWebUIClient
@@ -35,8 +36,8 @@ class TestWebSearch:
             assert len(response.results) > 0, "No search results returned"
             assert len(response.results) <= 3, "More results than requested"
 
-        except Exception as e:
-            if "404" in str(e) or "not found" in str(e).lower():
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code in (404, 405):
                 pytest.skip(
                     "Web search endpoint not available. "
                     "Ensure tavilySearch.enable = true in configuration."
@@ -62,8 +63,8 @@ class TestWebSearch:
                 # URL should be valid format
                 assert result.url.startswith("http"), f"Invalid URL: {result.url}"
 
-        except Exception as e:
-            if "404" in str(e):
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code in (404, 405):
                 pytest.skip("Web search endpoint not available")
             raise
 
@@ -82,8 +83,8 @@ class TestWebSearch:
                 f"Got {len(response.results)} results, expected max 2"
             )
 
-        except Exception as e:
-            if "404" in str(e):
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code in (404, 405):
                 pytest.skip("Web search endpoint not available")
             raise
 
@@ -107,8 +108,8 @@ class TestWebSearch:
                 "Search results don't seem relevant to query"
             )
 
-        except Exception as e:
-            if "404" in str(e):
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code in (404, 405):
                 pytest.skip("Web search endpoint not available")
             raise
 
@@ -120,21 +121,29 @@ class TestSearchErrorHandling:
     def test_empty_query_handled(self, client: OpenWebUIClient):
         """
         Empty search query is handled gracefully.
+
+        Expects either: empty results, or HTTP 400/422 validation error.
         """
         try:
             # This might fail with validation error or return empty results
             response = client.web_search(query="", max_results=3)
+            # If it succeeds, that's fine - API handles it gracefully
 
-            # If it succeeds, results should be empty or minimal
-            # (depends on Tavily behavior)
-
-        except Exception as e:
-            # Expected to fail - empty query is invalid
-            pass  # This is acceptable behavior
+        except requests.exceptions.HTTPError as e:
+            # 400/422 = validation error (expected for empty query)
+            # 404/405 = endpoint not available (skip test)
+            if e.response.status_code in (404, 405):
+                pytest.skip("Web search endpoint not available")
+            elif e.response.status_code in (400, 422):
+                pass  # Expected validation error
+            else:
+                raise  # Unexpected HTTP error
 
     def test_very_long_query_handled(self, client: OpenWebUIClient):
         """
         Very long search query is handled gracefully.
+
+        Expects either: successful response, or HTTP 400/413/422 error.
         """
         try:
             long_query = "test " * 100  # 400+ characters
@@ -142,7 +151,12 @@ class TestSearchErrorHandling:
             # Should either work or fail gracefully
             response = client.web_search(query=long_query, max_results=3)
 
-        except Exception as e:
-            # Long queries might be rejected - that's acceptable
-            if "400" not in str(e) and "invalid" not in str(e).lower():
-                raise  # Re-raise unexpected errors
+        except requests.exceptions.HTTPError as e:
+            # 400/413/422 = validation/payload error (acceptable)
+            # 404/405 = endpoint not available (skip test)
+            if e.response.status_code in (404, 405):
+                pytest.skip("Web search endpoint not available")
+            elif e.response.status_code in (400, 413, 422):
+                pass  # Expected - query too long
+            else:
+                raise  # Unexpected HTTP error
