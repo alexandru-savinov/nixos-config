@@ -138,7 +138,7 @@
 
     # E2E Testing - declarative test user provisioning
     # Run tests with:
-    #   export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/agenix/e2e-test-api-key)
+    #   export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/open-webui/e2e-test-api-key)
     #   nix-shell --run "pytest tests/e2e/ -v"
     testing = {
       enable = true;

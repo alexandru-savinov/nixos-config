@@ -246,7 +246,7 @@ class OpenWebUIClient:
         """
         Create streaming chat completion.
 
-        Follows SSE pattern from openrouter_zdr_pipe.py (lines 200-211).
+        Follows SSE pattern from openrouter_zdr_pipe.py generate() function.
 
         Args:
             model: Model ID
@@ -286,7 +286,7 @@ class OpenWebUIClient:
 
             decoded = line.decode("utf-8")
 
-            # Filter SSE comments (like openrouter_zdr_pipe.py line 207-208)
+            # Filter SSE comments (heartbeat/status lines starting with ':')
             if decoded.startswith(":"):
                 continue
 

@@ -3,11 +3,11 @@ Pytest fixtures for Open-WebUI E2E tests.
 
 Configuration via environment variables:
 - OPENWEBUI_BASE_URL: Target Open-WebUI instance (default: rpi5)
-- OPENWEBUI_TEST_API_KEY: Test user API key (required, from agenix)
+- OPENWEBUI_TEST_API_KEY: Test user API key (required, provisioned by NixOS module)
 - OPENWEBUI_CHAT_TIMEOUT: Chat completion timeout in seconds (default: 120)
 
 Run tests:
-    export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/agenix/e2e-test-api-key)
+    export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/open-webui/e2e-test-api-key)
     pytest tests/e2e/ -v
 """
 
@@ -37,14 +37,14 @@ def get_api_key() -> str:
     """
     Get test API key from environment.
 
-    This should be set from agenix secret:
-        export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/agenix/e2e-test-api-key)
+    This should be set from the file provisioned by the NixOS module:
+        export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/open-webui/e2e-test-api-key)
     """
     key = os.getenv("OPENWEBUI_TEST_API_KEY")
     if not key:
         pytest.fail(
             "OPENWEBUI_TEST_API_KEY not set.\n"
-            "Run: export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/agenix/e2e-test-api-key)\n"
+            "Run: export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/open-webui/e2e-test-api-key)\n"
             "Or set it in your environment before running pytest."
         )
     return key
