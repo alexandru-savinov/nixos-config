@@ -276,6 +276,38 @@ in
         '';
       };
     };
+
+    # E2E Testing Support
+    testing = {
+      enable = mkEnableOption "Declarative test user provisioning for E2E tests";
+
+      apiKeyFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        example = "/run/agenix/e2e-test-api-key";
+        description = ''
+          Path to agenix secret file that enables test user provisioning.
+          When set (along with testing.enable), a test user with JWT API key
+          is provisioned automatically. The generated API key is written to
+          /run/open-webui/e2e-test-api-key for E2E tests to read.
+
+          Note: The file content is not used directly - the API key is
+          JWT-generated using secretKeyFile at runtime.
+        '';
+      };
+
+      userEmail = mkOption {
+        type = types.str;
+        default = "e2e-test@local.test";
+        description = "Email address for the test user.";
+      };
+
+      userName = mkOption {
+        type = types.str;
+        default = "E2E Test User";
+        description = "Display name for the test user.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -286,6 +318,14 @@ in
       Generate a secret: openssl rand -hex 32
       Store it with agenix or sops-nix.
     '';
+
+    # Assertions for testing configuration
+    assertions = [
+      {
+        assertion = cfg.testing.enable -> cfg.secretKeyFile != null;
+        message = "services.open-webui-tailscale.secretKeyFile must be set when testing.enable is true (required for JWT API key generation)";
+      }
+    ];
 
     # Open-WebUI service configuration
     services.open-webui = {
@@ -311,6 +351,10 @@ in
           # WebUI URL for OAuth callbacks
           WEBUI_URL = cfg.webuiUrl;
         }
+        # Enable API keys for E2E testing
+        (mkIf cfg.testing.enable {
+          ENABLE_API_KEYS = "true";
+        })
         # When ZDR-only mode is enabled, use a dummy URL so base connection
         # returns no models. The pipe function provides ZDR models only.
         {
@@ -364,71 +408,9 @@ in
       ];
     };
 
-    # Load secrets from files at runtime
+    # Load secrets from files at runtime using a separate script
+    # This runs via ExecStartPre to avoid conflicts with upstream preStart
     systemd.services.open-webui = {
-      preStart =
-        mkIf
-          (
-            cfg.secretKeyFile != null
-            || cfg.openai.apiKeyFile != null
-            || cfg.oidc.clientSecretFile != null
-            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
-          )
-          ''
-            set -euo pipefail
-
-            SECRETS_FILE="/run/open-webui/secrets.env"
-            : > "$SECRETS_FILE"
-
-            # Helper function to safely read a secret file
-            read_secret() {
-              local file="$1"
-              local var_name="$2"
-              if [[ ! -f "$file" ]]; then
-                echo "ERROR: Secret file not found: $file" >&2
-                exit 1
-              fi
-              local value
-              value=$(cat "$file")
-              if [[ -z "$value" ]]; then
-                echo "ERROR: Secret file is empty: $file" >&2
-                exit 1
-              fi
-              echo "$var_name=$value" >> "$SECRETS_FILE"
-            }
-
-            ${optionalString (cfg.secretKeyFile != null) ''
-              read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
-            ''}
-            ${optionalString (cfg.openai.apiKeyFile != null) ''
-              read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
-            ''}
-            ${optionalString (cfg.oidc.clientSecretFile != null) ''
-              read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
-            ''}
-            ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
-              read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
-              read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
-              read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
-              read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
-              read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
-            ''}
-
-            chmod 600 "$SECRETS_FILE"
-          '';
-
       serviceConfig = mkMerge [
         {
           DynamicUser = lib.mkForce false;
@@ -452,6 +434,59 @@ in
           {
             RuntimeDirectory = "open-webui";
             EnvironmentFile = "-/run/open-webui/secrets.env";
+            # Run secrets setup script before any other ExecStartPre
+            ExecStartPre = lib.mkBefore [
+              (pkgs.writeShellScript "open-webui-secrets" ''
+                set -euo pipefail
+
+                SECRETS_FILE="/run/open-webui/secrets.env"
+                : > "$SECRETS_FILE"
+
+                # Helper function to safely read a secret file
+                read_secret() {
+                  local file="$1"
+                  local var_name="$2"
+                  if [[ ! -f "$file" ]]; then
+                    echo "ERROR: Secret file not found: $file" >&2
+                    exit 1
+                  fi
+                  local value
+                  value=$(cat "$file")
+                  if [[ -z "$value" ]]; then
+                    echo "ERROR: Secret file is empty: $file" >&2
+                    exit 1
+                  fi
+                  echo "$var_name=$value" >> "$SECRETS_FILE"
+                }
+
+                ${optionalString (cfg.secretKeyFile != null) ''
+                  read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
+                ''}
+                ${optionalString (cfg.openai.apiKeyFile != null) ''
+                  read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
+                ''}
+                ${optionalString (cfg.oidc.clientSecretFile != null) ''
+                  read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
+                ''}
+                ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
+                  read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
+                ''}
+
+                chmod 600 "$SECRETS_FILE"
+              '')
+            ];
           }
         )
       ];
@@ -470,148 +505,306 @@ in
       };
 
       script = ''
-                # Wait for Open WebUI to be ready
-                sleep 5
+        set -euo pipefail
 
-                FUNCTIONS_DIR="${cfg.stateDir}/functions"
-                DB_FILE="${cfg.stateDir}/data/webui.db"
-                FUNCTION_ID="openrouter_zdr_only_models"
-                FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
+        FUNCTIONS_DIR="${cfg.stateDir}/functions"
+        DB_FILE="${cfg.stateDir}/data/webui.db"
+        FUNCTION_ID="openrouter_zdr_only_models"
+        FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
 
-                # Read API key from agenix secret
-                API_KEY=$(cat ${cfg.openai.apiKeyFile})
+        # Read API key from agenix secret
+        API_KEY=$(cat ${cfg.openai.apiKeyFile})
 
-                # Create valves JSON with API key
-                VALVES_JSON=$(${pkgs.jq}/bin/jq -n \
-                  --arg api_key "$API_KEY" \
-                  '{
-                    "NAME_PREFIX": "ZDR/",
-                    "OPENROUTER_API_BASE_URL": "https://openrouter.ai/api/v1",
-                    "OPENROUTER_API_KEY": $api_key,
-                    "ZDR_CACHE_TTL": 3600,
-                    "ENABLE_ZDR_ENFORCEMENT": true
-                  }')
+        # Create valves JSON with API key
+        VALVES_JSON=$(${pkgs.jq}/bin/jq -n \
+          --arg api_key "$API_KEY" \
+          '{
+            "NAME_PREFIX": "ZDR/",
+            "OPENROUTER_API_BASE_URL": "https://openrouter.ai/api/v1",
+            "OPENROUTER_API_KEY": $api_key,
+            "ZDR_CACHE_TTL": 3600,
+            "ENABLE_ZDR_ENFORCEMENT": true
+          }')
 
-                # Create functions directory if it doesn't exist
-                mkdir -p "$FUNCTIONS_DIR"
+        # Create functions directory if it doesn't exist
+        mkdir -p "$FUNCTIONS_DIR"
 
-                # Copy the function file
-                cp "$FUNCTION_FILE" "$FUNCTIONS_DIR/$FUNCTION_ID.py"
-                chmod 600 "$FUNCTIONS_DIR/$FUNCTION_ID.py"
+        # Copy the function file
+        cp "$FUNCTION_FILE" "$FUNCTIONS_DIR/$FUNCTION_ID.py"
+        chmod 600 "$FUNCTIONS_DIR/$FUNCTION_ID.py"
 
-                # Read function content for database
-                FUNCTION_CONTENT=$(cat "$FUNCTION_FILE")
+        # Read function content for database
+        FUNCTION_CONTENT=$(cat "$FUNCTION_FILE")
 
-                # Wait for database to exist
-                for i in $(seq 1 30); do
-                  if [ -f "$DB_FILE" ]; then
-                    break
-                  fi
-                  echo "Waiting for database... ($i/30)"
-                  sleep 1
-                done
+        # Wait for database to exist
+        for i in $(seq 1 30); do
+          if [ -f "$DB_FILE" ]; then
+            break
+          fi
+          echo "Waiting for database... ($i/30)"
+          sleep 1
+        done
 
-                if [ ! -f "$DB_FILE" ]; then
-                  echo "Database not found at $DB_FILE"
-                  exit 1
-                fi
+        if [ ! -f "$DB_FILE" ]; then
+          echo "Database not found at $DB_FILE"
+          exit 1
+        fi
 
-                # Check if function already exists
-                EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM function WHERE id='$FUNCTION_ID';")
+        # Check if function already exists
+        EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM function WHERE id='$FUNCTION_ID';")
 
-                if [ "$EXISTS" = "0" ]; then
-                  # Get admin user ID
-                  ADMIN_ID=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT id FROM user WHERE role='admin' LIMIT 1;")
+        if [ "$EXISTS" = "0" ]; then
+          # Get admin user ID
+          ADMIN_ID=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT id FROM user WHERE role='admin' LIMIT 1;")
 
-                  if [ -z "$ADMIN_ID" ]; then
-                    echo "No admin user found, using empty user_id"
-                    ADMIN_ID=""
-                  fi
+          if [ -z "$ADMIN_ID" ]; then
+            echo "No admin user found, using empty user_id"
+            ADMIN_ID=""
+          fi
 
-                  NOW=$(date +%s)
+          NOW=$(date +%s)
 
-                  # Write valves JSON to temp file for Python to read
-                  VALVES_FILE=$(mktemp)
-                  echo "$VALVES_JSON" > "$VALVES_FILE"
+          # Write valves JSON to temp file for Python to read
+          VALVES_FILE=$(mktemp)
+          trap 'rm -f "$VALVES_FILE"' EXIT
+          echo "$VALVES_JSON" > "$VALVES_FILE"
 
-                  # Insert the function with content and valves
-                  ${pkgs.python3}/bin/python3 << PYTHON
-        import sqlite3
-        import json
-        import os
+          # Export variables for Python (avoids shell injection via quoted HEREDOC)
+          export DB_FILE FUNCTION_FILE VALVES_FILE FUNCTION_ID ADMIN_ID NOW
 
-        db_file = "$DB_FILE"
-        function_file = "$FUNCTION_FILE"
-        valves_file = "$VALVES_FILE"
-        function_id = "$FUNCTION_ID"
-        admin_id = "$ADMIN_ID" or None
-        now = $NOW
+          # Insert the function with content and valves
+          ${pkgs.python3}/bin/python3 << 'PYTHON'
+import sqlite3
+import json
+import os
 
-        conn = sqlite3.connect(db_file)
-        cursor = conn.cursor()
+db_file = os.environ["DB_FILE"]
+function_file = os.environ["FUNCTION_FILE"]
+valves_file = os.environ["VALVES_FILE"]
+function_id = os.environ["FUNCTION_ID"]
+admin_id = os.environ.get("ADMIN_ID") or None
+now = int(os.environ["NOW"])
 
-        content = open(function_file).read()
-        valves = json.load(open(valves_file))
-        meta = {"description": "Only shows OpenRouter models with Zero Data Retention policy"}
+conn = sqlite3.connect(db_file)
+cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            function_id,
-            admin_id,
-            "OpenRouter ZDR-Only Models",
-            "pipe",
-            content,
-            json.dumps(meta),
-            now,
-            now,
-            json.dumps(valves),
-            1,
-            1
-        ))
+content = open(function_file).read()
+valves = json.load(open(valves_file))
+meta = {"description": "Only shows OpenRouter models with Zero Data Retention policy"}
 
-        conn.commit()
-        conn.close()
-        print("Function inserted into database")
-        PYTHON
-                  rm -f "$VALVES_FILE"
-                else
-                  # Write valves JSON to temp file for Python to read
-                  VALVES_FILE=$(mktemp)
-                  echo "$VALVES_JSON" > "$VALVES_FILE"
+cursor.execute("""
+    INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+""", (
+    function_id,
+    admin_id,
+    "OpenRouter ZDR-Only Models",
+    "pipe",
+    content,
+    json.dumps(meta),
+    now,
+    now,
+    json.dumps(valves),
+    1,
+    1
+))
 
-                  # Update valves to ensure API key is current
-                  ${pkgs.python3}/bin/python3 << PYTHON
-        import sqlite3
-        import json
-        import time
+conn.commit()
+conn.close()
+print("Function inserted into database")
+PYTHON
+        else
+          # Write valves JSON to temp file for Python to read
+          VALVES_FILE=$(mktemp)
+          trap 'rm -f "$VALVES_FILE"' EXIT
+          echo "$VALVES_JSON" > "$VALVES_FILE"
 
-        db_file = "$DB_FILE"
-        function_file = "$FUNCTION_FILE"
-        valves_file = "$VALVES_FILE"
-        function_id = "$FUNCTION_ID"
+          # Export variables for Python (avoids shell injection via quoted HEREDOC)
+          export DB_FILE FUNCTION_FILE VALVES_FILE FUNCTION_ID
 
-        conn = sqlite3.connect(db_file)
-        cursor = conn.cursor()
+          # Update valves to ensure API key is current
+          ${pkgs.python3}/bin/python3 << 'PYTHON'
+import sqlite3
+import json
+import time
+import os
 
-        valves = json.load(open(valves_file))
-        content = open(function_file).read()
+db_file = os.environ["DB_FILE"]
+function_file = os.environ["FUNCTION_FILE"]
+valves_file = os.environ["VALVES_FILE"]
+function_id = os.environ["FUNCTION_ID"]
 
-        cursor.execute("""
-            UPDATE function
-            SET valves = ?, content = ?, updated_at = ?
-            WHERE id = ?
-        """, (json.dumps(valves), content, int(time.time()), function_id))
+conn = sqlite3.connect(db_file)
+cursor = conn.cursor()
 
-        conn.commit()
-        conn.close()
-        print("Function valves and content updated")
-        PYTHON
-                  rm -f "$VALVES_FILE"
-                fi
+valves = json.load(open(valves_file))
+content = open(function_file).read()
 
-                echo "ZDR function provisioning complete"
+cursor.execute("""
+    UPDATE function
+    SET valves = ?, content = ?, updated_at = ?
+    WHERE id = ?
+""", (json.dumps(valves), content, int(time.time()), function_id))
+
+conn.commit()
+conn.close()
+print("Function valves and content updated")
+PYTHON
+        fi
+
+        echo "ZDR function provisioning complete"
+      '';
+    };
+
+    # E2E Test User Provisioning
+    # Creates admin user with JWT API key for E2E testing
+    systemd.services.open-webui-e2e-test-user = mkIf (cfg.testing.enable && cfg.testing.apiKeyFile != null) {
+      description = "Provision E2E Test User for Open-WebUI";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" ];
+      requires = [ "open-webui.service" ];
+
+      path = [
+        pkgs.sqlite
+        pkgs.util-linux
+        (pkgs.python3.withPackages (ps: [ ps.pyjwt ps.bcrypt ]))
+      ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        RuntimeDirectory = "open-webui";
+        RuntimeDirectoryMode = "0755";
+      };
+
+      script = ''
+        set -euo pipefail
+
+        # Export variables for Python to read via os.environ (avoids shell injection)
+        export DB_FILE="${cfg.stateDir}/data/webui.db"
+        export SECRET_KEY_FILE="${cfg.secretKeyFile}"
+        export USER_EMAIL="${cfg.testing.userEmail}"
+        export USER_NAME="${cfg.testing.userName}"
+
+        echo "Waiting for Open-WebUI database..."
+        for i in $(seq 1 60); do
+          if [ -f "$DB_FILE" ]; then
+            break
+          fi
+          echo "Waiting for database... ($i/60)"
+          sleep 1
+        done
+
+        if [ ! -f "$DB_FILE" ]; then
+          echo "ERROR: Database not found at $DB_FILE after 60 seconds"
+          exit 1
+        fi
+
+        # Read the WEBUI_SECRET_KEY for JWT signing
+        if [ ! -f "$SECRET_KEY_FILE" ]; then
+          echo "ERROR: Secret key file not found: $SECRET_KEY_FILE"
+          exit 1
+        fi
+        export SECRET_KEY=$(cat "$SECRET_KEY_FILE")
+
+        # Run Python script to provision user with proper JWT API key
+        python3 << 'PYEOF'
+import sqlite3
+import json
+import time
+import uuid
+import os
+import jwt
+import bcrypt
+
+# Read from environment variables (safer than shell interpolation)
+db_path = os.environ["DB_FILE"]
+secret_key = os.environ["SECRET_KEY"]
+user_email = os.environ["USER_EMAIL"]
+user_name = os.environ["USER_NAME"]
+
+conn = sqlite3.connect(db_path)
+cursor = conn.cursor()
+
+# Check if user exists
+cursor.execute("SELECT id FROM user WHERE email=?", (user_email,))
+row = cursor.fetchone()
+
+now = int(time.time())
+
+if row:
+    user_id = row[0]
+    print(f"E2E test user already exists (id={user_id}), updating...")
+else:
+    user_id = str(uuid.uuid4())
+    print(f"Creating new E2E test user: {user_email}")
+
+    # Insert user with admin role
+    cursor.execute("""
+        INSERT INTO user (id, name, email, role, profile_image_url, api_key, created_at, updated_at, last_active_at)
+        VALUES (?, ?, ?, 'admin', '/static/user.png', '''''', ?, ?, ?)
+    """, (user_id, user_name, user_email, now, now, now))
+
+# Generate JWT API key
+payload = {
+    "id": user_id,
+    "iat": now,
+    "jti": str(uuid.uuid4()),
+}
+token = jwt.encode(payload, secret_key, algorithm="HS256")
+api_key = f"sk-{token}"
+
+# Update user with API key and ensure admin role
+cursor.execute("""
+    UPDATE user SET api_key=?, role='admin', updated_at=? WHERE id=?
+""", (api_key, now, user_id))
+
+# Create or update auth entry (required for API key auth)
+cursor.execute("SELECT id FROM auth WHERE id=?", (user_id,))
+if not cursor.fetchone():
+    # Generate random password hash (not used, API key auth only)
+    random_pw = str(uuid.uuid4())
+    pw_hash = bcrypt.hashpw(random_pw.encode(), bcrypt.gensalt()).decode()
+    cursor.execute("""
+        INSERT INTO auth (id, email, password, active)
+        VALUES (?, ?, ?, 1)
+    """, (user_id, user_email, pw_hash))
+    print("Created auth entry for E2E test user")
+
+# Enable API keys in config if not already enabled
+cursor.execute("SELECT data FROM config LIMIT 1")
+config_row = cursor.fetchone()
+if config_row:
+    config = json.loads(config_row[0])
+    if "features" not in config:
+        config["features"] = {}
+    if not config["features"].get("enable_api_keys"):
+        config["features"]["enable_api_keys"] = True
+        cursor.execute("UPDATE config SET data=?", (json.dumps(config),))
+        print("Enabled API keys in config")
+
+conn.commit()
+conn.close()
+
+print(f"E2E test user provisioned successfully")
+# Note: API key is stored in database only, not logged for security
+PYEOF
+
+        # Write the generated API key to a file for E2E tests to read
+        # This file is created fresh each run with the current API key
+        API_KEY_OUTPUT="/run/open-webui/e2e-test-api-key"
+        python3 -c '
+import sqlite3
+import os
+conn = sqlite3.connect(os.environ["DB_FILE"])
+cursor = conn.cursor()
+cursor.execute("SELECT api_key FROM user WHERE email=?", (os.environ["USER_EMAIL"],))
+row = cursor.fetchone()
+conn.close()
+print(row[0] if row else "", end="")
+' > "$API_KEY_OUTPUT"
+        chmod 600 "$API_KEY_OUTPUT"
+        echo "API key written to $API_KEY_OUTPUT"
       '';
     };
 
