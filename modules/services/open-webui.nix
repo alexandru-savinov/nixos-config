@@ -569,18 +569,21 @@ in
           trap 'rm -f "$VALVES_FILE"' EXIT
           echo "$VALVES_JSON" > "$VALVES_FILE"
 
+          # Export variables for Python (avoids shell injection via quoted HEREDOC)
+          export DB_FILE FUNCTION_FILE VALVES_FILE FUNCTION_ID ADMIN_ID NOW
+
           # Insert the function with content and valves
-          ${pkgs.python3}/bin/python3 << PYTHON
+          ${pkgs.python3}/bin/python3 << 'PYTHON'
 import sqlite3
 import json
 import os
 
-db_file = "$DB_FILE"
-function_file = "$FUNCTION_FILE"
-valves_file = "$VALVES_FILE"
-function_id = "$FUNCTION_ID"
-admin_id = "$ADMIN_ID" or None
-now = $NOW
+db_file = os.environ["DB_FILE"]
+function_file = os.environ["FUNCTION_FILE"]
+valves_file = os.environ["VALVES_FILE"]
+function_id = os.environ["FUNCTION_ID"]
+admin_id = os.environ.get("ADMIN_ID") or None
+now = int(os.environ["NOW"])
 
 conn = sqlite3.connect(db_file)
 cursor = conn.cursor()
@@ -616,16 +619,20 @@ PYTHON
           trap 'rm -f "$VALVES_FILE"' EXIT
           echo "$VALVES_JSON" > "$VALVES_FILE"
 
+          # Export variables for Python (avoids shell injection via quoted HEREDOC)
+          export DB_FILE FUNCTION_FILE VALVES_FILE FUNCTION_ID
+
           # Update valves to ensure API key is current
-          ${pkgs.python3}/bin/python3 << PYTHON
+          ${pkgs.python3}/bin/python3 << 'PYTHON'
 import sqlite3
 import json
 import time
+import os
 
-db_file = "$DB_FILE"
-function_file = "$FUNCTION_FILE"
-valves_file = "$VALVES_FILE"
-function_id = "$FUNCTION_ID"
+db_file = os.environ["DB_FILE"]
+function_file = os.environ["FUNCTION_FILE"]
+valves_file = os.environ["VALVES_FILE"]
+function_id = os.environ["FUNCTION_ID"]
 
 conn = sqlite3.connect(db_file)
 cursor = conn.cursor()
@@ -666,6 +673,8 @@ PYTHON
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        RuntimeDirectory = "open-webui";
+        RuntimeDirectoryMode = "0755";
       };
 
       script = ''

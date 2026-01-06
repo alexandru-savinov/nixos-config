@@ -130,7 +130,7 @@ def zdr_models(client: OpenWebUIClient) -> List[ModelInfo]:
     if not models:
         pytest.skip(
             "No ZDR models available. "
-            "Ensure zdrModelsOnly.enable = true in Open-WebUI configuration."
+            "Ensure services.open-webui-tailscale.zdrModelsOnly.enable = true in NixOS configuration."
         )
 
     return models

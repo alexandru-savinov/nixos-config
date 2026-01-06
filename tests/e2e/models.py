@@ -6,7 +6,7 @@ following patterns from openrouter_zdr_pipe.py.
 """
 
 from enum import Enum
-from typing import List, Optional, Any
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 

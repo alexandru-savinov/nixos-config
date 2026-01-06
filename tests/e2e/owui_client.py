@@ -15,10 +15,10 @@ import logging
 from typing import Iterator, List, Optional
 
 import requests
-
-logger = logging.getLogger(__name__)
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     ChatResponse,
@@ -280,6 +280,8 @@ class OpenWebUIClient:
 
         response.raise_for_status()
 
+        malformed_count = 0  # Track malformed chunks to fail if too many
+
         for line in response.iter_lines():
             if not line:
                 continue
@@ -326,12 +328,17 @@ class OpenWebUIClient:
                     )
 
                 except json.JSONDecodeError as e:
-                    # Log malformed chunks for debugging - could indicate upstream issues
-                    logger.warning(
-                        "Skipping malformed SSE chunk: %s... Error: %s",
+                    malformed_count += 1
+                    logger.error(
+                        "Malformed SSE chunk (%d so far): %s... Error: %s",
+                        malformed_count,
                         data_str[:100] if len(data_str) > 100 else data_str,
                         e,
                     )
+                    if malformed_count > 5:
+                        raise ValueError(
+                            f"Too many malformed SSE chunks ({malformed_count}), aborting stream"
+                        )
                     continue
 
     # ========================================================================
@@ -386,10 +393,10 @@ class OpenWebUIClient:
         Check if Open-WebUI is reachable and responding.
 
         Returns:
-            True if healthy, False for expected network failures
+            True if healthy, False for expected failures (network, auth, server errors)
 
         Note:
-            Catches only expected network errors. SSL errors, auth failures,
+            Catches network errors and HTTP errors. SSL certificate errors
             and other unexpected exceptions will propagate for visibility.
         """
         try:
@@ -398,6 +405,10 @@ class OpenWebUIClient:
         except requests.exceptions.ConnectionError:
             return False
         except requests.exceptions.Timeout:
+            return False
+        except requests.exceptions.HTTPError as e:
+            # 401/403 = auth problem, 5xx = server problem - not healthy
+            logger.warning("Health check failed with HTTP %s", e.response.status_code)
             return False
 
     def close(self) -> None:
