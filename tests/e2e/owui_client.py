@@ -11,9 +11,12 @@ Target: https://rpi5.tail4249a9.ts.net (configurable)
 """
 
 import json
+import logging
 from typing import Iterator, List, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -322,8 +325,13 @@ class OpenWebUIClient:
                         choices=choices,
                     )
 
-                except json.JSONDecodeError:
-                    # Skip malformed chunks
+                except json.JSONDecodeError as e:
+                    # Log malformed chunks for debugging - could indicate upstream issues
+                    logger.warning(
+                        "Skipping malformed SSE chunk: %s... Error: %s",
+                        data_str[:100] if len(data_str) > 100 else data_str,
+                        e,
+                    )
                     continue
 
     # ========================================================================
@@ -378,12 +386,18 @@ class OpenWebUIClient:
         Check if Open-WebUI is reachable and responding.
 
         Returns:
-            True if healthy, False otherwise
+            True if healthy, False for expected network failures
+
+        Note:
+            Catches only expected network errors. SSL errors, auth failures,
+            and other unexpected exceptions will propagate for visibility.
         """
         try:
             response = self._request("GET", "/api/models", timeout=10)
             return response.status_code == 200
-        except Exception:
+        except requests.exceptions.ConnectionError:
+            return False
+        except requests.exceptions.Timeout:
             return False
 
     def close(self) -> None:

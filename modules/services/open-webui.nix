@@ -315,6 +315,14 @@ in
       Store it with agenix or sops-nix.
     '';
 
+    # Assertions for testing configuration
+    assertions = [
+      {
+        assertion = cfg.testing.enable -> cfg.secretKeyFile != null;
+        message = "services.open-webui-tailscale.secretKeyFile must be set when testing.enable is true (required for JWT API key generation)";
+      }
+    ];
+
     # Open-WebUI service configuration
     services.open-webui = {
       enable = true;
@@ -493,10 +501,9 @@ in
       };
 
       script = ''
-                # Wait for Open WebUI to be ready
-                sleep 5
+        set -euo pipefail
 
-                FUNCTIONS_DIR="${cfg.stateDir}/functions"
+        FUNCTIONS_DIR="${cfg.stateDir}/functions"
                 DB_FILE="${cfg.stateDir}/data/webui.db"
                 FUNCTION_ID="openrouter_zdr_only_models"
                 FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
@@ -660,11 +667,11 @@ in
       script = ''
         set -euo pipefail
 
-        DB_FILE="${cfg.stateDir}/data/webui.db"
-        SECRET_KEY_FILE="${cfg.secretKeyFile}"
-        API_KEY_SEED_FILE="${cfg.testing.apiKeyFile}"
-        USER_EMAIL="${cfg.testing.userEmail}"
-        USER_NAME="${cfg.testing.userName}"
+        # Export variables for Python to read via os.environ (avoids shell injection)
+        export DB_FILE="${cfg.stateDir}/data/webui.db"
+        export SECRET_KEY_FILE="${cfg.secretKeyFile}"
+        export USER_EMAIL="${cfg.testing.userEmail}"
+        export USER_NAME="${cfg.testing.userName}"
 
         echo "Waiting for Open-WebUI database..."
         for i in $(seq 1 60); do
@@ -685,21 +692,23 @@ in
           echo "ERROR: Secret key file not found: $SECRET_KEY_FILE"
           exit 1
         fi
-        SECRET_KEY=$(cat "$SECRET_KEY_FILE")
+        export SECRET_KEY=$(cat "$SECRET_KEY_FILE")
 
         # Run Python script to provision user with proper JWT API key
-        python3 << PYEOF
+        python3 << 'PYEOF'
 import sqlite3
 import json
 import time
 import uuid
+import os
 import jwt
 import bcrypt
 
-db_path = "$DB_FILE"
-secret_key = "$SECRET_KEY"
-user_email = "$USER_EMAIL"
-user_name = "$USER_NAME"
+# Read from environment variables (safer than shell interpolation)
+db_path = os.environ["DB_FILE"]
+secret_key = os.environ["SECRET_KEY"]
+user_email = os.environ["USER_EMAIL"]
+user_name = os.environ["USER_NAME"]
 
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
@@ -765,8 +774,24 @@ conn.commit()
 conn.close()
 
 print(f"E2E test user provisioned successfully")
-print(f"API Key: {api_key}")
+# Note: API key is stored in database only, not logged for security
 PYEOF
+
+        # Write the generated API key to a file for E2E tests to read
+        # This file is created fresh each run with the current API key
+        API_KEY_OUTPUT="/run/open-webui/e2e-test-api-key"
+        python3 -c '
+import sqlite3
+import os
+conn = sqlite3.connect(os.environ["DB_FILE"])
+cursor = conn.cursor()
+cursor.execute("SELECT api_key FROM user WHERE email=?", (os.environ["USER_EMAIL"],))
+row = cursor.fetchone()
+conn.close()
+print(row[0] if row else "", end="")
+' > "$API_KEY_OUTPUT"
+        chmod 600 "$API_KEY_OUTPUT"
+        echo "API key written to $API_KEY_OUTPUT"
       '';
     };
 
