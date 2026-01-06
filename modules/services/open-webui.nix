@@ -339,6 +339,10 @@ in
           # WebUI URL for OAuth callbacks
           WEBUI_URL = cfg.webuiUrl;
         }
+        # Enable API keys for E2E testing
+        (mkIf cfg.testing.enable {
+          ENABLE_API_KEYS = "true";
+        })
         # When ZDR-only mode is enabled, use a dummy URL so base connection
         # returns no models. The pipe function provides ZDR models only.
         {
@@ -392,71 +396,9 @@ in
       ];
     };
 
-    # Load secrets from files at runtime
+    # Load secrets from files at runtime using a separate script
+    # This runs via ExecStartPre to avoid conflicts with upstream preStart
     systemd.services.open-webui = {
-      preStart =
-        mkIf
-          (
-            cfg.secretKeyFile != null
-            || cfg.openai.apiKeyFile != null
-            || cfg.oidc.clientSecretFile != null
-            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
-          )
-          ''
-            set -euo pipefail
-
-            SECRETS_FILE="/run/open-webui/secrets.env"
-            : > "$SECRETS_FILE"
-
-            # Helper function to safely read a secret file
-            read_secret() {
-              local file="$1"
-              local var_name="$2"
-              if [[ ! -f "$file" ]]; then
-                echo "ERROR: Secret file not found: $file" >&2
-                exit 1
-              fi
-              local value
-              value=$(cat "$file")
-              if [[ -z "$value" ]]; then
-                echo "ERROR: Secret file is empty: $file" >&2
-                exit 1
-              fi
-              echo "$var_name=$value" >> "$SECRETS_FILE"
-            }
-
-            ${optionalString (cfg.secretKeyFile != null) ''
-              read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
-            ''}
-            ${optionalString (cfg.openai.apiKeyFile != null) ''
-              read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
-            ''}
-            ${optionalString (cfg.oidc.clientSecretFile != null) ''
-              read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
-            ''}
-            ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
-              read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
-              read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
-              read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
-              read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
-            ''}
-            ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
-              read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
-            ''}
-
-            chmod 600 "$SECRETS_FILE"
-          '';
-
       serviceConfig = mkMerge [
         {
           DynamicUser = lib.mkForce false;
@@ -480,6 +422,59 @@ in
           {
             RuntimeDirectory = "open-webui";
             EnvironmentFile = "-/run/open-webui/secrets.env";
+            # Run secrets setup script before any other ExecStartPre
+            ExecStartPre = lib.mkBefore [
+              (pkgs.writeShellScript "open-webui-secrets" ''
+                set -euo pipefail
+
+                SECRETS_FILE="/run/open-webui/secrets.env"
+                : > "$SECRETS_FILE"
+
+                # Helper function to safely read a secret file
+                read_secret() {
+                  local file="$1"
+                  local var_name="$2"
+                  if [[ ! -f "$file" ]]; then
+                    echo "ERROR: Secret file not found: $file" >&2
+                    exit 1
+                  fi
+                  local value
+                  value=$(cat "$file")
+                  if [[ -z "$value" ]]; then
+                    echo "ERROR: Secret file is empty: $file" >&2
+                    exit 1
+                  fi
+                  echo "$var_name=$value" >> "$SECRETS_FILE"
+                }
+
+                ${optionalString (cfg.secretKeyFile != null) ''
+                  read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
+                ''}
+                ${optionalString (cfg.openai.apiKeyFile != null) ''
+                  read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
+                ''}
+                ${optionalString (cfg.oidc.clientSecretFile != null) ''
+                  read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
+                ''}
+                ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
+                  read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
+                ''}
+                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
+                  read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
+                ''}
+
+                chmod 600 "$SECRETS_FILE"
+              '')
+            ];
           }
         )
       ];
@@ -644,11 +639,18 @@ in
     };
 
     # E2E Test User Provisioning
+    # Creates admin user with JWT API key for E2E testing
     systemd.services.open-webui-e2e-test-user = mkIf (cfg.testing.enable && cfg.testing.apiKeyFile != null) {
       description = "Provision E2E Test User for Open-WebUI";
       wantedBy = [ "multi-user.target" ];
       after = [ "open-webui.service" ];
       requires = [ "open-webui.service" ];
+
+      path = [
+        pkgs.sqlite
+        pkgs.util-linux
+        (pkgs.python3.withPackages (ps: [ ps.pyjwt ps.bcrypt ]))
+      ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -656,10 +658,15 @@ in
       };
 
       script = ''
-        # Wait for Open-WebUI database to exist
-        DB_FILE="${cfg.stateDir}/data/webui.db"
-        echo "Waiting for Open-WebUI database..."
+        set -euo pipefail
 
+        DB_FILE="${cfg.stateDir}/data/webui.db"
+        SECRET_KEY_FILE="${cfg.secretKeyFile}"
+        API_KEY_SEED_FILE="${cfg.testing.apiKeyFile}"
+        USER_EMAIL="${cfg.testing.userEmail}"
+        USER_NAME="${cfg.testing.userName}"
+
+        echo "Waiting for Open-WebUI database..."
         for i in $(seq 1 60); do
           if [ -f "$DB_FILE" ]; then
             break
@@ -673,48 +680,93 @@ in
           exit 1
         fi
 
-        # Read test API key from agenix secret
-        TEST_API_KEY=$(cat "${cfg.testing.apiKeyFile}")
-
-        if [ -z "$TEST_API_KEY" ]; then
-          echo "ERROR: Test API key is empty"
+        # Read the WEBUI_SECRET_KEY for JWT signing
+        if [ ! -f "$SECRET_KEY_FILE" ]; then
+          echo "ERROR: Secret key file not found: $SECRET_KEY_FILE"
           exit 1
         fi
+        SECRET_KEY=$(cat "$SECRET_KEY_FILE")
 
-        # Check if test user already exists
-        USER_EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" \
-          "SELECT COUNT(*) FROM user WHERE email='${cfg.testing.userEmail}';")
+        # Run Python script to provision user with proper JWT API key
+        python3 << PYEOF
+import sqlite3
+import json
+import time
+import uuid
+import jwt
+import bcrypt
 
-        if [ "$USER_EXISTS" = "0" ]; then
-          echo "Creating E2E test user: ${cfg.testing.userEmail}"
+db_path = "$DB_FILE"
+secret_key = "$SECRET_KEY"
+user_email = "$USER_EMAIL"
+user_name = "$USER_NAME"
 
-          # Generate user ID and current timestamp
-          USER_ID=$(${pkgs.util-linux}/bin/uuidgen)
-          NOW=$(date +%s)
+conn = sqlite3.connect(db_path)
+cursor = conn.cursor()
 
-          # Insert test user with API key (no password - API key only auth)
-          ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" << SQL
-            INSERT INTO user (id, name, email, role, profile_image_url, api_key, created_at, updated_at, last_active_at)
-            VALUES (
-              '$USER_ID',
-              '${cfg.testing.userName}',
-              '${cfg.testing.userEmail}',
-              'user',
-              '/static/user.png',
-              '$TEST_API_KEY',
-              $NOW,
-              $NOW,
-              $NOW
-            );
-SQL
-          echo "E2E test user created successfully"
-        else
-          echo "E2E test user already exists, updating API key..."
-          NOW=$(date +%s)
-          ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" \
-            "UPDATE user SET api_key='$TEST_API_KEY', updated_at=$NOW WHERE email='${cfg.testing.userEmail}';"
-          echo "E2E test user API key updated"
-        fi
+# Check if user exists
+cursor.execute("SELECT id FROM user WHERE email=?", (user_email,))
+row = cursor.fetchone()
+
+now = int(time.time())
+
+if row:
+    user_id = row[0]
+    print(f"E2E test user already exists (id={user_id}), updating...")
+else:
+    user_id = str(uuid.uuid4())
+    print(f"Creating new E2E test user: {user_email}")
+
+    # Insert user with admin role
+    cursor.execute("""
+        INSERT INTO user (id, name, email, role, profile_image_url, api_key, created_at, updated_at, last_active_at)
+        VALUES (?, ?, ?, 'admin', '/static/user.png', '''''', ?, ?, ?)
+    """, (user_id, user_name, user_email, now, now, now))
+
+# Generate JWT API key
+payload = {
+    "id": user_id,
+    "iat": now,
+    "jti": str(uuid.uuid4()),
+}
+token = jwt.encode(payload, secret_key, algorithm="HS256")
+api_key = f"sk-{token}"
+
+# Update user with API key and ensure admin role
+cursor.execute("""
+    UPDATE user SET api_key=?, role='admin', updated_at=? WHERE id=?
+""", (api_key, now, user_id))
+
+# Create or update auth entry (required for API key auth)
+cursor.execute("SELECT id FROM auth WHERE id=?", (user_id,))
+if not cursor.fetchone():
+    # Generate random password hash (not used, API key auth only)
+    random_pw = str(uuid.uuid4())
+    pw_hash = bcrypt.hashpw(random_pw.encode(), bcrypt.gensalt()).decode()
+    cursor.execute("""
+        INSERT INTO auth (id, email, password, active)
+        VALUES (?, ?, ?, 1)
+    """, (user_id, user_email, pw_hash))
+    print("Created auth entry for E2E test user")
+
+# Enable API keys in config if not already enabled
+cursor.execute("SELECT data FROM config LIMIT 1")
+config_row = cursor.fetchone()
+if config_row:
+    config = json.loads(config_row[0])
+    if "features" not in config:
+        config["features"] = {}
+    if not config["features"].get("enable_api_keys"):
+        config["features"]["enable_api_keys"] = True
+        cursor.execute("UPDATE config SET data=?", (json.dumps(config),))
+        print("Enabled API keys in config")
+
+conn.commit()
+conn.close()
+
+print(f"E2E test user provisioned successfully")
+print(f"API Key: {api_key}")
+PYEOF
       '';
     };
 
