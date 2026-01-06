@@ -43,6 +43,9 @@
 
     # OpenAI API key (for TTS/STT)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
+
+    # E2E test credentials
+    e2e-test-api-key.file = "${self}/secrets/e2e-test-api-key.age";
   };
 
   # Open-WebUI with OpenRouter backend
@@ -131,6 +134,15 @@
     tailscaleServe = {
       enable = true;
       httpsPort = 443;
+    };
+
+    # E2E Testing - declarative test user provisioning
+    # Run tests with:
+    #   export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/agenix/e2e-test-api-key)
+    #   nix-shell --run "pytest tests/e2e/ -v"
+    testing = {
+      enable = true;
+      apiKeyFile = config.age.secrets.e2e-test-api-key.path;
     };
   };
 

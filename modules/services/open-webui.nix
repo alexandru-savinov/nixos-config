@@ -276,6 +276,34 @@ in
         '';
       };
     };
+
+    # E2E Testing Support
+    testing = {
+      enable = mkEnableOption "Declarative test user provisioning for E2E tests";
+
+      apiKeyFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        example = "/run/secrets/e2e-test-api-key";
+        description = ''
+          Path to file containing the test user's API key.
+          This API key is used by E2E tests to authenticate with Open-WebUI.
+          Use agenix for secret management.
+        '';
+      };
+
+      userEmail = mkOption {
+        type = types.str;
+        default = "e2e-test@local.test";
+        description = "Email address for the test user.";
+      };
+
+      userName = mkOption {
+        type = types.str;
+        default = "E2E Test User";
+        description = "Display name for the test user.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -612,6 +640,81 @@ in
                 fi
 
                 echo "ZDR function provisioning complete"
+      '';
+    };
+
+    # E2E Test User Provisioning
+    systemd.services.open-webui-e2e-test-user = mkIf (cfg.testing.enable && cfg.testing.apiKeyFile != null) {
+      description = "Provision E2E Test User for Open-WebUI";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" ];
+      requires = [ "open-webui.service" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+
+      script = ''
+        # Wait for Open-WebUI database to exist
+        DB_FILE="${cfg.stateDir}/data/webui.db"
+        echo "Waiting for Open-WebUI database..."
+
+        for i in $(seq 1 60); do
+          if [ -f "$DB_FILE" ]; then
+            break
+          fi
+          echo "Waiting for database... ($i/60)"
+          sleep 1
+        done
+
+        if [ ! -f "$DB_FILE" ]; then
+          echo "ERROR: Database not found at $DB_FILE after 60 seconds"
+          exit 1
+        fi
+
+        # Read test API key from agenix secret
+        TEST_API_KEY=$(cat "${cfg.testing.apiKeyFile}")
+
+        if [ -z "$TEST_API_KEY" ]; then
+          echo "ERROR: Test API key is empty"
+          exit 1
+        fi
+
+        # Check if test user already exists
+        USER_EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" \
+          "SELECT COUNT(*) FROM user WHERE email='${cfg.testing.userEmail}';")
+
+        if [ "$USER_EXISTS" = "0" ]; then
+          echo "Creating E2E test user: ${cfg.testing.userEmail}"
+
+          # Generate user ID and current timestamp
+          USER_ID=$(${pkgs.util-linux}/bin/uuidgen)
+          NOW=$(date +%s)
+
+          # Insert test user with API key (no password - API key only auth)
+          ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" << SQL
+            INSERT INTO user (id, name, email, role, profile_image_url, api_key, created_at, updated_at, last_active_at)
+            VALUES (
+              '$USER_ID',
+              '${cfg.testing.userName}',
+              '${cfg.testing.userEmail}',
+              'user',
+              '/static/user.png',
+              '$TEST_API_KEY',
+              $NOW,
+              $NOW,
+              $NOW
+            );
+SQL
+          echo "E2E test user created successfully"
+        else
+          echo "E2E test user already exists, updating API key..."
+          NOW=$(date +%s)
+          ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" \
+            "UPDATE user SET api_key='$TEST_API_KEY', updated_at=$NOW WHERE email='${cfg.testing.userEmail}';"
+          echo "E2E test user API key updated"
+        fi
       '';
     };
 
