@@ -1,0 +1,11 @@
+{
+  "name": "nix-commit",
+  "description": "Git commit commands with automatic nix fmt formatting for NixOS projects",
+  "version": "1.0.0",
+  "author": {
+    "name": "nixos-config"
+  },
+  "license": "MIT",
+  "keywords": ["nix", "nixos", "git", "commit", "formatting"],
+  "commands": "./commands/"
+}

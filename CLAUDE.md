@@ -130,11 +130,22 @@ Use these plugin commands when working on this project:
 
 | Command | When to Use |
 |---------|-------------|
-| `/commit` | When asked to commit changes |
-| `/commit-push-pr` | When asked to commit, push, and create a PR in one step |
+| `/nix-commit:commit` | Commit changes (runs `nix fmt` first) |
+| `/nix-commit:commit-push-pr` | Commit, push, and create PR (runs `nix fmt` first) |
 | `/clean_gone` | After merging PRs to clean up stale local branches |
 | `/review-pr` | Before creating pull requests to catch issues early |
 | `/feature-dev` | For complex feature implementations requiring architecture planning |
+
+### Project-Local Plugins
+
+This repo has custom Claude Code plugins in `.claude/plugins/` that override marketplace commands:
+
+| Plugin | Location | Purpose |
+|--------|----------|---------|
+| `nix-commit` | `.claude/plugins/nix-commit/` | Runs `nix fmt` before commits to pass CI formatting checks |
+| `local-review` | `.claude/plugins/local-review/` | Pre-commit code review |
+
+**Important:** Use `/nix-commit:commit` instead of `/commit` to ensure Nix files are formatted before committing. This prevents CI failures from formatting mismatches.
 
 ## Nix Code Style
 
