@@ -361,26 +361,33 @@ class OpenWebUIClient:
         Raises:
             requests.HTTPError: If request fails or Tavily not configured
         """
+        # Open-WebUI 0.6+ uses /api/v1/retrieval/process/web/search
+        # with 'queries' array (not 'query' string)
         payload = {
-            "query": query,
-            "max_results": max_results,
+            "queries": [query],
         }
 
         response = self._request(
             "POST",
-            "/api/rag/web/search",
+            "/api/v1/retrieval/process/web/search",
             json_data=payload,
             timeout=60,
         )
 
         data = response.json()
 
+        # API returns 'items' with 'link'/'snippet', map to our model's 'url'/'content'
         results = []
-        for result_data in data.get("results", []):
-            results.append(SearchResult(**result_data))
+        items = data.get("items", [])[:max_results]
+        for item in items:
+            results.append(SearchResult(
+                title=item.get("title", ""),
+                url=item.get("link", ""),
+                content=item.get("snippet", ""),
+            ))
 
         return SearchResponse(
-            query=data.get("query", query),
+            query=query,
             results=results,
         )
 

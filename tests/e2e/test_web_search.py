@@ -16,6 +16,22 @@ from .models import SearchResponse, SearchResult
 from .owui_client import OpenWebUIClient
 
 
+def _handle_web_search_error(e: Exception) -> None:
+    """Handle web search errors consistently across tests.
+
+    Skips test for expected errors (endpoint unavailable, network timeout).
+    Re-raises unexpected errors.
+    """
+    if isinstance(e, requests.exceptions.HTTPError):
+        if e.response.status_code in (404, 405):
+            pytest.skip("Web search endpoint not available")
+    elif isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        # Network timeouts are common on resource-constrained devices (RPi5)
+        # or when web search involves crawling external pages
+        pytest.skip(f"Web search timed out: {type(e).__name__}")
+    raise
+
+
 @pytest.mark.search
 class TestWebSearch:
     """Tests for Tavily web search integration."""
@@ -36,13 +52,8 @@ class TestWebSearch:
             assert len(response.results) > 0, "No search results returned"
             assert len(response.results) <= 3, "More results than requested"
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code in (404, 405):
-                pytest.skip(
-                    "Web search endpoint not available. "
-                    "Ensure tavilySearch.enable = true in configuration."
-                )
-            raise
+        except Exception as e:
+            _handle_web_search_error(e)
 
     def test_search_results_have_required_fields(self, client: OpenWebUIClient):
         """
@@ -63,10 +74,8 @@ class TestWebSearch:
                 # URL should be valid format
                 assert result.url.startswith("http"), f"Invalid URL: {result.url}"
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code in (404, 405):
-                pytest.skip("Web search endpoint not available")
-            raise
+        except Exception as e:
+            _handle_web_search_error(e)
 
     def test_search_respects_max_results(self, client: OpenWebUIClient):
         """
@@ -83,10 +92,8 @@ class TestWebSearch:
                 f"Got {len(response.results)} results, expected max 2"
             )
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code in (404, 405):
-                pytest.skip("Web search endpoint not available")
-            raise
+        except Exception as e:
+            _handle_web_search_error(e)
 
     def test_search_with_technical_query(self, client: OpenWebUIClient):
         """
@@ -108,10 +115,8 @@ class TestWebSearch:
                 "Search results don't seem relevant to query"
             )
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code in (404, 405):
-                pytest.skip("Web search endpoint not available")
-            raise
+        except Exception as e:
+            _handle_web_search_error(e)
 
 
 @pytest.mark.search
@@ -138,6 +143,8 @@ class TestSearchErrorHandling:
                 pass  # Expected validation error
             else:
                 raise  # Unexpected HTTP error
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            pytest.skip("Web search timed out")
 
     def test_very_long_query_handled(self, client: OpenWebUIClient):
         """
@@ -160,3 +167,5 @@ class TestSearchErrorHandling:
                 pass  # Expected - query too long
             else:
                 raise  # Unexpected HTTP error
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            pytest.skip("Web search timed out")
