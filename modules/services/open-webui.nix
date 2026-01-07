@@ -364,10 +364,11 @@ in
             else cfg.openai.apiBaseUrl;
         }
         (mkIf cfg.tavilySearch.enable {
-          ENABLE_RAG_WEB_SEARCH = "True";
-          RAG_WEB_SEARCH_ENGINE = "tavily";
-          RAG_WEB_SEARCH_RESULT_COUNT = "3";
-          RAG_WEB_SEARCH_CONCURRENT_REQUESTS = "10";
+          # Open-WebUI 0.6+ uses ENABLE_WEB_SEARCH (not ENABLE_RAG_WEB_SEARCH)
+          ENABLE_WEB_SEARCH = "True";
+          WEB_SEARCH_ENGINE = "tavily";
+          WEB_SEARCH_RESULT_COUNT = "3";
+          WEB_SEARCH_CONCURRENT_REQUESTS = "10";
         })
         (mkIf cfg.oidc.enable {
           OAUTH_PROVIDER_NAME = "Tailscale";
