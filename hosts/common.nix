@@ -33,6 +33,7 @@
     git
     curl
     wget
+    jq # Required for Ralph Wiggum plugin hooks (JSON parsing)
   ];
 
   # Default state version (override per host if needed)
