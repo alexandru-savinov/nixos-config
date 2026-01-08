@@ -11,8 +11,10 @@ result-*
 secrets.yaml
 *.key
 *.pem
-*.age
 .sops.yaml
+
+# MCP config (contains plaintext credentials)
+.mcp.json
 
 # Editor
 .vscode/
