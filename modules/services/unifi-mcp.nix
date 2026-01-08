@@ -429,8 +429,19 @@ in
     "unifi": {
       "command": "${if cfg.useDocker then "${pkgs.docker}/bin/docker" else "unifi-network-mcp"}",
       ${if cfg.useDocker then ''
-      "args": ["run", "--rm", "-i", "--env-file", "/run/unifi-mcp/env", "${dockerImage}"],
-      '' else ""}
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "UNIFI_HOST=${cfg.host}",
+        "-e", "UNIFI_PORT=${toString cfg.port}",
+        "-e", "UNIFI_USERNAME=${cfg.username}",
+        "-e", "UNIFI_PASSWORD=$PASSWORD",
+        "-e", "UNIFI_SITE=${cfg.site}",
+        "-e", "UNIFI_VERIFY_SSL=${boolToString cfg.verifySsl}",
+        "-e", "UNIFI_CONTROLLER_TYPE=${cfg.controllerType}",
+        "-e", "UNIFI_TOOL_REGISTRATION=${cfg.toolRegistration}",
+        "${dockerImage}"
+      ]
+      '' else ''
       "env": {
         "UNIFI_HOST": "${cfg.host}",
         "UNIFI_PORT": "${toString cfg.port}",
@@ -441,6 +452,7 @@ in
         "UNIFI_CONTROLLER_TYPE": "${cfg.controllerType}",
         "UNIFI_TOOL_REGISTRATION": "${cfg.toolRegistration}"
       }
+      ''}
     }
   }
 }
