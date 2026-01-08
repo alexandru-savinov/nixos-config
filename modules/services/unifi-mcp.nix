@@ -414,50 +414,50 @@ in
       (optional (!cfg.useDocker) cfg.package)
       ++ [
         (pkgs.writeShellScriptBin "unifi-mcp-config" ''
-        set -euo pipefail
+                  set -euo pipefail
 
-        if [[ ! -f "${cfg.passwordFile}" ]]; then
-          echo "ERROR: Password file not found. Cannot generate config." >&2
-          exit 1
-        fi
+                  if [[ ! -f "${cfg.passwordFile}" ]]; then
+                    echo "ERROR: Password file not found. Cannot generate config." >&2
+                    exit 1
+                  fi
 
-        PASSWORD=$(cat "${cfg.passwordFile}")
+                  PASSWORD=$(cat "${cfg.passwordFile}")
 
-        cat <<EOF
-{
-  "mcpServers": {
-    "unifi": {
-      "command": "${if cfg.useDocker then "${pkgs.docker}/bin/docker" else "unifi-network-mcp"}",
-      ${if cfg.useDocker then ''
-      "args": [
-        "run", "--rm", "-i",
-        "-e", "UNIFI_HOST=${cfg.host}",
-        "-e", "UNIFI_PORT=${toString cfg.port}",
-        "-e", "UNIFI_USERNAME=${cfg.username}",
-        "-e", "UNIFI_PASSWORD=$PASSWORD",
-        "-e", "UNIFI_SITE=${cfg.site}",
-        "-e", "UNIFI_VERIFY_SSL=${boolToString cfg.verifySsl}",
-        "-e", "UNIFI_CONTROLLER_TYPE=${cfg.controllerType}",
-        "-e", "UNIFI_TOOL_REGISTRATION=${cfg.toolRegistration}",
-        "${dockerImage}"
-      ]
-      '' else ''
-      "env": {
-        "UNIFI_HOST": "${cfg.host}",
-        "UNIFI_PORT": "${toString cfg.port}",
-        "UNIFI_USERNAME": "${cfg.username}",
-        "UNIFI_PASSWORD": "$PASSWORD",
-        "UNIFI_SITE": "${cfg.site}",
-        "UNIFI_VERIFY_SSL": "${boolToString cfg.verifySsl}",
-        "UNIFI_CONTROLLER_TYPE": "${cfg.controllerType}",
-        "UNIFI_TOOL_REGISTRATION": "${cfg.toolRegistration}"
-      }
-      ''}
-    }
-  }
-}
-EOF
-      '')
-    ];
+                  cat <<EOF
+          {
+            "mcpServers": {
+              "unifi": {
+                "command": "${if cfg.useDocker then "${pkgs.docker}/bin/docker" else "unifi-network-mcp"}",
+                ${if cfg.useDocker then ''
+                "args": [
+                  "run", "--rm", "-i",
+                  "-e", "UNIFI_HOST=${cfg.host}",
+                  "-e", "UNIFI_PORT=${toString cfg.port}",
+                  "-e", "UNIFI_USERNAME=${cfg.username}",
+                  "-e", "UNIFI_PASSWORD=$PASSWORD",
+                  "-e", "UNIFI_SITE=${cfg.site}",
+                  "-e", "UNIFI_VERIFY_SSL=${boolToString cfg.verifySsl}",
+                  "-e", "UNIFI_CONTROLLER_TYPE=${cfg.controllerType}",
+                  "-e", "UNIFI_TOOL_REGISTRATION=${cfg.toolRegistration}",
+                  "${dockerImage}"
+                ]
+                '' else ''
+                "env": {
+                  "UNIFI_HOST": "${cfg.host}",
+                  "UNIFI_PORT": "${toString cfg.port}",
+                  "UNIFI_USERNAME": "${cfg.username}",
+                  "UNIFI_PASSWORD": "$PASSWORD",
+                  "UNIFI_SITE": "${cfg.site}",
+                  "UNIFI_VERIFY_SSL": "${boolToString cfg.verifySsl}",
+                  "UNIFI_CONTROLLER_TYPE": "${cfg.controllerType}",
+                  "UNIFI_TOOL_REGISTRATION": "${cfg.toolRegistration}"
+                }
+                ''}
+              }
+            }
+          }
+          EOF
+        '')
+      ];
   };
 }
