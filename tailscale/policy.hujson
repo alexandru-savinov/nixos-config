@@ -1,0 +1,87 @@
+{
+  // Tailscale ACL policy for sancta-choir infrastructure
+  // Docs: https://tailscale.com/kb/1337/policy-syntax
+  //
+  // To get started:
+  // 1. Export your current ACL from https://login.tailscale.com/admin/acls/file
+  // 2. Replace this file's content with your exported policy
+  // 3. Add tests to validate your rules
+
+  "groups": {
+    "group:admins": [
+      // Add admin email addresses here
+      // "admin@example.com",
+    ],
+  },
+
+  "tagOwners": {
+    "tag:server": ["group:admins"],
+    "tag:nixos": ["group:admins"],
+  },
+
+  "acls": [
+    // Admins have full access
+    {
+      "action": "accept",
+      "src": ["group:admins"],
+      "dst": ["*:*"],
+    },
+
+    // Servers can communicate with each other
+    {
+      "action": "accept",
+      "src": ["tag:server"],
+      "dst": ["tag:server:*"],
+    },
+
+    // Allow HTTPS access to tagged servers from all tailnet members
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": [
+        "tag:server:443",   // Open-WebUI
+        "tag:server:3001",  // Uptime Kuma
+        "tag:server:5678",  // n8n
+      ],
+    },
+  ],
+
+  "ssh": [
+    // Admins can SSH as any user to servers
+    {
+      "action": "accept",
+      "src": ["group:admins"],
+      "dst": ["tag:server"],
+      "users": ["root", "nixos", "autogroup:nonroot"],
+    },
+  ],
+
+  // Tests validate your ACL rules
+  // These run automatically when you push changes via GitOps
+  "tests": [
+    // Test: Admins can access everything
+    {
+      "src": "group:admins",
+      "accept": ["tag:server:22", "tag:server:443", "tag:server:5678"],
+    },
+
+    // Test: Members can access web services but not SSH
+    {
+      "src": "autogroup:member",
+      "accept": ["tag:server:443", "tag:server:3001", "tag:server:5678"],
+      "deny": ["tag:server:22"],
+    },
+
+    // Test: Servers can reach each other
+    {
+      "src": "tag:server",
+      "accept": ["tag:server:443", "tag:server:8080"],
+    },
+
+    // Test: Non-admins cannot SSH
+    {
+      "src": "autogroup:member",
+      "deny": ["tag:server:22"],
+    },
+  ],
+}
