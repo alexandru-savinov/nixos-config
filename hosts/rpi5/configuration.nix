@@ -113,7 +113,7 @@
   services.unifi-mcp = {
     enable = true;
     host = "192.168.1.1";
-    username = "sanioc";
+    username = "tLoVYfJXE0eE";
     passwordFile = config.age.secrets.unifi-password.path;
     verifySsl = false; # UDM uses self-signed certs
 
