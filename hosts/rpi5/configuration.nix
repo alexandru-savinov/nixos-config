@@ -235,6 +235,27 @@
     DefaultTimeoutStopSec = "90s";
   };
 
+  # ============================================================
+  # BTOP ON TTY1 - Auto-start system monitor on physical console
+  # ============================================================
+  # Auto-login root on tty1 only (other TTYs require normal login)
+  systemd.services."getty@tty1" = {
+    overrideStrategy = "asDropin";
+    serviceConfig.ExecStart = [
+      "" # Clear the default ExecStart
+      "@${pkgs.util-linux}/sbin/agetty agetty --autologin root --noclear %I $TERM"
+    ];
+  };
+
+  # Start btop automatically when logged into tty1
+  # Quitting btop (q) returns to a bash shell; type 'exit' to trigger re-login and restart btop
+  programs.bash.interactiveShellInit = ''
+    if [[ $(tty) == "/dev/tty1" ]] && [[ -z "$BTOP_RUNNING" ]]; then
+      export BTOP_RUNNING=1
+      ${pkgs.btop}/bin/btop
+    fi
+  '';
+
   # Timezone (adjust as needed)
   time.timeZone = "UTC";
 
