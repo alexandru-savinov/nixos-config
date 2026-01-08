@@ -41,9 +41,9 @@ pkgs.testers.nixosTest {
     # Debug: print the environment
     print(machine.succeed(f"cat /proc/{pid}/environ | tr '\\0' '\\n'"))
 
-    # Check RAG env vars
-    machine.succeed(f"grep -z 'ENABLE_RAG_WEB_SEARCH=True' /proc/{pid}/environ")
-    machine.succeed(f"grep -z 'RAG_WEB_SEARCH_ENGINE=tavily' /proc/{pid}/environ")
+    # Check web search env vars (Open-WebUI 0.6+ uses ENABLE_WEB_SEARCH, not ENABLE_RAG_WEB_SEARCH)
+    machine.succeed(f"grep -z 'ENABLE_WEB_SEARCH=True' /proc/{pid}/environ")
+    machine.succeed(f"grep -z 'WEB_SEARCH_ENGINE=tavily' /proc/{pid}/environ")
 
     # Check that TAVILY_API_KEY is loaded
     machine.succeed(f"grep -z 'TAVILY_API_KEY=mock-tavily-key' /proc/{pid}/environ")
