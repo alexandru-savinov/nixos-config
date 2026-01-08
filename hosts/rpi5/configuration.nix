@@ -38,6 +38,7 @@
     ../../modules/services/copilot.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
+    ../../modules/services/unifi-mcp.nix
     # Additional services are in rpi5-full config:
     # - open-webui, n8n, uptime-kuma
   ];
@@ -101,6 +102,44 @@
   # Additional secrets for Open-WebUI, n8n, etc. are in rpi5-full
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
+    unifi-password.file = "${self}/secrets/unifi-password.age";
+  };
+
+  # ==========================================================================
+  # UniFi Network MCP - AI-assisted network management
+  # ==========================================================================
+  # Provides MCP server for Claude to read/modify UniFi controller config.
+  # Run `unifi-mcp-config` to generate Claude Desktop/Code MCP config.
+  services.unifi-mcp = {
+    enable = true;
+    host = "192.168.1.1";
+    username = "sanioc";
+    passwordFile = config.age.secrets.unifi-password.path;
+    verifySsl = false; # UDM uses self-signed certs
+
+    # Tool registration: lazy mode reduces token usage by 96%
+    toolRegistration = "lazy";
+
+    # Permissions - start with read-only + safe modifications
+    permissions = {
+      # High-risk operations disabled by default
+      networksCreate = false;
+      networksUpdate = false;
+      networksDelete = false;
+      wlanCreate = false;
+      wlanUpdate = false;
+      wlanDelete = false;
+      deviceReboot = false;
+
+      # Safe operations enabled
+      firewallManage = true;
+      portForwardManage = true;
+      trafficRouteManage = true;
+      qosManage = true;
+    };
+
+    # Don't run as persistent service - use stdio mode for Claude Code
+    service.enable = false;
   };
 
   # Hostname
