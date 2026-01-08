@@ -102,7 +102,10 @@
   # Additional secrets for Open-WebUI, n8n, etc. are in rpi5-full
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-    unifi-password.file = "${self}/secrets/unifi-password.age";
+    unifi-password = {
+      file = "${self}/secrets/unifi-password.age";
+      mode = "0444"; # Readable by all (needed for Claude Code MCP)
+    };
   };
 
   # ==========================================================================
