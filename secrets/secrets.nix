@@ -44,4 +44,7 @@ in
 
   # E2E test credentials - shared across all hosts for testing
   "e2e-test-api-key.age".publicKeys = allKeys;
+
+  # UniFi Network MCP - controller password for AI-assisted network management
+  "unifi-password.age".publicKeys = allKeys;
 }
