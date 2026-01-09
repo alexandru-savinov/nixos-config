@@ -31,9 +31,10 @@ def create_stub_openrouter():
     app = Flask(__name__)
 
     # In‑memory data for the stub
+    # ZDR endpoint returns {"name": "Provider | model-id", ...} format
     ZDR_MODELS = [
-        {"model": "openrouter/gpt-4o-mini"},
-        {"model": "openrouter/gpt-4o"},
+        {"name": "OpenAI | openrouter/gpt-4o-mini"},
+        {"name": "OpenAI | openrouter/gpt-4o"},
     ]
 
     ALL_MODELS = [
