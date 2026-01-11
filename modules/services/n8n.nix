@@ -122,7 +122,7 @@ in
 
     workflows = mkOption {
       type = types.listOf types.path;
-      default = [];
+      default = [ ];
       example = literalExpression "[ ./workflows/backup.json ]";
       description = ''
         List of workflow JSON files to import on service startup.
@@ -151,7 +151,7 @@ in
 
     extraEnvironment = mkOption {
       type = types.attrsOf types.str;
-      default = {};
+      default = { };
       example = literalExpression ''{ N8N_TEMPLATES_ENABLED = "false"; }'';
       description = ''
         Additional environment variables for n8n.
@@ -178,7 +178,7 @@ in
     assertions = [
       {
         assertion = cfg.credentialsFile == null ||
-                    !(hasPrefix "/nix/store" (toString cfg.credentialsFile));
+          !(hasPrefix "/nix/store" (toString cfg.credentialsFile));
         message = ''
           services.n8n-tailscale.credentialsFile points to the Nix store!
           Files in /nix/store are WORLD-READABLE. Your credentials would be exposed.
@@ -288,7 +288,7 @@ in
             chmod 600 "$ENV_FILE"
           '')
         ];
-      } // optionalAttrs (cfg.workflows != [] || cfg.workflowsDir != null) {
+      } // optionalAttrs (cfg.workflows != [ ] || cfg.workflowsDir != null) {
         ExecStartPost = [
           (pkgs.writeShellScript "n8n-import-workflows" ''
             set -euo pipefail
@@ -346,6 +346,53 @@ in
             fi
 
             echo "Workflow import complete: all workflows imported successfully"
+
+            # Sync active state from JSON files to database
+            # n8n import doesn't update active state of existing workflows
+            echo "Syncing workflow active states..."
+            DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
+
+            sync_active_state() {
+              local wf_file="$1"
+              local wf_id wf_active
+
+              # Extract id and active from JSON
+              wf_id=$(${pkgs.jq}/bin/jq -r '.id // empty' "$wf_file")
+              wf_active=$(${pkgs.jq}/bin/jq -r '.active // false' "$wf_file")
+
+              if [ -z "$wf_id" ]; then
+                echo "  WARNING: No id in $wf_file, skipping active sync"
+                return
+              fi
+
+              # Convert JSON boolean to SQLite integer
+              if [ "$wf_active" = "true" ]; then
+                active_int=1
+              else
+                active_int=0
+              fi
+
+              # Update database
+              ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
+                "UPDATE workflow_entity SET active=$active_int WHERE id='$wf_id';"
+              echo "  Set $wf_id active=$wf_active"
+            }
+
+            # Sync individual workflow files
+            ${concatMapStringsSep "\n" (wf: ''
+              sync_active_state "${wf}"
+            '') cfg.workflows}
+
+            # Sync all workflows from directory
+            ${optionalString (cfg.workflowsDir != null) ''
+              for wf in ${cfg.workflowsDir}/*.json; do
+                if [ -f "$wf" ]; then
+                  sync_active_state "$wf"
+                fi
+              done
+            ''}
+
+            echo "Workflow active state sync complete"
           '')
         ];
       };
