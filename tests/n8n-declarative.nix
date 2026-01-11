@@ -17,7 +17,7 @@ pkgs.testers.nixosTest {
 
     # Test workflow (minimal valid workflow - MUST have stable id!)
     environment.etc."n8n-test-workflow.json".text = builtins.toJSON {
-      id = "test-declarative-import";  # REQUIRED for idempotency
+      id = "test-declarative-import"; # REQUIRED for idempotency
       name = "Test Declarative Import";
       nodes = [
         {
@@ -26,12 +26,12 @@ pkgs.testers.nixosTest {
           type = "n8n-nodes-base.manualTrigger";
           typeVersion = 1;
           position = [ 250 300 ];
-          parameters = {};
+          parameters = { };
         }
       ];
-      connections = {};
+      connections = { };
       active = false;
-      settings = {};
+      settings = { };
     };
 
     services.n8n-tailscale = {
@@ -39,7 +39,7 @@ pkgs.testers.nixosTest {
       encryptionKeyFile = "/etc/n8n-encryption-key";
       credentialsFile = "/etc/n8n-credentials.json";
       workflows = [ "/etc/n8n-test-workflow.json" ];
-      tailscaleServe.enable = false;  # No tailscale in test VM
+      tailscaleServe.enable = false; # No tailscale in test VM
       # Enable public API for testing workflow verification
       extraEnvironment.N8N_PUBLIC_API_DISABLED = "false";
     };
