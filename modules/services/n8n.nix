@@ -94,6 +94,74 @@ in
       '';
     };
 
+    # ===================
+    # Declarative Config Options
+    # ===================
+
+    credentialsFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "config.age.secrets.n8n-credentials.path";
+      description = ''
+        Path to JSON file containing n8n credential overwrites.
+        The file is copied to /run/n8n/credentials.json at startup.
+
+        Format: { "credentialType": { "field": "value", ... }, ... }
+
+        Common credential types:
+          - httpHeaderAuth: { "name": "Header-Name", "value": "header-value" }
+          - httpBasicAuth: { "user": "...", "password": "..." }
+          - oAuth2Api: { "clientId": "...", "clientSecret": "..." }
+          - slackApi: { "accessToken": "xoxb-..." }
+          - telegramApi: { "accessToken": "123:ABC..." }
+
+        SECURITY: Use agenix, NOT a file in the Nix store!
+          credentialsFile = config.age.secrets.n8n-credentials.path;
+      '';
+    };
+
+    workflows = mkOption {
+      type = types.listOf types.path;
+      default = [];
+      example = literalExpression "[ ./workflows/backup.json ]";
+      description = ''
+        List of workflow JSON files to import on service startup.
+
+        IMPORTANT: Each workflow JSON MUST have a stable "id" field!
+        Without an ID, n8n generates a random one, causing duplicates on re-import.
+
+        Workflows are imported as-is, including their "active" state.
+        Set "active": true in JSON for scheduled/webhook workflows to run.
+
+        Export from n8n UI: Menu → Download workflow.
+      '';
+    };
+
+    workflowsDir = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "../../n8n-workflows";
+      description = ''
+        Directory containing workflow JSON files (*.json) to import.
+        All JSON files in this directory are imported on startup.
+
+        Same requirements as 'workflows': each file must have stable "id" field.
+      '';
+    };
+
+    extraEnvironment = mkOption {
+      type = types.attrsOf types.str;
+      default = {};
+      example = literalExpression ''{ N8N_TEMPLATES_ENABLED = "false"; }'';
+      description = ''
+        Additional environment variables for n8n.
+        Useful for enabling features not covered by this module.
+
+        Example: Enable public API for external integrations:
+          extraEnvironment.N8N_PUBLIC_API_DISABLED = "false";
+      '';
+    };
+
     tailscaleServe = {
       enable = mkEnableOption "Tailscale Serve for HTTPS access";
 
@@ -106,6 +174,22 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Security assertion: prevent credentials in Nix store (world-readable!)
+    assertions = [
+      {
+        assertion = cfg.credentialsFile == null ||
+                    !(hasPrefix "/nix/store" (toString cfg.credentialsFile));
+        message = ''
+          services.n8n-tailscale.credentialsFile points to the Nix store!
+          Files in /nix/store are WORLD-READABLE. Your credentials would be exposed.
+
+          Use agenix instead:
+            age.secrets.n8n-credentials.file = ./secrets/n8n-credentials.age;
+            services.n8n-tailscale.credentialsFile = config.age.secrets.n8n-credentials.path;
+        '';
+      }
+    ];
+
     # Warn if no encryption key file is provided
     warnings = optional (cfg.encryptionKeyFile == null) ''
       services.n8n-tailscale.encryptionKeyFile is not set!
@@ -166,6 +250,24 @@ in
               echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
             ''}
 
+            # Credentials file (if provided)
+            ${optionalString (cfg.credentialsFile != null) ''
+              if [[ ! -f "${cfg.credentialsFile}" ]]; then
+                echo "ERROR: Credentials file not found: ${cfg.credentialsFile}" >&2
+                exit 1
+              fi
+              # Validate JSON syntax before copying (fail fast)
+              if ! ${pkgs.jq}/bin/jq empty "${cfg.credentialsFile}" 2>/dev/null; then
+                echo "ERROR: Credentials file is not valid JSON: ${cfg.credentialsFile}" >&2
+                exit 1
+              fi
+              # Copy to runtime dir - chmod 644 is safe because dir is 0700
+              cp "${cfg.credentialsFile}" /run/n8n/credentials.json
+              chmod 644 /run/n8n/credentials.json
+              echo "CREDENTIALS_OVERWRITE_DATA_FILE=/run/n8n/credentials.json" >> "$ENV_FILE"
+              echo "Credentials file configured: /run/n8n/credentials.json"
+            ''}
+
             # Execution pruning settings
             echo "EXECUTIONS_DATA_PRUNE=${boolToString cfg.executionsPrune.enable}" >> "$ENV_FILE"
             echo "EXECUTIONS_DATA_MAX_AGE=${toString cfg.executionsPrune.maxAge}" >> "$ENV_FILE"
@@ -177,8 +279,62 @@ in
             # Concurrency limit
             echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
 
+            # Extra environment variables
+            ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
+              echo "${name}=${value}" >> "$ENV_FILE"
+            '') cfg.extraEnvironment)}
+
             # Make readable only by DynamicUser (600 + dir 0700 = secure)
             chmod 600 "$ENV_FILE"
+          '')
+        ];
+      } // optionalAttrs (cfg.workflows != [] || cfg.workflowsDir != null) {
+        ExecStartPost = [
+          (pkgs.writeShellScript "n8n-import-workflows" ''
+            set -euo pipefail
+
+            # Wait for n8n to be FULLY ready (not just port open)
+            echo "Waiting for n8n to be ready..."
+            timeout=120
+            while ! ${pkgs.curl}/bin/curl -sf http://127.0.0.1:${toString cfg.port}/healthz >/dev/null 2>&1; do
+              # Fallback: also accept 200 from root path
+              if ${pkgs.curl}/bin/curl -sf http://127.0.0.1:${toString cfg.port}/ >/dev/null 2>&1; then
+                break
+              fi
+              timeout=$((timeout - 1))
+              if [ $timeout -le 0 ]; then
+                echo "WARNING: n8n not ready after 120 seconds, skipping workflow import"
+                exit 0  # Don't fail the service
+              fi
+              sleep 1
+            done
+
+            # Brief delay for database initialization
+            sleep 2
+
+            echo "Importing declarative workflows..."
+
+            # Import individual workflow files
+            ${concatMapStringsSep "\n" (wf: ''
+              echo "Importing: ${wf}"
+              if ! ${pkgs.n8n}/bin/n8n import:workflow --input="${wf}" 2>&1; then
+                echo "WARNING: Failed to import ${wf} - check JSON syntax and 'id' field"
+              fi
+            '') cfg.workflows}
+
+            # Import all workflows from directory
+            ${optionalString (cfg.workflowsDir != null) ''
+              for wf in ${cfg.workflowsDir}/*.json; do
+                if [ -f "$wf" ]; then
+                  echo "Importing: $wf"
+                  if ! ${pkgs.n8n}/bin/n8n import:workflow --input="$wf" 2>&1; then
+                    echo "WARNING: Failed to import $wf - check JSON syntax and 'id' field"
+                  fi
+                fi
+              done
+            ''}
+
+            echo "Workflow import complete"
           '')
         ];
       };
