@@ -1,0 +1,136 @@
+{
+  "id": "rpi5-system-health-check",
+  "name": "RPi5 System Health Check",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 500],
+      "parameters": {}
+    },
+    {
+      "id": "check-open-webui",
+      "name": "Check Open-WebUI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [350, 300],
+      "parameters": {
+        "url": "http://127.0.0.1:8080/health",
+        "method": "GET",
+        "options": {
+          "timeout": 10000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "check-uptime-kuma",
+      "name": "Check Uptime Kuma",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [350, 500],
+      "parameters": {
+        "url": "http://127.0.0.1:3001/",
+        "method": "GET",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [600, 400],
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      }
+    },
+    {
+      "id": "build-report",
+      "name": "Build Health Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 400],
+      "parameters": {
+        "jsCode": "const results = $input.all();\nconst timestamp = new Date().toISOString();\n\nconst openWebUI = results.find(r => r.json.url?.includes('8080'));\nconst uptimeKuma = results.find(r => r.json.url?.includes('3001'));\n\nconst report = {\n  timestamp,\n  hostname: 'rpi5',\n  services: {\n    'open-webui': {\n      status: openWebUI?.json?.statusCode === 200 ? 'healthy' : 'unhealthy',\n      statusCode: openWebUI?.json?.statusCode || 'error',\n      responseTime: openWebUI?.json?.responseTime || null\n    },\n    'uptime-kuma': {\n      status: uptimeKuma?.json?.statusCode === 200 ? 'healthy' : 'unhealthy', \n      statusCode: uptimeKuma?.json?.statusCode || 'error',\n      responseTime: uptimeKuma?.json?.responseTime || null\n    }\n  },\n  allHealthy: (openWebUI?.json?.statusCode === 200) && (uptimeKuma?.json?.statusCode === 200)\n};\n\nreturn [{ json: report }];"
+      }
+    },
+    {
+      "id": "log-result",
+      "name": "Log Health Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 400],
+      "parameters": {
+        "jsCode": "const report = $input.first().json;\n\nconsole.log('=== RPi5 Health Check ===' );\nconsole.log('Timestamp:', report.timestamp);\nconsole.log('Open-WebUI:', report.services['open-webui'].status);\nconsole.log('Uptime-Kuma:', report.services['uptime-kuma'].status);\nconsole.log('All Healthy:', report.allHealthy);\n\nreturn $input.all();"
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          { "node": "Check Open-WebUI", "type": "main", "index": 0 },
+          { "node": "Check Uptime Kuma", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Check Open-WebUI", "type": "main", "index": 0 },
+          { "node": "Check Uptime Kuma", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Open-WebUI": {
+      "main": [
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Uptime Kuma": {
+      "main": [
+        [{ "node": "Merge Results", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [{ "node": "Build Health Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Health Report": {
+      "main": [
+        [{ "node": "Log Health Report", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

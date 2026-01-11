@@ -173,6 +173,10 @@
     # Lower concurrency for RPi5 resource constraints
     concurrencyLimit = 2;
 
+    # Declarative workflows - imported on service start
+    # Workflows must have stable "id" field for idempotency
+    workflowsDir = "${self}/n8n-workflows";
+
     tailscaleServe.enable = true;
   };
 
