@@ -279,9 +279,9 @@ in
             # Concurrency limit
             echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
 
-            # Extra environment variables
+            # Extra environment variables (values escaped to prevent shell injection)
             ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
-              echo "${name}=${value}" >> "$ENV_FILE"
+              echo "${name}=${escapeShellArg value}" >> "$ENV_FILE"
             '') cfg.extraEnvironment)}
 
             # Make readable only by DynamicUser (600 + dir 0700 = secure)
@@ -303,8 +303,9 @@ in
               fi
               timeout=$((timeout - 1))
               if [ $timeout -le 0 ]; then
-                echo "WARNING: n8n not ready after 120 seconds, skipping workflow import"
-                exit 0  # Don't fail the service
+                echo "ERROR: n8n not ready after 120 seconds, cannot import workflows" >&2
+                echo "  Check: systemctl status n8n / journalctl -u n8n" >&2
+                exit 1
               fi
               sleep 1
             done
@@ -313,12 +314,15 @@ in
             sleep 2
 
             echo "Importing declarative workflows..."
+            import_failed=0
 
             # Import individual workflow files
             ${concatMapStringsSep "\n" (wf: ''
               echo "Importing: ${wf}"
-              if ! ${pkgs.n8n}/bin/n8n import:workflow --input="${wf}" 2>&1; then
-                echo "WARNING: Failed to import ${wf} - check JSON syntax and 'id' field"
+              if ! import_output=$(${pkgs.n8n}/bin/n8n import:workflow --input="${wf}" 2>&1); then
+                echo "ERROR: Failed to import ${wf}" >&2
+                echo "  n8n output: $import_output" >&2
+                import_failed=1
               fi
             '') cfg.workflows}
 
@@ -327,14 +331,21 @@ in
               for wf in ${cfg.workflowsDir}/*.json; do
                 if [ -f "$wf" ]; then
                   echo "Importing: $wf"
-                  if ! ${pkgs.n8n}/bin/n8n import:workflow --input="$wf" 2>&1; then
-                    echo "WARNING: Failed to import $wf - check JSON syntax and 'id' field"
+                  if ! import_output=$(${pkgs.n8n}/bin/n8n import:workflow --input="$wf" 2>&1); then
+                    echo "ERROR: Failed to import $wf" >&2
+                    echo "  n8n output: $import_output" >&2
+                    import_failed=1
                   fi
                 fi
               done
             ''}
 
-            echo "Workflow import complete"
+            if [ "$import_failed" -eq 1 ]; then
+              echo "ERROR: One or more workflow imports failed" >&2
+              exit 1
+            fi
+
+            echo "Workflow import complete: all workflows imported successfully"
           '')
         ];
       };
