@@ -65,9 +65,7 @@
       "typeVersion": 3,
       "position": [600, 400],
       "parameters": {
-        "mode": "combine",
-        "combineBy": "combineAll",
-        "options": {}
+        "mode": "append"
       }
     },
     {
@@ -77,7 +75,7 @@
       "typeVersion": 2,
       "position": [800, 400],
       "parameters": {
-        "jsCode": "const results = $input.all();\nconst timestamp = new Date().toISOString();\n\nconst openWebUI = results.find(r => r.json.url?.includes('8080'));\nconst uptimeKuma = results.find(r => r.json.url?.includes('3001'));\n\nconst report = {\n  timestamp,\n  hostname: 'rpi5',\n  services: {\n    'open-webui': {\n      status: openWebUI?.json?.statusCode === 200 ? 'healthy' : 'unhealthy',\n      statusCode: openWebUI?.json?.statusCode || 'error',\n      responseTime: openWebUI?.json?.responseTime || null\n    },\n    'uptime-kuma': {\n      status: uptimeKuma?.json?.statusCode === 200 ? 'healthy' : 'unhealthy', \n      statusCode: uptimeKuma?.json?.statusCode || 'error',\n      responseTime: uptimeKuma?.json?.responseTime || null\n    }\n  },\n  allHealthy: (openWebUI?.json?.statusCode === 200) && (uptimeKuma?.json?.statusCode === 200)\n};\n\nreturn [{ json: report }];"
+        "jsCode": "const results = $input.all();\nconst timestamp = new Date().toISOString();\n\n// After merge (append mode), we get TWO separate items:\n// - Item 0: Open-WebUI response {status: true}\n// - Item 1: Uptime Kuma response {data: 'HTML...'}\n\n// Find Open-WebUI response (has status field)\nconst openWebUIResult = results.find(r => r.json.status !== undefined);\nconst openWebUIHealthy = openWebUIResult?.json?.status === true;\n\n// Find Uptime Kuma response (has data field with HTML)\nconst uptimeKumaResult = results.find(r => {\n  const data = r.json.data;\n  return typeof data === 'string' && data.includes('Uptime Kuma');\n});\nconst uptimeKumaHealthy = uptimeKumaResult !== undefined;\n\nconst report = {\n  timestamp,\n  hostname: 'rpi5',\n  services: {\n    'open-webui': {\n      status: openWebUIHealthy ? 'healthy' : 'unhealthy',\n      response: openWebUIResult?.json || 'no response'\n    },\n    'uptime-kuma': {\n      status: uptimeKumaHealthy ? 'healthy' : 'unhealthy',\n      response: uptimeKumaHealthy ? 'HTML page loaded' : 'no response'\n    }\n  },\n  allHealthy: openWebUIHealthy && uptimeKumaHealthy\n};\n\nreturn [{ json: report }];"
       }
     },
     {
