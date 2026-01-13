@@ -111,6 +111,76 @@ in
       };
     };
 
+    # Vector Database Configuration (for RAG document embedding)
+    # Required on ARM where chromadb is disabled due to onnxruntime crashes
+    vectorDb = {
+      type = mkOption {
+        type = types.enum [ "chromadb" "qdrant" "pgvector" "milvus" "opensearch" ];
+        default = "chromadb";
+        description = ''
+          Vector database backend for RAG document embedding.
+          - chromadb: Default, embedded (NOT available on ARM/aarch64)
+          - qdrant: Recommended for ARM, low memory with on_disk mode
+          - pgvector: PostgreSQL extension (requires PostgreSQL setup)
+          - milvus: Milvus vector database
+          - opensearch: OpenSearch with vector support
+        '';
+      };
+
+      qdrant = {
+        uri = mkOption {
+          type = types.str;
+          default = "http://127.0.0.1:6333";
+          description = "Qdrant server URI.";
+        };
+
+        apiKeyFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Path to file containing Qdrant API key (if authentication enabled).";
+        };
+
+        onDisk = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Enable on-disk storage mode for Qdrant.
+            Significantly reduces RAM usage at cost of some query speed.
+            Recommended for memory-constrained devices (RPi5).
+          '';
+        };
+
+        multitenancy = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable multitenancy mode for collection management (reduces RAM).";
+        };
+
+        collectionPrefix = mkOption {
+          type = types.str;
+          default = "open-webui";
+          description = "Prefix for Qdrant collection names.";
+        };
+      };
+
+      pgvector = {
+        dbUrl = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "postgresql://user:pass@localhost/openwebui";
+          description = "PostgreSQL connection URL with pgvector extension.";
+        };
+      };
+
+      milvus = {
+        uri = mkOption {
+          type = types.str;
+          default = "http://127.0.0.1:19530";
+          description = "Milvus server URI.";
+        };
+      };
+    };
+
     enableSignup = mkOption {
       type = types.bool;
       default = false;
@@ -405,6 +475,26 @@ in
         (mkIf (cfg.voice.enable && cfg.voice.voiceModePrompt != null) {
           VOICE_MODE_PROMPT_TEMPLATE = cfg.voice.voiceModePrompt;
         })
+        # Vector Database Configuration
+        # Only configure if not using default chromadb
+        (mkIf (cfg.vectorDb.type != "chromadb") {
+          VECTOR_DB = cfg.vectorDb.type;
+        })
+        # Qdrant-specific configuration
+        (mkIf (cfg.vectorDb.type == "qdrant") {
+          QDRANT_URI = cfg.vectorDb.qdrant.uri;
+          QDRANT_ON_DISK = if cfg.vectorDb.qdrant.onDisk then "True" else "False";
+          ENABLE_QDRANT_MULTITENANCY_MODE = if cfg.vectorDb.qdrant.multitenancy then "True" else "False";
+          QDRANT_COLLECTION_PREFIX = cfg.vectorDb.qdrant.collectionPrefix;
+        })
+        # pgvector-specific configuration
+        (mkIf (cfg.vectorDb.type == "pgvector" && cfg.vectorDb.pgvector.dbUrl != null) {
+          PGVECTOR_DB_URL = cfg.vectorDb.pgvector.dbUrl;
+        })
+        # Milvus-specific configuration
+        (mkIf (cfg.vectorDb.type == "milvus") {
+          MILVUS_URI = cfg.vectorDb.milvus.uri;
+        })
         cfg.extraEnvironment
       ];
     };
@@ -431,6 +521,7 @@ in
             || (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null)
             || (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null)
             || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
+            || (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null)
           )
           {
             RuntimeDirectory = "open-webui";
@@ -483,6 +574,9 @@ in
                 ''}
                 ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
                   read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
+                ''}
+                ${optionalString (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null) ''
+                  read_secret "${cfg.vectorDb.qdrant.apiKeyFile}" "QDRANT_API_KEY"
                 ''}
 
                 chmod 600 "$SECRETS_FILE"
