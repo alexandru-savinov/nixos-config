@@ -152,6 +152,39 @@ class SearchResponse(BaseModel):
 
 
 # ============================================================================
+# RAG Document Management
+# ============================================================================
+
+
+class FileStatus(str, Enum):
+    """File processing status."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class FileInfo(BaseModel):
+    """Uploaded file information from /api/v1/files/."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    filename: str
+    meta: Optional[dict] = None
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+
+class FileReference(BaseModel):
+    """File reference for RAG chat completions."""
+
+    type: str = "file"  # "file" or "collection"
+    id: str
+
+
+# ============================================================================
 # Error Handling
 # ============================================================================
 
