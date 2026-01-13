@@ -288,114 +288,136 @@ in
             chmod 600 "$ENV_FILE"
           '')
         ];
-      } // optionalAttrs (cfg.workflows != [ ] || cfg.workflowsDir != null) {
-        ExecStartPost = [
-          (pkgs.writeShellScript "n8n-import-workflows" ''
-            set -euo pipefail
+      };
+    };
 
-            # Wait for n8n to be FULLY ready (not just port open)
-            echo "Waiting for n8n to be ready..."
-            timeout=120
-            while ! ${pkgs.curl}/bin/curl -sf http://127.0.0.1:${toString cfg.port}/healthz >/dev/null 2>&1; do
-              # Fallback: also accept 200 from root path
-              if ${pkgs.curl}/bin/curl -sf http://127.0.0.1:${toString cfg.port}/ >/dev/null 2>&1; then
-                break
-              fi
-              timeout=$((timeout - 1))
-              if [ $timeout -le 0 ]; then
-                echo "ERROR: n8n not ready after 120 seconds, cannot import workflows" >&2
-                echo "  Check: systemctl status n8n / journalctl -u n8n" >&2
-                exit 1
-              fi
-              sleep 1
-            done
+    # Separate service for workflow import and active state sync
+    # This fixes issue #99: SQLite sync was running as root instead of n8n user
+    # Uses DynamicUser for least-privilege; StateDirectory ensures proper ownership
+    systemd.services.n8n-workflow-sync = mkIf (cfg.workflows != [ ] || cfg.workflowsDir != null) {
+      description = "Import n8n workflows and sync active states";
+      after = [ "n8n.service" ];
+      requires = [ "n8n.service" ];
+      wantedBy = [ "multi-user.target" ];
 
-            # Brief delay for database initialization
-            sleep 2
+      # DynamicUser drops root privileges; systemd chowns StateDirectory on service start
+      # Note: This is a oneshot that runs after n8n, so no concurrent access issues
+      serviceConfig = {
+        Type = "oneshot";
+        DynamicUser = true;
+        StateDirectory = "n8n";
+        # Need read access to workflow JSON files in Nix store
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+      };
 
-            echo "Importing declarative workflows..."
-            import_failed=0
+      path = [ pkgs.curl pkgs.jq pkgs.sqlite pkgs.n8n ];
 
-            # Import individual workflow files
-            ${concatMapStringsSep "\n" (wf: ''
-              echo "Importing: ${wf}"
-              if ! import_output=$(${pkgs.n8n}/bin/n8n import:workflow --input="${wf}" 2>&1); then
-                echo "ERROR: Failed to import ${wf}" >&2
+      script = ''
+        set -euo pipefail
+
+        # Wait for n8n to be FULLY ready (not just port open)
+        echo "Waiting for n8n to be ready..."
+        timeout=120
+        while ! curl -sf http://127.0.0.1:${toString cfg.port}/healthz >/dev/null 2>&1; do
+          # Fallback: also accept 200 from root path
+          if curl -sf http://127.0.0.1:${toString cfg.port}/ >/dev/null 2>&1; then
+            break
+          fi
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: n8n not ready after 120 seconds, cannot import workflows" >&2
+            echo "  Check: systemctl status n8n / journalctl -u n8n" >&2
+            exit 1
+          fi
+          sleep 1
+        done
+
+        # Brief delay for database initialization
+        sleep 2
+
+        echo "Importing declarative workflows..."
+        import_failed=0
+
+        # Import individual workflow files
+        ${concatMapStringsSep "\n" (wf: ''
+          echo "Importing: ${wf}"
+          if ! import_output=$(n8n import:workflow --input="${wf}" 2>&1); then
+            echo "ERROR: Failed to import ${wf}" >&2
+            echo "  n8n output: $import_output" >&2
+            import_failed=1
+          fi
+        '') cfg.workflows}
+
+        # Import all workflows from directory
+        ${optionalString (cfg.workflowsDir != null) ''
+          for wf in ${cfg.workflowsDir}/*.json; do
+            if [ -f "$wf" ]; then
+              echo "Importing: $wf"
+              if ! import_output=$(n8n import:workflow --input="$wf" 2>&1); then
+                echo "ERROR: Failed to import $wf" >&2
                 echo "  n8n output: $import_output" >&2
                 import_failed=1
               fi
-            '') cfg.workflows}
-
-            # Import all workflows from directory
-            ${optionalString (cfg.workflowsDir != null) ''
-              for wf in ${cfg.workflowsDir}/*.json; do
-                if [ -f "$wf" ]; then
-                  echo "Importing: $wf"
-                  if ! import_output=$(${pkgs.n8n}/bin/n8n import:workflow --input="$wf" 2>&1); then
-                    echo "ERROR: Failed to import $wf" >&2
-                    echo "  n8n output: $import_output" >&2
-                    import_failed=1
-                  fi
-                fi
-              done
-            ''}
-
-            if [ "$import_failed" -eq 1 ]; then
-              echo "ERROR: One or more workflow imports failed" >&2
-              exit 1
             fi
+          done
+        ''}
 
-            echo "Workflow import complete: all workflows imported successfully"
+        if [ "$import_failed" -eq 1 ]; then
+          echo "ERROR: One or more workflow imports failed" >&2
+          exit 1
+        fi
 
-            # Sync active state from JSON files to database
-            # n8n import doesn't update active state of existing workflows
-            echo "Syncing workflow active states..."
-            DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
+        echo "Workflow import complete: all workflows imported successfully"
 
-            sync_active_state() {
-              local wf_file="$1"
-              local wf_id wf_active
+        # Sync active state from JSON files to database
+        # n8n import doesn't update active state of existing workflows
+        echo "Syncing workflow active states..."
+        DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
 
-              # Extract id and active from JSON
-              wf_id=$(${pkgs.jq}/bin/jq -r '.id // empty' "$wf_file")
-              wf_active=$(${pkgs.jq}/bin/jq -r '.active // false' "$wf_file")
+        sync_active_state() {
+          local wf_file="$1"
+          local wf_id wf_active
 
-              if [ -z "$wf_id" ]; then
-                echo "  WARNING: No id in $wf_file, skipping active sync"
-                return
-              fi
+          # Extract id and active from JSON
+          wf_id=$(jq -r '.id // empty' "$wf_file")
+          wf_active=$(jq -r '.active // false' "$wf_file")
 
-              # Convert JSON boolean to SQLite integer
-              if [ "$wf_active" = "true" ]; then
-                active_int=1
-              else
-                active_int=0
-              fi
+          if [ -z "$wf_id" ]; then
+            echo "  WARNING: No id in $wf_file, skipping active sync"
+            return
+          fi
 
-              # Update database
-              ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
-                "UPDATE workflow_entity SET active=$active_int WHERE id='$wf_id';"
-              echo "  Set $wf_id active=$wf_active"
-            }
+          # Convert JSON boolean to SQLite integer
+          if [ "$wf_active" = "true" ]; then
+            active_int=1
+          else
+            active_int=0
+          fi
 
-            # Sync individual workflow files
-            ${concatMapStringsSep "\n" (wf: ''
-              sync_active_state "${wf}"
-            '') cfg.workflows}
+          # Update database (runs as DynamicUser, not root)
+          sqlite3 "$DB_PATH" \
+            "UPDATE workflow_entity SET active=$active_int WHERE id='$wf_id';"
+          echo "  Set $wf_id active=$wf_active"
+        }
 
-            # Sync all workflows from directory
-            ${optionalString (cfg.workflowsDir != null) ''
-              for wf in ${cfg.workflowsDir}/*.json; do
-                if [ -f "$wf" ]; then
-                  sync_active_state "$wf"
-                fi
-              done
-            ''}
+        # Sync individual workflow files
+        ${concatMapStringsSep "\n" (wf: ''
+          sync_active_state "${wf}"
+        '') cfg.workflows}
 
-            echo "Workflow active state sync complete"
-          '')
-        ];
-      };
+        # Sync all workflows from directory
+        ${optionalString (cfg.workflowsDir != null) ''
+          for wf in ${cfg.workflowsDir}/*.json; do
+            if [ -f "$wf" ]; then
+              sync_active_state "$wf"
+            fi
+          done
+        ''}
+
+        echo "Workflow active state sync complete"
+      '';
     };
 
     # Tailscale Serve configuration for HTTPS access
