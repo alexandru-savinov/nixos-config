@@ -424,12 +424,15 @@ class OpenWebUIClient:
         actual_filename = filename or os.path.basename(file_path)
 
         # Use multipart form data for file upload
+        # Must use requests directly (not session) to avoid Content-Type: application/json
+        # being added from session headers, which breaks multipart uploads
+        import requests as req
+
         with open(file_path, "rb") as f:
             files = {"file": (actual_filename, f)}
-            # Remove Content-Type header for multipart
             headers = {"Authorization": f"Bearer {self.api_key}"}
 
-            response = self.session.post(
+            response = req.post(
                 f"{self.base_url}/api/v1/files/",
                 files=files,
                 headers=headers,

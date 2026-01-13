@@ -8,6 +8,15 @@ with lib;
 
 let
   cfg = config.services.open-webui-tailscale;
+
+  # Create open-webui package with qdrant-client when needed
+  # This is required because the default open-webui package doesn't include qdrant-client
+  # See: https://github.com/nixos/nixpkgs/issues/422030
+  openWebuiWithQdrant = pkgs.open-webui.overridePythonAttrs (oldAttrs: {
+    propagatedBuildInputs = (oldAttrs.propagatedBuildInputs or [ ]) ++ [
+      pkgs.python3Packages.qdrant-client
+    ];
+  });
 in
 {
   options.services.open-webui-tailscale = {
@@ -402,6 +411,9 @@ in
       enable = true;
       inherit (cfg) host port stateDir;
       openFirewall = false; # Accessed via Tailscale only
+
+      # Use custom package with qdrant-client when qdrant vector DB is selected
+      package = mkIf (cfg.vectorDb.type == "qdrant") openWebuiWithQdrant;
 
       environment = mkMerge [
         {
