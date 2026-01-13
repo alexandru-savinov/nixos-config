@@ -196,3 +196,6 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "search: marks tests that require Tavily search (deselect with '-m \"not search\"')"
     )
+    config.addinivalue_line(
+        "markers", "rag: marks tests that require RAG/vector DB (deselect with '-m \"not rag\"')"
+    )

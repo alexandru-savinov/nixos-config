@@ -29,6 +29,7 @@
     ../../modules/services/open-webui.nix
     ../../modules/services/uptime-kuma.nix
     ../../modules/services/n8n.nix
+    ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
   ];
 
   # Agenix secrets for additional services
@@ -71,6 +72,17 @@
       apiKeyFile = config.age.secrets.tavily-api-key.path;
     };
 
+    # Vector Database: Use Qdrant instead of chromadb (which crashes on ARM)
+    # This enables RAG document embedding on ARM/aarch64
+    vectorDb = {
+      type = "qdrant";
+      qdrant = {
+        uri = "http://127.0.0.1:6333";
+        onDisk = true; # Use mmap storage for low memory footprint
+        multitenancy = true; # Reduces RAM usage
+      };
+    };
+
     # Extra environment variables for ARM compatibility
     extraEnvironment = {
       # ============================================================
@@ -87,14 +99,8 @@
       # Disable CUDA detection (not available on ARM, but prevents probing)
       CUDA_VISIBLE_DEVICES = "";
 
-      # Disable document RAG features on ARM (requires chromadb)
-      ENABLE_RAG_LOCAL_WEB_FETCH = "False";
-      ENABLE_RAG_WEB_LOADER_SSL_VERIFICATION = "False";
-
-      # Note: If you need document RAG, set up external vector DB:
-      # VECTOR_DB = "qdrant";  # or "milvus", "opensearch", "pgvector"
-      # QDRANT_URI = "http://localhost:6333";
-      # See: https://docs.openwebui.com/getting-started/env-configuration/
+      # RAG features now enabled via Qdrant external vector DB
+      # Document embedding works! Web search continues to work via Tavily.
     };
 
     # OIDC authentication - disabled (same issue as sancta-choir with tsidp on same host)
@@ -178,6 +184,36 @@
     workflowsDir = "${self}/n8n-workflows";
 
     tailscaleServe.enable = true;
+  };
+
+  # Qdrant Vector Database - External vector DB for RAG on ARM
+  # Required because chromadb crashes on aarch64-linux (onnxruntime SIGBUS)
+  # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net:6333
+  services.qdrant-tailscale = {
+    enable = true;
+    port = 6333;
+    grpcPort = 6334;
+
+    # On-disk storage for low memory footprint (critical for 4GB RPi5)
+    # Uses mmap - trades some query speed for significantly lower RAM
+    storage.onDisk = true;
+
+    # Limit workers to reduce resource contention
+    performance.maxWorkers = 2;
+
+    # Expose via Tailscale HTTPS
+    tailscaleServe = {
+      enable = true;
+      httpsPort = 6333;
+    };
+  };
+
+  # Qdrant resource limits
+  systemd.services.qdrant.serviceConfig = {
+    MemoryMax = "512M";
+    MemoryHigh = "384M";
+    CPUQuota = "100%"; # 1 core max
+    Nice = 10; # Lower priority than Open-WebUI
   };
 
   # RPi5 resource limits for Open-WebUI

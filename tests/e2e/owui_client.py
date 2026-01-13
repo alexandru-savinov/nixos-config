@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 from .models import (
     ChatResponse,
     ChatChoice,
+    FileInfo,
+    FileReference,
+    FileStatus,
     Message,
     MessageRole,
     ModelInfo,
@@ -390,6 +393,245 @@ class OpenWebUIClient:
             query=query,
             results=results,
         )
+
+    # ========================================================================
+    # Document RAG (File Upload & Embedding)
+    # ========================================================================
+
+    def upload_file(self, file_path: str, filename: Optional[str] = None) -> FileInfo:
+        """
+        Upload a file for RAG processing.
+
+        The file content is extracted and embeddings are computed asynchronously.
+        Use get_file_status() to check when processing is complete.
+
+        Args:
+            file_path: Path to the file to upload
+            filename: Optional filename override
+
+        Returns:
+            FileInfo with file ID for subsequent operations
+
+        Raises:
+            requests.HTTPError: If upload fails
+            FileNotFoundError: If file doesn't exist
+        """
+        import os
+
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        actual_filename = filename or os.path.basename(file_path)
+
+        # Use multipart form data for file upload
+        with open(file_path, "rb") as f:
+            files = {"file": (actual_filename, f)}
+            # Remove Content-Type header for multipart
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+
+            response = self.session.post(
+                f"{self.base_url}/api/v1/files/",
+                files=files,
+                headers=headers,
+                timeout=self.default_timeout,
+            )
+            response.raise_for_status()
+
+        data = response.json()
+        return FileInfo(
+            id=data.get("id", ""),
+            filename=data.get("filename", actual_filename),
+            meta=data.get("meta"),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
+        )
+
+    def upload_file_content(self, content: str, filename: str) -> FileInfo:
+        """
+        Upload text content as a file for RAG processing.
+
+        Convenience method that creates a temporary file from string content.
+
+        Args:
+            content: Text content to upload
+            filename: Filename for the uploaded content
+
+        Returns:
+            FileInfo with file ID
+        """
+        import tempfile
+        import os
+
+        # Create temp file with content
+        suffix = os.path.splitext(filename)[1] or ".txt"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+
+        try:
+            return self.upload_file(temp_path, filename)
+        finally:
+            os.unlink(temp_path)
+
+    def get_file_status(self, file_id: str) -> FileStatus:
+        """
+        Check file processing status.
+
+        Files are processed asynchronously after upload. Poll this endpoint
+        to determine when embedding computation is complete.
+
+        Args:
+            file_id: File ID from upload_file()
+
+        Returns:
+            FileStatus enum value
+
+        Raises:
+            requests.HTTPError: If request fails
+        """
+        response = self._request("GET", f"/api/v1/files/{file_id}")
+        data = response.json()
+
+        # Check various status indicators
+        # Open-WebUI uses different status fields depending on version
+        status = data.get("status", "")
+        if status:
+            return FileStatus(status.lower())
+
+        # If no status field, check if content exists (indicates completion)
+        if data.get("data", {}).get("content"):
+            return FileStatus.COMPLETED
+
+        return FileStatus.PENDING
+
+    def wait_for_file_ready(
+        self, file_id: str, timeout: int = 120, poll_interval: int = 2
+    ) -> bool:
+        """
+        Wait for file processing to complete.
+
+        Args:
+            file_id: File ID to wait for
+            timeout: Maximum seconds to wait
+            poll_interval: Seconds between status checks
+
+        Returns:
+            True if file is ready, False if timeout or failed
+        """
+        import time
+
+        start_time = time.time()
+        while (time.time() - start_time) < timeout:
+            status = self.get_file_status(file_id)
+            if status == FileStatus.COMPLETED:
+                return True
+            if status == FileStatus.FAILED:
+                logger.error("File processing failed for %s", file_id)
+                return False
+            time.sleep(poll_interval)
+
+        logger.error("Timeout waiting for file %s to be ready", file_id)
+        return False
+
+    def delete_file(self, file_id: str) -> bool:
+        """
+        Delete an uploaded file.
+
+        Args:
+            file_id: File ID to delete
+
+        Returns:
+            True if deleted successfully
+        """
+        try:
+            self._request("DELETE", f"/api/v1/files/{file_id}")
+            return True
+        except requests.HTTPError:
+            return False
+
+    def create_chat_with_files(
+        self,
+        model: str,
+        messages: List[dict],
+        file_ids: List[str],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> ChatResponse:
+        """
+        Create chat completion with RAG using uploaded files.
+
+        This enables the model to reference content from uploaded documents
+        when generating responses.
+
+        Args:
+            model: Model ID
+            messages: List of message dicts
+            file_ids: List of file IDs to include in RAG context
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens in response
+
+        Returns:
+            ChatResponse object
+
+        Raises:
+            requests.HTTPError: If request fails
+        """
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "temperature": temperature,
+            "files": [{"type": "file", "id": fid} for fid in file_ids],
+        }
+
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+
+        response = self._request(
+            "POST",
+            "/api/chat/completions",
+            json_data=payload,
+            timeout=self.chat_timeout,
+        )
+
+        data = response.json()
+
+        # Parse response (same as create_chat)
+        choices = []
+        for choice_data in data.get("choices", []):
+            message_data = choice_data.get("message", {})
+            message = Message(
+                role=MessageRole(message_data.get("role", "assistant")),
+                content=message_data.get("content", ""),
+            )
+            choices.append(
+                ChatChoice(
+                    index=choice_data.get("index", 0),
+                    message=message,
+                    finish_reason=choice_data.get("finish_reason"),
+                )
+            )
+
+        return ChatResponse(
+            id=data.get("id", ""),
+            object=data.get("object", "chat.completion"),
+            created=data.get("created", 0),
+            model=data.get("model", model),
+            choices=choices,
+        )
+
+    def get_rag_config(self) -> dict:
+        """
+        Get RAG configuration from Open-WebUI.
+
+        Returns:
+            Dict with RAG settings including vector DB type
+        """
+        try:
+            response = self._request("GET", "/api/v1/retrieval/config")
+            return response.json()
+        except requests.HTTPError:
+            return {}
 
     # ========================================================================
     # Utility Methods
