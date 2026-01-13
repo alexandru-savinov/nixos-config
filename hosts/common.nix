@@ -34,6 +34,9 @@
     curl
     wget
     jq # Required for Ralph Wiggum plugin hooks (JSON parsing)
+
+    # Terminal multiplexer
+    zellij
   ];
 
   # Default state version (override per host if needed)
