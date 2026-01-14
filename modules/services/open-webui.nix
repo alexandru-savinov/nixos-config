@@ -199,6 +199,36 @@ in
       };
     };
 
+    # Auto Memory Filter - Automatically extracts memories from conversations
+    # Requires memory.enable = true for the underlying storage
+    autoMemory = {
+      enable = mkEnableOption "automatic memory extraction from conversations";
+
+      model = mkOption {
+        type = types.str;
+        default = "openai/gpt-4o-mini";
+        example = "anthropic/claude-3-haiku";
+        description = ''
+          LLM model to use for memory extraction.
+          Should be fast and inexpensive since it runs on every message.
+          Uses the OpenRouter API (hardcoded to openrouter.ai/api/v1).
+          Model names must use OpenRouter format: provider/model-name.
+        '';
+      };
+
+      relatedMemoriesCount = mkOption {
+        type = types.int;
+        default = 5;
+        description = "Number of related memories to check for duplicates.";
+      };
+
+      relatedMemoriesDistance = mkOption {
+        type = types.float;
+        default = 0.75;
+        description = "Distance threshold for similar memories (lower = more similar).";
+      };
+    };
+
     enableSignup = mkOption {
       type = types.bool;
       default = false;
@@ -407,11 +437,19 @@ in
       Store it with agenix or sops-nix.
     '';
 
-    # Assertions for testing configuration
+    # Assertions for configuration dependencies
     assertions = [
       {
         assertion = cfg.testing.enable -> cfg.secretKeyFile != null;
         message = "services.open-webui-tailscale.secretKeyFile must be set when testing.enable is true (required for JWT API key generation)";
+      }
+      {
+        assertion = cfg.autoMemory.enable -> cfg.memory.enable;
+        message = "services.open-webui-tailscale.memory.enable must be true when autoMemory.enable is true (autoMemory requires memory storage)";
+      }
+      {
+        assertion = cfg.autoMemory.enable -> cfg.openai.apiKeyFile != null;
+        message = "services.open-webui-tailscale.openai.apiKeyFile must be set when autoMemory.enable is true (required for memory extraction LLM)";
       }
     ];
 
@@ -1142,6 +1180,159 @@ in
                 # Mark migration as complete
                 touch "$MARKER_FILE"
                 echo "Migration marker created at $MARKER_FILE"
+      '';
+    };
+
+    # Auto Memory Filter Provisioning
+    # Installs the auto memory extraction function into Open-WebUI
+    systemd.services.open-webui-auto-memory-function = mkIf cfg.autoMemory.enable {
+      description = "Provision Auto Memory Filter Function for Open-WebUI";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" "open-webui-memory-migration.service" ];
+      requires = [ "open-webui.service" ];
+
+      path = [
+        pkgs.sqlite
+        (pkgs.python3.withPackages (ps: [ ]))
+      ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+
+      script = ''
+                set -euo pipefail
+
+                DB_FILE="${cfg.stateDir}/data/webui.db"
+                FUNCTION_ID="auto_memory_filter"
+                FUNCTION_FILE="${./open-webui-functions/auto_memory_filter.py}"
+
+                # Read API key from agenix secret
+                API_KEY=$(cat ${cfg.openai.apiKeyFile})
+
+                # Wait for database to exist
+                echo "Waiting for Open-WebUI database..."
+                for i in $(seq 1 60); do
+                  if [ -f "$DB_FILE" ]; then
+                    break
+                  fi
+                  echo "Waiting for database... ($i/60)"
+                  sleep 1
+                done
+
+                if [ ! -f "$DB_FILE" ]; then
+                  echo "ERROR: Database not found at $DB_FILE"
+                  exit 1
+                fi
+
+                # Wait for schema to be ready (with timeout validation)
+                echo "Waiting for database schema..."
+                SCHEMA_READY=false
+                for i in $(seq 1 30); do
+                  if sqlite3 "$DB_FILE" "SELECT 1 FROM function LIMIT 1" >/dev/null 2>&1; then
+                    SCHEMA_READY=true
+                    break
+                  fi
+                  echo "Waiting for schema... ($i/30)"
+                  sleep 1
+                done
+
+                if [ "$SCHEMA_READY" != "true" ]; then
+                  echo "ERROR: Database schema not ready after 30 seconds"
+                  echo "The 'function' table does not exist - Open-WebUI may not have started properly"
+                  exit 1
+                fi
+
+                # Export variables for Python
+                export DB_FILE FUNCTION_FILE FUNCTION_ID API_KEY
+                export MODEL="${cfg.autoMemory.model}"
+                export RELATED_N="${toString cfg.autoMemory.relatedMemoriesCount}"
+                export RELATED_DIST="${toString cfg.autoMemory.relatedMemoriesDistance}"
+                export STATE_DIR="${cfg.stateDir}"
+
+                # Use Python to install/update the function
+                python3 << 'PYTHON'
+        import sqlite3
+        import json
+        import os
+        import time
+
+        db_file = os.environ["DB_FILE"]
+        function_file = os.environ["FUNCTION_FILE"]
+        function_id = os.environ["FUNCTION_ID"]
+        api_key = os.environ["API_KEY"]
+        model = os.environ["MODEL"]
+        related_n = int(os.environ["RELATED_N"])
+        related_dist = float(os.environ["RELATED_DIST"])
+        state_dir = os.environ["STATE_DIR"]
+
+        # Read function content
+        with open(function_file) as f:
+            content = f.read()
+
+        # Build valves configuration
+        valves = {
+            "openai_api_url": "https://openrouter.ai/api/v1",
+            "model": model,
+            "api_key": api_key,
+            "related_memories_n": related_n,
+            "related_memories_dist": related_dist,
+            "auto_save_user": True,
+            "direct_db_path": f"{state_dir}/data/webui.db",
+            "enabled": True,
+        }
+
+        meta = {
+            "description": "Automatically extracts and stores memories from conversations"
+        }
+
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
+
+        # Check if function exists
+        cursor.execute("SELECT id FROM function WHERE id = ?", (function_id,))
+        exists = cursor.fetchone()
+
+        now = int(time.time())
+
+        if exists:
+            # Update existing function
+            cursor.execute("""
+                UPDATE function
+                SET content = ?, valves = ?, meta = ?, updated_at = ?, is_active = 1, is_global = 1
+                WHERE id = ?
+            """, (content, json.dumps(valves), json.dumps(meta), now, function_id))
+            print(f"Updated auto memory filter function")
+        else:
+            # Get admin user ID for ownership
+            cursor.execute("SELECT id FROM user WHERE role='admin' LIMIT 1")
+            row = cursor.fetchone()
+            admin_id = row[0] if row else ""
+
+            # Insert new function
+            cursor.execute("""
+                INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                function_id,
+                admin_id,
+                "Auto Memory Filter",
+                "filter",
+                content,
+                json.dumps(meta),
+                now,
+                now,
+                json.dumps(valves),
+                1,
+                1,
+            ))
+            print(f"Installed auto memory filter function")
+
+        conn.commit()
+        conn.close()
+        print("Auto memory filter provisioning complete")
+        PYTHON
       '';
     };
   };
