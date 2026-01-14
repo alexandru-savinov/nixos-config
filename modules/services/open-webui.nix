@@ -190,6 +190,15 @@ in
       };
     };
 
+    # Memory Feature Configuration (Experimental)
+    # Allows models to store and retrieve long-term information about users
+    # Each user gets their own vector collection for semantic memory search
+    memory = {
+      enable = mkEnableOption "persistent memory feature for LLMs" // {
+        default = true;
+      };
+    };
+
     enableSignup = mkOption {
       type = types.bool;
       default = false;
@@ -506,6 +515,12 @@ in
         # Milvus-specific configuration
         (mkIf (cfg.vectorDb.type == "milvus") {
           MILVUS_URI = cfg.vectorDb.milvus.uri;
+        })
+        # Memory feature configuration
+        # Stores per-user memories in vector DB for semantic retrieval
+        (mkIf cfg.memory.enable {
+          ENABLE_MEMORIES = "True";
+          USER_PERMISSIONS_FEATURES_MEMORIES = "True";
         })
         cfg.extraEnvironment
       ];
@@ -971,6 +986,162 @@ in
       preStop = ''
         echo "Removing Tailscale Serve configuration for Open-WebUI..."
         ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+      '';
+    };
+
+    # Memory Feature Migration
+    # Updates existing database to enable memory feature (PersistentConfig vars)
+    # This is needed because ENABLE_MEMORIES is only read from env on first launch
+    systemd.services.open-webui-memory-migration = mkIf cfg.memory.enable {
+      description = "Enable Memory Feature in Open-WebUI Database";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" ];
+      requires = [ "open-webui.service" ];
+
+      path = [
+        pkgs.sqlite
+        (pkgs.python3.withPackages (ps: [ ]))
+      ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        # Note: Runs as root since open-webui also runs as root
+        # (DynamicUser is force-disabled in the open-webui service)
+      };
+
+      script = ''
+                set -euo pipefail
+
+                DB_FILE="${cfg.stateDir}/data/webui.db"
+                MARKER_FILE="${cfg.stateDir}/.memory-migration-complete"
+
+                # Skip if migration already completed
+                if [ -f "$MARKER_FILE" ]; then
+                  echo "Memory migration already completed, skipping"
+                  exit 0
+                fi
+
+                echo "Waiting for Open-WebUI database..."
+                for i in $(seq 1 60); do
+                  if [ -f "$DB_FILE" ]; then
+                    break
+                  fi
+                  echo "Waiting for database... ($i/60)"
+                  sleep 1
+                done
+
+                if [ ! -f "$DB_FILE" ]; then
+                  echo "ERROR: Database not found at $DB_FILE after 60 seconds"
+                  exit 1
+                fi
+
+                # Wait for schema to be ready (config table must exist)
+                echo "Waiting for database schema to be initialized..."
+                for i in $(seq 1 30); do
+                  if sqlite3 "$DB_FILE" "SELECT 1 FROM config LIMIT 1" >/dev/null 2>&1; then
+                    echo "Database schema is ready"
+                    break
+                  fi
+                  if [ "$i" -eq 30 ]; then
+                    echo "ERROR: Database schema not ready after 30 seconds"
+                    echo "HINT: The config table does not exist. Open-WebUI may not have started properly."
+                    exit 1
+                  fi
+                  echo "Waiting for schema... ($i/30)"
+                  sleep 1
+                done
+
+                # Update config to enable memory feature
+                # Uses Python to safely handle JSON merging with proper error handling
+                python3 << 'PYEOF'
+        import sqlite3
+        import json
+        import sys
+
+        db_path = "${cfg.stateDir}/data/webui.db"
+
+        try:
+            conn = sqlite3.connect(db_path, timeout=30)
+        except sqlite3.OperationalError as e:
+            print(f"ERROR: Cannot connect to database at {db_path}: {e}")
+            print("HINT: The database may be locked by Open-WebUI or corrupted")
+            sys.exit(1)
+
+        try:
+            cursor = conn.cursor()
+
+            # Get current config
+            try:
+                cursor.execute("SELECT data FROM config LIMIT 1")
+            except sqlite3.OperationalError as e:
+                print(f"ERROR: Failed to query config table: {e}")
+                conn.close()
+                sys.exit(1)
+
+            row = cursor.fetchone()
+
+            if row:
+                try:
+                    config = json.loads(row[0])
+                except json.JSONDecodeError as e:
+                    print(f"ERROR: Config data in database is not valid JSON: {e}")
+                    conn.close()
+                    sys.exit(1)
+            else:
+                print("WARNING: No existing config found in database, creating new config")
+                print("HINT: This is normal on first run, but may indicate data loss on existing installs")
+                config = {"version": 0}
+
+            # Ensure features section exists
+            if "features" not in config:
+                config["features"] = {}
+
+            # Enable memory features if not already enabled
+            changed = False
+            if not config["features"].get("enable_memories"):
+                config["features"]["enable_memories"] = True
+                changed = True
+                print("Enabled enable_memories in config")
+
+            if not config["features"].get("enable_memory_tool"):
+                config["features"]["enable_memory_tool"] = True
+                changed = True
+                print("Enabled enable_memory_tool in config")
+
+            # Ensure user permissions for memory
+            if "permissions" not in config:
+                config["permissions"] = {}
+            if "features" not in config["permissions"]:
+                config["permissions"]["features"] = {}
+            if not config["permissions"]["features"].get("memory"):
+                config["permissions"]["features"]["memory"] = True
+                changed = True
+                print("Enabled user memory permission in config")
+
+            if changed:
+                try:
+                    cursor.execute("UPDATE config SET data = ? WHERE rowid = 1", (json.dumps(config),))
+                    if cursor.rowcount == 0:
+                        print("WARNING: No config row found to update, inserting new row")
+                        cursor.execute("INSERT INTO config (data) VALUES (?)", (json.dumps(config),))
+                    conn.commit()
+                    print(f"Memory feature migration complete (updated {cursor.rowcount} row(s))")
+                except sqlite3.OperationalError as e:
+                    print(f"ERROR: Failed to update config in database: {e}")
+                    print("HINT: Database may be locked, disk may be full, or filesystem may be read-only")
+                    conn.close()
+                    sys.exit(1)
+            else:
+                print("Memory feature already enabled, no changes needed")
+
+        finally:
+            conn.close()
+        PYEOF
+
+                # Mark migration as complete
+                touch "$MARKER_FILE"
+                echo "Migration marker created at $MARKER_FILE"
       '';
     };
   };
