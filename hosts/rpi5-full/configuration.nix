@@ -83,6 +83,13 @@
       };
     };
 
+    # Auto Memory: Automatically extract and store memories from conversations
+    # Uses a fast LLM (gpt-4o-mini) to identify memorable facts from user messages
+    autoMemory = {
+      enable = true;
+      model = "openai/gpt-4o-mini"; # Fast and cheap for memory extraction
+    };
+
     # Extra environment variables for ARM compatibility
     extraEnvironment = {
       # ============================================================
