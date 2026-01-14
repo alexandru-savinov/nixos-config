@@ -1,5 +1,6 @@
 { config
 , pkgs
+, pkgs-unstable
 , lib
 , ...
 }:
@@ -12,9 +13,10 @@ let
   # Create open-webui package with qdrant-client when needed
   # This is required because the default open-webui package doesn't include qdrant-client
   # See: https://github.com/nixos/nixpkgs/issues/422030
-  openWebuiWithQdrant = pkgs.open-webui.overridePythonAttrs (oldAttrs: {
+  # Uses pkgs-unstable for latest open-webui version and Python dependency compatibility
+  openWebuiWithQdrant = pkgs-unstable.open-webui.overridePythonAttrs (oldAttrs: {
     propagatedBuildInputs = (oldAttrs.propagatedBuildInputs or [ ]) ++ [
-      pkgs.python3Packages.qdrant-client
+      pkgs-unstable.python3Packages.qdrant-client
     ];
   });
 in
@@ -459,8 +461,12 @@ in
       inherit (cfg) host port stateDir;
       openFirewall = false; # Accessed via Tailscale only
 
-      # Use custom package with qdrant-client when qdrant vector DB is selected
-      package = mkIf (cfg.vectorDb.type == "qdrant") openWebuiWithQdrant;
+      # Always use pkgs-unstable for latest open-webui version
+      # Add qdrant-client when qdrant vector DB is selected
+      package =
+        if (cfg.vectorDb.type == "qdrant")
+        then openWebuiWithQdrant
+        else pkgs-unstable.open-webui;
 
       environment = mkMerge [
         {
