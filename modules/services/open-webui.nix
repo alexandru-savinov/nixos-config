@@ -211,7 +211,8 @@ in
         description = ''
           LLM model to use for memory extraction.
           Should be fast and inexpensive since it runs on every message.
-          Uses the OpenRouter API by default.
+          Uses the OpenRouter API (hardcoded to openrouter.ai/api/v1).
+          Model names must use OpenRouter format: provider/model-name.
         '';
       };
 
@@ -1225,14 +1226,23 @@ in
                   exit 1
                 fi
 
-                # Wait for schema to be ready
+                # Wait for schema to be ready (with timeout validation)
                 echo "Waiting for database schema..."
+                SCHEMA_READY=false
                 for i in $(seq 1 30); do
                   if sqlite3 "$DB_FILE" "SELECT 1 FROM function LIMIT 1" >/dev/null 2>&1; then
+                    SCHEMA_READY=true
                     break
                   fi
+                  echo "Waiting for schema... ($i/30)"
                   sleep 1
                 done
+
+                if [ "$SCHEMA_READY" != "true" ]; then
+                  echo "ERROR: Database schema not ready after 30 seconds"
+                  echo "The 'function' table does not exist - Open-WebUI may not have started properly"
+                  exit 1
+                fi
 
                 # Export variables for Python
                 export DB_FILE FUNCTION_FILE FUNCTION_ID API_KEY
