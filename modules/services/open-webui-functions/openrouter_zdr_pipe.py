@@ -92,23 +92,31 @@ class Pipe:
             for item in zdr_data:
                 # Extract model ID from "Provider | model-id" format
                 # Use rsplit to handle edge cases where provider names might contain " | "
-                name_parts = item["name"].rsplit(" | ", 1)
-                model_id = name_parts[1] if len(name_parts) > 1 else item["name"]
+                # Use .get() to avoid KeyError on malformed data
+                name = item.get("name", "")
+                if not name:
+                    continue  # Skip items without a name field
 
-                if model_id not in seen_ids:
-                    seen_ids.add(model_id)
-                    # Handle empty model_name by falling back to model_id
-                    model_name = item.get("model_name", "")
-                    display_name = model_name if model_name else model_id
-                    zdr_models.append(
-                        {
-                            "id": model_id,
-                            "name": f"{self.valves.NAME_PREFIX}{display_name}",
-                            "object": "model",
-                            "created": int(time.time()),
-                            "owned_by": "openrouter",
-                        }
-                    )
+                name_parts = name.rsplit(" | ", 1)
+                model_id = name_parts[1] if len(name_parts) > 1 else name
+
+                # Skip if model_id is empty or already seen
+                if not model_id or model_id in seen_ids:
+                    continue
+
+                seen_ids.add(model_id)
+                # Handle empty model_name by falling back to model_id
+                model_name = item.get("model_name", "")
+                display_name = model_name if model_name else model_id
+                zdr_models.append(
+                    {
+                        "id": model_id,
+                        "name": f"{self.valves.NAME_PREFIX}{display_name}",
+                        "object": "model",
+                        "created": int(time.time()),
+                        "owned_by": "openrouter",
+                    }
+                )
 
             zdr_models.sort(key=lambda x: x["name"])
 
