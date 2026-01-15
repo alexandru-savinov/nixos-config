@@ -52,7 +52,8 @@ in
         type = types.bool;
         default = false;
         description = ''
-          Enable on-disk (mmap) storage for vectors.
+          Enable on-disk storage mode for vectors and payloads.
+          Sets on_disk_payload=true and hnsw_index.on_disk=true.
           Recommended for memory-constrained devices like RPi5.
           Trades some query speed for significantly lower RAM usage.
         '';
@@ -122,7 +123,7 @@ in
             storage_path = cfg.storage.path;
             snapshots_path = cfg.storage.snapshotsPath;
 
-            # On-disk mode uses mmap for vectors (lower RAM, slightly slower)
+            # Store payload metadata on disk (lower RAM, slightly slower queries)
             on_disk_payload = cfg.storage.onDisk;
           };
 
@@ -192,7 +193,9 @@ in
 
       preStop = ''
         echo "Removing Tailscale Serve configuration for Qdrant..."
-        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+        if ! ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off; then
+          echo "WARNING: Failed to remove Tailscale Serve configuration for port ${toString cfg.tailscaleServe.httpsPort}. Manual cleanup may be required." >&2
+        fi
       '';
     };
 

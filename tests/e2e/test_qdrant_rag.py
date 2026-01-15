@@ -20,6 +20,7 @@ import time
 import uuid
 
 import pytest
+import requests
 
 from .owui_client import OpenWebUIClient
 
@@ -152,11 +153,12 @@ class TestQdrantRAGIntegration:
                 "RAG may not be retrieving document content correctly."
             )
 
-            # Bonus check: national flower
-            if "moonbloom" not in answer:
-                pytest.xfail(
-                    "Response didn't include moonbloom - RAG retrieval may be partial"
-                )
+            # Check for national flower - indicates complete RAG retrieval
+            assert "moonbloom" in answer, (
+                f"Expected 'moonbloom' (national flower) in response. "
+                f"Got: {answer[:200]}... "
+                "RAG retrieval may be incomplete - only partial document content returned."
+            )
 
         finally:
             # Cleanup uploaded file
@@ -248,10 +250,12 @@ class TestQdrantRAGIntegration:
         # Small delay for Qdrant to process deletion
         time.sleep(2)
 
-        # Verify file is gone (should raise or return 404)
+        # Verify file is gone (should return 404)
         try:
             client.get_file_status(file_info.id)
             pytest.fail("Expected file to be deleted, but it still exists")
-        except Exception:
-            # Expected - file should not exist
-            pass
+        except requests.HTTPError as e:
+            # Expected - file should return 404
+            assert e.response.status_code == 404, (
+                f"Expected 404 for deleted file, got HTTP {e.response.status_code}"
+            )
