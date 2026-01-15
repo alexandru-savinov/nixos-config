@@ -1,5 +1,6 @@
 { config
 , pkgs
+, pkgs-unstable
 , lib
 , ...
 }:
@@ -8,6 +9,16 @@ with lib;
 
 let
   cfg = config.services.open-webui-tailscale;
+
+  # Create open-webui package with qdrant-client when needed
+  # This is required because the default open-webui package doesn't include qdrant-client
+  # See: https://github.com/nixos/nixpkgs/issues/422030
+  # Uses pkgs-unstable for latest open-webui version and Python dependency compatibility
+  openWebuiWithQdrant = pkgs-unstable.open-webui.overridePythonAttrs (oldAttrs: {
+    propagatedBuildInputs = (oldAttrs.propagatedBuildInputs or [ ]) ++ [
+      pkgs-unstable.python3Packages.qdrant-client
+    ];
+  });
 in
 {
   options.services.open-webui-tailscale = {
@@ -178,6 +189,45 @@ in
           default = "http://127.0.0.1:19530";
           description = "Milvus server URI.";
         };
+      };
+    };
+
+    # Memory Feature Configuration (Experimental)
+    # Allows models to store and retrieve long-term information about users
+    # Each user gets their own vector collection for semantic memory search
+    memory = {
+      enable = mkEnableOption "persistent memory feature for LLMs" // {
+        default = true;
+      };
+    };
+
+    # Auto Memory Filter - Automatically extracts memories from conversations
+    # Requires memory.enable = true for the underlying storage
+    autoMemory = {
+      enable = mkEnableOption "automatic memory extraction from conversations";
+
+      model = mkOption {
+        type = types.str;
+        default = "openai/gpt-4o-mini";
+        example = "anthropic/claude-3-haiku";
+        description = ''
+          LLM model to use for memory extraction.
+          Should be fast and inexpensive since it runs on every message.
+          Uses the OpenRouter API (hardcoded to openrouter.ai/api/v1).
+          Model names must use OpenRouter format: provider/model-name.
+        '';
+      };
+
+      relatedMemoriesCount = mkOption {
+        type = types.int;
+        default = 5;
+        description = "Number of related memories to check for duplicates.";
+      };
+
+      relatedMemoriesDistance = mkOption {
+        type = types.float;
+        default = 0.75;
+        description = "Distance threshold for similar memories (lower = more similar).";
       };
     };
 
@@ -389,11 +439,19 @@ in
       Store it with agenix or sops-nix.
     '';
 
-    # Assertions for testing configuration
+    # Assertions for configuration dependencies
     assertions = [
       {
         assertion = cfg.testing.enable -> cfg.secretKeyFile != null;
         message = "services.open-webui-tailscale.secretKeyFile must be set when testing.enable is true (required for JWT API key generation)";
+      }
+      {
+        assertion = cfg.autoMemory.enable -> cfg.memory.enable;
+        message = "services.open-webui-tailscale.memory.enable must be true when autoMemory.enable is true (autoMemory requires memory storage)";
+      }
+      {
+        assertion = cfg.autoMemory.enable -> cfg.openai.apiKeyFile != null;
+        message = "services.open-webui-tailscale.openai.apiKeyFile must be set when autoMemory.enable is true (required for memory extraction LLM)";
       }
     ];
 
@@ -402,6 +460,13 @@ in
       enable = true;
       inherit (cfg) host port stateDir;
       openFirewall = false; # Accessed via Tailscale only
+
+      # Always use pkgs-unstable for latest open-webui version
+      # Add qdrant-client when qdrant vector DB is selected
+      package =
+        if (cfg.vectorDb.type == "qdrant")
+        then openWebuiWithQdrant
+        else pkgs-unstable.open-webui;
 
       environment = mkMerge [
         {
@@ -494,6 +559,12 @@ in
         # Milvus-specific configuration
         (mkIf (cfg.vectorDb.type == "milvus") {
           MILVUS_URI = cfg.vectorDb.milvus.uri;
+        })
+        # Memory feature configuration
+        # Stores per-user memories in vector DB for semantic retrieval
+        (mkIf cfg.memory.enable {
+          ENABLE_MEMORIES = "True";
+          USER_PERMISSIONS_FEATURES_MEMORIES = "True";
         })
         cfg.extraEnvironment
       ];
@@ -965,6 +1036,315 @@ in
         if ! ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off; then
           echo "WARNING: Failed to remove Tailscale Serve configuration for port ${toString cfg.tailscaleServe.httpsPort}. Manual cleanup may be required." >&2
         fi
+      '';
+    };
+
+    # Memory Feature Migration
+    # Updates existing database to enable memory feature (PersistentConfig vars)
+    # This is needed because ENABLE_MEMORIES is only read from env on first launch
+    systemd.services.open-webui-memory-migration = mkIf cfg.memory.enable {
+      description = "Enable Memory Feature in Open-WebUI Database";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" ];
+      requires = [ "open-webui.service" ];
+
+      path = [
+        pkgs.sqlite
+        (pkgs.python3.withPackages (ps: [ ]))
+      ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        # Note: Runs as root since open-webui also runs as root
+        # (DynamicUser is force-disabled in the open-webui service)
+      };
+
+      script = ''
+                set -euo pipefail
+
+                DB_FILE="${cfg.stateDir}/data/webui.db"
+                MARKER_FILE="${cfg.stateDir}/.memory-migration-complete"
+
+                # Skip if migration already completed
+                if [ -f "$MARKER_FILE" ]; then
+                  echo "Memory migration already completed, skipping"
+                  exit 0
+                fi
+
+                echo "Waiting for Open-WebUI database..."
+                for i in $(seq 1 60); do
+                  if [ -f "$DB_FILE" ]; then
+                    break
+                  fi
+                  echo "Waiting for database... ($i/60)"
+                  sleep 1
+                done
+
+                if [ ! -f "$DB_FILE" ]; then
+                  echo "ERROR: Database not found at $DB_FILE after 60 seconds"
+                  exit 1
+                fi
+
+                # Wait for schema to be ready (config table must exist)
+                echo "Waiting for database schema to be initialized..."
+                for i in $(seq 1 30); do
+                  if sqlite3 "$DB_FILE" "SELECT 1 FROM config LIMIT 1" >/dev/null 2>&1; then
+                    echo "Database schema is ready"
+                    break
+                  fi
+                  if [ "$i" -eq 30 ]; then
+                    echo "ERROR: Database schema not ready after 30 seconds"
+                    echo "HINT: The config table does not exist. Open-WebUI may not have started properly."
+                    exit 1
+                  fi
+                  echo "Waiting for schema... ($i/30)"
+                  sleep 1
+                done
+
+                # Update config to enable memory feature
+                # Uses Python to safely handle JSON merging with proper error handling
+                python3 << 'PYEOF'
+        import sqlite3
+        import json
+        import sys
+
+        db_path = "${cfg.stateDir}/data/webui.db"
+
+        try:
+            conn = sqlite3.connect(db_path, timeout=30)
+        except sqlite3.OperationalError as e:
+            print(f"ERROR: Cannot connect to database at {db_path}: {e}")
+            print("HINT: The database may be locked by Open-WebUI or corrupted")
+            sys.exit(1)
+
+        try:
+            cursor = conn.cursor()
+
+            # Get current config
+            try:
+                cursor.execute("SELECT data FROM config LIMIT 1")
+            except sqlite3.OperationalError as e:
+                print(f"ERROR: Failed to query config table: {e}")
+                conn.close()
+                sys.exit(1)
+
+            row = cursor.fetchone()
+
+            if row:
+                try:
+                    config = json.loads(row[0])
+                except json.JSONDecodeError as e:
+                    print(f"ERROR: Config data in database is not valid JSON: {e}")
+                    conn.close()
+                    sys.exit(1)
+            else:
+                print("WARNING: No existing config found in database, creating new config")
+                print("HINT: This is normal on first run, but may indicate data loss on existing installs")
+                config = {"version": 0}
+
+            # Ensure features section exists
+            if "features" not in config:
+                config["features"] = {}
+
+            # Enable memory features if not already enabled
+            changed = False
+            if not config["features"].get("enable_memories"):
+                config["features"]["enable_memories"] = True
+                changed = True
+                print("Enabled enable_memories in config")
+
+            if not config["features"].get("enable_memory_tool"):
+                config["features"]["enable_memory_tool"] = True
+                changed = True
+                print("Enabled enable_memory_tool in config")
+
+            # Ensure user permissions for memory
+            if "permissions" not in config:
+                config["permissions"] = {}
+            if "features" not in config["permissions"]:
+                config["permissions"]["features"] = {}
+            if not config["permissions"]["features"].get("memory"):
+                config["permissions"]["features"]["memory"] = True
+                changed = True
+                print("Enabled user memory permission in config")
+
+            if changed:
+                try:
+                    cursor.execute("UPDATE config SET data = ? WHERE rowid = 1", (json.dumps(config),))
+                    if cursor.rowcount == 0:
+                        print("WARNING: No config row found to update, inserting new row")
+                        cursor.execute("INSERT INTO config (data) VALUES (?)", (json.dumps(config),))
+                    conn.commit()
+                    print(f"Memory feature migration complete (updated {cursor.rowcount} row(s))")
+                except sqlite3.OperationalError as e:
+                    print(f"ERROR: Failed to update config in database: {e}")
+                    print("HINT: Database may be locked, disk may be full, or filesystem may be read-only")
+                    conn.close()
+                    sys.exit(1)
+            else:
+                print("Memory feature already enabled, no changes needed")
+
+        finally:
+            conn.close()
+        PYEOF
+
+                # Mark migration as complete
+                touch "$MARKER_FILE"
+                echo "Migration marker created at $MARKER_FILE"
+      '';
+    };
+
+    # Auto Memory Filter Provisioning
+    # Installs the auto memory extraction function into Open-WebUI
+    systemd.services.open-webui-auto-memory-function = mkIf cfg.autoMemory.enable {
+      description = "Provision Auto Memory Filter Function for Open-WebUI";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" "open-webui-memory-migration.service" ];
+      requires = [ "open-webui.service" ];
+
+      path = [
+        pkgs.sqlite
+        (pkgs.python3.withPackages (ps: [ ]))
+      ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+
+      script = ''
+                set -euo pipefail
+
+                DB_FILE="${cfg.stateDir}/data/webui.db"
+                FUNCTION_ID="auto_memory_filter"
+                FUNCTION_FILE="${./open-webui-functions/auto_memory_filter.py}"
+
+                # Read API key from agenix secret
+                API_KEY=$(cat ${cfg.openai.apiKeyFile})
+
+                # Wait for database to exist
+                echo "Waiting for Open-WebUI database..."
+                for i in $(seq 1 60); do
+                  if [ -f "$DB_FILE" ]; then
+                    break
+                  fi
+                  echo "Waiting for database... ($i/60)"
+                  sleep 1
+                done
+
+                if [ ! -f "$DB_FILE" ]; then
+                  echo "ERROR: Database not found at $DB_FILE"
+                  exit 1
+                fi
+
+                # Wait for schema to be ready (with timeout validation)
+                echo "Waiting for database schema..."
+                SCHEMA_READY=false
+                for i in $(seq 1 30); do
+                  if sqlite3 "$DB_FILE" "SELECT 1 FROM function LIMIT 1" >/dev/null 2>&1; then
+                    SCHEMA_READY=true
+                    break
+                  fi
+                  echo "Waiting for schema... ($i/30)"
+                  sleep 1
+                done
+
+                if [ "$SCHEMA_READY" != "true" ]; then
+                  echo "ERROR: Database schema not ready after 30 seconds"
+                  echo "The 'function' table does not exist - Open-WebUI may not have started properly"
+                  exit 1
+                fi
+
+                # Export variables for Python
+                export DB_FILE FUNCTION_FILE FUNCTION_ID API_KEY
+                export MODEL="${cfg.autoMemory.model}"
+                export RELATED_N="${toString cfg.autoMemory.relatedMemoriesCount}"
+                export RELATED_DIST="${toString cfg.autoMemory.relatedMemoriesDistance}"
+                export STATE_DIR="${cfg.stateDir}"
+
+                # Use Python to install/update the function
+                python3 << 'PYTHON'
+        import sqlite3
+        import json
+        import os
+        import time
+
+        db_file = os.environ["DB_FILE"]
+        function_file = os.environ["FUNCTION_FILE"]
+        function_id = os.environ["FUNCTION_ID"]
+        api_key = os.environ["API_KEY"]
+        model = os.environ["MODEL"]
+        related_n = int(os.environ["RELATED_N"])
+        related_dist = float(os.environ["RELATED_DIST"])
+        state_dir = os.environ["STATE_DIR"]
+
+        # Read function content
+        with open(function_file) as f:
+            content = f.read()
+
+        # Build valves configuration
+        valves = {
+            "openai_api_url": "https://openrouter.ai/api/v1",
+            "model": model,
+            "api_key": api_key,
+            "related_memories_n": related_n,
+            "related_memories_dist": related_dist,
+            "auto_save_user": True,
+            "direct_db_path": f"{state_dir}/data/webui.db",
+            "enabled": True,
+        }
+
+        meta = {
+            "description": "Automatically extracts and stores memories from conversations"
+        }
+
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
+
+        # Check if function exists
+        cursor.execute("SELECT id FROM function WHERE id = ?", (function_id,))
+        exists = cursor.fetchone()
+
+        now = int(time.time())
+
+        if exists:
+            # Update existing function
+            cursor.execute("""
+                UPDATE function
+                SET content = ?, valves = ?, meta = ?, updated_at = ?, is_active = 1, is_global = 1
+                WHERE id = ?
+            """, (content, json.dumps(valves), json.dumps(meta), now, function_id))
+            print(f"Updated auto memory filter function")
+        else:
+            # Get admin user ID for ownership
+            cursor.execute("SELECT id FROM user WHERE role='admin' LIMIT 1")
+            row = cursor.fetchone()
+            admin_id = row[0] if row else ""
+
+            # Insert new function
+            cursor.execute("""
+                INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                function_id,
+                admin_id,
+                "Auto Memory Filter",
+                "filter",
+                content,
+                json.dumps(meta),
+                now,
+                now,
+                json.dumps(valves),
+                1,
+                1,
+            ))
+            print(f"Installed auto memory filter function")
+
+        conn.commit()
+        conn.close()
+        print("Auto memory filter provisioning complete")
+        PYTHON
       '';
     };
   };
