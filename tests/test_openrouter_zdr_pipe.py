@@ -56,8 +56,14 @@ def mock_requests_get(monkeypatch):
                 status_code=200,
                 json=lambda: {
                     "data": [
-                        {"name": "OpenAI | openrouter/gpt-4o-mini"},
-                        {"name": "OpenAI | openrouter/gpt-4o"},
+                        {
+                            "name": "OpenAI | openrouter/gpt-4o-mini",
+                            "model_name": "GPT-4o Mini",
+                        },
+                        {
+                            "name": "OpenAI | openrouter/gpt-4o",
+                            "model_name": "GPT-4o",
+                        },
                     ]
                 },
             )
@@ -178,19 +184,21 @@ def test_cache_mechanism(pipe, mock_requests_get, monkeypatch):
     pipe.valves.ZDR_CACHE_TTL = 3600
 
     # First call populates cache
-    first_call = pipe._get_zdr_models()
-    assert first_call == ["openrouter/gpt-4o-mini", "openrouter/gpt-4o"]
+    first_call = pipe.pipes()
+    assert len(first_call) == 2
+    assert {m["id"] for m in first_call} == {"openrouter/gpt-4o-mini", "openrouter/gpt-4o"}
 
     # Monkeypatch time to simulate time passage less than TTL
     original_time = time.time
     monkeypatch.setattr(time, "time", lambda: original_time() + 100)
 
     # Second call should return cached value, not trigger new request
-    second_call = pipe._get_zdr_models()
+    second_call = pipe.pipes()
     assert second_call == first_call
 
     # Simulate TTL expiry
     monkeypatch.setattr(time, "time", lambda: original_time() + 4000)
     # Next call should fetch again (mock will be called again)
-    third_call = pipe._get_zdr_models()
-    assert third_call == first_call
+    third_call = pipe.pipes()
+    assert len(third_call) == 2
+    assert {m["id"] for m in third_call} == {"openrouter/gpt-4o-mini", "openrouter/gpt-4o"}
