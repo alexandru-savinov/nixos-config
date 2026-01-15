@@ -72,11 +72,17 @@ class Pipe:
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/alexandru-savinov/nixos-config",
+                "X-Title": "nixos-config",
             }
             response = requests.get(zdr_url, headers=headers, timeout=30)
             response.raise_for_status()
 
-            zdr_data = response.json().get("data", [])
+            # Validate response data
+            response_data = response.json()
+            zdr_data = response_data.get("data", [])
+            if not isinstance(zdr_data, list):
+                zdr_data = []
 
             # Build model list directly from ZDR endpoint
             # Deduplicate by model ID (same model may have multiple providers)
@@ -85,15 +91,19 @@ class Pipe:
 
             for item in zdr_data:
                 # Extract model ID from "Provider | model-id" format
-                name_parts = item["name"].split(" | ")
+                # Use rsplit to handle edge cases where provider names might contain " | "
+                name_parts = item["name"].rsplit(" | ", 1)
                 model_id = name_parts[1] if len(name_parts) > 1 else item["name"]
 
                 if model_id not in seen_ids:
                     seen_ids.add(model_id)
+                    # Handle empty model_name by falling back to model_id
+                    model_name = item.get("model_name", "")
+                    display_name = model_name if model_name else model_id
                     zdr_models.append(
                         {
                             "id": model_id,
-                            "name": f"{self.valves.NAME_PREFIX}{item.get('model_name', model_id)}",
+                            "name": f"{self.valves.NAME_PREFIX}{display_name}",
                             "object": "model",
                             "created": int(time.time()),
                             "owned_by": "openrouter",
