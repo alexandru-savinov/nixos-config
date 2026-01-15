@@ -50,41 +50,6 @@ class Pipe:
         # Fall back to the global OPENAI_API_KEY (set by agenix)
         return os.environ.get("OPENAI_API_KEY", "")
 
-    def _get_zdr_models(self) -> list[str]:
-        """Fetch ZDR model list from OpenRouter API with caching."""
-        now = time.time()
-        if self._zdr_cache and (now - self._zdr_cache_time) < self.valves.ZDR_CACHE_TTL:
-            return self._zdr_cache
-
-        try:
-            # Fetch ZDR endpoints from OpenRouter
-            zdr_url = f"{self.valves.OPENROUTER_API_BASE_URL}/endpoints/zdr"
-            headers = {
-                "Authorization": f"Bearer {self._get_api_key()}",
-                "Content-Type": "application/json",
-            }
-
-            response = requests.get(zdr_url, headers=headers, timeout=30)
-            response.raise_for_status()
-
-            data = response.json()
-            # ZDR endpoint returns {"name": "Provider | model-id", ...}
-            # Extract the model ID from the name field
-            zdr_models = [
-                item["name"].split(" | ")[1] if " | " in item["name"] else item["name"]
-                for item in data.get("data", [])
-            ]
-
-            self._zdr_cache = zdr_models
-            self._zdr_cache_time = now
-
-            return zdr_models
-
-        except Exception as e:
-            print(f"Error fetching ZDR models: {e}")
-            # Return cached data if available, otherwise empty list
-            return self._zdr_cache if self._zdr_cache is not None else []
-
     def pipes(self) -> list[dict]:
         """Return only ZDR-compliant models."""
         api_key = self._get_api_key()
@@ -96,62 +61,72 @@ class Pipe:
                 }
             ]
 
+        # Check cache first
+        now = time.time()
+        if self._zdr_cache and (now - self._zdr_cache_time) < self.valves.ZDR_CACHE_TTL:
+            return self._zdr_cache
+
         try:
-            # Get ZDR model IDs
-            zdr_model_ids = set(self._get_zdr_models())
-
-            if not zdr_model_ids:
-                return [
-                    {
-                        "id": "error",
-                        "name": "No ZDR models found. Check API key and network connection.",
-                    }
-                ]
-
-            # Fetch all available models from OpenRouter
+            # Fetch ZDR endpoints directly
+            zdr_url = f"{self.valves.OPENROUTER_API_BASE_URL}/endpoints/zdr"
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/alexandru-savinov/nixos-config",
-                "X-Title": "nixos-config",
             }
-
-            models_url = f"{self.valves.OPENROUTER_API_BASE_URL}/models"
-            response = requests.get(models_url, headers=headers, timeout=30)
+            response = requests.get(zdr_url, headers=headers, timeout=30)
             response.raise_for_status()
 
-            all_models = response.json().get("data", [])
+            zdr_data = response.json().get("data", [])
 
-            # Filter to only ZDR-compliant models
-            zdr_models = [
-                {
-                    "id": model["id"],
-                    "name": f"{self.valves.NAME_PREFIX}{model.get('name', model['id'])}",
-                    "object": "model",
-                    "created": model.get("created", int(time.time())),
-                    "owned_by": model.get("owned_by", "openrouter"),
-                }
-                for model in all_models
-                if model["id"] in zdr_model_ids
-            ]
+            # Build model list directly from ZDR endpoint
+            # Deduplicate by model ID (same model may have multiple providers)
+            seen_ids = set()
+            zdr_models = []
 
-            # Sort by name for better UX
+            for item in zdr_data:
+                # Extract model ID from "Provider | model-id" format
+                name_parts = item["name"].split(" | ")
+                model_id = name_parts[1] if len(name_parts) > 1 else item["name"]
+
+                if model_id not in seen_ids:
+                    seen_ids.add(model_id)
+                    zdr_models.append(
+                        {
+                            "id": model_id,
+                            "name": f"{self.valves.NAME_PREFIX}{item.get('model_name', model_id)}",
+                            "object": "model",
+                            "created": int(time.time()),
+                            "owned_by": "openrouter",
+                        }
+                    )
+
             zdr_models.sort(key=lambda x: x["name"])
 
-            return (
+            # Cache the result
+            result = (
                 zdr_models
                 if zdr_models
                 else [
                     {
                         "id": "error",
-                        "name": "No ZDR models available. Check OpenRouter ZDR endpoint.",
+                        "name": "No ZDR models found",
                     }
                 ]
             )
+            self._zdr_cache = result
+            self._zdr_cache_time = now
+
+            return result
 
         except requests.exceptions.RequestException as e:
+            # Return cached data on error if available
+            if self._zdr_cache:
+                return self._zdr_cache
             return [{"id": "error", "name": f"Network error: {str(e)}"}]
         except Exception as e:
+            # Return cached data on error if available
+            if self._zdr_cache:
+                return self._zdr_cache
             return [{"id": "error", "name": f"Error loading ZDR models: {str(e)}"}]
 
     def pipe(self, body: dict, __user__: dict) -> Union[str, Generator, Iterator]:
