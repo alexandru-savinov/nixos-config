@@ -502,6 +502,10 @@ in
     # Load secrets from files at runtime using a separate script
     # This runs via ExecStartPre to avoid conflicts with upstream preStart
     systemd.services.open-webui = {
+      # Ensure Qdrant is running before Open-WebUI starts when using Qdrant vector DB
+      after = mkIf (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ];
+      wants = mkIf (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ];
+
       serviceConfig = mkMerge [
         {
           DynamicUser = lib.mkForce false;
@@ -958,7 +962,9 @@ in
 
       preStop = ''
         echo "Removing Tailscale Serve configuration for Open-WebUI..."
-        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+        if ! ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off; then
+          echo "WARNING: Failed to remove Tailscale Serve configuration for port ${toString cfg.tailscaleServe.httpsPort}. Manual cleanup may be required." >&2
+        fi
       '';
     };
   };
