@@ -120,6 +120,25 @@ in
           Get your API key from https://app.tavily.com
         '';
       };
+
+      fastMode = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Enable fast web search mode that skips the full RAG pipeline.
+
+          When enabled (default), web searches use only Tavily snippets instead of:
+          1. Fetching full page content from search results
+          2. Chunking and generating embeddings
+          3. Storing in vector database
+          4. Querying embeddings for context
+
+          Performance: ~2-3 seconds (fast mode) vs ~40+ seconds (full RAG)
+
+          Disable for deep research where full page content improves answer quality.
+          Recommended to keep enabled on resource-constrained devices (RPi5).
+        '';
+      };
     };
 
     # Vector Database Configuration (for RAG document embedding)
@@ -516,6 +535,13 @@ in
           WEB_SEARCH_ENGINE = "tavily";
           WEB_SEARCH_RESULT_COUNT = "3";
           WEB_SEARCH_CONCURRENT_REQUESTS = "10";
+        })
+        # Fast web search mode: skip page fetching and embedding for ~10x faster searches
+        # Uses only Tavily snippets instead of full RAG pipeline
+        # See: https://docs.openwebui.com/getting-started/env-configuration/
+        (mkIf (cfg.tavilySearch.enable && cfg.tavilySearch.fastMode) {
+          BYPASS_WEB_SEARCH_WEB_LOADER = "True";
+          BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL = "True";
         })
         (mkIf cfg.oidc.enable {
           OAUTH_PROVIDER_NAME = "Tailscale";
