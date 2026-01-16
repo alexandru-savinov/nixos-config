@@ -310,6 +310,14 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
+        # Use same environment file as main n8n service for encryption key
+        EnvironmentFile = "-/run/n8n/env";
+      };
+
+      # n8n needs N8N_USER_FOLDER to know where config/database is stored
+      # Without this, it defaults to $HOME/.n8n which fails with DynamicUser
+      environment = {
+        N8N_USER_FOLDER = "/var/lib/n8n/.n8n";
       };
 
       path = [ pkgs.curl pkgs.jq pkgs.sqlite pkgs.n8n ];
