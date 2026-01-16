@@ -708,7 +708,15 @@ in
                 # Read API key from secrets.env (created by main service's ExecStartPre)
                 # This avoids needing root access to read agenix secrets directly
                 if [ -f /run/open-webui/secrets.env ]; then
-                  source /run/open-webui/secrets.env
+                  source /run/open-webui/secrets.env || {
+                    echo "ERROR: Failed to parse /run/open-webui/secrets.env" >&2
+                    exit 1
+                  }
+                  if [ -z "''${OPENAI_API_KEY:-}" ]; then
+                    echo "ERROR: OPENAI_API_KEY not found in secrets.env" >&2
+                    echo "HINT: Ensure services.open-webui-tailscale.openai.apiKeyFile is configured" >&2
+                    exit 1
+                  fi
                   API_KEY="$OPENAI_API_KEY"
                 else
                   echo "ERROR: /run/open-webui/secrets.env not found" >&2
@@ -905,7 +913,15 @@ in
                 # Read the WEBUI_SECRET_KEY from secrets.env (created by main service's ExecStartPre)
                 # This avoids needing root access to read agenix secrets directly
                 if [ -f /run/open-webui/secrets.env ]; then
-                  source /run/open-webui/secrets.env
+                  source /run/open-webui/secrets.env || {
+                    echo "ERROR: Failed to parse /run/open-webui/secrets.env" >&2
+                    exit 1
+                  }
+                  if [ -z "''${WEBUI_SECRET_KEY:-}" ]; then
+                    echo "ERROR: WEBUI_SECRET_KEY not found in secrets.env" >&2
+                    echo "HINT: Ensure services.open-webui-tailscale.secretKeyFile is configured" >&2
+                    exit 1
+                  fi
                   export SECRET_KEY="$WEBUI_SECRET_KEY"
                 else
                   echo "ERROR: /run/open-webui/secrets.env not found" >&2
@@ -1262,7 +1278,15 @@ in
                 # Read API key from secrets.env (created by main service's ExecStartPre)
                 # This avoids needing root access to read agenix secrets directly
                 if [ -f /run/open-webui/secrets.env ]; then
-                  source /run/open-webui/secrets.env
+                  source /run/open-webui/secrets.env || {
+                    echo "ERROR: Failed to parse /run/open-webui/secrets.env" >&2
+                    exit 1
+                  }
+                  if [ -z "''${OPENAI_API_KEY:-}" ]; then
+                    echo "ERROR: OPENAI_API_KEY not found in secrets.env" >&2
+                    echo "HINT: Ensure services.open-webui-tailscale.openai.apiKeyFile is configured" >&2
+                    exit 1
+                  fi
                   API_KEY="$OPENAI_API_KEY"
                 else
                   echo "ERROR: /run/open-webui/secrets.env not found" >&2
