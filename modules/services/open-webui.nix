@@ -431,6 +431,18 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Create dedicated system user and group for open-webui
+    # This replaces DynamicUser to ensure consistent file ownership
+    # across the main service and all helper services
+    users.users.open-webui = {
+      isSystemUser = true;
+      group = "open-webui";
+      home = cfg.stateDir;
+      description = "Open-WebUI service user";
+    };
+
+    users.groups.open-webui = { };
+
     # Warn if no secret key file is provided
     warnings = optional (cfg.secretKeyFile == null) ''
       services.open-webui-tailscale.secretKeyFile is not set!
@@ -579,8 +591,14 @@ in
 
       serviceConfig = mkMerge [
         {
+          # Run as dedicated user instead of root
+          # This overrides upstream's DynamicUser=true with a static user
+          # for consistent file ownership across main + helper services
           DynamicUser = lib.mkForce false;
+          User = "open-webui";
+          Group = "open-webui";
           StateDirectory = "open-webui";
+          StateDirectoryMode = "0750";
           ProtectSystem = "strict";
           ProtectHome = true;
           PrivateTmp = true;
@@ -672,6 +690,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Run as open-webui user for database access
+        User = "open-webui";
+        Group = "open-webui";
       };
 
       script = ''
@@ -843,6 +864,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Run as open-webui user for database access
+        User = "open-webui";
+        Group = "open-webui";
         RuntimeDirectory = "open-webui";
         RuntimeDirectoryMode = "0755";
       };
@@ -1056,8 +1080,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        # Note: Runs as root since open-webui also runs as root
-        # (DynamicUser is force-disabled in the open-webui service)
+        # Run as open-webui user for database and state directory access
+        User = "open-webui";
+        Group = "open-webui";
       };
 
       script = ''
@@ -1211,6 +1236,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Run as open-webui user for database access
+        User = "open-webui";
+        Group = "open-webui";
       };
 
       script = ''
