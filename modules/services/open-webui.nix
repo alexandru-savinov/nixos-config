@@ -619,9 +619,10 @@ in
           {
             RuntimeDirectory = "open-webui";
             EnvironmentFile = "-/run/open-webui/secrets.env";
-            # Run secrets setup script before any other ExecStartPre
+            # Run secrets setup script as root (+ prefix) to read agenix secrets,
+            # then chown the env file so the open-webui user can read it
             ExecStartPre = lib.mkBefore [
-              (pkgs.writeShellScript "open-webui-secrets" ''
+              ("+" + pkgs.writeShellScript "open-webui-secrets" ''
                 set -euo pipefail
 
                 SECRETS_FILE="/run/open-webui/secrets.env"
@@ -673,6 +674,7 @@ in
                 ''}
 
                 chmod 600 "$SECRETS_FILE"
+                chown open-webui:open-webui "$SECRETS_FILE"
               '')
             ];
           }
@@ -703,8 +705,15 @@ in
                 FUNCTION_ID="openrouter_zdr_only_models"
                 FUNCTION_FILE="${./open-webui-functions/openrouter_zdr_pipe.py}"
 
-                # Read API key from agenix secret
-                API_KEY=$(cat ${cfg.openai.apiKeyFile})
+                # Read API key from secrets.env (created by main service's ExecStartPre)
+                # This avoids needing root access to read agenix secrets directly
+                if [ -f /run/open-webui/secrets.env ]; then
+                  source /run/open-webui/secrets.env
+                  API_KEY="$OPENAI_API_KEY"
+                else
+                  echo "ERROR: /run/open-webui/secrets.env not found" >&2
+                  exit 1
+                fi
 
                 # Create valves JSON with API key
                 VALVES_JSON=$(${pkgs.jq}/bin/jq -n \
@@ -876,7 +885,6 @@ in
 
                 # Export variables for Python to read via os.environ (avoids shell injection)
                 export DB_FILE="${cfg.stateDir}/data/webui.db"
-                export SECRET_KEY_FILE="${cfg.secretKeyFile}"
                 export USER_EMAIL="${cfg.testing.userEmail}"
                 export USER_NAME="${cfg.testing.userName}"
 
@@ -894,12 +902,15 @@ in
                   exit 1
                 fi
 
-                # Read the WEBUI_SECRET_KEY for JWT signing
-                if [ ! -f "$SECRET_KEY_FILE" ]; then
-                  echo "ERROR: Secret key file not found: $SECRET_KEY_FILE"
+                # Read the WEBUI_SECRET_KEY from secrets.env (created by main service's ExecStartPre)
+                # This avoids needing root access to read agenix secrets directly
+                if [ -f /run/open-webui/secrets.env ]; then
+                  source /run/open-webui/secrets.env
+                  export SECRET_KEY="$WEBUI_SECRET_KEY"
+                else
+                  echo "ERROR: /run/open-webui/secrets.env not found" >&2
                   exit 1
                 fi
-                export SECRET_KEY=$(cat "$SECRET_KEY_FILE")
 
                 # Run Python script to provision user with proper JWT API key
                 python3 << 'PYEOF'
@@ -1248,8 +1259,15 @@ in
                 FUNCTION_ID="auto_memory_filter"
                 FUNCTION_FILE="${./open-webui-functions/auto_memory_filter.py}"
 
-                # Read API key from agenix secret
-                API_KEY=$(cat ${cfg.openai.apiKeyFile})
+                # Read API key from secrets.env (created by main service's ExecStartPre)
+                # This avoids needing root access to read agenix secrets directly
+                if [ -f /run/open-webui/secrets.env ]; then
+                  source /run/open-webui/secrets.env
+                  API_KEY="$OPENAI_API_KEY"
+                else
+                  echo "ERROR: /run/open-webui/secrets.env not found" >&2
+                  exit 1
+                fi
 
                 # Wait for database to exist
                 echo "Waiting for Open-WebUI database..."
