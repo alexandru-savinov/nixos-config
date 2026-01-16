@@ -152,8 +152,7 @@
     # ==========================================================================
     # Monitored Endpoints
     # ==========================================================================
-    # Services are grouped by host. Future: sancta-vigil will be the dedicated
-    # observability host running Gatus, monitoring all other instances.
+    # Services are grouped by host for organization.
     endpoints = {
       # ----------------------------------------------------------------------
       # sancta-choir services (this host)

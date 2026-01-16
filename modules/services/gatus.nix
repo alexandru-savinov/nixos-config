@@ -5,7 +5,8 @@ with lib;
 let
   cfg = config.services.gatus-tailscale;
 
-  # Convert Nix endpoint definitions to Gatus YAML format
+  # Convert Nix endpoint definitions to Gatus attrset format
+  # Note: 'enabled' is a Nix-only option for filtering, not a Gatus config field
   endpointToYaml = ep: {
     name = ep.name;
     group = ep.group;
@@ -16,8 +17,7 @@ let
     // optionalAttrs (ep.body != null) { body = ep.body; }
     // optionalAttrs (ep.headers != { }) { headers = ep.headers; }
     // optionalAttrs (ep.dns != null) { dns = ep.dns; }
-    // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; }
-    // optionalAttrs ep.enabled { enabled = ep.enabled; };
+    // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; };
 
   # Generate full Gatus settings
   gatusSettings = {
@@ -88,12 +88,25 @@ let
         type = types.listOf types.str;
         default = [ "[STATUS] == 200" ];
         description = ''
-          Health conditions to check. Available placeholders:
+          Health conditions to check. Available placeholders by endpoint type:
+
+          HTTP/HTTPS endpoints:
           - [STATUS]: HTTP status code
           - [RESPONSE_TIME]: Response time in ms
           - [BODY]: Response body
-          - [CONNECTED]: Connection success (TCP/ICMP)
+          - [CERTIFICATE_EXPIRATION]: Days until cert expires
+
+          TCP endpoints:
+          - [CONNECTED]: Connection success (boolean)
+          - [RESPONSE_TIME]: Response time in ms
+
+          ICMP endpoints:
+          - [CONNECTED]: Ping success (boolean)
+          - [RESPONSE_TIME]: Response time in ms
+
+          DNS endpoints:
           - [DNS_RCODE]: DNS response code
+          - [BODY]: DNS response body
         '';
         example = [
           "[STATUS] == 200"
@@ -145,7 +158,7 @@ in
 
     port = mkOption {
       type = types.port;
-      default = 8080;
+      default = 3001;
       description = "Port for Gatus web interface to listen on.";
     };
 
@@ -215,7 +228,7 @@ in
           path = mkOption {
             type = types.nullOr types.str;
             default = null;
-            description = "Path for SQLite database (defaults to /var/lib/gatus/data.db).";
+            description = "Path for SQLite database. If null, Gatus uses its default location.";
           };
           caching = mkOption {
             type = types.bool;
@@ -259,7 +272,7 @@ in
 
       httpsPort = mkOption {
         type = types.port;
-        default = 8080;
+        default = 3001;
         description = "HTTPS port for Tailscale Serve to expose.";
       };
     };
@@ -299,6 +312,8 @@ in
       };
 
       script = ''
+        set -euo pipefail
+
         # Wait for tailscaled to be ready (timeout: 60 seconds)
         timeout=60
         while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
@@ -324,7 +339,11 @@ in
         # Check if serve is already configured for this port
         if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
           echo "Configuring Tailscale Serve for Gatus..."
-          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://127.0.0.1:${toString cfg.port}
+          if ! ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://127.0.0.1:${toString cfg.port}; then
+            echo "ERROR: Failed to configure Tailscale Serve for Gatus"
+            exit 1
+          fi
+          echo "Tailscale Serve configured successfully"
         else
           echo "Tailscale Serve already configured for Gatus"
         fi
@@ -332,12 +351,12 @@ in
 
       preStop = ''
         echo "Removing Tailscale Serve configuration for Gatus..."
-        ${pkgs.tailscale}/bin/tailscale serve --https ${toString cfg.tailscaleServe.httpsPort} off || true
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
       '';
     };
 
     # Access Gatus via Tailscale HTTPS (requires tailscaleServe.enable = true):
-    #   https://<hostname>.<tailnet>.ts.net:8080
+    #   https://<hostname>.<tailnet>.ts.net:<tailscaleServe.httpsPort>
     # Service binds to localhost only for security - no direct network access possible
   };
 }

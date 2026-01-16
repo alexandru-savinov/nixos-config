@@ -30,7 +30,6 @@
     ../../modules/services/n8n.nix
     ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
     # Note: Uptime Kuma removed - monitoring now centralized on sancta-choir via Gatus
-    # Future: Will move to dedicated sancta-vigil observability host
   ];
 
   # Agenix secrets for additional services
