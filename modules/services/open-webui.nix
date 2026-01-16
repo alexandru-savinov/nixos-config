@@ -909,11 +909,16 @@ in
             user_id = str(uuid.uuid4())
             print(f"Creating new E2E test user: {user_email}")
 
-            # Insert user with admin role
+            # Insert user with admin role (api_key moved to separate table in 0.7.x)
             cursor.execute("""
-                INSERT INTO user (id, name, email, role, profile_image_url, api_key, created_at, updated_at, last_active_at)
-                VALUES (?, ?, ?, 'admin', '/static/user.png', '''''', ?, ?, ?)
+                INSERT INTO user (id, name, email, role, profile_image_url, created_at, updated_at, last_active_at)
+                VALUES (?, ?, ?, 'admin', '/static/user.png', ?, ?, ?)
             """, (user_id, user_name, user_email, now, now, now))
+
+        # Ensure user has admin role
+        cursor.execute("""
+            UPDATE user SET role='admin', updated_at=? WHERE id=?
+        """, (now, user_id))
 
         # Generate JWT API key
         payload = {
@@ -923,11 +928,16 @@ in
         }
         token = jwt.encode(payload, secret_key, algorithm="HS256")
         api_key = f"sk-{token}"
+        key_id = f"e2e-test-{user_id[:8]}"
 
-        # Update user with API key and ensure admin role
+        # Delete existing API key for this user (if any) and insert new one
+        # Open-WebUI 0.7.x moved api_key from user table to separate api_key table
+        cursor.execute("DELETE FROM api_key WHERE user_id=?", (user_id,))
         cursor.execute("""
-            UPDATE user SET api_key=?, role='admin', updated_at=? WHERE id=?
-        """, (api_key, now, user_id))
+            INSERT INTO api_key (id, user_id, key, data, expires_at, last_used_at, created_at, updated_at)
+            VALUES (?, ?, ?, '{}', NULL, NULL, ?, ?)
+        """, (key_id, user_id, api_key, now, now))
+        print(f"Created API key in api_key table (id={key_id})")
 
         # Create or update auth entry (required for API key auth)
         cursor.execute("SELECT id FROM auth WHERE id=?", (user_id,))
@@ -968,7 +978,13 @@ in
         import os
         conn = sqlite3.connect(os.environ["DB_FILE"])
         cursor = conn.cursor()
-        cursor.execute("SELECT api_key FROM user WHERE email=?", (os.environ["USER_EMAIL"],))
+        # Open-WebUI 0.7.x: api_key moved from user table to separate api_key table
+        cursor.execute("""
+            SELECT ak.key FROM api_key ak
+            JOIN user u ON ak.user_id = u.id
+            WHERE u.email = ?
+            ORDER BY ak.created_at DESC LIMIT 1
+        """, (os.environ["USER_EMAIL"],))
         row = cursor.fetchone()
         conn.close()
         print(row[0] if row else "", end="")
