@@ -100,8 +100,28 @@ if FLAKE_CHECK_OUTPUT=$(nix flake check "$FLAKE_PATH" 2>&1); then
     echo "$FLAKE_CHECK_OUTPUT" | head -20
     echo "Flake check passed"
 else
-    echo "$FLAKE_CHECK_OUTPUT" | head -20
-    echo "Flake check had warnings (may be normal)"
+    echo "Flake check failed. Output (last 40 lines):"
+    echo "$FLAKE_CHECK_OUTPUT" | tail -40
+    echo ""
+    echo "ERROR: Flake check failed!"
+    echo ""
+    if [ "$YES_FLAG" = true ]; then
+        echo "Aborting deployment (non-interactive mode)."
+        exit 1
+    elif [ ! -t 0 ]; then
+        echo "Aborting deployment (no TTY for confirmation)."
+        echo "Use --yes flag to proceed despite errors in non-interactive mode."
+        exit 1
+    else
+        echo "The flake has errors. Proceeding may result in a broken deployment."
+        read -p "Continue despite errors? (y/N): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Deployment cancelled due to flake check failure."
+            exit 1
+        fi
+        echo "WARNING: Proceeding despite flake check errors at user request."
+    fi
 fi
 echo ""
 
@@ -119,12 +139,18 @@ echo ""
 if [ "$YES_FLAG" = true ]; then
     echo "Applying configuration (--yes flag set)..."
 else
+    # Check for TTY - interactive mode requires a terminal
+    if [ ! -t 0 ]; then
+        echo "ERROR: Interactive mode requires a terminal (stdin is not a TTY)"
+        echo "Use --yes flag for non-interactive deployments"
+        exit 1
+    fi
     echo "Ready to apply configuration"
     read -p "Apply configuration? (y/N): " -n 1 -r
     echo ""
 
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Deployment cancelled."
+        echo "Deployment cancelled by user."
         echo ""
         echo "The build result is available in ./result"
         exit 0
