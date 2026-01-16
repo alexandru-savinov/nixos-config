@@ -316,8 +316,9 @@ in
 
       # n8n needs N8N_USER_FOLDER to know where config/database is stored
       # Without this, it defaults to $HOME/.n8n which fails with DynamicUser
+      # Note: n8n creates .n8n subdirectory inside N8N_USER_FOLDER
       environment = {
-        N8N_USER_FOLDER = "/var/lib/n8n/.n8n";
+        N8N_USER_FOLDER = "/var/lib/n8n";
       };
 
       path = [ pkgs.curl pkgs.jq pkgs.sqlite pkgs.n8n ];
