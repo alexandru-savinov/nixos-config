@@ -989,7 +989,8 @@ in
         row = cursor.fetchone()
         conn.close()
         if not row:
-            print(f"ERROR: No API key found for {os.environ[\"USER_EMAIL\"]}", file=sys.stderr)
+            user_email = os.environ["USER_EMAIL"]
+            print(f"ERROR: No API key found for {user_email}", file=sys.stderr)
             print("Check open-webui-e2e-test-user service logs for setup failures", file=sys.stderr)
             sys.exit(1)
         print(row[0], end="")
