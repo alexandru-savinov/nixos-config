@@ -975,6 +975,7 @@ in
                 API_KEY_OUTPUT="/run/open-webui/e2e-test-api-key"
                 python3 -c '
         import sqlite3
+        import sys
         import os
         conn = sqlite3.connect(os.environ["DB_FILE"])
         cursor = conn.cursor()
@@ -987,7 +988,11 @@ in
         """, (os.environ["USER_EMAIL"],))
         row = cursor.fetchone()
         conn.close()
-        print(row[0] if row else "", end="")
+        if not row:
+            print(f"ERROR: No API key found for {os.environ[\"USER_EMAIL\"]}", file=sys.stderr)
+            print("Check open-webui-e2e-test-user service logs for setup failures", file=sys.stderr)
+            sys.exit(1)
+        print(row[0], end="")
         ' > "$API_KEY_OUTPUT"
                 chmod 600 "$API_KEY_OUTPUT"
                 echo "API key written to $API_KEY_OUTPUT"
