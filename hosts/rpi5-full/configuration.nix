@@ -27,9 +27,10 @@
 
     # Additional services for full deployment
     ../../modules/services/open-webui.nix
-    ../../modules/services/uptime-kuma.nix
     ../../modules/services/n8n.nix
     ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
+    # Note: Uptime Kuma removed - monitoring now centralized on sancta-choir via Gatus
+    # Future: Will move to dedicated sancta-vigil observability host
   ];
 
   # Agenix secrets for additional services
@@ -159,24 +160,6 @@
     testing = {
       enable = true;
       apiKeyFile = config.age.secrets.e2e-test-api-key.path;
-    };
-  };
-
-  # Uptime Kuma - Status monitoring with automatic backups and HTTPS
-  # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net:3001
-  services.uptime-kuma-tailscale = {
-    enable = true;
-    port = 3001;
-
-    backup = {
-      enable = true;
-      schedule = "daily";
-      retention = 7;
-    };
-
-    tailscaleServe = {
-      enable = true;
-      httpsPort = 3001;
     };
   };
 
