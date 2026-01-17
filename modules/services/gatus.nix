@@ -14,10 +14,10 @@ let
     interval = ep.interval;
     conditions = ep.conditions;
   } // optionalAttrs (ep.method != null) { method = ep.method; }
-    // optionalAttrs (ep.body != null) { body = ep.body; }
-    // optionalAttrs (ep.headers != { }) { headers = ep.headers; }
-    // optionalAttrs (ep.dns != null) { dns = ep.dns; }
-    // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; };
+  // optionalAttrs (ep.body != null) { body = ep.body; }
+  // optionalAttrs (ep.headers != { }) { headers = ep.headers; }
+  // optionalAttrs (ep.dns != null) { dns = ep.dns; }
+  // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; };
 
   # Transform storage config - filter null values and set SQLite default path
   storageConfig =
@@ -45,8 +45,8 @@ let
     };
     endpoints = map endpointToYaml (filter (ep: ep.enabled) (attrValues cfg.endpoints));
   } // optionalAttrs (uiConfig != null) { ui = uiConfig; }
-    // optionalAttrs (storageConfig != null) { storage = storageConfig; }
-    // optionalAttrs (cfg.alerting != { }) { alerting = cfg.alerting; };
+  // optionalAttrs (storageConfig != null) { storage = storageConfig; }
+  // optionalAttrs (cfg.alerting != { }) { alerting = cfg.alerting; };
 
   endpointModule = types.submodule {
     options = {
