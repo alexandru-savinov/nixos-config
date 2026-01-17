@@ -245,6 +245,12 @@
       httpsPort = 3001;
     };
 
+    # API key for suite authentication (used as ${GATUS_API_KEY} in suite endpoints)
+    # Uses the provisioned API key from Open-WebUI (not the raw agenix secret)
+    apiKeyFile = "/run/open-webui/e2e-test-api-key";
+    # Wait for the test user provisioning service to create the API key
+    apiKeyServiceDependency = "open-webui-e2e-test-user.service";
+
     # Monitored Endpoints
     endpoints = {
       # ----------------------------------------------------------------------
@@ -327,6 +333,61 @@
         conditions = [
           "[STATUS] == 200"
           "[RESPONSE_TIME] < 3000"
+        ];
+      };
+    };
+
+    # ==========================================================================
+    # Functional Test Suites (Gatus ALPHA feature - API may change upstream)
+    # ==========================================================================
+    # Suites run endpoints sequentially with shared context.
+    # Unlike health endpoints, these verify actual functionality works end-to-end.
+    suites = {
+      # LLM Chat Chain Test - Verifies Open-WebUI can actually process chat requests
+      # This goes beyond health checks to ensure the full LLM pipeline works:
+      # 1. Backend can list models (OpenRouter connection works)
+      # 2. Chat completion returns valid response (LLM actually responds)
+      chat-chain-test = {
+        name = "LLM Chat Chain";
+        group = "functional";
+        interval = "1h"; # Run hourly - more expensive than health checks
+
+        endpoints = [
+          # Step 1: Verify OpenRouter backend is connected and models are available
+          {
+            name = "verify-models";
+            url = "http://127.0.0.1:8080/api/models";
+            headers = {
+              Authorization = "Bearer \${GATUS_API_KEY}";
+            };
+            conditions = [
+              "[STATUS] == 200"
+              "len([BODY].data) > 0" # At least one model available
+            ];
+          }
+
+          # Step 2: Send actual chat completion and verify LLM responds
+          {
+            name = "chat-completion";
+            url = "http://127.0.0.1:8080/api/chat/completions";
+            method = "POST";
+            headers = {
+              Authorization = "Bearer \${GATUS_API_KEY}";
+              Content-Type = "application/json";
+            };
+            # Use cheap/fast model with minimal tokens for monitoring
+            # Note: Model ID must match the full Open-WebUI model path (format: provider.model/name)
+            body = builtins.toJSON {
+              model = "openrouter_zdr_only_models.openai/gpt-4o-mini";
+              messages = [{ role = "user"; content = "Reply with exactly one word: PONG"; }];
+              max_tokens = 5;
+              temperature = 0;
+            };
+            conditions = [
+              "[STATUS] == 200"
+              "[RESPONSE_TIME] < 30000" # 30s timeout for LLM response
+            ];
+          }
         ];
       };
     };
