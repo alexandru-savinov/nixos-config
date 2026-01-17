@@ -19,6 +19,25 @@ let
   // optionalAttrs (ep.dns != null) { dns = ep.dns; }
   // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; };
 
+  # Convert suite endpoint to Gatus attrset format (includes store and always-run)
+  suiteEndpointToYaml = ep: {
+    name = ep.name;
+    url = ep.url;
+    conditions = ep.conditions;
+  } // optionalAttrs (ep.method != null) { method = ep.method; }
+  // optionalAttrs (ep.body != null) { body = ep.body; }
+  // optionalAttrs (ep.headers != { }) { headers = ep.headers; }
+  // optionalAttrs (ep.store != { }) { store = ep.store; }
+  // optionalAttrs ep.always-run { always-run = true; };
+
+  # Convert suite to Gatus attrset format
+  suiteToYaml = suite: {
+    name = suite.name;
+    group = suite.group;
+    interval = suite.interval;
+    endpoints = map suiteEndpointToYaml suite.endpoints;
+  } // optionalAttrs (suite.context != { }) { context = suite.context; };
+
   # Transform storage config - filter null values and set SQLite default path
   storageConfig =
     if cfg.storage == null then null
@@ -37,6 +56,9 @@ let
     if cfg.ui == null then null
     else filterAttrs (n: v: v != null) cfg.ui;
 
+  # Filter enabled suites
+  enabledSuites = filter (s: s.enabled) (attrValues cfg.suites);
+
   # Generate full Gatus settings
   gatusSettings = {
     web = {
@@ -46,7 +68,8 @@ let
     endpoints = map endpointToYaml (filter (ep: ep.enabled) (attrValues cfg.endpoints));
   } // optionalAttrs (uiConfig != null) { ui = uiConfig; }
   // optionalAttrs (storageConfig != null) { storage = storageConfig; }
-  // optionalAttrs (cfg.alerting != { }) { alerting = cfg.alerting; };
+  // optionalAttrs (cfg.alerting != { }) { alerting = cfg.alerting; }
+  // optionalAttrs (enabledSuites != [ ]) { suites = map suiteToYaml enabledSuites; };
 
   endpointModule = types.submodule {
     options = {
@@ -171,6 +194,102 @@ let
       };
     };
   };
+
+  # Suite endpoint module (sequential endpoints with store/always-run support)
+  suiteEndpointModule = types.submodule {
+    options = {
+      name = mkOption {
+        type = types.str;
+        description = "Name of this step in the suite.";
+      };
+
+      url = mkOption {
+        type = types.str;
+        description = "URL to request.";
+      };
+
+      method = mkOption {
+        type = types.nullOr (types.enum [ "GET" "POST" "PUT" "DELETE" "PATCH" ]);
+        default = null;
+        description = "HTTP method (defaults to GET).";
+      };
+
+      body = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Request body.";
+      };
+
+      headers = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        description = "HTTP headers to send.";
+      };
+
+      conditions = mkOption {
+        type = types.listOf types.str;
+        default = [ "[STATUS] == 200" ];
+        description = "Conditions to verify.";
+      };
+
+      store = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        description = ''
+          Variables to extract and store in context for subsequent endpoints.
+          Example: { itemId = "[BODY].id"; }
+        '';
+      };
+
+      always-run = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Run this endpoint even if previous endpoints failed (useful for cleanup).";
+      };
+    };
+  };
+
+  # Suite module (ALPHA feature - sequential endpoints with shared context)
+  suiteModule = types.submodule {
+    options = {
+      enabled = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Whether this suite is enabled.";
+      };
+
+      name = mkOption {
+        type = types.str;
+        description = "Name of the suite.";
+      };
+
+      group = mkOption {
+        type = types.str;
+        default = "suites";
+        description = "Group name for organizing suites.";
+      };
+
+      interval = mkOption {
+        type = types.str;
+        default = "15m";
+        description = "Interval between suite executions.";
+      };
+
+      context = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        description = ''
+          Initial context variables available to all endpoints.
+          Can be referenced as [CONTEXT].varName in URLs, bodies, headers, and conditions.
+        '';
+      };
+
+      endpoints = mkOption {
+        type = types.listOf suiteEndpointModule;
+        description = "Sequential list of endpoints to execute.";
+      };
+    };
+  };
 in
 {
   options.services.gatus-tailscale = {
@@ -200,6 +319,44 @@ in
             group = "sancta-choir";
             url = "https://sancta-choir.tail4249a9.ts.net:5678/healthz";
             conditions = [ "[STATUS] == 200" ];
+          };
+        }
+      '';
+    };
+
+    # Suites - ALPHA feature for sequential endpoint testing with shared context
+    suites = mkOption {
+      type = types.attrsOf suiteModule;
+      default = { };
+      description = ''
+        Suites for sequential endpoint testing (ALPHA feature).
+        Endpoints in a suite run sequentially and can share context via store/[CONTEXT].
+        Useful for testing multi-step workflows like authentication or CRUD operations.
+      '';
+      example = literalExpression ''
+        {
+          chat-test = {
+            name = "LLM Chat Test";
+            group = "functional";
+            interval = "1h";
+            endpoints = [
+              {
+                name = "verify-models";
+                url = "http://127.0.0.1:8080/api/models";
+                conditions = [ "[STATUS] == 200" ];
+              }
+              {
+                name = "chat-completion";
+                url = "http://127.0.0.1:8080/api/chat/completions";
+                method = "POST";
+                # Use builtins.toJSON for type-safe request bodies
+                body = builtins.toJSON {
+                  model = "gpt-4o-mini";
+                  messages = [{ role = "user"; content = "Reply: OK"; }];
+                };
+                conditions = [ "[STATUS] == 200" ];
+              }
+            ];
           };
         }
       '';
@@ -296,6 +453,42 @@ in
         description = "HTTPS port for Tailscale Serve to expose.";
       };
     };
+
+    environmentFiles = mkOption {
+      type = types.listOf types.path;
+      default = [ ];
+      description = ''
+        List of environment files to load. Each file should contain KEY=value pairs.
+        Variables can be referenced in Gatus config using ''${VAR} syntax.
+        Useful for passing API keys to suite endpoints without storing in Nix store.
+      '';
+      example = literalExpression ''
+        [ config.age.secrets.my-api-key.path ]
+      '';
+    };
+
+    apiKeyFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = ''
+        Path to file containing API key for suite authentication.
+        The key will be available as ''${GATUS_API_KEY} in endpoint configurations.
+        File should contain just the raw key value (not KEY=value format).
+      '';
+      example = literalExpression ''
+        config.age.secrets.e2e-test-api-key.path
+      '';
+    };
+
+    apiKeyServiceDependency = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        Systemd service that must complete before the API key file exists.
+        Useful when the API key is provisioned by another service (e.g., user provisioning).
+      '';
+      example = "open-webui-e2e-test-user.service";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -306,10 +499,83 @@ in
     };
 
     # Add CAP_NET_RAW for ICMP ping support (required for icmp:// endpoints)
-    systemd.services.gatus.serviceConfig = {
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+    # Load environment files for secret API keys (referenced via ${VAR} in config)
+    systemd.services.gatus.serviceConfig =
+      let
+        # Build list of environment files to load
+        envFiles = cfg.environmentFiles
+          ++ optional (cfg.apiKeyFile != null) "/run/gatus/env";
+      in
+      {
+        AmbientCapabilities = [ "CAP_NET_RAW" ];
+        CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      } // optionalAttrs (envFiles != [ ]) {
+        EnvironmentFile = envFiles;
+      };
+
+    # Setup service to create environment file from API key before gatus starts
+    # EnvironmentFile is loaded before ExecStartPre, so we need a separate service
+    # (Using ExecStartPre would fail because the env file wouldn't exist when systemd reads EnvironmentFile)
+    systemd.services.gatus-env-setup = mkIf (cfg.apiKeyFile != null) {
+      description = "Create Gatus environment file from API key";
+      before = [ "gatus.service" ];
+      requiredBy = [ "gatus.service" ];
+      # Wait for API key provisioning service if specified - use requires for strict dependency
+      after = optional (cfg.apiKeyServiceDependency != null) cfg.apiKeyServiceDependency;
+      requires = optional (cfg.apiKeyServiceDependency != null) cfg.apiKeyServiceDependency;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        set -euo pipefail
+
+        API_KEY_FILE="${cfg.apiKeyFile}"
+
+        # Validate API key file exists
+        if [ ! -e "$API_KEY_FILE" ]; then
+          echo "ERROR: API key file does not exist: $API_KEY_FILE"
+          ${optionalString (cfg.apiKeyServiceDependency != null) ''
+          echo "This file should be created by: ${cfg.apiKeyServiceDependency}"
+          echo "Check if that service completed successfully:"
+          echo "  systemctl status ${cfg.apiKeyServiceDependency}"
+          ''}
+          exit 1
+        fi
+
+        # Validate API key file is readable
+        if [ ! -r "$API_KEY_FILE" ]; then
+          echo "ERROR: API key file is not readable: $API_KEY_FILE"
+          echo "Current permissions: $(ls -la "$API_KEY_FILE")"
+          exit 1
+        fi
+
+        # Read and validate API key content
+        API_KEY=$(cat "$API_KEY_FILE" | tr -d '[:space:]')
+
+        if [ -z "$API_KEY" ]; then
+          echo "ERROR: API key file is empty or contains only whitespace: $API_KEY_FILE"
+          echo "Suite endpoints will fail authentication without a valid API key."
+          exit 1
+        fi
+
+        if [ ''${#API_KEY} -lt 10 ]; then
+          echo "WARNING: API key appears suspiciously short (''${#API_KEY} characters)."
+          echo "This may indicate a truncated or invalid key."
+        fi
+
+        # Create environment file
+        mkdir -p /run/gatus
+        echo "GATUS_API_KEY=$API_KEY" > /run/gatus/env
+        chmod 600 /run/gatus/env
+
+        echo "Gatus environment file created successfully."
+        echo "API key length: ''${#API_KEY} characters"
+      '';
     };
+
+    # Ensure gatus waits for env setup
+    systemd.services.gatus.after = mkIf (cfg.apiKeyFile != null) [ "gatus-env-setup.service" ];
 
     # Tailscale Serve configuration for HTTPS access
     systemd.services.tailscale-serve-gatus = mkIf cfg.tailscaleServe.enable {
