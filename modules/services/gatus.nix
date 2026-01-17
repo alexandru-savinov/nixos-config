@@ -19,6 +19,24 @@ let
     // optionalAttrs (ep.dns != null) { dns = ep.dns; }
     // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; };
 
+  # Transform storage config - filter null values and set SQLite default path
+  storageConfig =
+    if cfg.storage == null then null
+    else {
+      type = cfg.storage.type;
+      caching = cfg.storage.caching;
+    } // optionalAttrs (cfg.storage.type == "sqlite") {
+      # SQLite requires an explicit path - use state directory
+      path = if cfg.storage.path != null then cfg.storage.path else "/var/lib/gatus/data.db";
+    } // optionalAttrs (cfg.storage.path != null && cfg.storage.type != "sqlite") {
+      path = cfg.storage.path;
+    };
+
+  # Transform UI config - filter null values
+  uiConfig =
+    if cfg.ui == null then null
+    else filterAttrs (n: v: v != null) cfg.ui;
+
   # Generate full Gatus settings
   gatusSettings = {
     web = {
@@ -26,8 +44,8 @@ let
       port = cfg.port;
     };
     endpoints = map endpointToYaml (filter (ep: ep.enabled) (attrValues cfg.endpoints));
-  } // optionalAttrs (cfg.ui != null) { ui = cfg.ui; }
-    // optionalAttrs (cfg.storage != null) { storage = cfg.storage; }
+  } // optionalAttrs (uiConfig != null) { ui = uiConfig; }
+    // optionalAttrs (storageConfig != null) { storage = storageConfig; }
     // optionalAttrs (cfg.alerting != { }) { alerting = cfg.alerting; };
 
   endpointModule = types.submodule {

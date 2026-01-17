@@ -1,5 +1,5 @@
 # Raspberry Pi 5 Full Configuration
-# Extends the minimal rpi5 config with all services (Open-WebUI, n8n, Uptime Kuma)
+# Extends the minimal rpi5 config with all services (Open-WebUI, n8n, Gatus, Qdrant)
 #
 # IMPORTANT: This configuration should only be built NATIVELY on the RPi5.
 # Do NOT use this for SD image builds - chromadb fails under QEMU emulation.
@@ -29,7 +29,7 @@
     ../../modules/services/open-webui.nix
     ../../modules/services/n8n.nix
     ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
-    # Note: Uptime Kuma removed - monitoring now centralized on sancta-choir via Gatus
+    ../../modules/services/gatus.nix # Declarative status monitoring
   ];
 
   # Agenix secrets for additional services
@@ -221,5 +221,121 @@
     # Allow fchown syscalls - SQLite WAL mode needs these for database operations
     # Open-WebUI's systemd hardening blocks @chown group; re-allow fchown here
     SystemCallFilter = [ "fchown" "fchown32" ];
+  };
+
+  # Gatus - Declarative status monitoring with HTTPS
+  # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net:3001
+  services.gatus-tailscale = {
+    enable = true;
+    port = 3001;
+
+    ui = {
+      title = "RPi5 Status";
+      header = "Service Health Dashboard";
+    };
+
+    storage = {
+      type = "sqlite";
+      caching = true;
+    };
+
+    # HTTPS access via Tailscale Serve
+    tailscaleServe = {
+      enable = true;
+      httpsPort = 3001;
+    };
+
+    # Monitored Endpoints
+    endpoints = {
+      # ----------------------------------------------------------------------
+      # rpi5 local services (this host)
+      # ----------------------------------------------------------------------
+      rpi5-open-webui = {
+        name = "Open-WebUI";
+        group = "rpi5";
+        url = "http://127.0.0.1:8080/health";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
+      rpi5-n8n = {
+        name = "n8n";
+        group = "rpi5";
+        url = "http://127.0.0.1:5678/healthz";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
+      rpi5-qdrant = {
+        name = "Qdrant";
+        group = "rpi5";
+        url = "http://127.0.0.1:6333/readyz";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
+      rpi5-tailscale = {
+        name = "Tailscale";
+        group = "rpi5";
+        url = "icmp://127.0.0.1";
+        interval = "30s";
+        conditions = [ "[CONNECTED] == true" ];
+      };
+
+      # ----------------------------------------------------------------------
+      # sancta-choir services (remote host via Tailscale)
+      # ----------------------------------------------------------------------
+      sancta-choir-open-webui = {
+        name = "Open-WebUI";
+        group = "sancta-choir";
+        url = "https://sancta-choir.tail4249a9.ts.net/health";
+        interval = "1m";
+        conditions = [
+          "[STATUS] == 200"
+          "[RESPONSE_TIME] < 5000"
+        ];
+      };
+
+      sancta-choir-n8n = {
+        name = "n8n";
+        group = "sancta-choir";
+        url = "https://sancta-choir.tail4249a9.ts.net:5678/healthz";
+        interval = "1m";
+        conditions = [
+          "[STATUS] == 200"
+          "[RESPONSE_TIME] < 5000"
+        ];
+      };
+
+      sancta-choir-tailscale = {
+        name = "Tailscale";
+        group = "sancta-choir";
+        url = "icmp://sancta-choir.tail4249a9.ts.net";
+        interval = "30s";
+        conditions = [ "[CONNECTED] == true" ];
+      };
+
+      # ----------------------------------------------------------------------
+      # External services
+      # ----------------------------------------------------------------------
+      external-openrouter = {
+        name = "OpenRouter API";
+        group = "external";
+        url = "https://openrouter.ai/api/v1/models";
+        interval = "5m";
+        conditions = [
+          "[STATUS] == 200"
+          "[RESPONSE_TIME] < 3000"
+        ];
+      };
+    };
+  };
+
+  # Gatus resource limits for RPi5
+  systemd.services.gatus.serviceConfig = {
+    MemoryMax = "256M";
+    MemoryHigh = "192M";
+    CPUQuota = "50%"; # Half a core max
+    Nice = 15; # Lower priority than other services
   };
 }
