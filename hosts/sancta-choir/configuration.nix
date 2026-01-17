@@ -42,7 +42,7 @@
     ../../modules/services/tailscale.nix
     ../../modules/services/tsidp.nix
     ../../modules/services/open-webui.nix
-    ../../modules/services/uptime-kuma.nix
+    ../../modules/services/gatus.nix
     ../../modules/services/n8n.nix
   ];
 
@@ -126,23 +126,124 @@
     };
   };
 
-  # Uptime Kuma - Status monitoring with automatic backups and HTTPS
+  # Gatus - Declarative status monitoring with HTTPS
   # Access via Tailscale HTTPS: https://sancta-choir.tail4249a9.ts.net:3001
-  services.uptime-kuma-tailscale = {
+  # Replaces Uptime Kuma for fully NixOS-native configuration
+  services.gatus-tailscale = {
     enable = true;
     port = 3001;
 
-    # Automatic database backups (daily, kept for 7 days)
-    backup = {
-      enable = true;
-      schedule = "daily";
-      retention = 7;
+    ui = {
+      title = "Infrastructure Status";
+      header = "Service Health Dashboard";
+    };
+
+    storage = {
+      type = "sqlite";
+      caching = true;
     };
 
     # HTTPS access via Tailscale Serve
     tailscaleServe = {
       enable = true;
       httpsPort = 3001;
+    };
+
+    # ==========================================================================
+    # Monitored Endpoints
+    # ==========================================================================
+    # Services are grouped by host for organization.
+    endpoints = {
+      # ----------------------------------------------------------------------
+      # sancta-choir services (this host)
+      # ----------------------------------------------------------------------
+      sancta-choir-open-webui = {
+        name = "Open-WebUI";
+        group = "sancta-choir";
+        url = "http://127.0.0.1:8080/health";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
+      sancta-choir-n8n = {
+        name = "n8n";
+        group = "sancta-choir";
+        url = "http://127.0.0.1:5678/healthz";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
+      sancta-choir-tailscale = {
+        name = "Tailscale";
+        group = "sancta-choir";
+        url = "icmp://100.68.185.44";
+        interval = "30s";
+        conditions = [ "[CONNECTED] == true" ];
+      };
+
+      # ----------------------------------------------------------------------
+      # rpi5 services (remote host via Tailscale)
+      # ----------------------------------------------------------------------
+      rpi5-open-webui = {
+        name = "Open-WebUI";
+        group = "rpi5";
+        url = "https://rpi5.tail4249a9.ts.net/health";
+        interval = "1m";
+        conditions = [
+          "[STATUS] == 200"
+          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
+        ];
+      };
+
+      rpi5-n8n = {
+        name = "n8n";
+        group = "rpi5";
+        url = "https://rpi5.tail4249a9.ts.net:5678/healthz";
+        interval = "1m";
+        conditions = [
+          "[STATUS] == 200"
+          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
+        ];
+      };
+
+      rpi5-qdrant = {
+        name = "Qdrant";
+        group = "rpi5";
+        url = "https://rpi5.tail4249a9.ts.net:6333/readyz";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
+      rpi5-tailscale = {
+        name = "Tailscale";
+        group = "rpi5";
+        url = "icmp://rpi5.tail4249a9.ts.net";
+        interval = "30s";
+        conditions = [ "[CONNECTED] == true" ];
+      };
+
+      # ----------------------------------------------------------------------
+      # External services
+      # ----------------------------------------------------------------------
+      external-openrouter = {
+        name = "OpenRouter API";
+        group = "external";
+        url = "https://openrouter.ai/api/v1/models";
+        interval = "5m";
+        conditions = [
+          "[STATUS] == 200"
+          "[RESPONSE_TIME] < 3000"
+        ];
+      };
+
+      external-tavily = {
+        name = "Tavily API";
+        group = "external";
+        url = "https://api.tavily.com/";
+        interval = "5m";
+        # Tavily returns 4xx without auth headers; only treat 5xx server errors as failures
+        conditions = [ "[STATUS] < 500" ];
+      };
     };
   };
 
