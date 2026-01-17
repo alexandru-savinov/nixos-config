@@ -191,7 +191,7 @@
         interval = "1m";
         conditions = [
           "[STATUS] == 200"
-          "[RESPONSE_TIME] < 5000"
+          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
         ];
       };
 
@@ -202,7 +202,7 @@
         interval = "1m";
         conditions = [
           "[STATUS] == 200"
-          "[RESPONSE_TIME] < 5000"
+          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
         ];
       };
 
@@ -241,6 +241,7 @@
         group = "external";
         url = "https://api.tavily.com/";
         interval = "5m";
+        # Tavily returns 4xx without auth headers; only treat 5xx server errors as failures
         conditions = [ "[STATUS] < 500" ];
       };
     };

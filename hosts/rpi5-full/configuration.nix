@@ -277,7 +277,8 @@
       rpi5-tailscale = {
         name = "Tailscale";
         group = "rpi5";
-        url = "icmp://127.0.0.1";
+        # Use Tailscale hostname to verify actual Tailscale connectivity
+        url = "icmp://rpi5.tail4249a9.ts.net";
         interval = "30s";
         conditions = [ "[CONNECTED] == true" ];
       };
@@ -292,7 +293,7 @@
         interval = "1m";
         conditions = [
           "[STATUS] == 200"
-          "[RESPONSE_TIME] < 5000"
+          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
         ];
       };
 
@@ -303,7 +304,7 @@
         interval = "1m";
         conditions = [
           "[STATUS] == 200"
-          "[RESPONSE_TIME] < 5000"
+          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
         ];
       };
 

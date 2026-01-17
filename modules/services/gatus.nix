@@ -113,6 +113,7 @@ let
           - [RESPONSE_TIME]: Response time in ms
           - [BODY]: Response body
           - [CERTIFICATE_EXPIRATION]: Days until cert expires
+          - [DOMAIN_EXPIRATION]: Days until domain expires
 
           TCP endpoints:
           - [CONNECTED]: Connection success (boolean)
@@ -121,6 +122,7 @@ let
           ICMP endpoints:
           - [CONNECTED]: Ping success (boolean)
           - [RESPONSE_TIME]: Response time in ms
+          - [IP]: Resolved IP address
 
           DNS endpoints:
           - [DNS_RCODE]: DNS response code
@@ -140,7 +142,7 @@ let
               description = "DNS query name.";
             };
             query-type = mkOption {
-              type = types.enum [ "A" "AAAA" "CNAME" "MX" "NS" "TXT" ];
+              type = types.enum [ "A" "AAAA" "CNAME" "MX" "NS" "TXT" "SOA" "PTR" "SRV" ];
               default = "A";
               description = "DNS query type.";
             };
@@ -246,7 +248,7 @@ in
           path = mkOption {
             type = types.nullOr types.str;
             default = null;
-            description = "Path for SQLite database. If null, Gatus uses its default location.";
+            description = "Path for SQLite database. If null, defaults to /var/lib/gatus/data.db.";
           };
           caching = mkOption {
             type = types.bool;
