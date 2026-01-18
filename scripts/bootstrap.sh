@@ -231,10 +231,16 @@ install_nixos_infect() {
     NIXOS_INFECT_COMMIT="5ef3f953d32ab92405b280615718e0b80da2ebe6"  # 2024-03-11
     NIXOS_INFECT_SHA256="0fb4fe42249b7d5bbb205a45f9466ed542a3095c1cbe4452f2b60d9adf8f3375"
     NIXOS_INFECT_URL="https://raw.githubusercontent.com/elitak/nixos-infect/${NIXOS_INFECT_COMMIT}/nixos-infect"
-    NIXOS_INFECT_TEMP=$(mktemp /tmp/nixos-infect.XXXXXX)
+    NIXOS_INFECT_TEMP=$(mktemp /tmp/nixos-infect.XXXXXX) || {
+        log_error "Failed to create temporary file for nixos-infect"
+        exit 1
+    }
+    trap 'rm -f "$NIXOS_INFECT_TEMP"' EXIT INT TERM
 
-    # Ensure cleanup on exit, interrupt, or termination
-    CURL_ERROR=$(mktemp)
+    CURL_ERROR=$(mktemp) || {
+        log_error "Failed to create temporary file for error capture"
+        exit 1
+    }
     trap 'rm -f "$NIXOS_INFECT_TEMP" "$CURL_ERROR"' EXIT INT TERM
 
     log_info "Downloading nixos-infect (commit: ${NIXOS_INFECT_COMMIT:0:8})..."
@@ -259,11 +265,20 @@ install_nixos_infect() {
         exit 1
     fi
 
-    ACTUAL_SHA256=$(sha256sum "$NIXOS_INFECT_TEMP" 2>&1 | awk '{print $1}')
+    SHA256_OUTPUT=$(sha256sum "$NIXOS_INFECT_TEMP" 2>&1)
+    SHA256_EXIT_CODE=$?
+
+    if [ $SHA256_EXIT_CODE -ne 0 ]; then
+        log_error "Failed to calculate SHA256 checksum"
+        log_error "sha256sum error: $SHA256_OUTPUT"
+        exit 1
+    fi
+
+    ACTUAL_SHA256=$(echo "$SHA256_OUTPUT" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')
     # Validate we got a proper hash (64 hex characters)
     if [[ ! "$ACTUAL_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-        log_error "Failed to calculate SHA256 checksum"
-        log_error "sha256sum output: $ACTUAL_SHA256"
+        log_error "sha256sum returned unexpected output format"
+        log_error "Output: $SHA256_OUTPUT"
         exit 1
     fi
 
