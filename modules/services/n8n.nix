@@ -174,6 +174,18 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Create static n8n user and group for consistent file ownership
+    # This prevents SQLite database lock conflicts between n8n and n8n-workflow-sync services
+    users.users.n8n = {
+      isSystemUser = true;
+      group = "n8n";
+      description = "n8n workflow automation service user";
+      home = "/var/lib/n8n";
+      createHome = true;
+    };
+
+    users.groups.n8n = { };
+
     # Security assertion: prevent credentials in Nix store (world-readable!)
     assertions = [
       {
@@ -206,16 +218,20 @@ in
     };
 
     # Configure systemd service with environment variables
-    # Uses ExecStartPre with "+" prefix to run as root before DynamicUser kicks in
+    # Uses ExecStartPre with "+" prefix to run as root for secret file setup
     systemd.services.n8n = {
       serviceConfig = {
+        # Use static n8n user instead of DynamicUser to ensure consistent file ownership
+        # This prevents SQLite database lock conflicts with n8n-workflow-sync service
+        User = "n8n";
+        Group = "n8n";
+        StateDirectory = "n8n";
         RuntimeDirectory = "n8n";
         RuntimeDirectoryMode = "0700";
         # Dash prefix: don't fail if file missing (allows service to start during initial setup)
         # ExecStartPre with set -euo pipefail ensures file is created with proper error handling
         EnvironmentFile = "-/run/n8n/env";
-        # Run setup as root (+ prefix), then main process as DynamicUser
-        # The file is made world-readable briefly, but /run/n8n dir is 0700 (DynamicUser only)
+        # Run setup as root (+ prefix) for reading secrets, then main process as n8n user
         ExecStartPre = [
           ("+" + pkgs.writeShellScript "n8n-setup-env" ''
             set -euo pipefail
@@ -292,19 +308,20 @@ in
     };
 
     # Separate service for workflow import and active state sync
-    # This fixes issue #99: SQLite sync was running as root instead of n8n user
-    # Uses DynamicUser for least-privilege; StateDirectory ensures proper ownership
+    # CRITICAL: Must use same static user as main n8n service to avoid SQLite lock conflicts
+    # Using DynamicUser here creates a different temporary UID, causing database permission errors
     systemd.services.n8n-workflow-sync = mkIf (cfg.workflows != [ ] || cfg.workflowsDir != null) {
       description = "Import n8n workflows and sync active states";
       after = [ "n8n.service" ];
       requires = [ "n8n.service" ];
       wantedBy = [ "multi-user.target" ];
 
-      # DynamicUser drops root privileges; systemd chowns StateDirectory on service start
-      # Note: This is a oneshot that runs after n8n, so no concurrent access issues
+      # Use static n8n user matching main service to prevent database ownership conflicts
+      # StateDirectory ensures /var/lib/n8n is owned by n8n:n8n
       serviceConfig = {
         Type = "oneshot";
-        DynamicUser = true;
+        User = "n8n";
+        Group = "n8n";
         StateDirectory = "n8n";
         # Need read access to workflow JSON files in Nix store
         ProtectSystem = "strict";
