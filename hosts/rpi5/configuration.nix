@@ -48,6 +48,10 @@
   # the correct kernel for RPi5 via flake.nix module configuration.
   nixpkgs.config.allowUnfree = true;
 
+  # Boot loader configuration - migrate from deprecated "kernelboot" to "kernel"
+  # See: https://github.com/nvmd/nixos-raspberrypi/pull/61
+  boot.loader.raspberryPi.bootloader = "kernel";
+
   # SSH configuration
   services.openssh = {
     enable = true;
