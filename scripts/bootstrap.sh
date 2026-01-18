@@ -186,8 +186,8 @@ install_nix() {
     esac
 
     # Install Nix using the official installer
-    # Note: The official Nix installer includes GPG signature verification internally
-    # See: https://github.com/NixOS/nix/blob/master/scripts/install-multi-user.sh
+    # Note: The official Nix installer relies on HTTPS transport security only.
+    # For high-security environments, consider verifying the installer hash manually.
     curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes
 
     # Source Nix
@@ -224,44 +224,49 @@ install_nixos_infect() {
 
     # Security: Pin to specific commit with SHA256 verification
     # To update nixos-infect commit:
-    # 1. Get new commit SHA from https://github.com/elitak/nixos-infect/commits/master
-    # 2. Calculate SHA256: curl -fsSL https://raw.githubusercontent.com/elitak/nixos-infect/<commit>/nixos-infect | sha256sum
-    # 3. Update NIXOS_INFECT_COMMIT and NIXOS_INFECT_SHA256 variables below
-    NIXOS_INFECT_COMMIT="c75c091f75e3af4a3f01dad8fde64c2e4e17f1e4"  # 2024-12-15
-    NIXOS_INFECT_SHA256="c5494c0814f8870e3ce75cf305c960bd2a15e8c47e26cfc3cc3f7e8cf599034c"
+    # 1. Get the full commit SHA from https://github.com/elitak/nixos-infect/commits/master
+    # 2. Verify URL works: curl -I "https://raw.githubusercontent.com/elitak/nixos-infect/<commit>/nixos-infect"
+    # 3. Calculate SHA256: curl -fsSL https://raw.githubusercontent.com/elitak/nixos-infect/<commit>/nixos-infect | sha256sum
+    # 4. Update NIXOS_INFECT_COMMIT and NIXOS_INFECT_SHA256 variables below
+    NIXOS_INFECT_COMMIT="5ef3f953d32a8df5c795de988dba6d8ac1e3b1ee"  # 2024-03-11
+    NIXOS_INFECT_SHA256="0fb4fe42249b7d5bbb205a45f9466ed542a3095c1cbe4452f2b60d9adf8f3375"
     NIXOS_INFECT_URL="https://raw.githubusercontent.com/elitak/nixos-infect/${NIXOS_INFECT_COMMIT}/nixos-infect"
-    NIXOS_INFECT_TEMP="/tmp/nixos-infect.$$"
+    NIXOS_INFECT_TEMP=$(mktemp /tmp/nixos-infect.XXXXXX)
+
+    # Ensure cleanup on exit, interrupt, or termination
+    trap 'rm -f "$NIXOS_INFECT_TEMP"' EXIT INT TERM
 
     log_info "Downloading nixos-infect (commit: ${NIXOS_INFECT_COMMIT:0:8})..."
 
     # Download to temporary file
-    if ! curl -fsSL "$NIXOS_INFECT_URL" -o "$NIXOS_INFECT_TEMP"; then
+    if ! curl -fSL "$NIXOS_INFECT_URL" -o "$NIXOS_INFECT_TEMP" 2>&1; then
         log_error "Failed to download nixos-infect"
-        rm -f "$NIXOS_INFECT_TEMP"
         exit 1
     fi
 
     # Verify SHA256 checksum
     log_info "Verifying integrity (SHA256 checksum)..."
-    echo "${NIXOS_INFECT_SHA256}  ${NIXOS_INFECT_TEMP}" | sha256sum -c - > /dev/null 2>&1
-    if [ $? -ne 0 ]; then
+    ACTUAL_SHA256=$(sha256sum "$NIXOS_INFECT_TEMP" | awk '{print $1}')
+    if [ "$ACTUAL_SHA256" != "$NIXOS_INFECT_SHA256" ]; then
         log_error "SHA256 verification failed!"
         log_error "Expected: $NIXOS_INFECT_SHA256"
+        log_error "Actual:   $ACTUAL_SHA256"
         log_error "This could indicate:"
+        log_error "  - Incorrect/outdated checksum in bootstrap script (most likely)"
         log_error "  - Network tampering (MITM attack)"
         log_error "  - Compromised GitHub CDN"
-        log_error "  - Incorrect checksum in bootstrap script"
-        rm -f "$NIXOS_INFECT_TEMP"
         exit 1
     fi
     log_success "Checksum verified"
 
     # Execute nixos-infect
     log_info "Running nixos-infect..."
-    NIX_CHANNEL="$NIX_CHANNEL" bash -x "$NIXOS_INFECT_TEMP"
-
-    # Cleanup
-    rm -f "$NIXOS_INFECT_TEMP"
+    if ! NIX_CHANNEL="$NIX_CHANNEL" bash -x "$NIXOS_INFECT_TEMP"; then
+        log_error "nixos-infect execution failed"
+        log_error "The system may be in an inconsistent state"
+        exit 1
+    fi
+    log_success "nixos-infect completed successfully"
 }
 
 # Generate hardware configuration
