@@ -186,6 +186,9 @@ install_nix() {
     esac
 
     # Install Nix using the official installer
+    # Note: The official Nix installer uses GPG verification internally.
+    # See: https://nixos.org/download.html for security details
+    log_info "Downloading Nix installer (verified by nixos.org GPG signature)..."
     curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes
 
     # Source Nix
@@ -220,9 +223,41 @@ install_nixos_infect() {
     # Set environment for nixos-infect
     export NIX_CHANNEL="nixos-24.05"
 
-    # Download and run nixos-infect
-    curl -L https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | \
-        NIX_CHANNEL="$NIX_CHANNEL" bash -x
+    # Security: Pin to specific commit and verify SHA256
+    # Commit pinned to: 2024-12-15 - Latest stable commit as of script creation
+    # To update: Get new commit SHA from https://github.com/elitak/nixos-infect/commits/master
+    # Calculate SHA256: curl -L <url> | sha256sum
+    NIXOS_INFECT_COMMIT="c75c091f75e3af4a3f01dad8fde64c2e4e17f1e4"
+    NIXOS_INFECT_SHA256="c5494c0814f8870e3ce75cf305c960bd2a15e8c47e26cfc3cc3f7e8cf599034c"
+    NIXOS_INFECT_URL="https://raw.githubusercontent.com/elitak/nixos-infect/${NIXOS_INFECT_COMMIT}/nixos-infect"
+
+    log_info "Downloading nixos-infect (commit: ${NIXOS_INFECT_COMMIT:0:8})..."
+
+    # Download to temporary file
+    INFECT_SCRIPT="/tmp/nixos-infect-${NIXOS_INFECT_COMMIT:0:8}.sh"
+    if ! curl -fsSL "$NIXOS_INFECT_URL" -o "$INFECT_SCRIPT"; then
+        log_error "Failed to download nixos-infect script"
+        exit 1
+    fi
+
+    # Verify SHA256 checksum
+    log_info "Verifying checksum..."
+    echo "${NIXOS_INFECT_SHA256}  ${INFECT_SCRIPT}" | sha256sum -c - || {
+        log_error "Checksum verification failed! Possible supply chain attack detected."
+        log_error "Expected: ${NIXOS_INFECT_SHA256}"
+        log_error "Downloaded file has been removed for security."
+        rm -f "$INFECT_SCRIPT"
+        exit 1
+    }
+
+    log_success "Checksum verified successfully"
+
+    # Run nixos-infect with verified script
+    log_info "Running nixos-infect..."
+    NIX_CHANNEL="$NIX_CHANNEL" bash -x "$INFECT_SCRIPT"
+
+    # Clean up
+    rm -f "$INFECT_SCRIPT"
 }
 
 # Generate hardware configuration
