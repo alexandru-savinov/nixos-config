@@ -186,6 +186,8 @@ install_nix() {
     esac
 
     # Install Nix using the official installer
+    # Note: The official Nix installer relies on HTTPS transport security only.
+    # For high-security environments, consider verifying the installer hash manually.
     curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes
 
     # Source Nix
@@ -220,9 +222,86 @@ install_nixos_infect() {
     # Set environment for nixos-infect
     export NIX_CHANNEL="nixos-24.05"
 
-    # Download and run nixos-infect
-    curl -L https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | \
-        NIX_CHANNEL="$NIX_CHANNEL" bash -x
+    # Security: Pin to specific commit with SHA256 verification
+    # To update nixos-infect commit:
+    # 1. Get the full commit SHA from https://github.com/elitak/nixos-infect/commits/master
+    # 2. Verify URL works: curl -I "https://raw.githubusercontent.com/elitak/nixos-infect/<commit>/nixos-infect"
+    # 3. Calculate SHA256: curl -fsSL https://raw.githubusercontent.com/elitak/nixos-infect/<commit>/nixos-infect | sha256sum
+    # 4. Update NIXOS_INFECT_COMMIT and NIXOS_INFECT_SHA256 variables below
+    NIXOS_INFECT_COMMIT="5ef3f953d32ab92405b280615718e0b80da2ebe6"  # 2024-03-11
+    NIXOS_INFECT_SHA256="0fb4fe42249b7d5bbb205a45f9466ed542a3095c1cbe4452f2b60d9adf8f3375"
+    NIXOS_INFECT_URL="https://raw.githubusercontent.com/elitak/nixos-infect/${NIXOS_INFECT_COMMIT}/nixos-infect"
+    NIXOS_INFECT_TEMP=$(mktemp /tmp/nixos-infect.XXXXXX) || {
+        log_error "Failed to create temporary file for nixos-infect"
+        exit 1
+    }
+    trap 'rm -f "$NIXOS_INFECT_TEMP"' EXIT INT TERM
+
+    CURL_ERROR=$(mktemp) || {
+        log_error "Failed to create temporary file for error capture"
+        exit 1
+    }
+    trap 'rm -f "$NIXOS_INFECT_TEMP" "$CURL_ERROR"' EXIT INT TERM
+
+    log_info "Downloading nixos-infect (commit: ${NIXOS_INFECT_COMMIT:0:8})..."
+
+    # Download to temporary file (capture errors for debugging)
+    if ! curl -fSL "$NIXOS_INFECT_URL" -o "$NIXOS_INFECT_TEMP" 2>"$CURL_ERROR"; then
+        log_error "Failed to download nixos-infect"
+        log_error "URL: $NIXOS_INFECT_URL"
+        if [ -s "$CURL_ERROR" ]; then
+            log_error "curl error: $(cat "$CURL_ERROR")"
+        fi
+        exit 1
+    fi
+
+    # Verify SHA256 checksum
+    log_info "Verifying integrity (SHA256 checksum)..."
+
+    # Check sha256sum is available (may be missing on minimal systems)
+    if ! command -v sha256sum &> /dev/null; then
+        log_error "sha256sum command not found"
+        log_error "Install coreutils: apt-get install coreutils"
+        exit 1
+    fi
+
+    SHA256_OUTPUT=$(sha256sum "$NIXOS_INFECT_TEMP" 2>&1)
+    SHA256_EXIT_CODE=$?
+
+    if [ $SHA256_EXIT_CODE -ne 0 ]; then
+        log_error "Failed to calculate SHA256 checksum"
+        log_error "sha256sum error: $SHA256_OUTPUT"
+        exit 1
+    fi
+
+    ACTUAL_SHA256=$(echo "$SHA256_OUTPUT" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')
+    # Validate we got a proper hash (64 hex characters)
+    if [[ ! "$ACTUAL_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+        log_error "sha256sum returned unexpected output format"
+        log_error "Output: $SHA256_OUTPUT"
+        exit 1
+    fi
+
+    if [ "$ACTUAL_SHA256" != "$NIXOS_INFECT_SHA256" ]; then
+        log_error "SHA256 verification failed!"
+        log_error "Expected: $NIXOS_INFECT_SHA256"
+        log_error "Actual:   $ACTUAL_SHA256"
+        log_error "This could indicate:"
+        log_error "  - Incorrect/outdated checksum in bootstrap script (most likely)"
+        log_error "  - Network tampering (MITM attack)"
+        log_error "  - Compromised GitHub CDN"
+        exit 1
+    fi
+    log_success "Checksum verified"
+
+    # Execute nixos-infect
+    log_info "Running nixos-infect..."
+    if ! NIX_CHANNEL="$NIX_CHANNEL" bash -x "$NIXOS_INFECT_TEMP"; then
+        log_error "nixos-infect execution failed"
+        log_error "The system may be in an inconsistent state"
+        exit 1
+    fi
+    log_success "nixos-infect completed successfully"
 }
 
 # Generate hardware configuration
