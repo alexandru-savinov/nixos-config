@@ -228,25 +228,45 @@ install_nixos_infect() {
     # 2. Verify URL works: curl -I "https://raw.githubusercontent.com/elitak/nixos-infect/<commit>/nixos-infect"
     # 3. Calculate SHA256: curl -fsSL https://raw.githubusercontent.com/elitak/nixos-infect/<commit>/nixos-infect | sha256sum
     # 4. Update NIXOS_INFECT_COMMIT and NIXOS_INFECT_SHA256 variables below
-    NIXOS_INFECT_COMMIT="5ef3f953d32a8df5c795de988dba6d8ac1e3b1ee"  # 2024-03-11
+    NIXOS_INFECT_COMMIT="5ef3f953d32ab92405b280615718e0b80da2ebe6"  # 2024-03-11
     NIXOS_INFECT_SHA256="0fb4fe42249b7d5bbb205a45f9466ed542a3095c1cbe4452f2b60d9adf8f3375"
     NIXOS_INFECT_URL="https://raw.githubusercontent.com/elitak/nixos-infect/${NIXOS_INFECT_COMMIT}/nixos-infect"
     NIXOS_INFECT_TEMP=$(mktemp /tmp/nixos-infect.XXXXXX)
 
     # Ensure cleanup on exit, interrupt, or termination
-    trap 'rm -f "$NIXOS_INFECT_TEMP"' EXIT INT TERM
+    CURL_ERROR=$(mktemp)
+    trap 'rm -f "$NIXOS_INFECT_TEMP" "$CURL_ERROR"' EXIT INT TERM
 
     log_info "Downloading nixos-infect (commit: ${NIXOS_INFECT_COMMIT:0:8})..."
 
-    # Download to temporary file
-    if ! curl -fSL "$NIXOS_INFECT_URL" -o "$NIXOS_INFECT_TEMP" 2>&1; then
+    # Download to temporary file (capture errors for debugging)
+    if ! curl -fSL "$NIXOS_INFECT_URL" -o "$NIXOS_INFECT_TEMP" 2>"$CURL_ERROR"; then
         log_error "Failed to download nixos-infect"
+        log_error "URL: $NIXOS_INFECT_URL"
+        if [ -s "$CURL_ERROR" ]; then
+            log_error "curl error: $(cat "$CURL_ERROR")"
+        fi
         exit 1
     fi
 
     # Verify SHA256 checksum
     log_info "Verifying integrity (SHA256 checksum)..."
-    ACTUAL_SHA256=$(sha256sum "$NIXOS_INFECT_TEMP" | awk '{print $1}')
+
+    # Check sha256sum is available (may be missing on minimal systems)
+    if ! command -v sha256sum &> /dev/null; then
+        log_error "sha256sum command not found"
+        log_error "Install coreutils: apt-get install coreutils"
+        exit 1
+    fi
+
+    ACTUAL_SHA256=$(sha256sum "$NIXOS_INFECT_TEMP" 2>&1 | awk '{print $1}')
+    # Validate we got a proper hash (64 hex characters)
+    if [[ ! "$ACTUAL_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+        log_error "Failed to calculate SHA256 checksum"
+        log_error "sha256sum output: $ACTUAL_SHA256"
+        exit 1
+    fi
+
     if [ "$ACTUAL_SHA256" != "$NIXOS_INFECT_SHA256" ]; then
         log_error "SHA256 verification failed!"
         log_error "Expected: $NIXOS_INFECT_SHA256"
