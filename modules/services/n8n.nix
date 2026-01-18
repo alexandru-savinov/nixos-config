@@ -174,6 +174,18 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Create static n8n user and group for consistent file ownership
+    # This prevents SQLite database lock conflicts between n8n and n8n-workflow-sync services
+    users.users.n8n = {
+      isSystemUser = true;
+      group = "n8n";
+      description = "n8n workflow automation service user";
+      home = "/var/lib/n8n";
+      # Note: Don't use createHome - StateDirectory handles directory creation
+    };
+
+    users.groups.n8n = { };
+
     # Security assertion: prevent credentials in Nix store (world-readable!)
     assertions = [
       {
@@ -206,16 +218,21 @@ in
     };
 
     # Configure systemd service with environment variables
-    # Uses ExecStartPre with "+" prefix to run as root before DynamicUser kicks in
+    # Uses ExecStartPre with "+" prefix to run as root for secret file setup
     systemd.services.n8n = {
       serviceConfig = {
+        # Use static n8n user instead of DynamicUser to ensure consistent file ownership
+        # This prevents SQLite database lock conflicts with n8n-workflow-sync service
+        DynamicUser = mkForce false; # Explicitly disable to ensure User/Group take effect
+        User = "n8n";
+        Group = "n8n";
+        StateDirectory = "n8n";
         RuntimeDirectory = "n8n";
         RuntimeDirectoryMode = "0700";
         # Dash prefix: don't fail if file missing (allows service to start during initial setup)
         # ExecStartPre with set -euo pipefail ensures file is created with proper error handling
         EnvironmentFile = "-/run/n8n/env";
-        # Run setup as root (+ prefix), then main process as DynamicUser
-        # The file is made world-readable briefly, but /run/n8n dir is 0700 (DynamicUser only)
+        # Run setup as root (+ prefix) for reading secrets, then main process as n8n user
         ExecStartPre = [
           ("+" + pkgs.writeShellScript "n8n-setup-env" ''
             set -euo pipefail
@@ -284,7 +301,7 @@ in
               echo "${name}=${escapeShellArg value}" >> "$ENV_FILE"
             '') cfg.extraEnvironment)}
 
-            # Make readable only by DynamicUser (600 + dir 0700 = secure)
+            # Make readable only by n8n user (600 + dir 0700 = secure)
             chmod 600 "$ENV_FILE"
           '')
         ];
@@ -292,19 +309,21 @@ in
     };
 
     # Separate service for workflow import and active state sync
-    # This fixes issue #99: SQLite sync was running as root instead of n8n user
-    # Uses DynamicUser for least-privilege; StateDirectory ensures proper ownership
+    # CRITICAL: Must use same static user as main n8n service to avoid SQLite lock conflicts
+    # Using DynamicUser here creates a different temporary UID, causing database permission errors
+    # See issue #127 for detailed problem description
     systemd.services.n8n-workflow-sync = mkIf (cfg.workflows != [ ] || cfg.workflowsDir != null) {
       description = "Import n8n workflows and sync active states";
       after = [ "n8n.service" ];
       requires = [ "n8n.service" ];
       wantedBy = [ "multi-user.target" ];
 
-      # DynamicUser drops root privileges; systemd chowns StateDirectory on service start
-      # Note: This is a oneshot that runs after n8n, so no concurrent access issues
+      # Use static n8n user matching main service to prevent database ownership conflicts
+      # StateDirectory creates /var/lib/n8n with n8n:n8n ownership on first run
       serviceConfig = {
         Type = "oneshot";
-        DynamicUser = true;
+        User = "n8n";
+        Group = "n8n";
         StateDirectory = "n8n";
         # Need read access to workflow JSON files in Nix store
         ProtectSystem = "strict";
@@ -315,7 +334,7 @@ in
       };
 
       # n8n needs N8N_USER_FOLDER to know where config/database is stored
-      # Without this, it defaults to $HOME/.n8n which fails with DynamicUser
+      # Without this, it defaults to $HOME/.n8n which may not be writable
       # Note: n8n creates .n8n subdirectory inside N8N_USER_FOLDER
       environment = {
         N8N_USER_FOLDER = "/var/lib/n8n";
@@ -405,7 +424,7 @@ in
             active_int=0
           fi
 
-          # Update database (runs as DynamicUser, not root)
+          # Update database (runs as n8n user, not root)
           sqlite3 "$DB_PATH" \
             "UPDATE workflow_entity SET active=$active_int WHERE id='$wf_id';"
           echo "  Set $wf_id active=$wf_active"
