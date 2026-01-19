@@ -16,12 +16,25 @@
 #
 # Access via Tailscale HTTPS: https://<hostname>.tail<hex>.ts.net:5678
 
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, self, ... }:
 
 with lib;
 
 let
   cfg = config.services.n8n-tailscale;
+
+  # Python environment with genanki for APKG generation
+  # Used by image-to-anki workflow to create Anki deck files
+  pythonWithGenanki = pkgs.python3.withPackages (ps: [
+    ps.genanki
+  ]);
+
+  # APKG generator script for n8n workflows
+  # Uses self from flake to reference the script file
+  generateApkgScript = pkgs.writeScriptBin "generate-apkg" ''
+    #!${pythonWithGenanki}/bin/python3
+    ${builtins.readFile "${self}/scripts/generate-apkg.py"}
+  '';
 in
 {
   options.services.n8n-tailscale = {
@@ -464,7 +477,8 @@ print(hash.decode())
 
       # Add nodejs and utilities to PATH for n8n's internal community package installer
       # n8n's package installer calls: npm pack, tar -xzf, and shell utilities
-      path = [ pkgs.nodejs pkgs.gnutar pkgs.gzip pkgs.coreutils pkgs.bash ];
+      # Also includes generate-apkg script for APKG deck generation in workflows
+      path = [ pkgs.nodejs pkgs.gnutar pkgs.gzip pkgs.coreutils pkgs.bash generateApkgScript ];
     };
 
     # Separate service for workflow import and active state sync

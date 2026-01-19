@@ -1,6 +1,6 @@
 {
   "id": "image-to-anki-download",
-  "name": "Image to AnkiApp Download",
+  "name": "Image to Anki Download (APKG)",
   "nodes": [
     {
       "id": "download-webhook",
@@ -24,7 +24,7 @@
       "position": [300, 300],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const zipBase64 = $input.first().json.body.zipBase64;\n\nif (!zipBase64) {\n  return [{ json: { error: 'No ZIP data provided' } }];\n}\n\n// Decode base64 to binary\nconst binaryData = Buffer.from(zipBase64, 'base64');\n\nreturn [{\n  json: {},\n  binary: {\n    data: {\n      data: zipBase64,\n      mimeType: 'application/zip',\n      fileName: 'vocabulary-deck.zip'\n    }\n  }\n}];\n"
+        "jsCode": "// Support both new apkgBase64 and legacy zipBase64 for backward compatibility\nconst apkgBase64 = $input.first().json.body.apkgBase64 || $input.first().json.body.zipBase64;\n\nif (!apkgBase64) {\n  return [{ json: { error: 'No APKG data provided' } }];\n}\n\n// Return as binary for download\nreturn [{\n  json: {},\n  binary: {\n    data: {\n      data: apkgBase64,\n      mimeType: 'application/octet-stream',\n      fileName: 'vocabulary-deck.apkg'\n    }\n  }\n}];\n"
       }
     },
     {
@@ -42,11 +42,11 @@
             "entries": [
               {
                 "name": "Content-Disposition",
-                "value": "attachment; filename=\"vocabulary-deck.zip\""
+                "value": "attachment; filename=\"vocabulary-deck.apkg\""
               },
               {
                 "name": "Content-Type",
-                "value": "application/zip"
+                "value": "application/octet-stream"
               }
             ]
           }
