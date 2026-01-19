@@ -172,6 +172,10 @@
     # Workflows can reference it using: Bearer {{ $env.OPENROUTER_API_KEY }}
     openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
 
+    # Allow $env expressions in workflows (required for declarative API keys)
+    # Safe here because workflows are controlled via workflowsDir, not user-created
+    blockEnvAccessInCode = false;
+
     # Lower concurrency for RPi5 resource constraints
     concurrencyLimit = 2;
 

@@ -87,7 +87,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
             },
             {
               "name": "HTTP-Referer",
@@ -202,7 +202,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
             },
             {
               "name": "HTTP-Referer",
