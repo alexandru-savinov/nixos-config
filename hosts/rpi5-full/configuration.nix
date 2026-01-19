@@ -41,6 +41,7 @@
 
     # n8n workflow automation
     n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
+    n8n-admin-password.file = "${self}/secrets/n8n-admin-password.age";
 
     # OpenAI API key (for TTS/STT)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
@@ -182,6 +183,19 @@
     # Declarative workflows - imported on service start
     # Workflows must have stable "id" field for idempotency
     workflowsDir = "${self}/n8n-workflows";
+
+    # Admin password for REST API authentication (required for community packages)
+    adminPasswordFile = config.age.secrets.n8n-admin-password.path;
+
+    # Community packages installed via REST API
+    # Requires adminPasswordFile to authenticate with n8n
+    communityPackages = [ "n8n-nodes-zip" ];
+
+    # Enable Node.js crypto module in Code nodes for efficient SHA256 hashing
+    # Without this, pure JavaScript SHA256 is extremely slow on ARM
+    extraEnvironment = {
+      NODE_FUNCTION_ALLOW_BUILTIN = "crypto";
+    };
 
     tailscaleServe.enable = true;
   };

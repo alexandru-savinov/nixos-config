@@ -62,6 +62,23 @@ in
       '';
     };
 
+    adminPasswordFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "config.age.secrets.n8n-admin-password.path";
+      description = ''
+        Path to file containing the n8n admin user password.
+        Required for declarative community package installation via REST API.
+
+        The admin user (admin@localhost.com) password is set on each service start.
+        This enables the n8n-community-packages service to authenticate and
+        install packages programmatically.
+
+        Use agenix for secret management:
+          adminPasswordFile = config.age.secrets.n8n-admin-password.path;
+      '';
+    };
+
     # ===================
     # Hardening Options
     # ===================
@@ -175,6 +192,27 @@ in
 
         Example: Enable public API for external integrations:
           extraEnvironment.N8N_PUBLIC_API_DISABLED = "false";
+      '';
+    };
+
+    communityPackages = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "n8n-nodes-zip" "@n8n/n8n-nodes-langchain" ];
+      description = ''
+        List of n8n community packages to install from npm.
+        These are installed on service start and available to workflows.
+
+        Common packages:
+          - n8n-nodes-zip: ZIP file creation/extraction
+          - n8n-nodes-convert-image: Image format conversion
+
+        Note: Packages are installed via npm in /var/lib/n8n/.n8n/nodes/
+
+        LIMITATION: n8n 1.x expects packages installed via its internal
+        package manager. Declaratively installed packages may trigger
+        "missing packages" warnings. For best results, install community
+        packages via n8n UI (Settings > Community nodes).
       '';
     };
 
@@ -310,6 +348,53 @@ in
               echo "OpenRouter API key configured for workflow expressions"
             ''}
 
+            # Admin password (if provided) - for REST API authentication
+            ${optionalString (cfg.adminPasswordFile != null) ''
+              if [[ ! -f "${cfg.adminPasswordFile}" ]]; then
+                echo "ERROR: Admin password file not found: ${cfg.adminPasswordFile}" >&2
+                exit 1
+              fi
+              ADMIN_PASSWORD=$(cat "${cfg.adminPasswordFile}")
+              if [[ -z "$ADMIN_PASSWORD" ]]; then
+                echo "ERROR: Admin password file is empty: ${cfg.adminPasswordFile}" >&2
+                exit 1
+              fi
+
+              # Generate bcrypt hash using python
+              ADMIN_HASH=$(${pkgs.python3.withPackages (ps: [ps.bcrypt])}/bin/python3 -c "
+import bcrypt
+import sys
+password = sys.stdin.read().strip().encode()
+hash = bcrypt.hashpw(password, bcrypt.gensalt(10))
+print(hash.decode())
+" <<< "$ADMIN_PASSWORD")
+
+              # Update admin user password in database (create user if not exists)
+              DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
+              if [[ -f "$DB_PATH" ]]; then
+                # Check if admin user exists
+                ADMIN_EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
+                  "SELECT COUNT(*) FROM user WHERE email='admin@localhost.com';")
+
+                if [[ "$ADMIN_EXISTS" -eq 0 ]]; then
+                  # Create admin user with generated UUID
+                  ADMIN_ID=$(${pkgs.util-linux}/bin/uuidgen)
+                  ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" "
+                    INSERT INTO user (id, email, firstName, lastName, password, role, disabled, createdAt, updatedAt)
+                    VALUES ('$ADMIN_ID', 'admin@localhost.com', 'Admin', 'User', '$ADMIN_HASH', 'global:owner', 0, datetime('now'), datetime('now'));
+                  "
+                  echo "Created admin user: admin@localhost.com"
+                else
+                  # Update existing admin password
+                  ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
+                    "UPDATE user SET password='$ADMIN_HASH', updatedAt=datetime('now') WHERE email='admin@localhost.com';"
+                  echo "Updated admin user password"
+                fi
+              else
+                echo "Database not yet created, admin password will be set on first n8n run"
+              fi
+            ''}
+
             # Credentials file (if provided)
             ${optionalString (cfg.credentialsFile != null) ''
               if [[ ! -f "${cfg.credentialsFile}" ]]; then
@@ -344,11 +429,30 @@ in
               echo "${name}=${escapeShellArg value}" >> "$ENV_FILE"
             '') cfg.extraEnvironment)}
 
+            # Community packages - enable support (actual installation via REST API service)
+            ${optionalString (cfg.communityPackages != []) ''
+              echo "N8N_COMMUNITY_PACKAGES_ENABLED=true" >> "$ENV_FILE"
+
+              # Create nodes directory for community packages
+              NODES_DIR="/var/lib/n8n/.n8n/nodes"
+              mkdir -p "$NODES_DIR"
+              chown n8n:n8n "$NODES_DIR"
+            ''}
+
+            # Fix npm cache ownership (ExecStartPre runs as root, but n8n needs write access)
+            if [[ -d "/var/lib/n8n/.npm" ]]; then
+              chown -R n8n:n8n /var/lib/n8n/.npm
+            fi
+
             # Make readable only by n8n user (600 + dir 0700 = secure)
             chmod 600 "$ENV_FILE"
           '')
         ];
       };
+
+      # Add nodejs and utilities to PATH for n8n's internal community package installer
+      # n8n's package installer calls: npm pack, tar -xzf, and shell utilities
+      path = [ pkgs.nodejs pkgs.gnutar pkgs.gzip pkgs.coreutils pkgs.bash ];
     };
 
     # Separate service for workflow import and active state sync
@@ -547,6 +651,101 @@ in
       preStop = ''
         echo "Removing Tailscale Serve configuration for n8n..."
         ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+      '';
+    };
+
+    # Community packages installation via REST API
+    # Requires adminPasswordFile to authenticate with n8n
+    systemd.services.n8n-community-packages = mkIf (cfg.communityPackages != [ ] && cfg.adminPasswordFile != null) {
+      description = "Install n8n community packages via REST API";
+      after = [ "n8n.service" ];
+      requires = [ "n8n.service" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        # Run as root to read password file and restart n8n
+      };
+
+      path = [ pkgs.curl pkgs.jq ];
+
+      script = ''
+        set -euo pipefail
+
+        N8N_URL="http://127.0.0.1:${toString cfg.port}"
+        COOKIE_JAR="/tmp/n8n-community-packages-cookies.$$"
+        trap "rm -f $COOKIE_JAR" EXIT
+
+        # Read admin password
+        ADMIN_PASSWORD=$(cat "${cfg.adminPasswordFile}")
+
+        # Wait for n8n to be ready
+        echo "Waiting for n8n to be ready..."
+        timeout=120
+        while ! curl -sf "$N8N_URL/healthz" >/dev/null 2>&1; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: n8n not ready after 120 seconds"
+            exit 1
+          fi
+          sleep 1
+        done
+        sleep 5  # Extra delay for full initialization
+
+        # Login to get session cookie
+        echo "Authenticating with n8n..."
+        LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"emailOrLdapLoginId\":\"admin@localhost.com\",\"password\":\"$ADMIN_PASSWORD\"}" \
+          "$N8N_URL/rest/login" 2>&1)
+
+        if ! echo "$LOGIN_RESPONSE" | jq -e '.data.id' >/dev/null 2>&1; then
+          echo "ERROR: Failed to authenticate with n8n"
+          echo "Response: $LOGIN_RESPONSE"
+          exit 1
+        fi
+        echo "Authentication successful"
+
+        # Get currently installed packages
+        echo "Checking installed packages..."
+        INSTALLED_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+          "$N8N_URL/rest/community-packages" 2>&1)
+
+        INSTALLED_PACKAGES=$(echo "$INSTALLED_RESPONSE" | jq -r '.data[].packageName // empty' 2>/dev/null || echo "")
+
+        # Install missing packages
+        PACKAGES_INSTALLED=0
+        for pkg in ${concatStringsSep " " cfg.communityPackages}; do
+          if echo "$INSTALLED_PACKAGES" | grep -qx "$pkg"; then
+            echo "Package $pkg already installed"
+          else
+            echo "Installing package: $pkg"
+            INSTALL_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "{\"name\":\"$pkg\"}" \
+              "$N8N_URL/rest/community-packages" 2>&1)
+
+            if echo "$INSTALL_RESPONSE" | jq -e '.data.packageName' >/dev/null 2>&1; then
+              echo "Successfully installed: $pkg"
+              PACKAGES_INSTALLED=1
+            else
+              echo "WARNING: Failed to install $pkg"
+              echo "Response: $INSTALL_RESPONSE"
+            fi
+          fi
+        done
+
+        # Restart n8n if packages were installed (to load new nodes)
+        if [ "$PACKAGES_INSTALLED" -eq 1 ]; then
+          echo "Restarting n8n to load new community packages..."
+          ${pkgs.systemd}/bin/systemctl restart n8n.service
+          echo "n8n restarted"
+        fi
+
+        echo "Community packages installation complete"
       '';
     };
 
