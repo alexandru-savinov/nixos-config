@@ -1,0 +1,85 @@
+{
+  "id": "image-to-anki-download",
+  "name": "Image to AnkiApp Download",
+  "nodes": [
+    {
+      "id": "download-webhook",
+      "name": "Download Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "image-to-anki-download",
+      "parameters": {
+        "path": "image-to-anki-download",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "decode-and-respond",
+      "name": "Decode and Respond",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const zipBase64 = $input.first().json.body.zipBase64;\n\nif (!zipBase64) {\n  return [{ json: { error: 'No ZIP data provided' } }];\n}\n\n// Decode base64 to binary\nconst binaryData = Buffer.from(zipBase64, 'base64');\n\nreturn [{\n  json: {},\n  binary: {\n    data: {\n      data: zipBase64,\n      mimeType: 'application/zip',\n      fileName: 'vocabulary-deck.zip'\n    }\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "send-file",
+      "name": "Send File",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [500, 300],
+      "parameters": {
+        "respondWith": "binary",
+        "responseBinaryPropertyName": "data",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Disposition",
+                "value": "attachment; filename=\"vocabulary-deck.zip\""
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/zip"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Download Webhook": {
+      "main": [
+        [
+          {
+            "node": "Decode and Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decode and Respond": {
+      "main": [
+        [
+          {
+            "node": "Send File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": true
+}
