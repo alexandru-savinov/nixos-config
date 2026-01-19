@@ -266,6 +266,18 @@ in
             services.n8n-tailscale.openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
         '';
       }
+      {
+        assertion = cfg.adminPasswordFile == null ||
+          !(hasPrefix "/nix/store" (toString cfg.adminPasswordFile));
+        message = ''
+          services.n8n-tailscale.adminPasswordFile points to the Nix store!
+          Files in /nix/store are WORLD-READABLE. Your admin password would be exposed.
+
+          Use agenix instead:
+            age.secrets.n8n-admin-password.file = ./secrets/n8n-admin-password.age;
+            services.n8n-tailscale.adminPasswordFile = config.age.secrets.n8n-admin-password.path;
+        '';
+      }
     ];
 
     # Warn if no encryption key file is provided

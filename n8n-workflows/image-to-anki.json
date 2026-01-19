@@ -7,10 +7,7 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        100,
-        300
-      ],
+      "position": [100, 300],
       "webhookId": "image-to-anki",
       "parameters": {
         "path": "image-to-anki",
@@ -20,31 +17,30 @@
       }
     },
     {
-      "id": "validate-input",
-      "name": "Validate Input",
+      "id": "normalize-input",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "parameters": {
+        "jsCode": "// Normalize and validate input - returns error JSON if invalid\nconst body = $input.first().json.body || {};\n\nif (body.imageUrl && typeof body.imageUrl === 'string' && body.imageUrl.length > 0) {\n  return [{ json: { ...($input.first().json), imageSource: body.imageUrl, inputType: 'url', isValid: true } }];\n}\n\nif (body.imageData && typeof body.imageData === 'string' && body.imageData.length > 0) {\n  let data = body.imageData;\n  if (!data.startsWith('data:')) {\n    data = 'data:image/png;base64,' + data;\n  }\n  return [{ json: { ...($input.first().json), imageSource: data, inputType: 'base64', isValid: true } }];\n}\n\n// Invalid - return error marker\nreturn [{ json: { isValid: false, error: 'Missing image. Send POST with {\"imageUrl\": \"...\"} or {\"imageData\": \"...\"}' } }];\n"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Check Valid",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        300,
-        300
-      ],
+      "position": [500, 300],
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
           "conditions": [
             {
-              "id": "check-image-url",
-              "leftValue": "={{ $json.body.imageUrl }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "exists",
-                "singleValue": true
-              }
+              "id": "is-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
             }
           ],
           "combinator": "and"
@@ -57,16 +53,11 @@
       "name": "Error Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        500,
-        500
-      ],
+      "position": [700, 500],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: \"Missing imageUrl in request body. Send POST with {\\\"imageUrl\\\": \\\"https://...\\\"}\" }) }}",
-        "options": {
-          "responseCode": 400
-        }
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": { "responseCode": 400 }
       }
     },
     {
@@ -74,10 +65,8 @@
       "name": "Extract Vocabulary (Vision)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        500,
-        300
-      ],
+      "position": [700, 300],
+      "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
         "url": "https://openrouter.ai/api/v1/chat/completions",
@@ -85,26 +74,27 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
-            },
-            {
-              "name": "HTTP-Referer",
-              "value": "https://rpi5.tail4249a9.ts.net"
-            },
-            {
-              "name": "X-Title",
-              "value": "Image-to-Anki"
-            }
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
+            { "name": "X-Title", "value": "Image-to-Anki" }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-sonnet-4', messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract all vocabulary items from this educational image. Return ONLY a valid JSON array of objects with \"word\" (the English vocabulary word) and \"description\" (a brief 3-5 word description suitable for generating a simple illustration). Example: [{\"word\": \"bed\", \"description\": \"furniture for sleeping\"}]. Return ONLY the JSON array, no markdown, no code blocks, no other text.' }, { type: 'image_url', image_url: { url: $json.body.imageUrl } }] }] }) }}",
-        "options": {
-          "timeout": 120000
-        }
+        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-sonnet-4', max_tokens: 4096, messages: [{ role: 'user', content: [{ type: 'text', text: 'TASK: Extract EVERY vocabulary item from this educational infographic. Be EXHAUSTIVE - these images often contain 10-30+ items.\\n\\nINSTRUCTIONS:\\n1. Scan the ENTIRE image systematically\\n2. Include EVERY labeled word/item\\n3. Count and verify you captured everything\\n\\nOUTPUT: Return ONLY a JSON array: [{\"word\": \"...\", \"description\": \"3-5 words for illustration\"}]\\n\\nNo markdown, no code blocks.' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
+        "options": { "timeout": 120000 }
+      }
+    },
+    {
+      "id": "vision-error-response",
+      "name": "Vision Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Vision API failed: ' + ($json.error?.message || $json.message || 'Unknown error'), details: $json.error?.description || $json.statusCode || null }) }}",
+        "options": { "responseCode": 502 }
       }
     },
     {
@@ -112,12 +102,9 @@
       "name": "Parse Vocabulary JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        700,
-        300
-      ],
+      "position": [900, 300],
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst originalImageUrl = $('Webhook Trigger').first().json.body.imageUrl;\n\ntry {\n  const content = response.choices?.[0]?.message?.content || '';\n  let jsonStr = content.trim();\n\n  // Remove markdown code blocks if present\n  const jsonStart = jsonStr.indexOf('```json');\n  const codeStart = jsonStr.indexOf('```');\n  const codeEnd = jsonStr.lastIndexOf('```');\n\n  if (jsonStart !== -1 && codeEnd > jsonStart + 7) {\n    jsonStr = jsonStr.substring(jsonStart + 7, codeEnd).trim();\n  } else if (codeStart !== -1 && codeEnd > codeStart + 3) {\n    jsonStr = jsonStr.substring(codeStart + 3, codeEnd).trim();\n  }\n\n  // Skip any leading newlines or whitespace\n  jsonStr = jsonStr.trim();\n\n  // If it starts with [ it's already JSON\n  if (!jsonStr.startsWith('[')) {\n    throw new Error('Expected JSON array, got: ' + jsonStr.substring(0, 50));\n  }\n\n  const vocabulary = JSON.parse(jsonStr);\n  if (!Array.isArray(vocabulary)) throw new Error('Response is not an array');\n  if (vocabulary.length === 0) throw new Error('No vocabulary items found');\n\n  return vocabulary.map((item, index) => ({\n    json: { index, word: item.word, description: item.description, originalImageUrl, totalItems: vocabulary.length }\n  }));\n} catch (error) {\n  return [{ json: { error: 'Parse failed: ' + error.message, rawContent: response.choices?.[0]?.message?.content?.substring(0, 500) || 'No content', originalImageUrl } }];\n}\n"
+        "jsCode": "const response = $input.first().json;\nconst imageSource = $('Normalize Input').first().json.imageSource;\nconst inputType = $('Normalize Input').first().json.inputType;\n\nconst content = response.choices?.[0]?.message?.content || '';\nif (!content) {\n  return [{ json: { parseError: 'No content in LLM response' } }];\n}\n\nlet jsonStr = content.trim();\nif (jsonStr.includes('```')) {\n  const start = jsonStr.indexOf('[');\n  const end = jsonStr.lastIndexOf(']') + 1;\n  if (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end);\n}\n\nlet vocabulary;\ntry {\n  vocabulary = JSON.parse(jsonStr);\n} catch (e) {\n  return [{ json: { parseError: 'Invalid JSON: ' + e.message, rawContent: jsonStr.substring(0, 200) } }];\n}\n\nif (!Array.isArray(vocabulary) || vocabulary.length === 0) {\n  return [{ json: { parseError: 'No vocabulary found', rawContent: jsonStr.substring(0, 200) } }];\n}\n\nreturn vocabulary.map((item, index) => ({\n  json: { index, word: item.word, description: item.description, imageSource, inputType, totalItems: vocabulary.length }\n}));\n"
       }
     },
     {
@@ -125,27 +112,16 @@
       "name": "Check Parse Error",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        900,
-        300
-      ],
+      "position": [1100, 300],
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
           "conditions": [
             {
-              "id": "check-error",
-              "leftValue": "={{ $json.error }}",
+              "id": "no-error",
+              "leftValue": "={{ $json.parseError }}",
               "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notExists",
-                "singleValue": true
-              }
+              "operator": { "type": "string", "operation": "notExists", "singleValue": true }
             }
           ],
           "combinator": "and"
@@ -158,16 +134,11 @@
       "name": "Parse Error Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1100,
-        500
-      ],
+      "position": [1300, 500],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error, rawContent: $json.rawContent }) }}",
-        "options": {
-          "responseCode": 500
-        }
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.parseError, rawContent: $json.rawContent }) }}",
+        "options": { "responseCode": 500 }
       }
     },
     {
@@ -175,24 +146,16 @@
       "name": "Loop Over Items",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [
-        1100,
-        300
-      ],
-      "parameters": {
-        "batchSize": 5,
-        "options": {}
-      }
+      "position": [1300, 300],
+      "parameters": { "batchSize": 5, "options": {} }
     },
     {
       "id": "generate-image",
       "name": "Generate Image",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1300,
-        300
-      ],
+      "position": [1500, 300],
+      "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
         "url": "https://openrouter.ai/api/v1/chat/completions",
@@ -200,26 +163,25 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
-            },
-            {
-              "name": "HTTP-Referer",
-              "value": "https://rpi5.tail4249a9.ts.net"
-            },
-            {
-              "name": "X-Title",
-              "value": "Image-to-Anki"
-            }
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
+            { "name": "X-Title", "value": "Image-to-Anki" }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', messages: [{ role: 'user', content: 'Generate a simple, clean illustration for a vocabulary flashcard. Subject: ' + $json.word + ' (' + $json.description + '). Style: flat design, minimal, centered, white background, suitable for educational flashcard. Do not include any text in the image.' }] }) }}",
-        "options": {
-          "timeout": 120000
-        }
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', messages: [{ role: 'user', content: 'Generate a simple illustration for flashcard: ' + $json.word + ' (' + $json.description + '). Style: flat, minimal, white background, no text.' }] }) }}",
+        "options": { "timeout": 120000 }
+      }
+    },
+    {
+      "id": "handle-image-error",
+      "name": "Handle Image Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 500],
+      "parameters": {
+        "jsCode": "// Handle HTTP errors from image generation gracefully\nconst prevData = $('Loop Over Items').first().json;\nconst { word, description, index } = prevData;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'Image generation failed';\nreturn [{ json: { index, word, description, error: errorMsg, imageBase64: null, imageHash: null } }];\n"
       }
     },
     {
@@ -227,12 +189,9 @@
       "name": "Extract Image Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1500,
-        300
-      ],
+      "position": [1700, 300],
       "parameters": {
-        "jsCode": "// Extract base64 image from OpenRouter response and calculate SHA256\n// Optimized: Uses Node.js crypto (requires NODE_FUNCTION_ALLOW_BUILTIN=crypto)\nconst crypto = require('crypto');\n\nconst response = $input.first().json;\nconst prevData = $('Loop Over Items').first().json;\nconst { word, description, index } = prevData;\n\ntry {\n  const message = response.choices?.[0]?.message;\n  const images = message?.images;\n  let base64Data = null;\n  let mimeType = 'image/png';\n\n  if (images && images.length > 0) {\n    const imageUrl = images[0].image_url?.url || images[0].url || images[0];\n    if (typeof imageUrl === 'string' && imageUrl.includes('base64,')) {\n      base64Data = imageUrl.split('base64,')[1];\n      if (imageUrl.includes('image/jpeg')) mimeType = 'image/jpeg';\n    }\n  }\n\n  if (!base64Data && message?.content) {\n    const match = message.content.match(/data:image\\/([^;]+);base64,([A-Za-z0-9+/=]+)/);\n    if (match) {\n      mimeType = 'image/' + match[1];\n      base64Data = match[2];\n    }\n  }\n\n  if (!base64Data) throw new Error('No image in response: ' + (message?.content?.substring(0, 200) || 'empty'));\n\n  // Use Node.js Buffer for base64 decoding (fast native implementation)\n  const bytes = Buffer.from(base64Data, 'base64');\n\n  // Use Node.js crypto for SHA256 (fast native implementation)\n  const hash = crypto.createHash('sha256').update(bytes).digest('hex');\n\n  return [{ json: { index, word, description, imageBase64: base64Data, imageHash: hash, mimeType, imageSizeBytes: bytes.length } }];\n} catch (error) {\n  return [{ json: { index, word, description, error: 'Image gen failed: ' + error.message, imageBase64: null, imageHash: null, mimeType: null } }];\n}\n"
+        "jsCode": "const crypto = require('crypto');\nconst response = $input.first().json;\nconst prevData = $('Loop Over Items').first().json;\nconst { word, description, index } = prevData;\n\ntry {\n  const message = response.choices?.[0]?.message;\n  let base64Data = null, mimeType = 'image/png';\n\n  if (message?.images?.[0]) {\n    const img = message.images[0];\n    const url = img.image_url?.url || img.url || img;\n    if (typeof url === 'string' && url.includes('base64,')) {\n      base64Data = url.split('base64,')[1];\n      if (url.includes('jpeg')) mimeType = 'image/jpeg';\n    }\n  }\n\n  if (!base64Data && message?.content) {\n    const m = message.content.match(/data:image\\/([^;]+);base64,([A-Za-z0-9+/=]+)/);\n    if (m) { mimeType = 'image/' + m[1]; base64Data = m[2]; }\n  }\n\n  if (!base64Data) throw new Error('No image');\n\n  const bytes = Buffer.from(base64Data, 'base64');\n  const hash = crypto.createHash('sha256').update(bytes).digest('hex');\n  return [{ json: { index, word, description, imageBase64: base64Data, imageHash: hash, mimeType, imageSizeBytes: bytes.length } }];\n} catch (e) {\n  return [{ json: { index, word, description, error: e.message, imageBase64: null, imageHash: null } }];\n}\n"
       }
     },
     {
@@ -240,40 +199,25 @@
       "name": "Wait (Rate Limit)",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [
-        1700,
-        300
-      ],
-      "parameters": {
-        "amount": 2,
-        "unit": "seconds"
-      }
+      "position": [1900, 300],
+      "parameters": { "amount": 2, "unit": "seconds" }
     },
     {
       "id": "aggregate-items",
       "name": "Aggregate All Items",
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
-      "position": [
-        1900,
-        100
-      ],
-      "parameters": {
-        "aggregate": "aggregateAllItemData",
-        "options": {}
-      }
+      "position": [2100, 100],
+      "parameters": { "aggregate": "aggregateAllItemData", "options": {} }
     },
     {
       "id": "build-anki-deck",
       "name": "Build AnkiApp Deck",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        2100,
-        100
-      ],
+      "position": [2300, 100],
       "parameters": {
-        "jsCode": "// Build AnkiApp XML and ZIP - Optimized with Node.js Buffer\nconst allData = $input.first().json;\nconst items = allData.data || [];\n\nconst validItems = items.filter(item => item.imageBase64 && item.imageHash);\nconst errorItems = items.filter(item => item.error);\n\nif (validItems.length === 0) {\n  return [{ json: { success: false, error: 'No valid items', failedItems: errorItems.map(i => ({ word: i.word, error: i.error })) } }];\n}\n\nfunction escapeXml(str) {\n  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&apos;');\n}\n\nlet xml = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<deck name=\"Vocabulary Deck\" tags=\"vocabulary,ai-generated\">\\n  <fields>\\n    <img name=\"Image\" sides=\"10\"/>\\n    <text lang=\"en-US\" name=\"Word\" sides=\"01\"/>\\n  </fields>\\n  <cards>\\n';\nfor (const item of validItems) {\n  xml += '    <card>\\n      <img name=\"Image\" id=\"' + item.imageHash + '\"/>\\n      <text name=\"Word\">' + escapeXml(item.word) + '</text>\\n    </card>\\n';\n}\nxml += '  </cards>\\n</deck>\\n';\n\n// CRC32 with lookup table (faster)\nconst crc32Table = new Uint32Array(256);\nfor (let i = 0; i < 256; i++) {\n  let c = i;\n  for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);\n  crc32Table[i] = c;\n}\n\nfunction crc32(data) {\n  let crc = 0xFFFFFFFF;\n  for (let i = 0; i < data.length; i++) {\n    crc = crc32Table[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);\n  }\n  return (crc ^ 0xFFFFFFFF) >>> 0;\n}\n\nfunction createZip(files) {\n  const parts = [];\n  const centralHeaders = [];\n  let offset = 0;\n\n  for (const file of files) {\n    const nameBytes = Buffer.from(file.name, 'utf8');\n    const dataBytes = file.data;\n    const crc = crc32(dataBytes);\n\n    // Local file header\n    const localHeader = Buffer.alloc(30);\n    localHeader.writeUInt32LE(0x04034b50, 0);  // signature\n    localHeader.writeUInt16LE(20, 4);          // version needed\n    localHeader.writeUInt16LE(0, 6);           // flags\n    localHeader.writeUInt16LE(0, 8);           // compression (store)\n    localHeader.writeUInt16LE(0, 10);          // mod time\n    localHeader.writeUInt16LE(0, 12);          // mod date\n    localHeader.writeUInt32LE(crc, 14);        // crc32\n    localHeader.writeUInt32LE(dataBytes.length, 18);  // compressed size\n    localHeader.writeUInt32LE(dataBytes.length, 22);  // uncompressed size\n    localHeader.writeUInt16LE(nameBytes.length, 26);  // name length\n    localHeader.writeUInt16LE(0, 28);          // extra length\n\n    parts.push(localHeader, nameBytes, dataBytes);\n\n    // Central directory header\n    const centralHeader = Buffer.alloc(46);\n    centralHeader.writeUInt32LE(0x02014b50, 0);\n    centralHeader.writeUInt16LE(20, 4);\n    centralHeader.writeUInt16LE(20, 6);\n    centralHeader.writeUInt16LE(0, 8);\n    centralHeader.writeUInt16LE(0, 10);\n    centralHeader.writeUInt16LE(0, 12);\n    centralHeader.writeUInt16LE(0, 14);\n    centralHeader.writeUInt32LE(crc, 16);\n    centralHeader.writeUInt32LE(dataBytes.length, 20);\n    centralHeader.writeUInt32LE(dataBytes.length, 24);\n    centralHeader.writeUInt16LE(nameBytes.length, 28);\n    centralHeader.writeUInt16LE(0, 30);\n    centralHeader.writeUInt16LE(0, 32);\n    centralHeader.writeUInt16LE(0, 34);\n    centralHeader.writeUInt16LE(0, 36);\n    centralHeader.writeUInt32LE(0, 38);\n    centralHeader.writeUInt32LE(offset, 42);\n\n    centralHeaders.push(centralHeader, nameBytes);\n    offset += 30 + nameBytes.length + dataBytes.length;\n  }\n\n  const centralDir = Buffer.concat(centralHeaders);\n  const endRecord = Buffer.alloc(22);\n  endRecord.writeUInt32LE(0x06054b50, 0);\n  endRecord.writeUInt16LE(0, 4);\n  endRecord.writeUInt16LE(0, 6);\n  endRecord.writeUInt16LE(files.length, 8);\n  endRecord.writeUInt16LE(files.length, 10);\n  endRecord.writeUInt32LE(centralDir.length, 12);\n  endRecord.writeUInt32LE(offset, 16);\n  endRecord.writeUInt16LE(0, 20);\n\n  return Buffer.concat([...parts, centralDir, endRecord]);\n}\n\nconst files = [{ name: 'deck.xml', data: Buffer.from(xml, 'utf8') }];\nfor (const item of validItems) {\n  const ext = item.mimeType === 'image/jpeg' ? 'jpg' : 'png';\n  files.push({ name: 'blobs/' + item.imageHash + '.' + ext, data: Buffer.from(item.imageBase64, 'base64') });\n}\n\nconst zipData = createZip(files);\nconst zipBase64 = zipData.toString('base64');\n\nreturn [{ json: { success: true, cardCount: validItems.length, words: validItems.map(i => i.word), zipBase64, zipSizeBytes: zipData.length } }];\n"
+        "jsCode": "try {\n  const items = ($input.first().json.data || []);\n  const valid = items.filter(i => i.imageBase64 && i.imageHash);\n  const errors = items.filter(i => i.error);\n\n  if (valid.length === 0) return [{ json: { success: false, error: 'No valid items' } }];\n\n  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');\n\n  let xml = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<deck name=\"Vocabulary\" tags=\"ai\">\\n<fields><img name=\"Image\" sides=\"10\"/><text lang=\"en-US\" name=\"Word\" sides=\"01\"/></fields>\\n<cards>\\n';\n  for (const i of valid) xml += '<card><img name=\"Image\" id=\"'+i.imageHash+'\"/><text name=\"Word\">'+esc(i.word)+'</text></card>\\n';\n  xml += '</cards></deck>';\n\n  const crc32T = new Uint32Array(256);\n  for(let i=0;i<256;i++){let c=i;for(let j=0;j<8;j++)c=(c&1)?0xEDB88320^(c>>>1):c>>>1;crc32T[i]=c;}\n  const crc32 = d => { let c=0xFFFFFFFF; for(let i=0;i<d.length;i++)c=crc32T[(c^d[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; };\n\n  const mkZip = files => {\n    const p=[],ch=[];let o=0;\n    for(const f of files){\n      const n=Buffer.from(f.name,'utf8'),d=f.data,cr=crc32(d);\n      const lh=Buffer.alloc(30);lh.writeUInt32LE(0x04034b50,0);lh.writeUInt16LE(20,4);lh.writeUInt32LE(cr,14);lh.writeUInt32LE(d.length,18);lh.writeUInt32LE(d.length,22);lh.writeUInt16LE(n.length,26);\n      p.push(lh,n,d);\n      const cd=Buffer.alloc(46);cd.writeUInt32LE(0x02014b50,0);cd.writeUInt16LE(20,4);cd.writeUInt16LE(20,6);cd.writeUInt32LE(cr,16);cd.writeUInt32LE(d.length,20);cd.writeUInt32LE(d.length,24);cd.writeUInt16LE(n.length,28);cd.writeUInt32LE(o,42);\n      ch.push(cd,n);o+=30+n.length+d.length;\n    }\n    const cd=Buffer.concat(ch),er=Buffer.alloc(22);er.writeUInt32LE(0x06054b50,0);er.writeUInt16LE(files.length,8);er.writeUInt16LE(files.length,10);er.writeUInt32LE(cd.length,12);er.writeUInt32LE(o,16);\n    return Buffer.concat([...p,cd,er]);\n  };\n\n  const files=[{name:'deck.xml',data:Buffer.from(xml)}];\n  for(const i of valid) files.push({name:'blobs/'+i.imageHash+'.'+(i.mimeType==='image/jpeg'?'jpg':'png'),data:Buffer.from(i.imageBase64,'base64')});\n  const zip=mkZip(files);\n  return [{json:{success:true,cardCount:valid.length,words:valid.map(i=>i.word),zipBase64:zip.toString('base64'),zipSizeBytes:zip.length,failedCount:errors.length}}];\n} catch(e) { return [{json:{success:false,error:e.message}}]; }\n"
       }
     },
     {
@@ -281,165 +225,70 @@
       "name": "Success Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        2300,
-        100
-      ],
+      "position": [2500, 100],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {
-          "responseCode": 200
-        }
+        "options": { "responseCode": 200 }
       }
     }
   ],
   "connections": {
     "Webhook Trigger": {
-      "main": [
-        [
-          {
-            "node": "Validate Input",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]]
     },
-    "Validate Input": {
+    "Normalize Input": {
+      "main": [[{ "node": "Check Valid", "type": "main", "index": 0 }]]
+    },
+    "Check Valid": {
       "main": [
-        [
-          {
-            "node": "Extract Vocabulary (Vision)",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Error Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Extract Vocabulary (Vision)", "type": "main", "index": 0 }],
+        [{ "node": "Error Response", "type": "main", "index": 0 }]
       ]
     },
     "Extract Vocabulary (Vision)": {
       "main": [
-        [
-          {
-            "node": "Parse Vocabulary JSON",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Parse Vocabulary JSON", "type": "main", "index": 0 }],
+        [{ "node": "Vision Error Response", "type": "main", "index": 0 }]
       ]
     },
     "Parse Vocabulary JSON": {
-      "main": [
-        [
-          {
-            "node": "Check Parse Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Check Parse Error", "type": "main", "index": 0 }]]
     },
     "Check Parse Error": {
       "main": [
-        [
-          {
-            "node": "Loop Over Items",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Parse Error Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Loop Over Items", "type": "main", "index": 0 }],
+        [{ "node": "Parse Error Response", "type": "main", "index": 0 }]
       ]
     },
     "Loop Over Items": {
       "main": [
-        [
-          {
-            "node": "Aggregate All Items",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Generate Image",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Aggregate All Items", "type": "main", "index": 0 }],
+        [{ "node": "Generate Image", "type": "main", "index": 0 }]
       ]
     },
     "Generate Image": {
       "main": [
-        [
-          {
-            "node": "Extract Image Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Extract Image Data", "type": "main", "index": 0 }],
+        [{ "node": "Handle Image Error", "type": "main", "index": 0 }]
       ]
+    },
+    "Handle Image Error": {
+      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
     },
     "Extract Image Data": {
-      "main": [
-        [
-          {
-            "node": "Wait (Rate Limit)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
     },
     "Wait (Rate Limit)": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
     },
     "Aggregate All Items": {
-      "main": [
-        [
-          {
-            "node": "Build AnkiApp Deck",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Build AnkiApp Deck", "type": "main", "index": 0 }]]
     },
     "Build AnkiApp Deck": {
-      "main": [
-        [
-          {
-            "node": "Success Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Success Response", "type": "main", "index": 0 }]]
     }
   },
-  "settings": {
-    "executionOrder": "v1"
-  },
+  "settings": { "executionOrder": "v1" },
   "active": true
 }

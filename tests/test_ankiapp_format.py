@@ -80,11 +80,11 @@ def validate_ankiapp_zip(zip_base64: str) -> dict:
 
     # Validate cards section
     cards_elem = root.find("cards")
+    card_count = 0
+    image_ids = set()
     if cards_elem is None:
         errors.append("Missing <cards> element")
     else:
-        card_count = 0
-        image_ids = set()
 
         for card in cards_elem.findall("card"):
             card_count += 1
@@ -265,38 +265,419 @@ def create_sample_deck() -> str:
     return base64.b64encode(zip_data).decode("ascii")
 
 
-def test_sample_deck():
-    """Test validation with a sample deck."""
-    print("Creating sample deck...")
-    sample_base64 = create_sample_deck()
+def create_multi_card_deck(card_count: int = 5, words: list = None) -> str:
+    """
+    Create an AnkiApp deck with multiple cards for testing.
 
-    print(f"Sample ZIP size: {len(base64.b64decode(sample_base64))} bytes")
+    Args:
+        card_count: Number of cards to create (ignored if words provided)
+        words: List of word strings to use as card content
+    """
+    import struct
 
-    print("\nValidating...")
-    result = validate_ankiapp_zip(sample_base64)
+    # XML escape function (same as workflow code)
+    def esc(s):
+        return (str(s)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;"))
 
-    print(f"\nValid: {result['valid']}")
-    print(f"Stats: {result['stats']}")
+    # Generate test words if not provided
+    if words is None:
+        words = [f"word{i}" for i in range(card_count)]
 
-    if result['errors']:
-        print(f"\nErrors:")
-        for err in result['errors']:
-            print(f"  - {err}")
+    # Generate unique PNG data for each card (different color values)
+    cards_data = []
+    for i, word in enumerate(words):
+        # Create slightly different PNG data for each card (vary last byte)
+        png_data = bytes([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+            0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+            0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+            0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
+            0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+            0x44, 0xAE, 0x42, 0x60, (0x82 + i) & 0xFF  # Vary last byte
+        ])
+        image_hash = hashlib.sha256(png_data).hexdigest()
+        cards_data.append({"word": word, "png_data": png_data, "hash": image_hash})
 
-    if result['warnings']:
-        print(f"\nWarnings:")
-        for warn in result['warnings']:
-            print(f"  - {warn}")
+    # Build XML with escaped words
+    cards_xml = "\n".join(
+        f'    <card><img name="Image" id="{c["hash"]}"/><text name="Word">{esc(c["word"])}</text></card>'
+        for c in cards_data
+    )
 
-    return result['valid']
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<deck name="Test Vocabulary" tags="test,multi">
+  <fields>
+    <img name="Image" sides="10"/>
+    <text lang="en-US" name="Word" sides="01"/>
+  </fields>
+  <cards>
+{cards_xml}
+  </cards>
+</deck>
+'''
 
+    # Create ZIP using same algorithm as create_sample_deck
+    def crc32(data):
+        crc = 0xFFFFFFFF
+        table = []
+        for i in range(256):
+            c = i
+            for _ in range(8):
+                c = (0xEDB88320 ^ (c >> 1)) if (c & 1) else (c >> 1)
+            table.append(c)
+        for byte in data:
+            crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
+        return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
+
+    files = [("deck.xml", xml.encode("utf-8"))]
+    for c in cards_data:
+        files.append((f"blobs/{c['hash']}.png", c["png_data"]))
+
+    local_parts = []
+    central_parts = []
+    offset = 0
+
+    for name, data in files:
+        name_bytes = name.encode("utf-8")
+        crc = crc32(data)
+
+        local_header = struct.pack(
+            "<IHHHHHIIIHH",
+            0x04034b50, 20, 0, 0, 0, 0, crc,
+            len(data), len(data), len(name_bytes), 0
+        )
+        local_parts.append(local_header + name_bytes + data)
+
+        central_header = struct.pack(
+            "<IHHHHHHIIIHHHHHII",
+            0x02014b50, 20, 20, 0, 0, 0, 0, crc,
+            len(data), len(data), len(name_bytes), 0, 0, 0, 0, 0, offset
+        )
+        central_parts.append(central_header + name_bytes)
+        offset += len(local_header) + len(name_bytes) + len(data)
+
+    local_data = b"".join(local_parts)
+    central_data = b"".join(central_parts)
+
+    end_record = struct.pack(
+        "<IHHHHIIH",
+        0x06054b50, 0, 0, len(files), len(files),
+        len(central_data), len(local_data), 0
+    )
+
+    zip_data = local_data + central_data + end_record
+    return base64.b64encode(zip_data).decode("ascii")
+
+
+# =============================================================================
+# Pytest Tests - Use assertions for proper test framework integration
+# =============================================================================
+
+class TestValidDeck:
+    """Tests for valid AnkiApp deck format."""
+
+    def test_sample_deck_is_valid(self):
+        """Test that a properly formatted sample deck passes validation."""
+        sample_base64 = create_sample_deck()
+        result = validate_ankiapp_zip(sample_base64)
+
+        assert result["valid"] is True, f"Sample deck should be valid: {result['errors']}"
+        assert result["errors"] == [], f"No errors expected: {result['errors']}"
+        assert result["stats"]["card_count"] == 1
+        assert result["stats"]["blob_count"] == 1
+        assert "deck_name" in result["stats"]
+
+    def test_deck_stats_populated(self):
+        """Test that validation returns expected stats."""
+        sample_base64 = create_sample_deck()
+        result = validate_ankiapp_zip(sample_base64)
+
+        assert "card_count" in result["stats"]
+        assert "blob_count" in result["stats"]
+        assert "field_count" in result["stats"]
+        assert "image_ids" in result["stats"]
+        assert len(result["stats"]["image_ids"]) == 1
+
+    def test_multi_card_deck_is_valid(self):
+        """Test that a deck with multiple cards passes validation."""
+        sample_base64 = create_multi_card_deck(card_count=10)
+        result = validate_ankiapp_zip(sample_base64)
+
+        assert result["valid"] is True, f"Multi-card deck should be valid: {result['errors']}"
+        assert result["errors"] == [], f"No errors expected: {result['errors']}"
+        assert result["stats"]["card_count"] == 10
+        assert result["stats"]["blob_count"] == 10
+        assert len(result["stats"]["image_ids"]) == 10
+
+    def test_special_characters_in_word(self):
+        """Test that special XML characters are properly escaped in words."""
+        # Test words with XML special characters that need escaping
+        test_words = [
+            "bed & breakfast",      # & -> &amp;
+            "<html> tag",           # < > -> &lt; &gt;
+            '"quoted"',             # " -> &quot;
+            "rock & roll <live>",   # multiple special chars
+            "apostrophe's test",    # apostrophe (safe in XML)
+        ]
+        sample_base64 = create_multi_card_deck(words=test_words)
+        result = validate_ankiapp_zip(sample_base64)
+
+        assert result["valid"] is True, f"Deck with special chars should be valid: {result['errors']}"
+        assert result["stats"]["card_count"] == len(test_words)
+
+        # Also verify the XML can be parsed (escaping worked)
+        zip_bytes = base64.b64decode(sample_base64)
+        zf = zipfile.ZipFile(BytesIO(zip_bytes))
+        xml_content = zf.read("deck.xml")
+        root = ET.fromstring(xml_content)  # Would fail if escaping is broken
+        zf.close()
+
+        # Verify unescaped content is recovered correctly
+        cards = root.find("cards").findall("card")
+        for i, card in enumerate(cards):
+            text_elem = card.find("text[@name='Word']")
+            assert text_elem is not None
+            # XML parser automatically unescapes, so we should get original text
+            assert text_elem.text == test_words[i], f"Word mismatch: {text_elem.text} != {test_words[i]}"
+
+    def test_unicode_characters_in_word(self):
+        """Test that Unicode/non-ASCII characters work correctly."""
+        test_words = [
+            "café",          # accented character
+            "日本語",         # Japanese
+            "emoji 🎉",      # emoji
+            "Ñoño",          # Spanish Ñ
+        ]
+        sample_base64 = create_multi_card_deck(words=test_words)
+        result = validate_ankiapp_zip(sample_base64)
+
+        assert result["valid"] is True, f"Deck with Unicode should be valid: {result['errors']}"
+        assert result["stats"]["card_count"] == len(test_words)
+
+
+class TestInvalidInput:
+    """Tests for error handling with invalid inputs."""
+
+    def test_invalid_base64(self):
+        """Test that invalid base64 returns appropriate error."""
+        result = validate_ankiapp_zip("not-valid-base64!!!")
+
+        assert result["valid"] is False
+        assert any("Invalid base64" in err or "base64" in err.lower() for err in result["errors"])
+
+    def test_empty_string(self):
+        """Test that empty string is handled gracefully."""
+        result = validate_ankiapp_zip("")
+
+        assert result["valid"] is False
+        assert len(result["errors"]) > 0
+
+    def test_invalid_zip(self):
+        """Test that non-ZIP binary data returns appropriate error."""
+        # Valid base64 but not a ZIP file
+        not_a_zip = base64.b64encode(b"This is not a ZIP file").decode()
+        result = validate_ankiapp_zip(not_a_zip)
+
+        assert result["valid"] is False
+        assert any("ZIP" in err or "zip" in err.lower() for err in result["errors"])
+
+    def test_zip_missing_deck_xml(self):
+        """Test that ZIP without deck.xml fails validation."""
+        # Create a valid ZIP but without deck.xml
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("other_file.txt", "This ZIP has no deck.xml")
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("deck.xml" in err for err in result["errors"])
+
+    def test_invalid_xml(self):
+        """Test that malformed XML in deck.xml fails validation."""
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", "<deck><not-closed>")  # Invalid XML
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("XML" in err or "xml" in err.lower() for err in result["errors"])
+
+
+class TestXmlValidation:
+    """Tests for XML structure validation."""
+
+    def test_wrong_root_element(self):
+        """Test that XML with wrong root element fails."""
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", '<?xml version="1.0"?><wrong_root name="Test"/>')
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("deck" in err.lower() and "root" in err.lower() for err in result["errors"])
+
+    def test_missing_deck_name(self):
+        """Test that deck without name attribute fails."""
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", '<?xml version="1.0"?><deck><fields/><cards/></deck>')
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("name" in err.lower() for err in result["errors"])
+
+    def test_missing_fields_element(self):
+        """Test that deck without fields element fails."""
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", '<?xml version="1.0"?><deck name="Test"><cards/></deck>')
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("fields" in err.lower() for err in result["errors"])
+
+    def test_missing_cards_element(self):
+        """Test that deck without cards element fails."""
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", '<?xml version="1.0"?><deck name="Test"><fields/></deck>')
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("cards" in err.lower() for err in result["errors"])
+
+
+class TestBlobValidation:
+    """Tests for blob/image validation."""
+
+    def test_missing_blob_for_card(self):
+        """Test that cards referencing missing blobs fail validation."""
+        # Create deck with card referencing non-existent blob
+        xml = '''<?xml version="1.0"?>
+<deck name="Test" tags="test">
+  <fields>
+    <img name="Image" sides="10"/>
+    <text name="Word" sides="01"/>
+  </fields>
+  <cards>
+    <card>
+      <img name="Image" id="nonexistent_hash_123"/>
+      <text name="Word">test</text>
+    </card>
+  </cards>
+</deck>'''
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", xml)
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("missing" in err.lower() and "blob" in err.lower() for err in result["errors"])
+
+    def test_blob_hash_mismatch(self):
+        """Test that blobs with wrong hash in filename fail validation."""
+        png_data = b'\x89PNG\r\n\x1a\n' + b'\x00' * 50  # Minimal PNG-like data
+        wrong_hash = "0" * 64  # All zeros - won't match actual hash
+
+        xml = f'''<?xml version="1.0"?>
+<deck name="Test" tags="test">
+  <fields>
+    <img name="Image" sides="10"/>
+  </fields>
+  <cards>
+    <card><img name="Image" id="{wrong_hash}"/></card>
+  </cards>
+</deck>'''
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", xml)
+            zf.writestr(f"blobs/{wrong_hash}.png", png_data)
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        assert result["valid"] is False
+        assert any("hash" in err.lower() and "mismatch" in err.lower() for err in result["errors"])
+
+    def test_unused_blob_warning(self):
+        """Test that unused blobs generate warnings, not errors."""
+        # Create valid deck with an extra unused blob
+        png_data = bytes([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+            0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+            0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+            0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
+            0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+            0x44, 0xAE, 0x42, 0x60, 0x82
+        ])
+        used_hash = hashlib.sha256(png_data).hexdigest()
+
+        # Different data for unused blob
+        unused_data = b"unused blob data"
+        unused_hash = hashlib.sha256(unused_data).hexdigest()
+
+        xml = f'''<?xml version="1.0"?>
+<deck name="Test" tags="test">
+  <fields><img name="Image" sides="10"/></fields>
+  <cards><card><img name="Image" id="{used_hash}"/></card></cards>
+</deck>'''
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("deck.xml", xml)
+            zf.writestr(f"blobs/{used_hash}.png", png_data)
+            zf.writestr(f"blobs/{unused_hash}.bin", unused_data)
+        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
+
+        result = validate_ankiapp_zip(zip_base64)
+
+        # Should still be valid (unused blobs are warnings, not errors)
+        assert result["valid"] is True
+        assert any("unused" in warn.lower() for warn in result["warnings"])
+
+
+# =============================================================================
+# CLI Interface - For manual testing and debugging
+# =============================================================================
 
 if __name__ == "__main__":
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        success = test_sample_deck()
-        sys.exit(0 if success else 1)
+        # Run basic self-test (for quick manual verification)
+        sample_base64 = create_sample_deck()
+        print(f"Sample ZIP size: {len(base64.b64decode(sample_base64))} bytes")
+        result = validate_ankiapp_zip(sample_base64)
+        print(f"Valid: {result['valid']}")
+        print(f"Stats: {result['stats']}")
+        if result['errors']:
+            print(f"Errors: {result['errors']}")
+        if result['warnings']:
+            print(f"Warnings: {result['warnings']}")
+        sys.exit(0 if result['valid'] else 1)
     elif len(sys.argv) > 1:
         # Validate a file
         with open(sys.argv[1], "r") as f:
@@ -321,3 +702,4 @@ if __name__ == "__main__":
         print("Usage: python test_ankiapp_format.py [--test | <base64_or_json_file>]")
         print("  --test: Run self-test with sample deck")
         print("  <file>: Validate base64 ZIP or JSON response file")
+        print("\nFor full test suite, run: pytest tests/test_ankiapp_format.py -v")
