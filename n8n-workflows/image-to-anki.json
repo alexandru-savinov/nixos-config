@@ -283,9 +283,9 @@
       "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
     },
     "Aggregate All Items": {
-      "main": [[{ "node": "Build AnkiApp Deck", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Build APKG Deck", "type": "main", "index": 0 }]]
     },
-    "Build AnkiApp Deck": {
+    "Build APKG Deck": {
       "main": [[{ "node": "Success Response", "type": "main", "index": 0 }]]
     }
   },
