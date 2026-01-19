@@ -170,7 +170,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'bytedance-seed/seedream-4.5', modalities: ['text', 'image'], zdr: false, messages: [{ role: 'user', content: 'Generate a simple illustration for flashcard: ' + $json.word + ' (' + $json.description + '). Style: flat, minimal, white background, no text.' }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'black-forest-labs/flux.2-klein-4b', modalities: ['text', 'image'], zdr: false, messages: [{ role: 'user', content: 'Generate a simple illustration for flashcard: ' + $json.word + ' (' + $json.description + '). Style: flat, minimal, white background, no text.' }] }) }}",
         "options": { "timeout": 120000 }
       }
     },
