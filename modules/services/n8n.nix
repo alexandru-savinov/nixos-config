@@ -326,151 +326,151 @@ in
         # Run setup as root (+ prefix) for reading secrets, then main process as n8n user
         ExecStartPre = [
           ("+" + pkgs.writeShellScript "n8n-setup-env" ''
-            set -euo pipefail
+                        set -euo pipefail
 
-            ENV_FILE="/run/n8n/env"
-            : > "$ENV_FILE"
+                        ENV_FILE="/run/n8n/env"
+                        : > "$ENV_FILE"
 
-            # Port configuration
-            echo "N8N_PORT=${toString cfg.port}" >> "$ENV_FILE"
+                        # Port configuration
+                        echo "N8N_PORT=${toString cfg.port}" >> "$ENV_FILE"
 
-            # Bind to localhost only - access is via Tailscale Serve (HTTPS)
-            echo "N8N_LISTEN_ADDRESS=127.0.0.1" >> "$ENV_FILE"
+                        # Bind to localhost only - access is via Tailscale Serve (HTTPS)
+                        echo "N8N_LISTEN_ADDRESS=127.0.0.1" >> "$ENV_FILE"
 
-            # Privacy settings
-            echo "N8N_DIAGNOSTICS_ENABLED=false" >> "$ENV_FILE"
-            echo "N8N_VERSION_NOTIFICATIONS_ENABLED=false" >> "$ENV_FILE"
+                        # Privacy settings
+                        echo "N8N_DIAGNOSTICS_ENABLED=false" >> "$ENV_FILE"
+                        echo "N8N_VERSION_NOTIFICATIONS_ENABLED=false" >> "$ENV_FILE"
 
-            # Security: disable public API by default (access via UI)
-            echo "N8N_PUBLIC_API_DISABLED=true" >> "$ENV_FILE"
+                        # Security: disable public API by default (access via UI)
+                        echo "N8N_PUBLIC_API_DISABLED=true" >> "$ENV_FILE"
 
-            # Encryption key (if provided)
-            ${optionalString (cfg.encryptionKeyFile != null) ''
-              if [[ ! -f "${cfg.encryptionKeyFile}" ]]; then
-                echo "ERROR: Encryption key file not found: ${cfg.encryptionKeyFile}" >&2
-                exit 1
-              fi
-              ENCRYPTION_KEY=$(cat "${cfg.encryptionKeyFile}")
-              if [[ -z "$ENCRYPTION_KEY" ]]; then
-                echo "ERROR: Encryption key file is empty: ${cfg.encryptionKeyFile}" >&2
-                exit 1
-              fi
-              echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
-            ''}
+                        # Encryption key (if provided)
+                        ${optionalString (cfg.encryptionKeyFile != null) ''
+                          if [[ ! -f "${cfg.encryptionKeyFile}" ]]; then
+                            echo "ERROR: Encryption key file not found: ${cfg.encryptionKeyFile}" >&2
+                            exit 1
+                          fi
+                          ENCRYPTION_KEY=$(cat "${cfg.encryptionKeyFile}")
+                          if [[ -z "$ENCRYPTION_KEY" ]]; then
+                            echo "ERROR: Encryption key file is empty: ${cfg.encryptionKeyFile}" >&2
+                            exit 1
+                          fi
+                          echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
+                        ''}
 
-            # OpenRouter API key (if provided)
-            ${optionalString (cfg.openrouterApiKeyFile != null) ''
-              if [[ ! -f "${cfg.openrouterApiKeyFile}" ]]; then
-                echo "ERROR: OpenRouter API key file not found: ${cfg.openrouterApiKeyFile}" >&2
-                exit 1
-              fi
-              OPENROUTER_KEY=$(cat "${cfg.openrouterApiKeyFile}")
-              if [[ -z "$OPENROUTER_KEY" ]]; then
-                echo "ERROR: OpenRouter API key file is empty: ${cfg.openrouterApiKeyFile}" >&2
-                exit 1
-              fi
-              echo "OPENROUTER_API_KEY=$OPENROUTER_KEY" >> "$ENV_FILE"
-              echo "OpenRouter API key configured for workflow expressions"
-            ''}
+                        # OpenRouter API key (if provided)
+                        ${optionalString (cfg.openrouterApiKeyFile != null) ''
+                          if [[ ! -f "${cfg.openrouterApiKeyFile}" ]]; then
+                            echo "ERROR: OpenRouter API key file not found: ${cfg.openrouterApiKeyFile}" >&2
+                            exit 1
+                          fi
+                          OPENROUTER_KEY=$(cat "${cfg.openrouterApiKeyFile}")
+                          if [[ -z "$OPENROUTER_KEY" ]]; then
+                            echo "ERROR: OpenRouter API key file is empty: ${cfg.openrouterApiKeyFile}" >&2
+                            exit 1
+                          fi
+                          echo "OPENROUTER_API_KEY=$OPENROUTER_KEY" >> "$ENV_FILE"
+                          echo "OpenRouter API key configured for workflow expressions"
+                        ''}
 
-            # Admin password (if provided) - for REST API authentication
-            ${optionalString (cfg.adminPasswordFile != null) ''
-              if [[ ! -f "${cfg.adminPasswordFile}" ]]; then
-                echo "ERROR: Admin password file not found: ${cfg.adminPasswordFile}" >&2
-                exit 1
-              fi
-              ADMIN_PASSWORD=$(cat "${cfg.adminPasswordFile}")
-              if [[ -z "$ADMIN_PASSWORD" ]]; then
-                echo "ERROR: Admin password file is empty: ${cfg.adminPasswordFile}" >&2
-                exit 1
-              fi
+                        # Admin password (if provided) - for REST API authentication
+                        ${optionalString (cfg.adminPasswordFile != null) ''
+                          if [[ ! -f "${cfg.adminPasswordFile}" ]]; then
+                            echo "ERROR: Admin password file not found: ${cfg.adminPasswordFile}" >&2
+                            exit 1
+                          fi
+                          ADMIN_PASSWORD=$(cat "${cfg.adminPasswordFile}")
+                          if [[ -z "$ADMIN_PASSWORD" ]]; then
+                            echo "ERROR: Admin password file is empty: ${cfg.adminPasswordFile}" >&2
+                            exit 1
+                          fi
 
-              # Generate bcrypt hash using python
-              ADMIN_HASH=$(${pkgs.python3.withPackages (ps: [ps.bcrypt])}/bin/python3 -c "
-import bcrypt
-import sys
-password = sys.stdin.read().strip().encode()
-hash = bcrypt.hashpw(password, bcrypt.gensalt(10))
-print(hash.decode())
-" <<< "$ADMIN_PASSWORD")
+                          # Generate bcrypt hash using python
+                          ADMIN_HASH=$(${pkgs.python3.withPackages (ps: [ps.bcrypt])}/bin/python3 -c "
+            import bcrypt
+            import sys
+            password = sys.stdin.read().strip().encode()
+            hash = bcrypt.hashpw(password, bcrypt.gensalt(10))
+            print(hash.decode())
+            " <<< "$ADMIN_PASSWORD")
 
-              # Update admin user password in database (create user if not exists)
-              DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
-              if [[ -f "$DB_PATH" ]]; then
-                # Check if admin user exists
-                ADMIN_EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
-                  "SELECT COUNT(*) FROM user WHERE email='admin@localhost.com';")
+                          # Update admin user password in database (create user if not exists)
+                          DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
+                          if [[ -f "$DB_PATH" ]]; then
+                            # Check if admin user exists
+                            ADMIN_EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
+                              "SELECT COUNT(*) FROM user WHERE email='admin@localhost.com';")
 
-                if [[ "$ADMIN_EXISTS" -eq 0 ]]; then
-                  # Create admin user with generated UUID
-                  ADMIN_ID=$(${pkgs.util-linux}/bin/uuidgen)
-                  ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" "
-                    INSERT INTO user (id, email, firstName, lastName, password, role, disabled, createdAt, updatedAt)
-                    VALUES ('$ADMIN_ID', 'admin@localhost.com', 'Admin', 'User', '$ADMIN_HASH', 'global:owner', 0, datetime('now'), datetime('now'));
-                  "
-                  echo "Created admin user: admin@localhost.com"
-                else
-                  # Update existing admin password
-                  ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
-                    "UPDATE user SET password='$ADMIN_HASH', updatedAt=datetime('now') WHERE email='admin@localhost.com';"
-                  echo "Updated admin user password"
-                fi
-              else
-                echo "Database not yet created, admin password will be set on first n8n run"
-              fi
-            ''}
+                            if [[ "$ADMIN_EXISTS" -eq 0 ]]; then
+                              # Create admin user with generated UUID
+                              ADMIN_ID=$(${pkgs.util-linux}/bin/uuidgen)
+                              ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" "
+                                INSERT INTO user (id, email, firstName, lastName, password, role, disabled, createdAt, updatedAt)
+                                VALUES ('$ADMIN_ID', 'admin@localhost.com', 'Admin', 'User', '$ADMIN_HASH', 'global:owner', 0, datetime('now'), datetime('now'));
+                              "
+                              echo "Created admin user: admin@localhost.com"
+                            else
+                              # Update existing admin password
+                              ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
+                                "UPDATE user SET password='$ADMIN_HASH', updatedAt=datetime('now') WHERE email='admin@localhost.com';"
+                              echo "Updated admin user password"
+                            fi
+                          else
+                            echo "Database not yet created, admin password will be set on first n8n run"
+                          fi
+                        ''}
 
-            # Credentials file (if provided)
-            ${optionalString (cfg.credentialsFile != null) ''
-              if [[ ! -f "${cfg.credentialsFile}" ]]; then
-                echo "ERROR: Credentials file not found: ${cfg.credentialsFile}" >&2
-                exit 1
-              fi
-              # Validate JSON syntax before copying (fail fast)
-              if ! ${pkgs.jq}/bin/jq empty "${cfg.credentialsFile}" 2>/dev/null; then
-                echo "ERROR: Credentials file is not valid JSON: ${cfg.credentialsFile}" >&2
-                exit 1
-              fi
-              # Copy to runtime dir - chmod 644 is safe because dir is 0700
-              cp "${cfg.credentialsFile}" /run/n8n/credentials.json
-              chmod 644 /run/n8n/credentials.json
-              echo "CREDENTIALS_OVERWRITE_DATA_FILE=/run/n8n/credentials.json" >> "$ENV_FILE"
-              echo "Credentials file configured: /run/n8n/credentials.json"
-            ''}
+                        # Credentials file (if provided)
+                        ${optionalString (cfg.credentialsFile != null) ''
+                          if [[ ! -f "${cfg.credentialsFile}" ]]; then
+                            echo "ERROR: Credentials file not found: ${cfg.credentialsFile}" >&2
+                            exit 1
+                          fi
+                          # Validate JSON syntax before copying (fail fast)
+                          if ! ${pkgs.jq}/bin/jq empty "${cfg.credentialsFile}" 2>/dev/null; then
+                            echo "ERROR: Credentials file is not valid JSON: ${cfg.credentialsFile}" >&2
+                            exit 1
+                          fi
+                          # Copy to runtime dir - chmod 644 is safe because dir is 0700
+                          cp "${cfg.credentialsFile}" /run/n8n/credentials.json
+                          chmod 644 /run/n8n/credentials.json
+                          echo "CREDENTIALS_OVERWRITE_DATA_FILE=/run/n8n/credentials.json" >> "$ENV_FILE"
+                          echo "Credentials file configured: /run/n8n/credentials.json"
+                        ''}
 
-            # Execution pruning settings
-            echo "EXECUTIONS_DATA_PRUNE=${boolToString cfg.executionsPrune.enable}" >> "$ENV_FILE"
-            echo "EXECUTIONS_DATA_MAX_AGE=${toString cfg.executionsPrune.maxAge}" >> "$ENV_FILE"
-            echo "EXECUTIONS_DATA_PRUNE_MAX_COUNT=${toString cfg.executionsPrune.maxCount}" >> "$ENV_FILE"
+                        # Execution pruning settings
+                        echo "EXECUTIONS_DATA_PRUNE=${boolToString cfg.executionsPrune.enable}" >> "$ENV_FILE"
+                        echo "EXECUTIONS_DATA_MAX_AGE=${toString cfg.executionsPrune.maxAge}" >> "$ENV_FILE"
+                        echo "EXECUTIONS_DATA_PRUNE_MAX_COUNT=${toString cfg.executionsPrune.maxCount}" >> "$ENV_FILE"
 
-            # Security: Block env access in Code nodes
-            echo "N8N_BLOCK_ENV_ACCESS_IN_NODE=${boolToString cfg.blockEnvAccessInCode}" >> "$ENV_FILE"
+                        # Security: Block env access in Code nodes
+                        echo "N8N_BLOCK_ENV_ACCESS_IN_NODE=${boolToString cfg.blockEnvAccessInCode}" >> "$ENV_FILE"
 
-            # Concurrency limit
-            echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
+                        # Concurrency limit
+                        echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
 
-            # Extra environment variables (values escaped to prevent shell injection)
-            ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
-              echo "${name}=${escapeShellArg value}" >> "$ENV_FILE"
-            '') cfg.extraEnvironment)}
+                        # Extra environment variables (values escaped to prevent shell injection)
+                        ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
+                          echo "${name}=${escapeShellArg value}" >> "$ENV_FILE"
+                        '') cfg.extraEnvironment)}
 
-            # Community packages - enable support (actual installation via REST API service)
-            ${optionalString (cfg.communityPackages != []) ''
-              echo "N8N_COMMUNITY_PACKAGES_ENABLED=true" >> "$ENV_FILE"
+                        # Community packages - enable support (actual installation via REST API service)
+                        ${optionalString (cfg.communityPackages != []) ''
+                          echo "N8N_COMMUNITY_PACKAGES_ENABLED=true" >> "$ENV_FILE"
 
-              # Create nodes directory for community packages
-              NODES_DIR="/var/lib/n8n/.n8n/nodes"
-              mkdir -p "$NODES_DIR"
-              chown n8n:n8n "$NODES_DIR"
-            ''}
+                          # Create nodes directory for community packages
+                          NODES_DIR="/var/lib/n8n/.n8n/nodes"
+                          mkdir -p "$NODES_DIR"
+                          chown n8n:n8n "$NODES_DIR"
+                        ''}
 
-            # Fix npm cache ownership (ExecStartPre runs as root, but n8n needs write access)
-            if [[ -d "/var/lib/n8n/.npm" ]]; then
-              chown -R n8n:n8n /var/lib/n8n/.npm
-            fi
+                        # Fix npm cache ownership (ExecStartPre runs as root, but n8n needs write access)
+                        if [[ -d "/var/lib/n8n/.npm" ]]; then
+                          chown -R n8n:n8n /var/lib/n8n/.npm
+                        fi
 
-            # Make readable only by n8n user (600 + dir 0700 = secure)
-            chmod 600 "$ENV_FILE"
+                        # Make readable only by n8n user (600 + dir 0700 = secure)
+                        chmod 600 "$ENV_FILE"
           '')
         ];
       };
