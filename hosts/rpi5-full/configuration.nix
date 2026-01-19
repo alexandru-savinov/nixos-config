@@ -168,6 +168,10 @@
     enable = true;
     encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
 
+    # OpenRouter API key - injected as OPENROUTER_API_KEY environment variable
+    # Workflows can reference it using: Bearer {{ $env.OPENROUTER_API_KEY }}
+    openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
+
     # Lower concurrency for RPi5 resource constraints
     concurrencyLimit = 2;
 

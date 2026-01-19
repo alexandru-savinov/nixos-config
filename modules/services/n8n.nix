@@ -46,6 +46,22 @@ in
       '';
     };
 
+    openrouterApiKeyFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "config.age.secrets.openrouter-api-key.path";
+      description = ''
+        Path to file containing OpenRouter API key.
+        This is injected as OPENROUTER_API_KEY environment variable.
+
+        Workflows can reference it using the expression:
+          Bearer {{ $env.OPENROUTER_API_KEY }}
+
+        Use agenix for secret management:
+          openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
+      '';
+    };
+
     # ===================
     # Hardening Options
     # ===================
@@ -265,6 +281,21 @@ in
                 exit 1
               fi
               echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
+            ''}
+
+            # OpenRouter API key (if provided)
+            ${optionalString (cfg.openrouterApiKeyFile != null) ''
+              if [[ ! -f "${cfg.openrouterApiKeyFile}" ]]; then
+                echo "ERROR: OpenRouter API key file not found: ${cfg.openrouterApiKeyFile}" >&2
+                exit 1
+              fi
+              OPENROUTER_KEY=$(cat "${cfg.openrouterApiKeyFile}")
+              if [[ -z "$OPENROUTER_KEY" ]]; then
+                echo "ERROR: OpenRouter API key file is empty: ${cfg.openrouterApiKeyFile}" >&2
+                exit 1
+              fi
+              echo "OPENROUTER_API_KEY=$OPENROUTER_KEY" >> "$ENV_FILE"
+              echo "OpenRouter API key configured for workflow expressions"
             ''}
 
             # Credentials file (if provided)
