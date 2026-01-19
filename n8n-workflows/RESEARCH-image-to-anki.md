@@ -75,11 +75,12 @@ deck.zip
 
 **Endpoint**: `POST https://openrouter.ai/api/v1/chat/completions`
 
-**Request Format** (example - actual implementation uses `anthropic/claude-sonnet-4` for ZDR):
+**Request Format**:
 ```json
 {
-  "model": "anthropic/claude-sonnet-4",
+  "model": "google/gemini-2.5-flash",
   "max_tokens": 4096,
+  "zdr": true,
   "messages": [
     {
       "role": "user",
@@ -112,7 +113,8 @@ deck.zip
 **Request Format**:
 ```json
 {
-  "model": "google/gemini-2.5-flash-image",
+  "model": "black-forest-labs/flux-1-schnell",
+  "zdr": true,
   "messages": [
     {
       "role": "user",

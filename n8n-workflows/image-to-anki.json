@@ -81,7 +81,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-sonnet-4', max_tokens: 4096, messages: [{ role: 'user', content: [{ type: 'text', text: 'TASK: Extract EVERY vocabulary item from this educational infographic. Be EXHAUSTIVE - these images often contain 10-30+ items.\\n\\nINSTRUCTIONS:\\n1. Scan the ENTIRE image systematically\\n2. Include EVERY labeled word/item\\n3. Count and verify you captured everything\\n\\nOUTPUT: Return ONLY a JSON array: [{\"word\": \"...\", \"description\": \"3-5 words for illustration\"}]\\n\\nNo markdown, no code blocks.' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash', max_tokens: 4096, zdr: true, messages: [{ role: 'user', content: [{ type: 'text', text: 'TASK: Extract EVERY vocabulary item from this educational infographic. Be EXHAUSTIVE - these images often contain 10-30+ items.\\n\\nINSTRUCTIONS:\\n1. Scan the ENTIRE image systematically\\n2. Include EVERY labeled word/item\\n3. Count and verify you captured everything\\n\\nOUTPUT: Return ONLY a JSON array: [{\"word\": \"...\", \"description\": \"3-5 words for illustration\"}]\\n\\nNo markdown, no code blocks.' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
         "options": { "timeout": 120000 }
       }
     },
@@ -170,7 +170,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', messages: [{ role: 'user', content: 'Generate a simple illustration for flashcard: ' + $json.word + ' (' + $json.description + '). Style: flat, minimal, white background, no text.' }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'black-forest-labs/flux-1-schnell', zdr: true, messages: [{ role: 'user', content: 'Generate a simple illustration for flashcard: ' + $json.word + ' (' + $json.description + '). Style: flat, minimal, white background, no text.' }] }) }}",
         "options": { "timeout": 120000 }
       }
     },
