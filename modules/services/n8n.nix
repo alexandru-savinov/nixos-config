@@ -202,7 +202,7 @@ in
 
     users.groups.n8n = { };
 
-    # Security assertion: prevent credentials in Nix store (world-readable!)
+    # Security assertions: prevent secrets in Nix store (world-readable!)
     assertions = [
       {
         assertion = cfg.credentialsFile == null ||
@@ -214,6 +214,18 @@ in
           Use agenix instead:
             age.secrets.n8n-credentials.file = ./secrets/n8n-credentials.age;
             services.n8n-tailscale.credentialsFile = config.age.secrets.n8n-credentials.path;
+        '';
+      }
+      {
+        assertion = cfg.openrouterApiKeyFile == null ||
+          !(hasPrefix "/nix/store" (toString cfg.openrouterApiKeyFile));
+        message = ''
+          services.n8n-tailscale.openrouterApiKeyFile points to the Nix store!
+          Files in /nix/store are WORLD-READABLE. Your API key would be exposed.
+
+          Use agenix instead:
+            age.secrets.openrouter-api-key.file = ./secrets/openrouter-api-key.age;
+            services.n8n-tailscale.openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
         '';
       }
     ];
