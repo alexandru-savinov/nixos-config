@@ -23,7 +23,7 @@
       "typeVersion": 2,
       "position": [300, 300],
       "parameters": {
-        "jsCode": "// Normalize and validate input - returns error JSON if invalid\nconst body = $input.first().json.body || {};\n\nif (body.imageUrl && typeof body.imageUrl === 'string' && body.imageUrl.length > 0) {\n  return [{ json: { ...($input.first().json), imageSource: body.imageUrl, inputType: 'url', isValid: true } }];\n}\n\nif (body.imageData && typeof body.imageData === 'string' && body.imageData.length > 0) {\n  let data = body.imageData;\n  if (!data.startsWith('data:')) {\n    data = 'data:image/png;base64,' + data;\n  }\n  return [{ json: { ...($input.first().json), imageSource: data, inputType: 'base64', isValid: true } }];\n}\n\n// Invalid - return error marker\nreturn [{ json: { isValid: false, error: 'Missing image. Send POST with {\"imageUrl\": \"...\"} or {\"imageData\": \"...\"}' } }];\n"
+        "jsCode": "// Normalize and validate input - returns error JSON if invalid\nconst body = $input.first().json.body || {};\n\nif (body.imageUrl && typeof body.imageUrl === 'string' && body.imageUrl.length > 0) {\n  return [{ json: { ...($input.first().json), imageSource: body.imageUrl, inputType: 'url', isValid: true, base64Only: null } }];\n}\n\nif (body.imageData && typeof body.imageData === 'string' && body.imageData.length > 0) {\n  let data = body.imageData;\n  if (!data.startsWith('data:')) {\n    data = 'data:image/png;base64,' + data;\n  }\n  // Extract just the base64 part for saving\n  const base64Only = data.split('base64,')[1] || null;\n  return [{ json: { ...($input.first().json), imageSource: data, inputType: 'base64', isValid: true, base64Only } }];\n}\n\n// Invalid - return error marker\nreturn [{ json: { isValid: false, error: 'Missing image. Send POST with {\"imageUrl\": \"...\"} or {\"imageData\": \"...\"}' } }];\n"
       }
     },
     {
@@ -49,6 +49,27 @@
       }
     },
     {
+      "id": "save-image",
+      "name": "Save Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 300],
+      "parameters": {
+        "jsCode": "// Save uploaded image to /tmp for testing\nconst item = $input.first().json;\nif (item.base64Only) {\n  const binary = Buffer.from(item.base64Only, 'base64');\n  return [{\n    json: item,\n    binary: { data: { data: binary.toString('base64'), mimeType: 'image/jpeg', fileName: 'user-vocab.jpg' } }\n  }];\n}\nreturn [{ json: item }];\n"
+      }
+    },
+    {
+      "id": "write-image",
+      "name": "Write Image",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [700, 300],
+      "parameters": {
+        "fileName": "/var/lib/n8n/user-vocab.jpg",
+        "options": {}
+      }
+    },
+    {
       "id": "error-response",
       "name": "Error Response",
       "type": "n8n-nodes-base.respondToWebhook",
@@ -65,7 +86,7 @@
       "name": "Extract Vocabulary (Vision)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [700, 300],
+      "position": [900, 300],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -81,7 +102,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash', max_tokens: 8192, messages: [{ role: 'user', content: [{ type: 'text', text: 'You are extracting vocabulary from an educational infographic for Anki flashcards.\\n\\nCRITICAL: These images typically contain 10-30+ vocabulary items. You MUST find ALL of them.\\n\\nSYSTEMATIC SCAN PROCESS:\\n1. Divide image into a 3x3 grid mentally\\n2. Scan each cell: TOP-LEFT, TOP-CENTER, TOP-RIGHT, MIDDLE-LEFT, MIDDLE-CENTER, MIDDLE-RIGHT, BOTTOM-LEFT, BOTTOM-CENTER, BOTTOM-RIGHT\\n3. For EACH cell, list every labeled word/item you see\\n4. After scanning all 9 cells, review the full image for any missed items\\n\\nFor each vocabulary item found, provide:\\n- word: the vocabulary word exactly as shown\\n- description: 3-5 words describing what to illustrate (for image generation)\\n\\nOUTPUT FORMAT: Return ONLY a valid JSON array, no markdown, no explanation:\\n[{\"word\": \"example\", \"description\": \"brief illustration description\"}]\\n\\nRemember: Missing items = incomplete flashcard deck. Find EVERY labeled word!' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'qwen/qwen-2.5-vl-7b-instruct:free', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract ALL vocabulary words from this educational image for Anki flashcards.\\n\\nFor each vocabulary word, provide:\\n- word: the exact vocabulary word as labeled\\n- description: 2-4 words describing it (e.g., \"red round fruit\")\\n\\nReturn ONLY a JSON array - no markdown:\\n[{\"word\": \"apple\", \"description\": \"red round fruit\"}]' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
         "options": { "timeout": 120000 }
       }
     },
@@ -102,9 +123,9 @@
       "name": "Parse Vocabulary JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [900, 300],
+      "position": [1100, 300],
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst imageSource = $('Normalize Input').first().json.imageSource;\nconst inputType = $('Normalize Input').first().json.inputType;\n\nconst content = response.choices?.[0]?.message?.content || '';\nif (!content) {\n  return [{ json: { parseError: 'No content in LLM response' } }];\n}\n\nlet jsonStr = content.trim();\nif (jsonStr.includes('```')) {\n  const start = jsonStr.indexOf('[');\n  const end = jsonStr.lastIndexOf(']') + 1;\n  if (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end);\n}\n\nlet vocabulary;\ntry {\n  vocabulary = JSON.parse(jsonStr);\n} catch (e) {\n  return [{ json: { parseError: 'Invalid JSON: ' + e.message, rawContent: jsonStr.substring(0, 200) } }];\n}\n\nif (!Array.isArray(vocabulary) || vocabulary.length === 0) {\n  return [{ json: { parseError: 'No vocabulary found', rawContent: jsonStr.substring(0, 200) } }];\n}\n\nreturn vocabulary.map((item, index) => ({\n  json: { index, word: item.word, description: item.description, imageSource, inputType, totalItems: vocabulary.length }\n}));\n"
+        "jsCode": "const response = $input.first().json;\nconst imageSource = $('Normalize Input').first().json.imageSource;\nconst inputType = $('Normalize Input').first().json.inputType;\n\n// Try multiple paths for content (different n8n/API versions)\nlet content = response.choices?.[0]?.message?.content\n  || response.data?.choices?.[0]?.message?.content\n  || response.body?.choices?.[0]?.message?.content\n  || '';\n\nif (!content) {\n  return [{ json: { parseError: 'No content in LLM response', responseKeys: Object.keys(response), rawResponse: JSON.stringify(response).substring(0, 1000) } }];\n}\n\nlet jsonStr = content.trim();\n// Handle markdown code blocks\nif (jsonStr.includes('```')) {\n  const jsonMatch = jsonStr.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) jsonStr = jsonMatch[1].trim();\n}\n// Find JSON array\nconst start = jsonStr.indexOf('[');\nconst end = jsonStr.lastIndexOf(']') + 1;\nif (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end);\n\nlet vocabulary;\ntry {\n  vocabulary = JSON.parse(jsonStr);\n} catch (e) {\n  return [{ json: { parseError: 'Invalid JSON: ' + e.message, rawContent: jsonStr.substring(0, 1000) } }];\n}\n\nif (!Array.isArray(vocabulary) || vocabulary.length === 0) {\n  return [{ json: { parseError: 'No vocabulary found', rawContent: jsonStr.substring(0, 1000) } }];\n}\n\nreturn vocabulary.map((item, index) => ({\n  json: { index, word: item.word, description: item.description, imageSource, inputType, totalItems: vocabulary.length }\n}));\n"
       }
     },
     {
@@ -307,9 +328,15 @@
     },
     "Check Valid": {
       "main": [
-        [{ "node": "Extract Vocabulary (Vision)", "type": "main", "index": 0 }],
+        [{ "node": "Save Image", "type": "main", "index": 0 }],
         [{ "node": "Error Response", "type": "main", "index": 0 }]
       ]
+    },
+    "Save Image": {
+      "main": [[{ "node": "Write Image", "type": "main", "index": 0 }]]
+    },
+    "Write Image": {
+      "main": [[{ "node": "Extract Vocabulary (Vision)", "type": "main", "index": 0 }]]
     },
     "Extract Vocabulary (Vision)": {
       "main": [
@@ -322,7 +349,7 @@
     },
     "Check Parse Error": {
       "main": [
-        [{ "node": "Loop Over Items", "type": "main", "index": 0 }],
+        [{ "node": "Aggregate All Items", "type": "main", "index": 0 }],
         [{ "node": "Parse Error Response", "type": "main", "index": 0 }]
       ]
     },
