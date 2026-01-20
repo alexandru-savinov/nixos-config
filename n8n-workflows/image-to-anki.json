@@ -168,7 +168,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [1300, 300],
-      "parameters": { "batchSize": 5, "options": {} }
+      "parameters": { "batchSize": 1, "options": {} }
     },
     {
       "id": "generate-image",
@@ -349,7 +349,7 @@
     },
     "Check Parse Error": {
       "main": [
-        [{ "node": "Aggregate All Items", "type": "main", "index": 0 }],
+        [{ "node": "Loop Over Items", "type": "main", "index": 0 }],
         [{ "node": "Parse Error Response", "type": "main", "index": 0 }]
       ]
     },
