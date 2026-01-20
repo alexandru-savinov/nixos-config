@@ -3,7 +3,7 @@
 Generate Anki APKG deck from JSON input.
 
 Usage:
-    echo '{"deckName": "Vocab", "cards": [{"word": "apple", "imageBase64": "..."}]}' | python generate-apkg.py
+    echo '{"deckName": "Vocab", "cards": [{"word": "apple", "description": "A red fruit"}]}' | python generate-apkg.py
 
 Input JSON format:
 {
@@ -11,11 +11,16 @@ Input JSON format:
     "cards": [
         {
             "word": "apple",
-            "imageBase64": "iVBORw0KGgo...",  # Base64-encoded image
-            "mimeType": "image/jpeg"           # Optional, defaults to image/jpeg
+            "description": "A red fruit",          # Required for text-only cards
+            "imageBase64": "iVBORw0KGgo...",       # Optional: if present, creates image card
+            "mimeType": "image/jpeg"               # Optional, defaults to image/jpeg
         }
     ]
 }
+
+Card types:
+- With imageBase64: Shows image on front, word on back
+- Without imageBase64: Shows word on front, description on back (text-only)
 
 Output: Base64-encoded APKG file to stdout
 """
@@ -41,7 +46,7 @@ def generate_deck_id():
     return random.randrange(1 << 30, 1 << 31)
 
 
-def create_vocabulary_model(model_id):
+def create_image_model(model_id):
     """Create an Anki model for image-to-word vocabulary cards."""
     return genanki.Model(
         model_id,
@@ -82,6 +87,48 @@ def create_vocabulary_model(model_id):
     )
 
 
+def create_text_model(model_id):
+    """Create an Anki model for text-only vocabulary cards (word/description)."""
+    return genanki.Model(
+        model_id,
+        'Vocabulary (Text-Only)',
+        fields=[
+            {'name': 'Word'},
+            {'name': 'Description'},
+        ],
+        templates=[
+            {
+                'name': 'Word to Description',
+                'qfmt': '<div class="word">{{Word}}</div>',
+                'afmt': '{{FrontSide}}<hr id="answer"><div class="description">{{Description}}</div>',
+            },
+        ],
+        css='''
+.card {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 24px;
+    text-align: center;
+    color: #333;
+    background-color: #fafafa;
+    padding: 20px;
+}
+.word {
+    font-size: 36px;
+    font-weight: 700;
+    color: #1e40af;
+    margin: 20px 0;
+}
+.description {
+    font-size: 24px;
+    font-weight: 400;
+    color: #374151;
+    line-height: 1.5;
+    margin-top: 16px;
+}
+'''
+    )
+
+
 def get_image_extension(mime_type):
     """Get file extension from MIME type."""
     mime_map = {
@@ -109,57 +156,89 @@ def main():
         print(json.dumps({'success': False, 'error': 'No cards provided'}))
         sys.exit(1)
 
-    # Create model and deck
-    model_id = generate_model_id()
+    # Create models and deck
+    image_model_id = generate_model_id()
+    text_model_id = generate_model_id()
     deck_id = generate_deck_id()
 
-    model = create_vocabulary_model(model_id)
+    image_model = create_image_model(image_model_id)
+    text_model = create_text_model(text_model_id)
     deck = genanki.Deck(deck_id, deck_name)
 
     # Temporary directory for media files
     media_files = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        valid_count = 0
+        image_card_count = 0
+        text_card_count = 0
         error_count = 0
         words = []
 
         for idx, card in enumerate(cards_data):
             word = card.get('word', '')
+            description = card.get('description', '')
             image_base64 = card.get('imageBase64', '')
             mime_type = card.get('mimeType', 'image/jpeg')
 
-            if not word or not image_base64:
+            if not word:
                 error_count += 1
                 continue
 
-            # Decode and save image to temp file
-            try:
-                image_data = base64.b64decode(image_base64)
-                ext = get_image_extension(mime_type)
-                image_filename = f'img_{idx}.{ext}'
-                image_path = os.path.join(tmpdir, image_filename)
-
-                with open(image_path, 'wb') as f:
-                    f.write(image_data)
-
-                media_files.append(image_path)
-            except Exception as e:
-                error_count += 1
-                continue
-
-            # Create note with image reference
-            # HTML-escape the word to prevent XSS/rendering issues
+            # HTML-escape to prevent XSS/rendering issues
             escaped_word = html.escape(word)
-            image_field = f'<img src="{image_filename}">'
+            escaped_description = html.escape(description) if description else ''
 
-            note = genanki.Note(
-                model=model,
-                fields=[image_field, escaped_word]
-            )
-            deck.add_note(note)
-            valid_count += 1
-            words.append(word)
+            # Card with image: use image model (image on front, word on back)
+            if image_base64:
+                try:
+                    image_data = base64.b64decode(image_base64)
+                    ext = get_image_extension(mime_type)
+                    image_filename = f'img_{idx}.{ext}'
+                    image_path = os.path.join(tmpdir, image_filename)
+
+                    with open(image_path, 'wb') as f:
+                        f.write(image_data)
+
+                    media_files.append(image_path)
+                    image_field = f'<img src="{image_filename}">'
+
+                    note = genanki.Note(
+                        model=image_model,
+                        fields=[image_field, escaped_word]
+                    )
+                    deck.add_note(note)
+                    image_card_count += 1
+                    words.append(word)
+                except Exception as e:
+                    # Fall back to text card if image processing fails
+                    if escaped_description:
+                        note = genanki.Note(
+                            model=text_model,
+                            fields=[escaped_word, escaped_description]
+                        )
+                        deck.add_note(note)
+                        text_card_count += 1
+                        words.append(word)
+                    else:
+                        error_count += 1
+                    continue
+
+            # Card without image: use text model (word on front, description on back)
+            elif escaped_description:
+                note = genanki.Note(
+                    model=text_model,
+                    fields=[escaped_word, escaped_description]
+                )
+                deck.add_note(note)
+                text_card_count += 1
+                words.append(word)
+
+            # No image and no description: skip
+            else:
+                error_count += 1
+                continue
+
+        valid_count = image_card_count + text_card_count
 
         if valid_count == 0:
             print(json.dumps({'success': False, 'error': 'No valid cards created'}))
@@ -169,21 +248,30 @@ def main():
         package = genanki.Package(deck)
         package.media_files = media_files
 
-        # Write to temp file and read as base64
-        output_path = os.path.join(tmpdir, 'output.apkg')
+        # Write APKG to persistent temp directory for download
+        # Use UUID for unique filename to avoid collisions
+        import uuid
+        apkg_dir = '/tmp/anki-decks'
+        os.makedirs(apkg_dir, exist_ok=True)
+
+        deck_id = str(uuid.uuid4())[:8]
+        output_filename = f'{deck_id}.apkg'
+        output_path = os.path.join(apkg_dir, output_filename)
         package.write_to_file(output_path)
 
-        with open(output_path, 'rb') as f:
-            apkg_base64 = base64.b64encode(f.read()).decode('utf-8')
+        apkg_size = os.path.getsize(output_path)
 
-        # Output result as JSON
+        # Output result as JSON (no base64 - use download endpoint instead)
         result = {
             'success': True,
             'cardCount': valid_count,
+            'imageCardCount': image_card_count,
+            'textCardCount': text_card_count,
             'failedCount': error_count,
             'words': words,
-            'apkgBase64': apkg_base64,
-            'apkgSizeBytes': len(base64.b64decode(apkg_base64))
+            'deckId': deck_id,
+            'apkgPath': output_path,
+            'apkgSizeBytes': apkg_size
         }
         print(json.dumps(result))
 
