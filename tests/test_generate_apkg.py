@@ -32,10 +32,12 @@ def run_generate_apkg(input_data: dict) -> dict:
         text=True
     )
 
-    if result.returncode != 0:
-        raise RuntimeError(f"Script failed: {result.stderr}")
-
-    return json.loads(result.stdout)
+    # Script returns JSON even on error (with success: false)
+    # Only raise if we can't parse the output
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Script failed with no valid JSON: {result.stderr}")
 
 
 def validate_apkg_file(apkg_path: str) -> dict:
