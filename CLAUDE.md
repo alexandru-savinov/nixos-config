@@ -2,11 +2,39 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current Environment
+
+**You are running on rpi5** (Raspberry Pi 5, aarch64-linux). This affects what you can build and deploy:
+
+| Task | Can do on rpi5? | Notes |
+|------|-----------------|-------|
+| `nix flake check` | ✅ Yes | Evaluates all configs |
+| `nixos-rebuild build --flake .#rpi5` | ✅ Yes | Native build |
+| `nixos-rebuild build --flake .#sancta-choir` | ❌ No | x86_64 requires cross-compilation |
+| Deploy to rpi5 | ✅ Yes | Local rebuild |
+| Deploy to sancta-choir | ⚠️ Via SSH | Must SSH and rebuild remotely |
+
+### Deploying to sancta-choir from rpi5
+
+Since you cannot build x86_64 binaries on aarch64, deploy via SSH:
+
+```bash
+# Option 1: SSH and pull from GitHub (after PR merged)
+ssh sancta-choir "cd ~/nixos-config && git pull && sudo nixos-rebuild switch --flake .#sancta-choir"
+
+# Option 2: SSH and build from GitHub directly
+ssh sancta-choir "sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#sancta-choir"
+```
+
+**Tailscale hostnames:**
+- `sancta-choir` or `sancta-choir.tail4249a9.ts.net`
+- `rpi5` or `rpi5.tail4249a9.ts.net`
+
 ## Project Overview
 
 Flake-based NixOS configuration for multi-machine deployment:
-- **sancta-choir** (x86_64-linux): Hetzner Cloud VPS
-- **rpi5** (aarch64-linux): Raspberry Pi 5
+- **rpi5** (aarch64-linux): Raspberry Pi 5 ← **You are here** (MAIN site)
+- **sancta-choir** (x86_64-linux): Hetzner Cloud VPS (backup site)
 
 ## Commands
 

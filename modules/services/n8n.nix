@@ -16,12 +16,25 @@
 #
 # Access via Tailscale HTTPS: https://<hostname>.tail<hex>.ts.net:5678
 
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, self, ... }:
 
 with lib;
 
 let
   cfg = config.services.n8n-tailscale;
+
+  # Python environment with genanki for APKG generation
+  # Used by image-to-anki workflow to create Anki deck files
+  pythonWithGenanki = pkgs.python3.withPackages (ps: [
+    ps.genanki
+  ]);
+
+  # APKG generator script for n8n workflows
+  # Uses self from flake to reference the script file
+  generateApkgScript = pkgs.writeScriptBin "generate-apkg" ''
+    #!${pythonWithGenanki}/bin/python3
+    ${builtins.readFile "${self}/scripts/generate-apkg.py"}
+  '';
 in
 {
   options.services.n8n-tailscale = {
@@ -43,6 +56,39 @@ in
         Generate with: openssl rand -hex 32
         Use agenix for secret management.
         WARNING: If null, credentials will not be encrypted (insecure).
+      '';
+    };
+
+    openrouterApiKeyFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "config.age.secrets.openrouter-api-key.path";
+      description = ''
+        Path to file containing OpenRouter API key.
+        This is injected as OPENROUTER_API_KEY environment variable.
+
+        Workflows can reference it using the expression:
+          Bearer {{ $env.OPENROUTER_API_KEY }}
+
+        Use agenix for secret management:
+          openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
+      '';
+    };
+
+    adminPasswordFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "config.age.secrets.n8n-admin-password.path";
+      description = ''
+        Path to file containing the n8n admin user password.
+        Required for declarative community package installation via REST API.
+
+        The admin user (admin@localhost.com) password is set on each service start.
+        This enables the n8n-community-packages service to authenticate and
+        install packages programmatically.
+
+        Use agenix for secret management:
+          adminPasswordFile = config.age.secrets.n8n-admin-password.path;
       '';
     };
 
@@ -162,6 +208,27 @@ in
       '';
     };
 
+    communityPackages = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "n8n-nodes-zip" "@n8n/n8n-nodes-langchain" ];
+      description = ''
+        List of n8n community packages to install from npm.
+        These are installed on service start and available to workflows.
+
+        Common packages:
+          - n8n-nodes-zip: ZIP file creation/extraction
+          - n8n-nodes-convert-image: Image format conversion
+
+        Note: Packages are installed via npm in /var/lib/n8n/.n8n/nodes/
+
+        LIMITATION: n8n 1.x expects packages installed via its internal
+        package manager. Declaratively installed packages may trigger
+        "missing packages" warnings. For best results, install community
+        packages via n8n UI (Settings > Community nodes).
+      '';
+    };
+
     tailscaleServe = {
       enable = mkEnableOption "Tailscale Serve for HTTPS access";
 
@@ -186,7 +253,7 @@ in
 
     users.groups.n8n = { };
 
-    # Security assertion: prevent credentials in Nix store (world-readable!)
+    # Security assertions: prevent secrets in Nix store (world-readable!)
     assertions = [
       {
         assertion = cfg.credentialsFile == null ||
@@ -198,6 +265,30 @@ in
           Use agenix instead:
             age.secrets.n8n-credentials.file = ./secrets/n8n-credentials.age;
             services.n8n-tailscale.credentialsFile = config.age.secrets.n8n-credentials.path;
+        '';
+      }
+      {
+        assertion = cfg.openrouterApiKeyFile == null ||
+          !(hasPrefix "/nix/store" (toString cfg.openrouterApiKeyFile));
+        message = ''
+          services.n8n-tailscale.openrouterApiKeyFile points to the Nix store!
+          Files in /nix/store are WORLD-READABLE. Your API key would be exposed.
+
+          Use agenix instead:
+            age.secrets.openrouter-api-key.file = ./secrets/openrouter-api-key.age;
+            services.n8n-tailscale.openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
+        '';
+      }
+      {
+        assertion = cfg.adminPasswordFile == null ||
+          !(hasPrefix "/nix/store" (toString cfg.adminPasswordFile));
+        message = ''
+          services.n8n-tailscale.adminPasswordFile points to the Nix store!
+          Files in /nix/store are WORLD-READABLE. Your admin password would be exposed.
+
+          Use agenix instead:
+            age.secrets.n8n-admin-password.file = ./secrets/n8n-admin-password.age;
+            services.n8n-tailscale.adminPasswordFile = config.age.secrets.n8n-admin-password.path;
         '';
       }
     ];
@@ -235,77 +326,159 @@ in
         # Run setup as root (+ prefix) for reading secrets, then main process as n8n user
         ExecStartPre = [
           ("+" + pkgs.writeShellScript "n8n-setup-env" ''
-            set -euo pipefail
+                        set -euo pipefail
 
-            ENV_FILE="/run/n8n/env"
-            : > "$ENV_FILE"
+                        ENV_FILE="/run/n8n/env"
+                        : > "$ENV_FILE"
 
-            # Port configuration
-            echo "N8N_PORT=${toString cfg.port}" >> "$ENV_FILE"
+                        # Port configuration
+                        echo "N8N_PORT=${toString cfg.port}" >> "$ENV_FILE"
 
-            # Bind to localhost only - access is via Tailscale Serve (HTTPS)
-            echo "N8N_LISTEN_ADDRESS=127.0.0.1" >> "$ENV_FILE"
+                        # Bind to localhost only - access is via Tailscale Serve (HTTPS)
+                        echo "N8N_LISTEN_ADDRESS=127.0.0.1" >> "$ENV_FILE"
 
-            # Privacy settings
-            echo "N8N_DIAGNOSTICS_ENABLED=false" >> "$ENV_FILE"
-            echo "N8N_VERSION_NOTIFICATIONS_ENABLED=false" >> "$ENV_FILE"
+                        # Privacy settings
+                        echo "N8N_DIAGNOSTICS_ENABLED=false" >> "$ENV_FILE"
+                        echo "N8N_VERSION_NOTIFICATIONS_ENABLED=false" >> "$ENV_FILE"
 
-            # Security: disable public API by default (access via UI)
-            echo "N8N_PUBLIC_API_DISABLED=true" >> "$ENV_FILE"
+                        # Security: disable public API by default (access via UI)
+                        echo "N8N_PUBLIC_API_DISABLED=true" >> "$ENV_FILE"
 
-            # Encryption key (if provided)
-            ${optionalString (cfg.encryptionKeyFile != null) ''
-              if [[ ! -f "${cfg.encryptionKeyFile}" ]]; then
-                echo "ERROR: Encryption key file not found: ${cfg.encryptionKeyFile}" >&2
-                exit 1
-              fi
-              ENCRYPTION_KEY=$(cat "${cfg.encryptionKeyFile}")
-              if [[ -z "$ENCRYPTION_KEY" ]]; then
-                echo "ERROR: Encryption key file is empty: ${cfg.encryptionKeyFile}" >&2
-                exit 1
-              fi
-              echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
-            ''}
+                        # Encryption key (if provided)
+                        ${optionalString (cfg.encryptionKeyFile != null) ''
+                          if [[ ! -f "${cfg.encryptionKeyFile}" ]]; then
+                            echo "ERROR: Encryption key file not found: ${cfg.encryptionKeyFile}" >&2
+                            exit 1
+                          fi
+                          ENCRYPTION_KEY=$(cat "${cfg.encryptionKeyFile}")
+                          if [[ -z "$ENCRYPTION_KEY" ]]; then
+                            echo "ERROR: Encryption key file is empty: ${cfg.encryptionKeyFile}" >&2
+                            exit 1
+                          fi
+                          echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
+                        ''}
 
-            # Credentials file (if provided)
-            ${optionalString (cfg.credentialsFile != null) ''
-              if [[ ! -f "${cfg.credentialsFile}" ]]; then
-                echo "ERROR: Credentials file not found: ${cfg.credentialsFile}" >&2
-                exit 1
-              fi
-              # Validate JSON syntax before copying (fail fast)
-              if ! ${pkgs.jq}/bin/jq empty "${cfg.credentialsFile}" 2>/dev/null; then
-                echo "ERROR: Credentials file is not valid JSON: ${cfg.credentialsFile}" >&2
-                exit 1
-              fi
-              # Copy to runtime dir - chmod 644 is safe because dir is 0700
-              cp "${cfg.credentialsFile}" /run/n8n/credentials.json
-              chmod 644 /run/n8n/credentials.json
-              echo "CREDENTIALS_OVERWRITE_DATA_FILE=/run/n8n/credentials.json" >> "$ENV_FILE"
-              echo "Credentials file configured: /run/n8n/credentials.json"
-            ''}
+                        # OpenRouter API key (if provided)
+                        ${optionalString (cfg.openrouterApiKeyFile != null) ''
+                          if [[ ! -f "${cfg.openrouterApiKeyFile}" ]]; then
+                            echo "ERROR: OpenRouter API key file not found: ${cfg.openrouterApiKeyFile}" >&2
+                            exit 1
+                          fi
+                          OPENROUTER_KEY=$(cat "${cfg.openrouterApiKeyFile}")
+                          if [[ -z "$OPENROUTER_KEY" ]]; then
+                            echo "ERROR: OpenRouter API key file is empty: ${cfg.openrouterApiKeyFile}" >&2
+                            exit 1
+                          fi
+                          echo "OPENROUTER_API_KEY=$OPENROUTER_KEY" >> "$ENV_FILE"
+                          echo "OpenRouter API key configured for workflow expressions"
+                        ''}
 
-            # Execution pruning settings
-            echo "EXECUTIONS_DATA_PRUNE=${boolToString cfg.executionsPrune.enable}" >> "$ENV_FILE"
-            echo "EXECUTIONS_DATA_MAX_AGE=${toString cfg.executionsPrune.maxAge}" >> "$ENV_FILE"
-            echo "EXECUTIONS_DATA_PRUNE_MAX_COUNT=${toString cfg.executionsPrune.maxCount}" >> "$ENV_FILE"
+                        # Admin password (if provided) - for REST API authentication
+                        ${optionalString (cfg.adminPasswordFile != null) ''
+                          if [[ ! -f "${cfg.adminPasswordFile}" ]]; then
+                            echo "ERROR: Admin password file not found: ${cfg.adminPasswordFile}" >&2
+                            exit 1
+                          fi
+                          ADMIN_PASSWORD=$(cat "${cfg.adminPasswordFile}")
+                          if [[ -z "$ADMIN_PASSWORD" ]]; then
+                            echo "ERROR: Admin password file is empty: ${cfg.adminPasswordFile}" >&2
+                            exit 1
+                          fi
 
-            # Security: Block env access in Code nodes
-            echo "N8N_BLOCK_ENV_ACCESS_IN_NODE=${boolToString cfg.blockEnvAccessInCode}" >> "$ENV_FILE"
+                          # Generate bcrypt hash using python
+                          ADMIN_HASH=$(${pkgs.python3.withPackages (ps: [ps.bcrypt])}/bin/python3 -c "
+            import bcrypt
+            import sys
+            password = sys.stdin.read().strip().encode()
+            hash = bcrypt.hashpw(password, bcrypt.gensalt(10))
+            print(hash.decode())
+            " <<< "$ADMIN_PASSWORD")
 
-            # Concurrency limit
-            echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
+                          # Update admin user password in database (create user if not exists)
+                          DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
+                          if [[ -f "$DB_PATH" ]]; then
+                            # Check if admin user exists
+                            ADMIN_EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
+                              "SELECT COUNT(*) FROM user WHERE email='admin@localhost.com';")
 
-            # Extra environment variables (values escaped to prevent shell injection)
-            ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
-              echo "${name}=${escapeShellArg value}" >> "$ENV_FILE"
-            '') cfg.extraEnvironment)}
+                            if [[ "$ADMIN_EXISTS" -eq 0 ]]; then
+                              # Create admin user with generated UUID
+                              ADMIN_ID=$(${pkgs.util-linux}/bin/uuidgen)
+                              ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" "
+                                INSERT INTO user (id, email, firstName, lastName, password, role, disabled, createdAt, updatedAt)
+                                VALUES ('$ADMIN_ID', 'admin@localhost.com', 'Admin', 'User', '$ADMIN_HASH', 'global:owner', 0, datetime('now'), datetime('now'));
+                              "
+                              echo "Created admin user: admin@localhost.com"
+                            else
+                              # Update existing admin password
+                              ${pkgs.sqlite}/bin/sqlite3 "$DB_PATH" \
+                                "UPDATE user SET password='$ADMIN_HASH', updatedAt=datetime('now') WHERE email='admin@localhost.com';"
+                              echo "Updated admin user password"
+                            fi
+                          else
+                            echo "Database not yet created, admin password will be set on first n8n run"
+                          fi
+                        ''}
 
-            # Make readable only by n8n user (600 + dir 0700 = secure)
-            chmod 600 "$ENV_FILE"
+                        # Credentials file (if provided)
+                        ${optionalString (cfg.credentialsFile != null) ''
+                          if [[ ! -f "${cfg.credentialsFile}" ]]; then
+                            echo "ERROR: Credentials file not found: ${cfg.credentialsFile}" >&2
+                            exit 1
+                          fi
+                          # Validate JSON syntax before copying (fail fast)
+                          if ! ${pkgs.jq}/bin/jq empty "${cfg.credentialsFile}" 2>/dev/null; then
+                            echo "ERROR: Credentials file is not valid JSON: ${cfg.credentialsFile}" >&2
+                            exit 1
+                          fi
+                          # Copy to runtime dir - chmod 644 is safe because dir is 0700
+                          cp "${cfg.credentialsFile}" /run/n8n/credentials.json
+                          chmod 644 /run/n8n/credentials.json
+                          echo "CREDENTIALS_OVERWRITE_DATA_FILE=/run/n8n/credentials.json" >> "$ENV_FILE"
+                          echo "Credentials file configured: /run/n8n/credentials.json"
+                        ''}
+
+                        # Execution pruning settings
+                        echo "EXECUTIONS_DATA_PRUNE=${boolToString cfg.executionsPrune.enable}" >> "$ENV_FILE"
+                        echo "EXECUTIONS_DATA_MAX_AGE=${toString cfg.executionsPrune.maxAge}" >> "$ENV_FILE"
+                        echo "EXECUTIONS_DATA_PRUNE_MAX_COUNT=${toString cfg.executionsPrune.maxCount}" >> "$ENV_FILE"
+
+                        # Security: Block env access in Code nodes
+                        echo "N8N_BLOCK_ENV_ACCESS_IN_NODE=${boolToString cfg.blockEnvAccessInCode}" >> "$ENV_FILE"
+
+                        # Concurrency limit
+                        echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
+
+                        # Extra environment variables (values escaped to prevent shell injection)
+                        ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
+                          echo "${name}=${escapeShellArg value}" >> "$ENV_FILE"
+                        '') cfg.extraEnvironment)}
+
+                        # Community packages - enable support (actual installation via REST API service)
+                        ${optionalString (cfg.communityPackages != []) ''
+                          echo "N8N_COMMUNITY_PACKAGES_ENABLED=true" >> "$ENV_FILE"
+
+                          # Create nodes directory for community packages
+                          NODES_DIR="/var/lib/n8n/.n8n/nodes"
+                          mkdir -p "$NODES_DIR"
+                          chown n8n:n8n "$NODES_DIR"
+                        ''}
+
+                        # Fix npm cache ownership (ExecStartPre runs as root, but n8n needs write access)
+                        if [[ -d "/var/lib/n8n/.npm" ]]; then
+                          chown -R n8n:n8n /var/lib/n8n/.npm
+                        fi
+
+                        # Make readable only by n8n user (600 + dir 0700 = secure)
+                        chmod 600 "$ENV_FILE"
           '')
         ];
       };
+
+      # Add nodejs and utilities to PATH for n8n's internal community package installer
+      # n8n's package installer calls: npm pack, tar -xzf, and shell utilities
+      # Also includes generate-apkg script for APKG deck generation in workflows
+      path = [ pkgs.nodejs pkgs.gnutar pkgs.gzip pkgs.coreutils pkgs.bash generateApkgScript ];
     };
 
     # Separate service for workflow import and active state sync
@@ -504,6 +677,101 @@ in
       preStop = ''
         echo "Removing Tailscale Serve configuration for n8n..."
         ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+      '';
+    };
+
+    # Community packages installation via REST API
+    # Requires adminPasswordFile to authenticate with n8n
+    systemd.services.n8n-community-packages = mkIf (cfg.communityPackages != [ ] && cfg.adminPasswordFile != null) {
+      description = "Install n8n community packages via REST API";
+      after = [ "n8n.service" ];
+      requires = [ "n8n.service" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        # Run as root to read password file and restart n8n
+      };
+
+      path = [ pkgs.curl pkgs.jq ];
+
+      script = ''
+        set -euo pipefail
+
+        N8N_URL="http://127.0.0.1:${toString cfg.port}"
+        COOKIE_JAR="/tmp/n8n-community-packages-cookies.$$"
+        trap "rm -f $COOKIE_JAR" EXIT
+
+        # Read admin password
+        ADMIN_PASSWORD=$(cat "${cfg.adminPasswordFile}")
+
+        # Wait for n8n to be ready
+        echo "Waiting for n8n to be ready..."
+        timeout=120
+        while ! curl -sf "$N8N_URL/healthz" >/dev/null 2>&1; do
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "ERROR: n8n not ready after 120 seconds"
+            exit 1
+          fi
+          sleep 1
+        done
+        sleep 5  # Extra delay for full initialization
+
+        # Login to get session cookie
+        echo "Authenticating with n8n..."
+        LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"emailOrLdapLoginId\":\"admin@localhost.com\",\"password\":\"$ADMIN_PASSWORD\"}" \
+          "$N8N_URL/rest/login" 2>&1)
+
+        if ! echo "$LOGIN_RESPONSE" | jq -e '.data.id' >/dev/null 2>&1; then
+          echo "ERROR: Failed to authenticate with n8n"
+          echo "Response: $LOGIN_RESPONSE"
+          exit 1
+        fi
+        echo "Authentication successful"
+
+        # Get currently installed packages
+        echo "Checking installed packages..."
+        INSTALLED_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+          "$N8N_URL/rest/community-packages" 2>&1)
+
+        INSTALLED_PACKAGES=$(echo "$INSTALLED_RESPONSE" | jq -r '.data[].packageName // empty' 2>/dev/null || echo "")
+
+        # Install missing packages
+        PACKAGES_INSTALLED=0
+        for pkg in ${concatStringsSep " " cfg.communityPackages}; do
+          if echo "$INSTALLED_PACKAGES" | grep -qx "$pkg"; then
+            echo "Package $pkg already installed"
+          else
+            echo "Installing package: $pkg"
+            INSTALL_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "{\"name\":\"$pkg\"}" \
+              "$N8N_URL/rest/community-packages" 2>&1)
+
+            if echo "$INSTALL_RESPONSE" | jq -e '.data.packageName' >/dev/null 2>&1; then
+              echo "Successfully installed: $pkg"
+              PACKAGES_INSTALLED=1
+            else
+              echo "WARNING: Failed to install $pkg"
+              echo "Response: $INSTALL_RESPONSE"
+            fi
+          fi
+        done
+
+        # Restart n8n if packages were installed (to load new nodes)
+        if [ "$PACKAGES_INSTALLED" -eq 1 ]; then
+          echo "Restarting n8n to load new community packages..."
+          ${pkgs.systemd}/bin/systemctl restart n8n.service
+          echo "n8n restarted"
+        fi
+
+        echo "Community packages installation complete"
       '';
     };
 
