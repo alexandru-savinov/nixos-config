@@ -90,47 +90,47 @@ let
 
   # Script to generate MCP config with API key injected at runtime
   generateMcpConfigScript = user: pkgs.writeShellScript "n8n-mcp-config-${user}" ''
-    set -euo pipefail
+        set -euo pipefail
 
-    USER_HOME=$(getent passwd "${user}" | cut -d: -f6)
-    CONFIG_DIR="$USER_HOME/.config/claude"
-    CONFIG_FILE="$CONFIG_DIR/mcp.json"
+        USER_HOME=$(getent passwd "${user}" | cut -d: -f6)
+        CONFIG_DIR="$USER_HOME/.config/claude"
+        CONFIG_FILE="$CONFIG_DIR/mcp.json"
 
-    # Create config directory if it doesn't exist
-    mkdir -p "$CONFIG_DIR"
+        # Create config directory if it doesn't exist
+        mkdir -p "$CONFIG_DIR"
 
-    # Read existing config or start fresh
-    if [ -f "$CONFIG_FILE" ]; then
-      EXISTING_CONFIG=$(cat "$CONFIG_FILE")
-    else
-      EXISTING_CONFIG='{"mcpServers":{}}'
-    fi
+        # Read existing config or start fresh
+        if [ -f "$CONFIG_FILE" ]; then
+          EXISTING_CONFIG=$(cat "$CONFIG_FILE")
+        else
+          EXISTING_CONFIG='{"mcpServers":{}}'
+        fi
 
-    # Build n8n-mcp server config
-    N8N_MCP_CONFIG=$(cat <<'MCPEOF'
-${builtins.toJSON mkMcpConfigBase}
-MCPEOF
-)
+        # Build n8n-mcp server config
+        N8N_MCP_CONFIG=$(cat <<'MCPEOF'
+    ${builtins.toJSON mkMcpConfigBase}
+    MCPEOF
+    )
 
-    # Inject API key if provided
-    ${optionalString (cfg.apiKeyFile != null) ''
-      if [ -f "${cfg.apiKeyFile}" ]; then
-        API_KEY=$(cat "${cfg.apiKeyFile}")
-        N8N_MCP_CONFIG=$(echo "$N8N_MCP_CONFIG" | ${pkgs.jq}/bin/jq --arg key "$API_KEY" '.env.N8N_API_KEY = $key')
-      else
-        echo "WARNING: API key file not found: ${cfg.apiKeyFile}" >&2
-        echo "n8n-mcp will run in documentation-only mode" >&2
-      fi
-    ''}
+        # Inject API key if provided
+        ${optionalString (cfg.apiKeyFile != null) ''
+          if [ -f "${cfg.apiKeyFile}" ]; then
+            API_KEY=$(cat "${cfg.apiKeyFile}")
+            N8N_MCP_CONFIG=$(echo "$N8N_MCP_CONFIG" | ${pkgs.jq}/bin/jq --arg key "$API_KEY" '.env.N8N_API_KEY = $key')
+          else
+            echo "WARNING: API key file not found: ${cfg.apiKeyFile}" >&2
+            echo "n8n-mcp will run in documentation-only mode" >&2
+          fi
+        ''}
 
-    # Merge into existing config (preserving other MCP servers like context7, unifi)
-    echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq --argjson n8n "$N8N_MCP_CONFIG" '.mcpServers["n8n-mcp"] = $n8n' > "$CONFIG_FILE"
+        # Merge into existing config (preserving other MCP servers like context7, unifi)
+        echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq --argjson n8n "$N8N_MCP_CONFIG" '.mcpServers["n8n-mcp"] = $n8n' > "$CONFIG_FILE"
 
-    # Set proper ownership
-    chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$CONFIG_FILE"
-    chmod 600 "$CONFIG_FILE"
+        # Set proper ownership
+        chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$CONFIG_FILE"
+        chmod 600 "$CONFIG_FILE"
 
-    echo "n8n-mcp configured for ${user} at $CONFIG_FILE"
+        echo "n8n-mcp configured for ${user} at $CONFIG_FILE"
   '';
 in
 {
