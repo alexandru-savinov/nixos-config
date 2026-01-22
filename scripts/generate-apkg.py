@@ -32,6 +32,7 @@ import tempfile
 import os
 import html
 import random
+import time
 
 import genanki
 
@@ -253,6 +254,16 @@ def main():
         import uuid
         apkg_dir = '/tmp/anki-decks'
         os.makedirs(apkg_dir, exist_ok=True)
+
+        # Cleanup: delete files older than 1 hour to prevent accumulation
+        cutoff_time = time.time() - 3600  # 1 hour ago
+        for old_file in os.listdir(apkg_dir):
+            old_path = os.path.join(apkg_dir, old_file)
+            if os.path.isfile(old_path) and os.path.getmtime(old_path) < cutoff_time:
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    pass  # Ignore cleanup errors
 
         deck_id = str(uuid.uuid4())[:8]
         output_filename = f'{deck_id}.apkg'
