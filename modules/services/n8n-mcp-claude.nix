@@ -191,37 +191,23 @@ in
   };
 
   config = mkIf cfg.enable {
-    # For API key mode: Use systemd service to inject secret at runtime
-    # This avoids putting secrets in the Nix store
-    systemd.services = mkIf (cfg.apiKeyFile != null)
-      (listToAttrs (map
-        (user: {
-          name = "n8n-mcp-config-${user}";
-          value = {
-            description = "Configure n8n-mcp for Claude Code (${user})";
-            after = [ "network.target" ];
-            wantedBy = [ "multi-user.target" ];
+    # Use systemd service to manage MCP config for all users
+    # This ensures proper merging with existing MCP servers (context7, unifi-mcp, etc.)
+    systemd.services = listToAttrs (map
+      (user: {
+        name = "n8n-mcp-config-${user}";
+        value = {
+          description = "Configure n8n-mcp for Claude Code (${user})";
+          after = [ "network.target" "agenix.service" ];
+          wantedBy = [ "multi-user.target" ];
 
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              ExecStart = generateMcpConfigScript user;
-            };
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = generateMcpConfigScript user;
           };
-        })
-        cfg.users));
-
-    # For documentation-only mode (no API key): Use home-manager to write static config
-    # This is simpler and works without systemd service at boot
-    home-manager.users = mkIf (cfg.apiKeyFile == null)
-      (listToAttrs (map
-        (user: {
-          name = user;
-          value = {
-            home.stateVersion = lib.mkDefault "24.05";
-            xdg.configFile."claude/mcp.json".text = builtins.toJSON mkMcpConfigStatic;
-          };
-        })
-        cfg.users));
+        };
+      })
+      cfg.users);
   };
 }
