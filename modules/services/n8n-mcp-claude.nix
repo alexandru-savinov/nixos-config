@@ -185,7 +185,7 @@ in
       default = true;
       description = ''
         Disable n8n-mcp telemetry collection.
-        Enabled by default for privacy.
+        Defaults to true (telemetry disabled) for privacy.
       '';
     };
   };
