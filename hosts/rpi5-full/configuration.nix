@@ -42,6 +42,14 @@
     # n8n workflow automation
     n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
     n8n-admin-password.file = "${self}/secrets/n8n-admin-password.age";
+    # n8n API key for Claude Code MCP (workflow management)
+    # NOTE: Uncomment after creating the secret:
+    #   cd secrets && agenix -e n8n-api-key.age
+    #   (paste API key from n8n Settings > API > Create API Key)
+    # n8n-api-key = {
+    #   file = "${self}/secrets/n8n-api-key.age";
+    #   mode = "0400"; # Readable only by root (systemd service runs as root)
+    # };
 
     # OpenAI API key (for TTS/STT)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
@@ -198,6 +206,18 @@
     };
 
     tailscaleServe.enable = true;
+  };
+
+  # n8n MCP Server for Claude Code - FULL MODE with workflow management
+  # Overrides the documentation-only mode from rpi5/configuration.nix
+  # To enable full workflow management:
+  # 1. Create API key in n8n: Settings > API > Create API Key
+  # 2. Store in agenix: cd secrets && agenix -e n8n-api-key.age
+  # 3. Uncomment the age.secrets.n8n-api-key block above
+  # 4. Uncomment the apiKeyFile line below
+  services.n8n-mcp-claude = {
+    n8nUrl = "http://127.0.0.1:5678";
+    # apiKeyFile = config.age.secrets.n8n-api-key.path;
   };
 
   # Qdrant Vector Database - External vector DB for RAG on ARM
