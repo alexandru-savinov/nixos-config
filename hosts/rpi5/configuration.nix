@@ -39,6 +39,8 @@
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/unifi-mcp.nix
+    ../../modules/services/n8n-skills.nix
+    ../../modules/services/n8n-mcp-claude.nix
     # Additional services are in rpi5-full config:
     # - open-webui, n8n, uptime-kuma
   ];
@@ -143,6 +145,23 @@
 
     # Don't run as persistent service - use stdio mode for Claude Code
     service.enable = false;
+  };
+
+  # ==========================================================================
+  # n8n Skills and MCP for Claude Code
+  # ==========================================================================
+  # Provides 7 skills for building production-ready n8n workflows.
+  # Documentation-only mode (no API key) - for full workflow management,
+  # use rpi5-full config which has local n8n running.
+  services.n8n-skills = {
+    enable = true;
+    users = [ "nixos" "root" ];
+  };
+
+  services.n8n-mcp-claude = {
+    enable = true;
+    users = [ "nixos" "root" ];
+    # Documentation-only mode - no n8n instance on minimal config
   };
 
   # Hostname
