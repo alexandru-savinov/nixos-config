@@ -89,19 +89,21 @@ let
   };
 
   # Script to generate MCP config with API key injected at runtime
+  # Claude Code reads MCP servers from ~/.claude.json (user scope)
+  # See: https://code.claude.com/docs/en/mcp
   generateMcpConfigScript = user: pkgs.writeShellScript "n8n-mcp-config-${user}" ''
         set -euo pipefail
 
-        USER_HOME=$(getent passwd "${user}" | cut -d: -f6)
-        CONFIG_DIR="$USER_HOME/.config/claude"
-        CONFIG_FILE="$CONFIG_DIR/mcp.json"
+        # Get home directory using shell expansion (works for any user)
+        USER_HOME=$(eval echo "~${user}")
+        CONFIG_FILE="$USER_HOME/.claude.json"
 
-        # Create config directory if it doesn't exist
-        mkdir -p "$CONFIG_DIR"
-
-        # Read existing config or start fresh
+        # Read existing config or start with empty object
+        # ~/.claude.json contains user settings (tips, stats) AND mcpServers
         if [ -f "$CONFIG_FILE" ]; then
           EXISTING_CONFIG=$(cat "$CONFIG_FILE")
+          # Ensure mcpServers key exists
+          EXISTING_CONFIG=$(echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq 'if .mcpServers == null then .mcpServers = {} else . end')
         else
           EXISTING_CONFIG='{"mcpServers":{}}'
         fi
@@ -130,7 +132,7 @@ let
         chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
 
-        echo "n8n-mcp configured for ${user} at $CONFIG_FILE"
+        echo "n8n-mcp configured for ${user} in $CONFIG_FILE"
   '';
 in
 {
@@ -143,7 +145,7 @@ in
       example = [ "nixos" "root" ];
       description = ''
         List of users to configure n8n-mcp for.
-        MCP config is written to ~/.config/claude/mcp.json for each user.
+        MCP config is merged into ~/.claude.json for each user.
       '';
     };
 
