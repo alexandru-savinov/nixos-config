@@ -191,7 +191,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'bytedance-seed/seedream-4.5', modalities: ['text', 'image'], messages: [{ role: 'user', content: 'Generate a simple illustration for flashcard: ' + $json.word + ' (' + $json.description + '). Style: flat, minimal, white background, no text.' }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'bytedance-seed/seedream-4.5', modalities: ['text', 'image'], messages: [{ role: 'user', content: 'Create a fun blocky illustration of ' + $json.word + ' (' + $json.description + ') for a kids flashcard. Style: cute pixel-art inspired, colorful blocks, Minecraft-like but friendly and simple. White background, no text.' }] }) }}",
         "options": { "timeout": 120000 }
       }
     },
