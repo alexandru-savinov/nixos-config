@@ -635,6 +635,9 @@ in
         "n8n.service"
       ];
       wantedBy = [ "multi-user.target" ];
+      # PartOf ensures this service restarts when n8n restarts
+      # Without this, Requires= only stops this service but doesn't restart it
+      partOf = [ "n8n.service" ];
 
       serviceConfig = {
         Type = "oneshot";

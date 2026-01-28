@@ -591,6 +591,9 @@ in
         "gatus.service"
       ];
       wantedBy = [ "multi-user.target" ];
+      # PartOf ensures this service restarts when gatus restarts
+      # Without this, Requires= only stops this service but doesn't restart it
+      partOf = [ "gatus.service" ];
 
       serviceConfig = {
         Type = "oneshot";
