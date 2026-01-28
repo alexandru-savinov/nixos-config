@@ -1091,6 +1091,9 @@ in
         "open-webui.service"
       ];
       wantedBy = [ "multi-user.target" ];
+      # PartOf ensures this service restarts when open-webui restarts
+      # Without this, Requires= only stops this service but doesn't restart it
+      partOf = [ "open-webui.service" ];
 
       serviceConfig = {
         Type = "oneshot";

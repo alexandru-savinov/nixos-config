@@ -153,6 +153,9 @@ in
         "qdrant.service"
       ];
       wantedBy = [ "multi-user.target" ];
+      # PartOf ensures this service restarts when qdrant restarts
+      # Without this, Requires= only stops this service but doesn't restart it
+      partOf = [ "qdrant.service" ];
 
       serviceConfig = {
         Type = "oneshot";

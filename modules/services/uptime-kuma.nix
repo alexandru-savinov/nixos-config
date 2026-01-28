@@ -112,6 +112,9 @@ in
         "uptime-kuma.service"
       ];
       wantedBy = [ "multi-user.target" ];
+      # PartOf ensures this service restarts when uptime-kuma restarts
+      # Without this, Requires= only stops this service but doesn't restart it
+      partOf = [ "uptime-kuma.service" ];
 
       serviceConfig = {
         Type = "oneshot";

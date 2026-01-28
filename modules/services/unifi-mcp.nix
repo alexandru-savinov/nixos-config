@@ -364,6 +364,9 @@ in
         "unifi-mcp.service"
       ];
       wantedBy = [ "multi-user.target" ];
+      # PartOf ensures this service restarts when unifi-mcp restarts
+      # Without this, Requires= only stops this service but doesn't restart it
+      partOf = [ "unifi-mcp.service" ];
 
       serviceConfig = {
         Type = "oneshot";
