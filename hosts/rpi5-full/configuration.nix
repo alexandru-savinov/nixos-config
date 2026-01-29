@@ -192,6 +192,10 @@
     # Workflows must have stable "id" field for idempotency
     workflowsDir = "${self}/n8n-workflows";
 
+    # Wait for this webhook to be registered before completing workflow sync
+    # Prevents 404 errors when accessing webhooks immediately after n8n start
+    webhookHealthCheck = "image-to-anki-ui";
+
     # Admin password for REST API authentication (required for community packages)
     adminPasswordFile = config.age.secrets.n8n-admin-password.path;
 
