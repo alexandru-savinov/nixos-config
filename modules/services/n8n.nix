@@ -469,6 +469,16 @@ in
                           chown -R n8n:n8n /var/lib/n8n/.npm
                         fi
 
+                        # Create APKG output directory for generate-apkg script used by image-to-anki workflow
+                        # Uses /var/lib/n8n (StateDirectory) for persistence and security (no shared /tmp)
+                        APKG_DIR="/var/lib/n8n/anki-decks"
+                        mkdir -p "$APKG_DIR"
+                        if ! chown n8n:n8n "$APKG_DIR"; then
+                          echo "ERROR: Failed to set ownership of $APKG_DIR to n8n:n8n" >&2
+                          exit 1
+                        fi
+                        echo "APKG output directory configured: $APKG_DIR"
+
                         # Make readable only by n8n user (600 + dir 0700 = secure)
                         chmod 600 "$ENV_FILE"
           '')

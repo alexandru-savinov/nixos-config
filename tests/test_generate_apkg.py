@@ -417,7 +417,7 @@ class TestAPKGDownloadIDValidation:
         apkg_path = result["apkgPath"]
 
         # Path must be within /tmp/anki-decks
-        assert apkg_path.startswith('/tmp/anki-decks/'), f"Path should be in /tmp/anki-decks: {apkg_path}"
+        assert apkg_path.startswith('/var/lib/n8n/anki-decks/'), f"Path should be in /var/lib/n8n/anki-decks: {apkg_path}"
 
         # Path must not contain directory traversal
         assert '..' not in apkg_path, f"Path should not contain ..: {apkg_path}"
