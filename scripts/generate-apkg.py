@@ -252,7 +252,7 @@ def main():
         # Write APKG to persistent temp directory for download
         # Use UUID for unique filename to avoid collisions
         import uuid
-        apkg_dir = '/tmp/anki-decks'
+        apkg_dir = '/var/lib/n8n/anki-decks'
         os.makedirs(apkg_dir, exist_ok=True)
 
         # Cleanup: delete files older than 1 hour to prevent accumulation

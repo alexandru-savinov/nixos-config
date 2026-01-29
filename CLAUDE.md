@@ -9,9 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Task | Can do on rpi5? | Notes |
 |------|-----------------|-------|
 | `nix flake check` | ✅ Yes | Evaluates all configs |
-| `nixos-rebuild build --flake .#rpi5` | ✅ Yes | Native build |
+| `nixos-rebuild build --flake .#rpi5-full` | ✅ Yes | Native build (use `rpi5-full`, not `rpi5`) |
 | `nixos-rebuild build --flake .#sancta-choir` | ❌ No | x86_64 requires cross-compilation |
-| Deploy to rpi5 | ✅ Yes | Local rebuild |
+| Deploy to rpi5 | ✅ Yes | Local rebuild with `rpi5-full` |
 | Deploy to sancta-choir | ⚠️ Via SSH | Must SSH and rebuild remotely |
 
 ### Deploying to sancta-choir from rpi5

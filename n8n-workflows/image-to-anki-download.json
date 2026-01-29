@@ -68,7 +68,7 @@
       "typeVersion": 1,
       "position": [700, 300],
       "parameters": {
-        "fileSelector": "=/tmp/anki-decks/{{ $json.deckId }}.apkg"
+        "fileSelector": "=/var/lib/n8n/anki-decks/{{ $json.deckId }}.apkg"
       }
     },
     {
