@@ -54,6 +54,21 @@
       # Formatter for `nix fmt`
       formatter = forAllSystems (system: nixpkgsFor.${system}.nixpkgs-fmt);
 
+      # Exportable NixOS modules for use in external flakes
+      nixosModules = {
+        # Common base configuration (SSH, zram, flakes, /bin/bash shim)
+        common = ./hosts/common.nix;
+
+        # Claude Code package (requires claude-code flake in specialArgs)
+        claude = ./modules/services/claude.nix;
+
+        # Dynamic binary support (nix-ld for running non-Nix binaries)
+        nix-ld = ./modules/system/nix-ld.nix;
+
+        # Development tools package set (editors, dev tools, nix tooling)
+        dev-tools = ./modules/system/dev-tools.nix;
+      };
+
       # NixOS system configurations
       nixosConfigurations = {
         # x86_64 VPS server

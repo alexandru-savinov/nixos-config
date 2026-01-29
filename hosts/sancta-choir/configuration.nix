@@ -36,6 +36,7 @@
     ../../modules/system/host.nix
     ../../modules/system/networking.nix
     ../../modules/system/nix-ld.nix
+    ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
     ../../modules/services/claude.nix
@@ -45,6 +46,9 @@
     ../../modules/services/gatus.nix
     ../../modules/services/n8n.nix
   ];
+
+  # Enable development tools
+  customModules.dev-tools.enable = true;
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets = {
