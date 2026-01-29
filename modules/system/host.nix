@@ -46,22 +46,8 @@
   networking.firewall.enable = true;
   networking.firewall.allowedTCPPorts = [ 22 ];
 
-  # System packages (basic utilities in common.nix)
-  environment.systemPackages = with pkgs; [
-    helix
-    tmux
-    htop
-    tree
-    ripgrep
-    fd
-    btop
-    nodejs_22
-    gh
-    pkgs-unstable.github-copilot-cli # Use unstable for latest @github/copilot package
-    # Nix development tools
-    nixpkgs-fmt
-    nil # Nix language server
-  ];
+  # System packages moved to dev-tools.nix module
+  # Networking-specific packages can be added here if needed
 
   # Time zone
   time.timeZone = "UTC";

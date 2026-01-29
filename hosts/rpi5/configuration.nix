@@ -34,6 +34,7 @@
     # - sancta-choir hostname
     # ../../modules/system/host.nix
     # ../../modules/system/networking.nix  # Hetzner Cloud specific, incompatible with RPi5
+    ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
     ../../modules/services/claude.nix
@@ -44,6 +45,10 @@
     # Additional services are in rpi5-full config:
     # - open-webui, n8n, uptime-kuma
   ];
+
+  # Enable development tools and Claude Code
+  customModules.dev-tools.enable = true;
+  customModules.claude.enable = true;
 
   # Allow unfree packages (Open-WebUI license changed in v0.6+)
   # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides
@@ -68,26 +73,13 @@
   networking.firewall.enable = true;
   networking.firewall.allowedTCPPorts = [ 22 ];
 
-  # System packages (merged for RPi5)
+  # System packages (RPi5-specific utilities)
+  # Common dev tools (helix, tmux, nodejs, gh, etc.) are in dev-tools.nix
   environment.systemPackages = with pkgs; [
-    # Development tools
-    helix
+    # Additional editors for RPi5
     neovim
-    tmux
-    tree
-    ripgrep
-    fd
-    nodejs_22
-    gh
-    pkgs-unstable.github-copilot-cli
 
-    # Nix development tools
-    nixpkgs-fmt
-    nil
-
-    # System utilities
-    htop
-    btop
+    # RPi5-specific system utilities
     iotop
     lsof
 
