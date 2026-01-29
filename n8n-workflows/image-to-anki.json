@@ -102,7 +102,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'qwen/qwen-2.5-vl-7b-instruct:free', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract ALL vocabulary words from this educational image for Anki flashcards.\\n\\nFor each vocabulary word, provide:\\n- word: the exact vocabulary word as labeled\\n- description: 2-4 words describing it (e.g., \"red round fruit\")\\n\\nReturn ONLY a JSON array - no markdown:\\n[{\"word\": \"apple\", \"description\": \"red round fruit\"}]' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash-001', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract ALL vocabulary words from this educational image for Anki flashcards.\\n\\nFor each vocabulary word, provide:\\n- word: the exact vocabulary word as labeled\\n- description: 2-4 words describing it (e.g., \"red round fruit\")\\n\\nReturn ONLY a JSON array - no markdown:\\n[{\"word\": \"apple\", \"description\": \"red round fruit\"}]' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
         "options": { "timeout": 120000 }
       }
     },
