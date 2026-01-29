@@ -46,8 +46,9 @@
     # - open-webui, n8n, uptime-kuma
   ];
 
-  # Enable development tools
+  # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
+  customModules.claude.enable = true;
 
   # Allow unfree packages (Open-WebUI license changed in v0.6+)
   # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides

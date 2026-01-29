@@ -47,8 +47,9 @@
     ../../modules/services/n8n.nix
   ];
 
-  # Enable development tools
+  # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
+  customModules.claude.enable = true;
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets = {

@@ -55,17 +55,29 @@
       formatter = forAllSystems (system: nixpkgsFor.${system}.nixpkgs-fmt);
 
       # Exportable NixOS modules for use in external flakes
+      # Usage in external flake:
+      #   inputs.nixos-config.url = "github:alexandru-savinov/nixos-config";
+      #   modules = [ nixos-config.nixosModules.dev-tools ];
       nixosModules = {
         # Common base configuration (SSH, zram, flakes, /bin/bash shim)
         common = ./hosts/common.nix;
 
-        # Claude Code package (requires claude-code flake in specialArgs)
+        # Claude Code package
+        # Requires claude-code flake input passed via specialArgs.
+        # Example:
+        #   inputs.claude-code.url = "github:sadjow/claude-code-nix";
+        #   specialArgs = { inherit claude-code; };
+        # Enable with: customModules.claude.enable = true;
         claude = ./modules/services/claude.nix;
 
         # Dynamic binary support (nix-ld for running non-Nix binaries)
         nix-ld = ./modules/system/nix-ld.nix;
 
         # Development tools package set (editors, dev tools, nix tooling)
+        # Optional: Pass pkgs-unstable via specialArgs for latest github-copilot-cli
+        # Example:
+        #   specialArgs = { pkgs-unstable = import nixpkgs-unstable { system = "..."; }; };
+        # Enable with: customModules.dev-tools.enable = true;
         dev-tools = ./modules/system/dev-tools.nix;
       };
 

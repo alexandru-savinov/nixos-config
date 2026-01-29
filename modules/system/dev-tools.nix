@@ -1,6 +1,11 @@
-{ config, pkgs, pkgs-unstable, lib, ... }:
+{ config, pkgs, pkgs-unstable ? pkgs, lib, ... }:
 
 {
+  # Development tools package set
+  # IMPORTANT: For latest github-copilot-cli, pass pkgs-unstable via specialArgs:
+  #   pkgs-unstable = import nixpkgs-unstable { system = "..."; };
+  # Otherwise, the stable version will be used.
+
   options.customModules.dev-tools = {
     enable = lib.mkEnableOption "development tools package set";
   };
