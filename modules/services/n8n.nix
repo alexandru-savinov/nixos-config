@@ -195,6 +195,24 @@ in
       '';
     };
 
+    webhookHealthCheck = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "image-to-anki-ui";
+      description = ''
+        Webhook path to verify after workflow sync completes.
+
+        n8n reports workflows as "activated" before webhooks are actually
+        registered internally. This causes 404 errors if webhooks are hit
+        immediately after n8n starts.
+
+        Set this to a known webhook path (without /webhook/ prefix) to wait
+        until that webhook responds before considering workflow sync complete.
+        The health check polls the webhook with GET requests until it returns
+        a non-404 response or times out after 60 seconds.
+      '';
+    };
+
     extraEnvironment = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -628,6 +646,33 @@ in
         ''}
 
         echo "Workflow active state sync complete"
+
+        ${optionalString (cfg.webhookHealthCheck != null) ''
+          # Verify webhooks are actually registered (not just "activated")
+          # n8n logs "Activated workflow" before webhooks are ready to receive requests
+          echo "Verifying webhook registration for: ${cfg.webhookHealthCheck}"
+          webhook_timeout=60
+          webhook_ready=0
+          while [ $webhook_timeout -gt 0 ]; do
+            http_code=$(curl -sf -o /dev/null -w "%{http_code}" \
+              "http://127.0.0.1:${toString cfg.port}/webhook/${cfg.webhookHealthCheck}" 2>/dev/null || echo "000")
+            # Any response except 404 means webhook is registered
+            # (200=success, 405=wrong method, 500=error, but NOT 404=not found)
+            if [ "$http_code" != "404" ] && [ "$http_code" != "000" ]; then
+              echo "Webhook health check passed (HTTP $http_code) after $((60 - webhook_timeout))s"
+              webhook_ready=1
+              break
+            fi
+            webhook_timeout=$((webhook_timeout - 1))
+            sleep 1
+          done
+
+          if [ $webhook_ready -eq 0 ]; then
+            echo "WARNING: Webhook ${cfg.webhookHealthCheck} not ready after 60s (still returning 404)"
+            echo "  Webhooks may not be registered yet. Check: journalctl -u n8n"
+            # Don't fail - webhook might be legitimately disabled or have different path
+          fi
+        ''}
       '';
     };
 
