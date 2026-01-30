@@ -193,6 +193,51 @@ This repo has custom Claude Code plugins in `.claude/plugins/` that override mar
 3. Add to host configuration
 4. Add secret to `secrets/secrets.nix` if needed
 
+## n8n Async Workflow Pattern
+
+For long-running n8n workflows (>60s), use the async job pattern to prevent browser timeout:
+
+### Architecture
+```
+User → Main Webhook → Create Job ID → Trigger Worker → Return HTTP 202 immediately
+                         │
+                         ↓ (fire-and-forget)
+                   Background Worker → Process → Update Status File
+
+UI Polling → Status Endpoint → Read Status File → Return Progress JSON
+```
+
+### Key Components
+
+| Component | Response Mode | Purpose |
+|-----------|--------------|---------|
+| Main webhook | `responseNode` | Create job, return 202 with statusUrl |
+| Worker webhook | `onReceived` | Process in background |
+| Status endpoint | `responseNode` | Read job status file |
+
+### Fire-and-Forget Pattern
+To trigger background work without blocking:
+```json
+{
+  "options": { "timeout": 1000 },
+  "continueOnFail": true
+}
+```
+
+### Required Environment
+Enable Node.js built-in modules for file-based status tracking:
+```nix
+extraEnvironment = {
+  NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto";
+};
+```
+
+### Job Storage
+- Status files: `/var/lib/n8n/jobs/{jobId}/status.json`
+- Auto-cleanup: `n8n-cleanup-jobs.timer` removes jobs older than 7 days
+
+See PR #154 for reference implementation (`image-to-anki-*.json` workflows).
+
 ## Troubleshooting
 
 ### Build Failures

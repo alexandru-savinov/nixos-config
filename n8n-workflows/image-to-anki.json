@@ -23,7 +23,7 @@
       "typeVersion": 2,
       "position": [300, 300],
       "parameters": {
-        "jsCode": "// Normalize and validate input - returns error JSON if invalid\nconst body = $input.first().json.body || {};\n\nif (body.imageUrl && typeof body.imageUrl === 'string' && body.imageUrl.length > 0) {\n  return [{ json: { ...($input.first().json), imageSource: body.imageUrl, inputType: 'url', isValid: true, base64Only: null } }];\n}\n\nif (body.imageData && typeof body.imageData === 'string' && body.imageData.length > 0) {\n  let data = body.imageData;\n  if (!data.startsWith('data:')) {\n    data = 'data:image/png;base64,' + data;\n  }\n  // Extract just the base64 part for saving\n  const base64Only = data.split('base64,')[1] || null;\n  return [{ json: { ...($input.first().json), imageSource: data, inputType: 'base64', isValid: true, base64Only } }];\n}\n\n// Invalid - return error marker\nreturn [{ json: { isValid: false, error: 'Missing image. Send POST with {\"imageUrl\": \"...\"} or {\"imageData\": \"...\"}' } }];\n"
+        "jsCode": "// Normalize and validate input - returns error JSON if invalid\nconst body = $input.first().json.body || {};\n\nif (body.imageUrl && typeof body.imageUrl === 'string' && body.imageUrl.length > 0) {\n  return [{ json: { ...($input.first().json), imageSource: body.imageUrl, inputType: 'url', isValid: true, base64Only: null } }];\n}\n\nif (body.imageData && typeof body.imageData === 'string' && body.imageData.length > 0) {\n  let data = body.imageData;\n  if (!data.startsWith('data:')) {\n    data = 'data:image/png;base64,' + data;\n  }\n  const base64Only = data.split('base64,')[1] || null;\n  return [{ json: { ...($input.first().json), imageSource: data, inputType: 'base64', isValid: true, base64Only } }];\n}\n\nreturn [{ json: { isValid: false, error: 'Missing image. Send POST with {\"imageUrl\": \"...\"} or {\"imageData\": \"...\"}' } }];\n"
       }
     },
     {
@@ -49,27 +49,6 @@
       }
     },
     {
-      "id": "save-image",
-      "name": "Save Image",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [600, 300],
-      "parameters": {
-        "jsCode": "// Save uploaded image to /tmp for testing\nconst item = $input.first().json;\nif (item.base64Only) {\n  const binary = Buffer.from(item.base64Only, 'base64');\n  return [{\n    json: item,\n    binary: { data: { data: binary.toString('base64'), mimeType: 'image/jpeg', fileName: 'user-vocab.jpg' } }\n  }];\n}\nreturn [{ json: item }];\n"
-      }
-    },
-    {
-      "id": "write-image",
-      "name": "Write Image",
-      "type": "n8n-nodes-base.writeBinaryFile",
-      "typeVersion": 1,
-      "position": [700, 300],
-      "parameters": {
-        "fileName": "/var/lib/n8n/user-vocab.jpg",
-        "options": {}
-      }
-    },
-    {
       "id": "error-response",
       "name": "Error Response",
       "type": "n8n-nodes-base.respondToWebhook",
@@ -82,240 +61,42 @@
       }
     },
     {
-      "id": "vision-extract",
-      "name": "Extract Vocabulary (Vision)",
+      "id": "create-job",
+      "name": "Create Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\n\nconst item = $input.first().json;\nconst jobId = crypto.randomUUID();\nconst jobDir = path.join('/var/lib/n8n/jobs', jobId);\n\n// Create job directory\nfs.mkdirSync(jobDir, { recursive: true });\n\n// Write initial status\nconst status = {\n  status: 'queued',\n  phase: 'Job queued, starting processing...',\n  progress: 0,\n  wordCount: null,\n  currentWord: null,\n  createdAt: new Date().toISOString()\n};\nfs.writeFileSync(path.join(jobDir, 'status.json'), JSON.stringify(status, null, 2));\n\n// Build status URL\nconst host = item.headers?.host || 'localhost:5678';\nconst protocol = host.includes('ts.net') ? 'https' : 'http';\nconst statusUrl = `${protocol}://${host}/webhook/anki-status?id=${jobId}`;\n\nreturn [{ json: { jobId, jobDir, statusUrl, imageSource: item.imageSource, host } }];\n"
+      }
+    },
+    {
+      "id": "trigger-worker",
+      "name": "Trigger Worker",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [900, 300],
-      "onError": "continueErrorOutput",
+      "continueOnFail": true,
       "parameters": {
         "method": "POST",
-        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "url": "=http://127.0.0.1:5678/webhook/anki-worker",
         "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
-            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
-            { "name": "X-Title", "value": "Image-to-Anki" }
-          ]
-        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash-001', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract ALL vocabulary words from this educational image for Anki flashcards.\\n\\nFor each vocabulary word, provide:\\n- word: the exact vocabulary word as labeled\\n- description: 2-4 words describing it (e.g., \"red round fruit\")\\n\\nReturn ONLY a JSON array - no markdown:\\n[{\"word\": \"apple\", \"description\": \"red round fruit\"}]' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
-        "options": { "timeout": 120000 }
+        "jsonBody": "={{ JSON.stringify({ jobId: $json.jobId, imageSource: $json.imageSource }) }}",
+        "options": { "timeout": 1000 }
       }
     },
     {
-      "id": "vision-error-response",
-      "name": "Vision Error Response",
+      "id": "accepted-response",
+      "name": "Accepted Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [900, 500],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: 'Vision API failed: ' + ($json.error?.message || $json.message || 'Unknown error'), details: $json.error?.description || $json.statusCode || null }) }}",
-        "options": { "responseCode": 502 }
-      }
-    },
-    {
-      "id": "parse-vocabulary",
-      "name": "Parse Vocabulary JSON",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [1100, 300],
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst imageSource = $('Normalize Input').first().json.imageSource;\nconst inputType = $('Normalize Input').first().json.inputType;\n\n// Try multiple paths for content (different n8n/API versions)\nlet content = response.choices?.[0]?.message?.content\n  || response.data?.choices?.[0]?.message?.content\n  || response.body?.choices?.[0]?.message?.content\n  || '';\n\nif (!content) {\n  return [{ json: { parseError: 'No content in LLM response', responseKeys: Object.keys(response), rawResponse: JSON.stringify(response).substring(0, 1000) } }];\n}\n\nlet jsonStr = content.trim();\n// Handle markdown code blocks\nif (jsonStr.includes('```')) {\n  const jsonMatch = jsonStr.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) jsonStr = jsonMatch[1].trim();\n}\n// Find JSON array\nconst start = jsonStr.indexOf('[');\nconst end = jsonStr.lastIndexOf(']') + 1;\nif (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end);\n\nlet vocabulary;\ntry {\n  vocabulary = JSON.parse(jsonStr);\n} catch (e) {\n  return [{ json: { parseError: 'Invalid JSON: ' + e.message, rawContent: jsonStr.substring(0, 1000) } }];\n}\n\nif (!Array.isArray(vocabulary) || vocabulary.length === 0) {\n  return [{ json: { parseError: 'No vocabulary found', rawContent: jsonStr.substring(0, 1000) } }];\n}\n\nreturn vocabulary.map((item, index) => ({\n  json: { index, word: item.word, description: item.description, imageSource, inputType, totalItems: vocabulary.length }\n}));\n"
-      }
-    },
-    {
-      "id": "check-parse-error",
-      "name": "Check Parse Error",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [1100, 300],
-      "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
-          "conditions": [
-            {
-              "id": "no-error",
-              "leftValue": "={{ $json.parseError }}",
-              "rightValue": "",
-              "operator": { "type": "string", "operation": "notExists", "singleValue": true }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "parse-error-response",
-      "name": "Parse Error Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1300, 500],
-      "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: $json.parseError, rawContent: $json.rawContent }) }}",
-        "options": { "responseCode": 500 }
-      }
-    },
-    {
-      "id": "loop-items",
-      "name": "Loop Over Items",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [1300, 300],
-      "parameters": { "batchSize": 1, "options": {} }
-    },
-    {
-      "id": "generate-image",
-      "name": "Generate Image",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1500, 300],
-      "onError": "continueErrorOutput",
-      "parameters": {
-        "method": "POST",
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
-            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
-            { "name": "X-Title", "value": "Image-to-Anki" }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', modalities: ['text', 'image'], messages: [{ role: 'user', content: 'Create a fun blocky illustration of ' + $json.word + ' (' + $json.description + ') for a kids flashcard. Style: cute pixel-art inspired, colorful blocks, Minecraft-like but friendly and simple. White background, no text.' }] }) }}",
-        "options": { "timeout": 120000 }
-      }
-    },
-    {
-      "id": "handle-image-error",
-      "name": "Handle Image Error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1700, 500],
-      "parameters": {
-        "jsCode": "// Handle HTTP errors from image generation gracefully\nconst prevData = $('Loop Over Items').first().json;\nconst { word, description, index } = prevData;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'Image generation failed';\nreturn [{ json: { index, word, description, error: errorMsg, imageBase64: null, imageHash: null } }];\n"
-      }
-    },
-    {
-      "id": "extract-image-data",
-      "name": "Extract Image Data",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1700, 300],
-      "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst response = $input.first().json;\nconst prevData = $('Loop Over Items').first().json;\nconst { word, description, index } = prevData;\n\ntry {\n  const message = response.choices?.[0]?.message;\n  let base64Data = null, mimeType = 'image/png';\n\n  if (message?.images?.[0]) {\n    const img = message.images[0];\n    const url = img.image_url?.url || img.url || img;\n    if (typeof url === 'string' && url.includes('base64,')) {\n      base64Data = url.split('base64,')[1];\n      if (url.includes('jpeg')) mimeType = 'image/jpeg';\n    }\n  }\n\n  if (!base64Data && message?.content) {\n    const m = message.content.match(/data:image\\/([^;]+);base64,([A-Za-z0-9+/=]+)/);\n    if (m) { mimeType = 'image/' + m[1]; base64Data = m[2]; }\n  }\n\n  if (!base64Data) throw new Error('No image');\n\n  const bytes = Buffer.from(base64Data, 'base64');\n  const hash = crypto.createHash('sha256').update(bytes).digest('hex');\n  return [{ json: { index, word, description, imageBase64: base64Data, imageHash: hash, mimeType, imageSizeBytes: bytes.length } }];\n} catch (e) {\n  return [{ json: { index, word, description, error: e.message, imageBase64: null, imageHash: null } }];\n}\n"
-      }
-    },
-    {
-      "id": "wait-rate-limit",
-      "name": "Wait (Rate Limit)",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [1900, 300],
-      "parameters": { "amount": 2, "unit": "seconds" }
-    },
-    {
-      "id": "aggregate-items",
-      "name": "Aggregate All Items",
-      "type": "n8n-nodes-base.aggregate",
-      "typeVersion": 1,
-      "position": [2100, 100],
-      "parameters": { "aggregate": "aggregateAllItemData", "options": {} }
-    },
-    {
-      "id": "prepare-apkg-input",
-      "name": "Prepare APKG Input",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2300, 100],
-      "parameters": {
-        "jsCode": "// Prepare input data for APKG generation\n// Returns JSON as binary data to avoid command-line size limits\nconst items = ($input.first().json.data || []);\n\n// Cards are valid if they have: word AND (imageBase64 OR description)\nconst valid = items.filter(i => i.word && (i.imageBase64 || i.description));\n\nif (valid.length === 0) {\n  return [{ json: { hasError: true, error: 'No valid items to create deck (need word + image or description)' } }];\n}\n\n// Prepare input for Python script\nconst inputData = {\n  deckName: 'Vocabulary',\n  cards: valid.map(item => ({\n    word: item.word,\n    description: item.description || '',\n    imageBase64: item.imageBase64 || null,\n    mimeType: item.mimeType || 'image/jpeg'\n  }))\n};\n\n// Return JSON string as binary data for file writing\nconst jsonStr = JSON.stringify(inputData);\nconst binaryData = Buffer.from(jsonStr, 'utf-8');\n\nreturn [{\n  json: { hasError: false, cardCount: valid.length },\n  binary: { data: { data: binaryData.toString('base64'), mimeType: 'application/json', fileName: 'input.json' } }\n}];\n"
-      }
-    },
-    {
-      "id": "check-apkg-error",
-      "name": "Check APKG Error",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [2500, 100],
-      "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
-          "conditions": [
-            {
-              "id": "no-error",
-              "leftValue": "={{ $json.hasError }}",
-              "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "apkg-prep-error",
-      "name": "APKG Prep Error Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [2700, 300],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
-        "options": { "responseCode": 500 }
-      }
-    },
-    {
-      "id": "write-input-file",
-      "name": "Write Input File",
-      "type": "n8n-nodes-base.writeBinaryFile",
-      "typeVersion": 1,
-      "position": [2700, 100],
-      "parameters": {
-        "fileName": "/tmp/n8n-apkg-input.json",
-        "options": {}
-      }
-    },
-    {
-      "id": "run-apkg-generator",
-      "name": "Run APKG Generator",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
-      "position": [2900, 100],
-      "parameters": {
-        "command": "cat /tmp/n8n-apkg-input.json | generate-apkg && rm -f /tmp/n8n-apkg-input.json"
-      }
-    },
-    {
-      "id": "parse-apkg-result",
-      "name": "Parse APKG Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [3100, 100],
-      "parameters": {
-        "jsCode": "// Parse the generate-apkg script output and return download URL\nconst stdout = $input.first().json.stdout || '';\n\ntry {\n  const output = JSON.parse(stdout);\n  \n  if (!output.success) {\n    return [{ json: { success: false, error: output.error || 'APKG generation failed' } }];\n  }\n  \n  // Construct download URL using the deck ID\n  const baseUrl = $('Webhook Trigger').first().json.headers?.host || 'localhost:5678';\n  const protocol = baseUrl.includes('ts.net') ? 'https' : 'http';\n  const downloadUrl = `${protocol}://${baseUrl}/webhook/anki-download?id=${output.deckId}`;\n  \n  return [{ json: {\n    success: true,\n    cardCount: output.cardCount,\n    imageCardCount: output.imageCardCount || 0,\n    textCardCount: output.textCardCount || 0,\n    words: output.words,\n    deckId: output.deckId,\n    downloadUrl: downloadUrl,\n    apkgSizeBytes: output.apkgSizeBytes,\n    failedCount: output.failedCount || 0\n  }}];\n} catch (e) {\n  const stderr = $input.first().json.stderr || '';\n  return [{ json: { success: false, error: 'Parse error: ' + e.message, stdout: stdout.substring(0, 200), stderr } }];\n}\n"
-      }
-    },
-    {
-      "id": "success-response",
-      "name": "Success Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [3300, 100],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
-        "options": { "responseCode": 200 }
+        "responseBody": "={{ JSON.stringify({ success: true, status: 'processing', jobId: $('Create Job').first().json.jobId, statusUrl: $('Create Job').first().json.statusUrl, message: 'Job accepted. Poll statusUrl for progress.' }) }}",
+        "options": { "responseCode": 202 }
       }
     }
   ],
@@ -328,72 +109,15 @@
     },
     "Check Valid": {
       "main": [
-        [{ "node": "Save Image", "type": "main", "index": 0 }],
+        [{ "node": "Create Job", "type": "main", "index": 0 }],
         [{ "node": "Error Response", "type": "main", "index": 0 }]
       ]
     },
-    "Save Image": {
-      "main": [[{ "node": "Write Image", "type": "main", "index": 0 }]]
+    "Create Job": {
+      "main": [[{ "node": "Trigger Worker", "type": "main", "index": 0 }]]
     },
-    "Write Image": {
-      "main": [[{ "node": "Extract Vocabulary (Vision)", "type": "main", "index": 0 }]]
-    },
-    "Extract Vocabulary (Vision)": {
-      "main": [
-        [{ "node": "Parse Vocabulary JSON", "type": "main", "index": 0 }],
-        [{ "node": "Vision Error Response", "type": "main", "index": 0 }]
-      ]
-    },
-    "Parse Vocabulary JSON": {
-      "main": [[{ "node": "Check Parse Error", "type": "main", "index": 0 }]]
-    },
-    "Check Parse Error": {
-      "main": [
-        [{ "node": "Loop Over Items", "type": "main", "index": 0 }],
-        [{ "node": "Parse Error Response", "type": "main", "index": 0 }]
-      ]
-    },
-    "Loop Over Items": {
-      "main": [
-        [{ "node": "Aggregate All Items", "type": "main", "index": 0 }],
-        [{ "node": "Generate Image", "type": "main", "index": 0 }]
-      ]
-    },
-    "Generate Image": {
-      "main": [
-        [{ "node": "Extract Image Data", "type": "main", "index": 0 }],
-        [{ "node": "Handle Image Error", "type": "main", "index": 0 }]
-      ]
-    },
-    "Handle Image Error": {
-      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
-    },
-    "Extract Image Data": {
-      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
-    },
-    "Wait (Rate Limit)": {
-      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
-    },
-    "Aggregate All Items": {
-      "main": [[{ "node": "Prepare APKG Input", "type": "main", "index": 0 }]]
-    },
-    "Prepare APKG Input": {
-      "main": [[{ "node": "Check APKG Error", "type": "main", "index": 0 }]]
-    },
-    "Check APKG Error": {
-      "main": [
-        [{ "node": "Write Input File", "type": "main", "index": 0 }],
-        [{ "node": "APKG Prep Error Response", "type": "main", "index": 0 }]
-      ]
-    },
-    "Write Input File": {
-      "main": [[{ "node": "Run APKG Generator", "type": "main", "index": 0 }]]
-    },
-    "Run APKG Generator": {
-      "main": [[{ "node": "Parse APKG Result", "type": "main", "index": 0 }]]
-    },
-    "Parse APKG Result": {
-      "main": [[{ "node": "Success Response", "type": "main", "index": 0 }]]
+    "Trigger Worker": {
+      "main": [[{ "node": "Accepted Response", "type": "main", "index": 0 }]]
     }
   },
   "settings": { "executionOrder": "v1" },

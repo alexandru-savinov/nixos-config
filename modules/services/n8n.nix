@@ -497,6 +497,16 @@ in
                         fi
                         echo "APKG output directory configured: $APKG_DIR"
 
+                        # Create jobs directory for async workflow status tracking
+                        # Used by image-to-anki async pattern for job status files
+                        JOBS_DIR="/var/lib/n8n/jobs"
+                        mkdir -p "$JOBS_DIR"
+                        if ! chown n8n:n8n "$JOBS_DIR"; then
+                          echo "ERROR: Failed to set ownership of $JOBS_DIR to n8n:n8n" >&2
+                          exit 1
+                        fi
+                        echo "Jobs directory configured: $JOBS_DIR"
+
                         # Make readable only by n8n user (600 + dir 0700 = secure)
                         chmod 600 "$ENV_FILE"
           '')
@@ -735,6 +745,34 @@ in
       preStop = ''
         echo "Removing Tailscale Serve configuration for n8n..."
         ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+      '';
+    };
+
+    # Job cleanup timer - removes old job status directories to prevent disk exhaustion
+    # Jobs older than 7 days are automatically deleted
+    systemd.timers.n8n-cleanup-jobs = {
+      description = "Clean up old n8n job status directories";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "daily";
+        Persistent = true; # Run immediately if missed (e.g., system was off)
+      };
+    };
+
+    systemd.services.n8n-cleanup-jobs = {
+      description = "Remove n8n job directories older than 7 days";
+      serviceConfig = {
+        Type = "oneshot";
+        User = "n8n";
+        Group = "n8n";
+      };
+      script = ''
+        JOBS_DIR="/var/lib/n8n/jobs"
+        if [ -d "$JOBS_DIR" ]; then
+          echo "Cleaning up job directories older than 7 days..."
+          ${pkgs.findutils}/bin/find "$JOBS_DIR" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + || true
+          echo "Job cleanup complete"
+        fi
       '';
     };
 

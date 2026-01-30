@@ -1,0 +1,250 @@
+{
+  "id": "image-to-anki-worker",
+  "name": "Image to Anki Worker (Background)",
+  "nodes": [
+    {
+      "id": "worker-webhook",
+      "name": "Worker Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "anki-worker",
+      "parameters": {
+        "path": "anki-worker",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "init-job",
+      "name": "Initialize Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst body = $input.first().json.body || {};\nconst jobId = body.jobId;\nconst imageSource = body.imageSource;\n\nif (!jobId) {\n  throw new Error('Missing jobId');\n}\n\nconst jobDir = path.join('/var/lib/n8n/jobs', jobId);\nconst statusFile = path.join(jobDir, 'status.json');\n\n// Update status to processing\nconst status = {\n  status: 'extracting',\n  phase: 'Extracting vocabulary from image...',\n  progress: 0,\n  wordCount: null,\n  currentWord: null,\n  startedAt: new Date().toISOString()\n};\nfs.writeFileSync(statusFile, JSON.stringify(status, null, 2));\n\nreturn [{ json: { jobId, jobDir, statusFile, imageSource } }];\n"
+      }
+    },
+    {
+      "id": "vision-extract",
+      "name": "Extract Vocabulary (Vision)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
+            { "name": "X-Title", "value": "Image-to-Anki" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash-001', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract ALL vocabulary words from this educational image for Anki flashcards.\\n\\nFor each vocabulary word, provide:\\n- word: the exact vocabulary word as labeled\\n- description: 2-4 words describing it (e.g., \"red round fruit\")\\n\\nReturn ONLY a JSON array - no markdown:\\n[{\"word\": \"apple\", \"description\": \"red round fruit\"}]' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
+        "options": { "timeout": 120000 }
+      }
+    },
+    {
+      "id": "vision-error",
+      "name": "Handle Vision Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 500],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'Vision API failed';\n\nconst status = {\n  status: 'error',\n  phase: 'Vision extraction failed',\n  error: errorMsg,\n  failedAt: new Date().toISOString()\n};\nfs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n\nthrow new Error('Vision extraction failed: ' + errorMsg);\n"
+      }
+    },
+    {
+      "id": "parse-vocabulary",
+      "name": "Parse Vocabulary JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst response = $input.first().json;\n\nlet content = response.choices?.[0]?.message?.content || '';\n\nif (!content) {\n  const status = { status: 'error', phase: 'No content from vision API', error: 'Empty response', failedAt: new Date().toISOString() };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  throw new Error('No content in LLM response');\n}\n\nlet jsonStr = content.trim();\nif (jsonStr.includes('```')) {\n  const jsonMatch = jsonStr.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) jsonStr = jsonMatch[1].trim();\n}\nconst start = jsonStr.indexOf('[');\nconst end = jsonStr.lastIndexOf(']') + 1;\nif (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end);\n\nlet vocabulary;\ntry {\n  vocabulary = JSON.parse(jsonStr);\n} catch (e) {\n  const status = { status: 'error', phase: 'Failed to parse vocabulary', error: e.message, failedAt: new Date().toISOString() };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  throw new Error('Invalid JSON: ' + e.message);\n}\n\nif (!Array.isArray(vocabulary) || vocabulary.length === 0) {\n  const status = { status: 'error', phase: 'No vocabulary found', error: 'Empty vocabulary array', failedAt: new Date().toISOString() };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  throw new Error('No vocabulary found');\n}\n\n// Update status with word count\nconst status = {\n  status: 'generating',\n  phase: 'Generating images...',\n  progress: 0,\n  wordCount: vocabulary.length,\n  currentWord: 0,\n  words: vocabulary.map(v => v.word)\n};\nfs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n\nreturn vocabulary.map((item, index) => ({\n  json: { ...initData, index, word: item.word, description: item.description, totalItems: vocabulary.length }\n}));\n"
+      }
+    },
+    {
+      "id": "loop-items",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [900, 300],
+      "parameters": { "batchSize": 1, "options": {} }
+    },
+    {
+      "id": "update-progress",
+      "name": "Update Progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.currentWord = item.index + 1;\n  status.progress = Math.round(((item.index + 1) / item.totalItems) * 100);\n  status.phase = `Generating image ${item.index + 1}/${item.totalItems}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { /* ignore */ }\n\nreturn [{ json: item }];\n"
+      }
+    },
+    {
+      "id": "generate-image",
+      "name": "Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 300],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
+            { "name": "X-Title", "value": "Image-to-Anki" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', modalities: ['text', 'image'], messages: [{ role: 'user', content: 'Create a fun blocky illustration of ' + $json.word + ' (' + $json.description + ') for a kids flashcard. Style: cute pixel-art inspired, colorful blocks, Minecraft-like but friendly and simple. White background, no text.' }] }) }}",
+        "options": { "timeout": 120000 }
+      }
+    },
+    {
+      "id": "handle-image-error",
+      "name": "Handle Image Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 500],
+      "parameters": {
+        "jsCode": "const prevData = $('Update Progress').first().json;\nconst { word, description, index } = prevData;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'Image generation failed';\nreturn [{ json: { index, word, description, error: errorMsg, imageBase64: null, imageHash: null } }];\n"
+      }
+    },
+    {
+      "id": "extract-image-data",
+      "name": "Extract Image Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst response = $input.first().json;\nconst prevData = $('Update Progress').first().json;\nconst { word, description, index } = prevData;\n\ntry {\n  const message = response.choices?.[0]?.message;\n  let base64Data = null, mimeType = 'image/png';\n\n  if (message?.images?.[0]) {\n    const img = message.images[0];\n    const url = img.image_url?.url || img.url || img;\n    if (typeof url === 'string' && url.includes('base64,')) {\n      base64Data = url.split('base64,')[1];\n      if (url.includes('jpeg')) mimeType = 'image/jpeg';\n    }\n  }\n\n  if (!base64Data && message?.content) {\n    const m = message.content.match(/data:image\\/([^;]+);base64,([A-Za-z0-9+/=]+)/);\n    if (m) { mimeType = 'image/' + m[1]; base64Data = m[2]; }\n  }\n\n  if (!base64Data) throw new Error('No image');\n\n  const bytes = Buffer.from(base64Data, 'base64');\n  const hash = crypto.createHash('sha256').update(bytes).digest('hex');\n  return [{ json: { index, word, description, imageBase64: base64Data, imageHash: hash, mimeType, imageSizeBytes: bytes.length } }];\n} catch (e) {\n  return [{ json: { index, word, description, error: e.message, imageBase64: null, imageHash: null } }];\n}\n"
+      }
+    },
+    {
+      "id": "wait-rate-limit",
+      "name": "Wait (Rate Limit)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1700, 300],
+      "parameters": { "amount": 2, "unit": "seconds" }
+    },
+    {
+      "id": "aggregate-items",
+      "name": "Aggregate All Items",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1900, 100],
+      "parameters": { "aggregate": "aggregateAllItemData", "options": {} }
+    },
+    {
+      "id": "prepare-apkg-input",
+      "name": "Prepare APKG Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 100],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst items = ($input.first().json.data || []);\nconst initData = $('Initialize Job').first().json;\n\n// Update status\nlet status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\nstatus.phase = 'Creating Anki deck...';\nstatus.progress = 95;\nfs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n\nconst valid = items.filter(i => i.word && (i.imageBase64 || i.description));\n\nif (valid.length === 0) {\n  status = { status: 'error', phase: 'No valid cards', error: 'No valid items to create deck', failedAt: new Date().toISOString() };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  throw new Error('No valid items');\n}\n\nconst inputData = {\n  deckName: 'Vocabulary',\n  cards: valid.map(item => ({\n    word: item.word,\n    description: item.description || '',\n    imageBase64: item.imageBase64 || null,\n    mimeType: item.mimeType || 'image/jpeg'\n  }))\n};\n\nconst jsonStr = JSON.stringify(inputData);\nconst binaryData = Buffer.from(jsonStr, 'utf-8');\n\nreturn [{\n  json: { ...initData, hasError: false, cardCount: valid.length, imageCardCount: valid.filter(i => i.imageBase64).length },\n  binary: { data: { data: binaryData.toString('base64'), mimeType: 'application/json', fileName: 'input.json' } }\n}];\n"
+      }
+    },
+    {
+      "id": "write-input-file",
+      "name": "Write Input File",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [2300, 100],
+      "parameters": {
+        "fileName": "/tmp/n8n-apkg-input.json",
+        "options": {}
+      }
+    },
+    {
+      "id": "run-apkg-generator",
+      "name": "Run APKG Generator",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [2500, 100],
+      "parameters": {
+        "command": "cat /tmp/n8n-apkg-input.json | generate-apkg && rm -f /tmp/n8n-apkg-input.json"
+      }
+    },
+    {
+      "id": "finalize-job",
+      "name": "Finalize Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2700, 100],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst stdout = $input.first().json.stdout || '';\nconst initData = $('Prepare APKG Input').first().json;\n\ntry {\n  const output = JSON.parse(stdout);\n  \n  if (!output.success) {\n    const status = { status: 'error', phase: 'APKG generation failed', error: output.error || 'Unknown error', failedAt: new Date().toISOString() };\n    fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n    throw new Error(output.error);\n  }\n  \n  const status = {\n    status: 'complete',\n    phase: 'Complete!',\n    progress: 100,\n    wordCount: initData.cardCount,\n    imageCardCount: initData.imageCardCount,\n    deckId: output.deckId,\n    downloadUrl: `/webhook/anki-download?id=${output.deckId}`,\n    apkgSizeBytes: output.apkgSizeBytes,\n    completedAt: new Date().toISOString()\n  };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  \n  return [{ json: { success: true, ...status } }];\n} catch (e) {\n  if (!e.message.includes('Unknown error')) {\n    const status = { status: 'error', phase: 'Parse error', error: e.message, failedAt: new Date().toISOString() };\n    fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  }\n  throw e;\n}\n"
+      }
+    }
+  ],
+  "connections": {
+    "Worker Webhook": {
+      "main": [[{ "node": "Initialize Job", "type": "main", "index": 0 }]]
+    },
+    "Initialize Job": {
+      "main": [[{ "node": "Extract Vocabulary (Vision)", "type": "main", "index": 0 }]]
+    },
+    "Extract Vocabulary (Vision)": {
+      "main": [
+        [{ "node": "Parse Vocabulary JSON", "type": "main", "index": 0 }],
+        [{ "node": "Handle Vision Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Vocabulary JSON": {
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+    },
+    "Loop Over Items": {
+      "main": [
+        [{ "node": "Aggregate All Items", "type": "main", "index": 0 }],
+        [{ "node": "Update Progress", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Progress": {
+      "main": [[{ "node": "Generate Image", "type": "main", "index": 0 }]]
+    },
+    "Generate Image": {
+      "main": [
+        [{ "node": "Extract Image Data", "type": "main", "index": 0 }],
+        [{ "node": "Handle Image Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Handle Image Error": {
+      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
+    },
+    "Extract Image Data": {
+      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
+    },
+    "Wait (Rate Limit)": {
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+    },
+    "Aggregate All Items": {
+      "main": [[{ "node": "Prepare APKG Input", "type": "main", "index": 0 }]]
+    },
+    "Prepare APKG Input": {
+      "main": [[{ "node": "Write Input File", "type": "main", "index": 0 }]]
+    },
+    "Write Input File": {
+      "main": [[{ "node": "Run APKG Generator", "type": "main", "index": 0 }]]
+    },
+    "Run APKG Generator": {
+      "main": [[{ "node": "Finalize Job", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true
+}

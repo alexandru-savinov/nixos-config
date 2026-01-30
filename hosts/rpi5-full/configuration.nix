@@ -203,10 +203,11 @@
     # Requires adminPasswordFile to authenticate with n8n
     communityPackages = [ "n8n-nodes-zip" ];
 
-    # Enable Node.js crypto module in Code nodes for efficient SHA256 hashing
-    # Without this, pure JavaScript SHA256 is extremely slow on ARM
+    # Enable Node.js built-in modules in Code nodes:
+    # - crypto: efficient SHA256 hashing (pure JS is slow on ARM)
+    # - fs, path: file-based job status tracking for async workflow patterns
     extraEnvironment = {
-      NODE_FUNCTION_ALLOW_BUILTIN = "crypto";
+      NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto";
     };
 
     tailscaleServe.enable = true;
