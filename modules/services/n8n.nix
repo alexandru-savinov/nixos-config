@@ -748,6 +748,34 @@ in
       '';
     };
 
+    # Job cleanup timer - removes old job status directories to prevent disk exhaustion
+    # Jobs older than 7 days are automatically deleted
+    systemd.timers.n8n-cleanup-jobs = {
+      description = "Clean up old n8n job status directories";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "daily";
+        Persistent = true; # Run immediately if missed (e.g., system was off)
+      };
+    };
+
+    systemd.services.n8n-cleanup-jobs = {
+      description = "Remove n8n job directories older than 7 days";
+      serviceConfig = {
+        Type = "oneshot";
+        User = "n8n";
+        Group = "n8n";
+      };
+      script = ''
+        JOBS_DIR="/var/lib/n8n/jobs"
+        if [ -d "$JOBS_DIR" ]; then
+          echo "Cleaning up job directories older than 7 days..."
+          ${pkgs.findutils}/bin/find "$JOBS_DIR" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + || true
+          echo "Job cleanup complete"
+        fi
+      '';
+    };
+
     # Community packages installation via REST API
     # Requires adminPasswordFile to authenticate with n8n
     systemd.services.n8n-community-packages = mkIf (cfg.communityPackages != [ ] && cfg.adminPasswordFile != null) {
