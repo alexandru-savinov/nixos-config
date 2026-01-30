@@ -497,6 +497,16 @@ in
                         fi
                         echo "APKG output directory configured: $APKG_DIR"
 
+                        # Create jobs directory for async workflow status tracking
+                        # Used by image-to-anki async pattern for job status files
+                        JOBS_DIR="/var/lib/n8n/jobs"
+                        mkdir -p "$JOBS_DIR"
+                        if ! chown n8n:n8n "$JOBS_DIR"; then
+                          echo "ERROR: Failed to set ownership of $JOBS_DIR to n8n:n8n" >&2
+                          exit 1
+                        fi
+                        echo "Jobs directory configured: $JOBS_DIR"
+
                         # Make readable only by n8n user (600 + dir 0700 = secure)
                         chmod 600 "$ENV_FILE"
           '')

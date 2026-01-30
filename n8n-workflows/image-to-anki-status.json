@@ -1,0 +1,54 @@
+{
+  "id": "image-to-anki-status",
+  "name": "Image to Anki Status Check",
+  "nodes": [
+    {
+      "id": "status-webhook",
+      "name": "Status Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "anki-status",
+      "parameters": {
+        "path": "anki-status",
+        "httpMethod": "GET",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "read-status",
+      "name": "Read Status File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst jobId = $input.first().json.query?.id;\n\nif (!jobId || !/^[a-f0-9-]+$/i.test(jobId)) {\n  return [{ json: { success: false, error: 'Invalid or missing job ID' } }];\n}\n\nconst statusFile = path.join('/var/lib/n8n/jobs', jobId, 'status.json');\n\ntry {\n  if (!fs.existsSync(statusFile)) {\n    return [{ json: { success: false, error: 'Job not found', jobId } }];\n  }\n  \n  const status = JSON.parse(fs.readFileSync(statusFile, 'utf-8'));\n  return [{ json: { success: true, ...status, jobId } }];\n} catch (e) {\n  return [{ json: { success: false, error: 'Failed to read status: ' + e.message, jobId } }];\n}\n"
+      }
+    },
+    {
+      "id": "status-response",
+      "name": "Status Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [500, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error === 'Job not found' ? 404 : 400) }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Status Webhook": {
+      "main": [[{ "node": "Read Status File", "type": "main", "index": 0 }]]
+    },
+    "Read Status File": {
+      "main": [[{ "node": "Status Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true
+}
