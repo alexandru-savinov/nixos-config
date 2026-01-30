@@ -213,6 +213,19 @@ in
       '';
     };
 
+    allowBuiltinModules = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "fs" "path" "crypto" ];
+      description = ''
+        Node.js built-in modules to allow in Code nodes.
+        SECURITY: Only enable modules your workflows actually need.
+        Common modules:
+          - crypto: For hashing (recommended for ARM performance)
+          - fs, path: For file-based job status tracking
+      '';
+    };
+
     extraEnvironment = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -466,6 +479,11 @@ in
 
                         # Concurrency limit
                         echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
+
+                        # Allowed built-in modules for Code nodes
+                        ${optionalString (cfg.allowBuiltinModules != []) ''
+                          echo "NODE_FUNCTION_ALLOW_BUILTIN=${concatStringsSep "," cfg.allowBuiltinModules}" >> "$ENV_FILE"
+                        ''}
 
                         # Extra environment variables (values escaped to prevent shell injection)
                         ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
