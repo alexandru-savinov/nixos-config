@@ -23,7 +23,7 @@
       "typeVersion": 2,
       "position": [300, 300],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst body = $input.first().json.body || {};\nconst jobId = body.jobId;\nconst imageSource = body.imageSource;\nconst deckName = body.deckName || 'Vocabulary';\n\nif (!jobId) {\n  throw new Error('Missing jobId');\n}\n\nconst jobDir = path.join('/var/lib/n8n/jobs', jobId);\nconst statusFile = path.join(jobDir, 'status.json');\n\n// Update status to processing\nconst status = {\n  status: 'extracting',\n  phase: 'Extracting vocabulary from image...',\n  progress: 0,\n  wordCount: null,\n  currentWord: null,\n  startedAt: new Date().toISOString()\n};\nfs.writeFileSync(statusFile, JSON.stringify(status, null, 2));\n\nreturn [{ json: { jobId, jobDir, statusFile, imageSource, deckName } }];\n"
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst body = $input.first().json.body || {};\nconst jobId = body.jobId;\nconst imageSource = body.imageSource;\nconst deckName = body.deckName || 'Vocabulary';\nconst includeAudio = body.includeAudio !== false;\n\nif (!jobId) {\n  throw new Error('Missing jobId');\n}\n\n// Check OpenAI API key if audio is requested\nif (includeAudio && !$env.OPENAI_API_KEY) {\n  throw new Error('OPENAI_API_KEY not configured');\n}\n\nconst jobDir = path.join('/var/lib/n8n/jobs', jobId);\nconst statusFile = path.join(jobDir, 'status.json');\n\n// Update status to processing\nconst status = {\n  status: 'extracting',\n  phase: 'Extracting vocabulary from image...',\n  progress: 0,\n  wordCount: null,\n  currentWord: null,\n  includeAudio,\n  startedAt: new Date().toISOString()\n};\nfs.writeFileSync(statusFile, JSON.stringify(status, null, 2));\n\nreturn [{ json: { jobId, jobDir, statusFile, imageSource, deckName, includeAudio } }];\n"
       }
     },
     {
@@ -86,7 +86,7 @@
       "typeVersion": 2,
       "position": [1100, 300],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.currentWord = item.index + 1;\n  status.progress = Math.round(((item.index + 1) / item.totalItems) * 100);\n  status.phase = `Generating image ${item.index + 1}/${item.totalItems}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { /* ignore */ }\n\nreturn [{ json: item }];\n"
+        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\nconst initData = $('Initialize Job').first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.currentWord = item.index + 1;\n  // If audio enabled: images use 0-50%, audio uses 50-100%\n  // If audio disabled: images use 0-100%\n  const maxProgress = initData.includeAudio ? 50 : 100;\n  status.progress = Math.round(((item.index + 1) / item.totalItems) * maxProgress);\n  status.phase = `Generating image ${item.index + 1}/${item.totalItems}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Status update failed:', e.message); }\n\nreturn [{ json: item }];\n"
       }
     },
     {
@@ -151,13 +151,173 @@
       "parameters": { "aggregate": "aggregateAllItemData", "options": {} }
     },
     {
+      "id": "check-audio-flag",
+      "name": "Check Audio Flag",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2100, 100],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "include-audio",
+              "leftValue": "={{ $('Initialize Job').first().json.includeAudio }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "tts-precheck",
+      "name": "TTS Pre-check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2300, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENAI_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'tts-1-hd', input: 'hello', voice: 'nova', response_format: 'mp3' }) }}",
+        "options": {
+          "timeout": 10000,
+          "response": { "response": { "fullResponse": true, "responseFormat": "file" } }
+        }
+      }
+    },
+    {
+      "id": "handle-tts-precheck-error",
+      "name": "Handle TTS Pre-check Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 150],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'TTS API pre-check failed';\n\nconst status = {\n  status: 'error',\n  phase: 'TTS pre-check failed',\n  error: 'OpenAI TTS failed: ' + errorMsg,\n  failedAt: new Date().toISOString()\n};\nfs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n\nthrow new Error('OpenAI TTS pre-check failed: ' + errorMsg);\n"
+      }
+    },
+    {
+      "id": "update-audio-status",
+      "name": "Update Audio Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 0],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst aggregatedData = $('Aggregate All Items').first().json;\nconst items = aggregatedData.data || [];\n\ntry {\n  const status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\n  status.phase = 'Generating pronunciation audio...';\n  status.progress = 50;\n  status.audioProgress = 0;\n  status.audioTotal = items.length;\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Audio status update failed:', e.message); }\n\n// Spread items for TTS loop\nreturn items.map((item, index) => ({\n  json: { ...item, audioIndex: index, audioTotal: items.length, statusFile: initData.statusFile }\n}));\n"
+      }
+    },
+    {
+      "id": "tts-loop",
+      "name": "TTS Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2700, 0],
+      "parameters": { "batchSize": 1, "options": {} }
+    },
+    {
+      "id": "update-tts-progress",
+      "name": "Update TTS Progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2900, 0],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.audioProgress = item.audioIndex + 1;\n  status.progress = 50 + Math.round(((item.audioIndex + 1) / item.audioTotal) * 50);\n  status.phase = `Generating audio ${item.audioIndex + 1}/${item.audioTotal}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('TTS progress update failed:', e.message); }\n\nreturn [{ json: item }];\n"
+      }
+    },
+    {
+      "id": "generate-tts",
+      "name": "Generate TTS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3100, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENAI_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'tts-1-hd', input: $json.word, voice: 'nova', response_format: 'mp3' }) }}",
+        "options": {
+          "timeout": 30000,
+          "response": { "response": { "fullResponse": true, "responseFormat": "file" } }
+        }
+      }
+    },
+    {
+      "id": "extract-audio-data",
+      "name": "Extract Audio Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, 0],
+      "parameters": {
+        "jsCode": "const prevData = $('Update TTS Progress').first().json;\nconst response = $input.first();\n\ntry {\n  const binaryData = response.binary?.data;\n  \n  if (binaryData && binaryData.data) {\n    return [{\n      json: {\n        ...prevData,\n        audioBase64: binaryData.data,\n        audioMimeType: 'audio/mpeg',\n        audioError: null\n      }\n    }];\n  }\n  \n  throw new Error('No audio data in response');\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      audioBase64: null,\n      audioMimeType: null,\n      audioError: e.message\n    }\n  }];\n}\n"
+      }
+    },
+    {
+      "id": "handle-tts-error",
+      "name": "Handle TTS Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, 200],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst prevData = $('Update TTS Progress').first().json;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'TTS generation failed';\n\n// First TTS failure after retry = fail entire job\nconst status = { status: 'error', phase: 'TTS generation failed', error: 'OpenAI TTS failed: ' + errorMsg, failedAt: new Date().toISOString() };\nfs.writeFileSync(prevData.statusFile, JSON.stringify(status, null, 2));\n\nthrow new Error('OpenAI TTS failed: ' + errorMsg);\n"
+      }
+    },
+    {
+      "id": "tts-rate-limit",
+      "name": "TTS Rate Limit",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [3500, 0],
+      "parameters": { "amount": 500, "unit": "milliseconds" }
+    },
+    {
+      "id": "aggregate-audio",
+      "name": "Aggregate Audio Items",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [3700, 0],
+      "parameters": { "aggregate": "aggregateAllItemData", "options": {} }
+    },
+    {
+      "id": "no-audio-passthrough",
+      "name": "No Audio Passthrough",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2300, 200],
+      "parameters": {
+        "jsCode": "// Pass through items without audio data\nconst aggregatedData = $input.first().json;\nconst items = aggregatedData.data || [];\n\nconst itemsWithNullAudio = items.map(item => ({\n  ...item,\n  audioBase64: null,\n  audioMimeType: null,\n  audioError: null\n}));\n\nreturn [{ json: { data: itemsWithNullAudio } }];\n"
+      }
+    },
+    {
       "id": "prepare-apkg-input",
       "name": "Prepare APKG Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2100, 100],
+      "position": [3900, 100],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst items = ($input.first().json.data || []);\nconst initData = $('Initialize Job').first().json;\n\n// Update status\nlet status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\nstatus.phase = 'Creating Anki deck...';\nstatus.progress = 95;\nfs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n\nconst valid = items.filter(i => i.word && (i.imageBase64 || i.description));\n\nif (valid.length === 0) {\n  status = { status: 'error', phase: 'No valid cards', error: 'No valid items to create deck', failedAt: new Date().toISOString() };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  throw new Error('No valid items');\n}\n\nconst inputData = {\n  deckName: initData.deckName || 'Vocabulary',\n  cards: valid.map(item => ({\n    word: item.word,\n    description: item.description || '',\n    imageBase64: item.imageBase64 || null,\n    mimeType: item.mimeType || 'image/jpeg'\n  }))\n};\n\nconst jsonStr = JSON.stringify(inputData);\nconst binaryData = Buffer.from(jsonStr, 'utf-8');\n\nreturn [{\n  json: { ...initData, hasError: false, cardCount: valid.length, imageCardCount: valid.filter(i => i.imageBase64).length },\n  binary: { data: { data: binaryData.toString('base64'), mimeType: 'application/json', fileName: 'input.json' } }\n}];\n"
+        "jsCode": "const fs = require('fs');\nconst items = ($input.first().json.data || []);\nconst initData = $('Initialize Job').first().json;\n\n// Update status\nlet status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\nstatus.phase = 'Creating Anki deck...';\nstatus.progress = 95;\nfs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n\nconst valid = items.filter(i => i.word && (i.imageBase64 || i.description));\n\nif (valid.length === 0) {\n  status = { status: 'error', phase: 'No valid cards', error: 'No valid items to create deck', failedAt: new Date().toISOString() };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  throw new Error('No valid items');\n}\n\n// Count cards with audio and extract word list\nconst audioCardCount = valid.filter(i => i.audioBase64).length;\nconst words = valid.map(i => i.word);\n\nconst inputData = {\n  deckName: initData.deckName || 'Vocabulary',\n  cards: valid.map(item => ({\n    word: item.word,\n    description: item.description || '',\n    imageBase64: item.imageBase64 || null,\n    mimeType: item.mimeType || 'image/jpeg',\n    audioBase64: item.audioBase64 || null,\n    audioMimeType: item.audioMimeType || 'audio/mpeg'\n  }))\n};\n\nconst jsonStr = JSON.stringify(inputData);\nconst binaryData = Buffer.from(jsonStr, 'utf-8');\n\nreturn [{\n  json: { ...initData, hasError: false, cardCount: valid.length, imageCardCount: valid.filter(i => i.imageBase64).length, audioCardCount, words },\n  binary: { data: { data: binaryData.toString('base64'), mimeType: 'application/json', fileName: 'input.json' } }\n}];\n"
       }
     },
     {
@@ -165,7 +325,7 @@
       "name": "Write Input File",
       "type": "n8n-nodes-base.writeBinaryFile",
       "typeVersion": 1,
-      "position": [2300, 100],
+      "position": [4100, 100],
       "parameters": {
         "fileName": "/tmp/n8n-apkg-input.json",
         "options": {}
@@ -176,7 +336,7 @@
       "name": "Run APKG Generator",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
-      "position": [2500, 100],
+      "position": [4200, 100],
       "parameters": {
         "command": "cat /tmp/n8n-apkg-input.json | generate-apkg && rm -f /tmp/n8n-apkg-input.json"
       }
@@ -186,9 +346,9 @@
       "name": "Finalize Job",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2700, 100],
+      "position": [4300, 100],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst stdout = $input.first().json.stdout || '';\nconst initData = $('Prepare APKG Input').first().json;\n\ntry {\n  const output = JSON.parse(stdout);\n  \n  if (!output.success) {\n    const status = { status: 'error', phase: 'APKG generation failed', error: output.error || 'Unknown error', failedAt: new Date().toISOString() };\n    fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n    throw new Error(output.error);\n  }\n  \n  const status = {\n    status: 'complete',\n    phase: 'Complete!',\n    progress: 100,\n    wordCount: initData.cardCount,\n    imageCardCount: initData.imageCardCount,\n    deckId: output.deckId,\n    downloadUrl: `/webhook/anki-download?id=${output.deckId}`,\n    apkgSizeBytes: output.apkgSizeBytes,\n    completedAt: new Date().toISOString()\n  };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  \n  return [{ json: { success: true, ...status } }];\n} catch (e) {\n  if (!e.message.includes('Unknown error')) {\n    const status = { status: 'error', phase: 'Parse error', error: e.message, failedAt: new Date().toISOString() };\n    fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  }\n  throw e;\n}\n"
+        "jsCode": "const fs = require('fs');\nconst stdout = $input.first().json.stdout || '';\nconst initData = $('Prepare APKG Input').first().json;\n\ntry {\n  const output = JSON.parse(stdout);\n  \n  if (!output.success) {\n    const status = { status: 'error', phase: 'APKG generation failed', error: output.error || 'Unknown error', failedAt: new Date().toISOString() };\n    fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n    throw new Error(output.error);\n  }\n  \n  const status = {\n    status: 'complete',\n    phase: 'Complete!',\n    progress: 100,\n    wordCount: initData.cardCount,\n    imageCardCount: initData.imageCardCount,\n    audioCardCount: initData.audioCardCount || 0,\n    words: initData.words || [],\n    deckId: output.deckId,\n    downloadUrl: `/webhook/anki-download?id=${output.deckId}`,\n    apkgSizeBytes: output.apkgSizeBytes,\n    completedAt: new Date().toISOString()\n  };\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  \n  return [{ json: { success: true, ...status } }];\n} catch (e) {\n  if (!e.message.includes('Unknown error')) {\n    const status = { status: 'error', phase: 'Parse error', error: e.message, failedAt: new Date().toISOString() };\n    fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n  }\n  throw e;\n}\n"
       }
     }
   ],
@@ -233,6 +393,48 @@
       "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
     },
     "Aggregate All Items": {
+      "main": [[{ "node": "Check Audio Flag", "type": "main", "index": 0 }]]
+    },
+    "Check Audio Flag": {
+      "main": [
+        [{ "node": "TTS Pre-check", "type": "main", "index": 0 }],
+        [{ "node": "No Audio Passthrough", "type": "main", "index": 0 }]
+      ]
+    },
+    "TTS Pre-check": {
+      "main": [
+        [{ "node": "Update Audio Status", "type": "main", "index": 0 }],
+        [{ "node": "Handle TTS Pre-check Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Audio Status": {
+      "main": [[{ "node": "TTS Loop", "type": "main", "index": 0 }]]
+    },
+    "TTS Loop": {
+      "main": [
+        [{ "node": "Aggregate Audio Items", "type": "main", "index": 0 }],
+        [{ "node": "Update TTS Progress", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update TTS Progress": {
+      "main": [[{ "node": "Generate TTS", "type": "main", "index": 0 }]]
+    },
+    "Generate TTS": {
+      "main": [
+        [{ "node": "Extract Audio Data", "type": "main", "index": 0 }],
+        [{ "node": "Handle TTS Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Audio Data": {
+      "main": [[{ "node": "TTS Rate Limit", "type": "main", "index": 0 }]]
+    },
+    "TTS Rate Limit": {
+      "main": [[{ "node": "TTS Loop", "type": "main", "index": 0 }]]
+    },
+    "Aggregate Audio Items": {
+      "main": [[{ "node": "Prepare APKG Input", "type": "main", "index": 0 }]]
+    },
+    "No Audio Passthrough": {
       "main": [[{ "node": "Prepare APKG Input", "type": "main", "index": 0 }]]
     },
     "Prepare APKG Input": {

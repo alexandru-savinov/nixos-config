@@ -107,7 +107,7 @@ age.secrets.my-secret.file = "${self}/secrets/my-secret.age";
 someService.secretFile = config.age.secrets.my-secret.path;
 ```
 
-Current secrets: `openrouter-api-key`, `tavily-api-key`, `n8n-encryption-key`, `tailscale-auth-key`, `open-webui-secret-key`
+Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `tailscale-auth-key`, `open-webui-secret-key`
 
 ## CI/CD
 

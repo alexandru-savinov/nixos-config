@@ -13,16 +13,20 @@ Input JSON format:
             "word": "apple",
             "description": "A red fruit",          # Required for text-only cards
             "imageBase64": "iVBORw0KGgo...",       # Optional: if present, creates image card
-            "mimeType": "image/jpeg"               # Optional, defaults to image/jpeg
+            "mimeType": "image/jpeg",              # Optional, defaults to image/jpeg
+            "audioBase64": "//uQxAAA...",          # Optional: MP3 pronunciation audio
+            "audioMimeType": "audio/mpeg"          # Optional, defaults to audio/mpeg
         }
     ]
 }
 
 Card types:
-- With imageBase64: Shows image on front, word on back
-- Without imageBase64: Shows word on front, description on back (text-only)
+- With imageBase64: Shows image on front, word on back (with optional audio)
+- Without imageBase64: Shows word on front, description on back (text-only, with optional audio)
 
-Output: Base64-encoded APKG file to stdout
+Audio: If audioBase64 is present, audio auto-plays when the card back is revealed.
+
+Output: JSON with deck info (use download endpoint to get APKG file)
 """
 
 import sys
@@ -48,19 +52,20 @@ def generate_deck_id():
 
 
 def create_image_model(model_id):
-    """Create an Anki model for image-to-word vocabulary cards."""
+    """Create an Anki model for image-to-word vocabulary cards with optional audio."""
     return genanki.Model(
         model_id,
         'Vocabulary (Image-to-Word)',
         fields=[
             {'name': 'Image'},
             {'name': 'Word'},
+            {'name': 'Audio'},  # [sound:audio_0.mp3] - auto-plays on card reveal
         ],
         templates=[
             {
                 'name': 'Image to Word',
                 'qfmt': '{{Image}}',
-                'afmt': '{{FrontSide}}<hr id="answer"><div class="word">{{Word}}</div>',
+                'afmt': '{{FrontSide}}<hr id="answer"><div class="word">{{Word}}</div>{{Audio}}',
             },
         ],
         css='''
@@ -89,19 +94,20 @@ def create_image_model(model_id):
 
 
 def create_text_model(model_id):
-    """Create an Anki model for text-only vocabulary cards (word/description)."""
+    """Create an Anki model for text-only vocabulary cards with optional audio."""
     return genanki.Model(
         model_id,
         'Vocabulary (Text-Only)',
         fields=[
             {'name': 'Word'},
             {'name': 'Description'},
+            {'name': 'Audio'},  # [sound:audio_0.mp3] - auto-plays on card reveal
         ],
         templates=[
             {
                 'name': 'Word to Description',
                 'qfmt': '<div class="word">{{Word}}</div>',
-                'afmt': '{{FrontSide}}<hr id="answer"><div class="description">{{Description}}</div>',
+                'afmt': '{{FrontSide}}<hr id="answer"><div class="description">{{Description}}</div>{{Audio}}',
             },
         ],
         css='''
@@ -142,6 +148,19 @@ def get_image_extension(mime_type):
     return mime_map.get(mime_type, 'jpg')
 
 
+def get_audio_extension(mime_type):
+    """Get file extension from audio MIME type."""
+    mime_map = {
+        'audio/mpeg': 'mp3',
+        'audio/mp3': 'mp3',
+        'audio/wav': 'wav',
+        'audio/ogg': 'ogg',
+        'audio/webm': 'webm',
+        'audio/aac': 'aac',
+    }
+    return mime_map.get(mime_type, 'mp3')
+
+
 def main():
     # Read JSON from stdin
     try:
@@ -172,6 +191,8 @@ def main():
     with tempfile.TemporaryDirectory() as tmpdir:
         image_card_count = 0
         text_card_count = 0
+        audio_card_count = 0
+        audio_failed_count = 0
         error_count = 0
         words = []
 
@@ -180,6 +201,8 @@ def main():
             description = card.get('description', '')
             image_base64 = card.get('imageBase64', '')
             mime_type = card.get('mimeType', 'image/jpeg')
+            audio_base64 = card.get('audioBase64', '')
+            audio_mime_type = card.get('audioMimeType', 'audio/mpeg')
 
             if not word:
                 error_count += 1
@@ -188,6 +211,27 @@ def main():
             # HTML-escape to prevent XSS/rendering issues
             escaped_word = html.escape(word)
             escaped_description = html.escape(description) if description else ''
+
+            # Process audio if present (used by both image and text cards)
+            audio_field = ''
+            if audio_base64:
+                try:
+                    audio_data = base64.b64decode(audio_base64)
+                    audio_ext = get_audio_extension(audio_mime_type)
+                    audio_filename = f'audio_{idx}.{audio_ext}'
+                    audio_path = os.path.join(tmpdir, audio_filename)
+
+                    with open(audio_path, 'wb') as f:
+                        f.write(audio_data)
+
+                    media_files.append(audio_path)
+                    audio_field = f'[sound:{audio_filename}]'
+                    audio_card_count += 1
+                except Exception as e:
+                    # Log audio failure for debugging, continue without audio
+                    print(f"WARNING: Audio processing failed for card {idx} ({word}): {e}", file=sys.stderr)
+                    audio_field = ''
+                    audio_failed_count += 1
 
             # Card with image: use image model (image on front, word on back)
             if image_base64:
@@ -205,17 +249,18 @@ def main():
 
                     note = genanki.Note(
                         model=image_model,
-                        fields=[image_field, escaped_word]
+                        fields=[image_field, escaped_word, audio_field]
                     )
                     deck.add_note(note)
                     image_card_count += 1
                     words.append(word)
                 except Exception as e:
-                    # Fall back to text card if image processing fails
+                    # Log image failure, fall back to text card if possible
+                    print(f"WARNING: Image processing failed for card {idx} ({word}): {e}", file=sys.stderr)
                     if escaped_description:
                         note = genanki.Note(
                             model=text_model,
-                            fields=[escaped_word, escaped_description]
+                            fields=[escaped_word, escaped_description, audio_field]
                         )
                         deck.add_note(note)
                         text_card_count += 1
@@ -228,7 +273,7 @@ def main():
             elif escaped_description:
                 note = genanki.Note(
                     model=text_model,
-                    fields=[escaped_word, escaped_description]
+                    fields=[escaped_word, escaped_description, audio_field]
                 )
                 deck.add_note(note)
                 text_card_count += 1
@@ -262,8 +307,8 @@ def main():
             if os.path.isfile(old_path) and os.path.getmtime(old_path) < cutoff_time:
                 try:
                     os.remove(old_path)
-                except OSError:
-                    pass  # Ignore cleanup errors
+                except OSError as e:
+                    print(f"WARNING: Failed to cleanup old file {old_path}: {e}", file=sys.stderr)
 
         deck_id = str(uuid.uuid4())[:8]
         output_filename = f'{deck_id}.apkg'
@@ -278,6 +323,8 @@ def main():
             'cardCount': valid_count,
             'imageCardCount': image_card_count,
             'textCardCount': text_card_count,
+            'audioCardCount': audio_card_count,
+            'audioFailedCount': audio_failed_count,
             'failedCount': error_count,
             'words': words,
             'deckId': deck_id,

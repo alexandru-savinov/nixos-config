@@ -75,6 +75,23 @@ in
       '';
     };
 
+    openaiApiKeyFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "config.age.secrets.openai-api-key.path";
+      description = ''
+        Path to file containing OpenAI API key.
+        This is injected as OPENAI_API_KEY environment variable.
+
+        Used by workflows requiring OpenAI services (e.g., TTS for pronunciation audio).
+        Workflows can reference it using the expression:
+          Bearer {{ $env.OPENAI_API_KEY }}
+
+        Use agenix for secret management:
+          openaiApiKeyFile = config.age.secrets.openai-api-key.path;
+      '';
+    };
+
     adminPasswordFile = mkOption {
       type = types.nullOr types.path;
       default = null;
@@ -298,6 +315,18 @@ in
         '';
       }
       {
+        assertion = cfg.openaiApiKeyFile == null ||
+          !(hasPrefix "/nix/store" (toString cfg.openaiApiKeyFile));
+        message = ''
+          services.n8n-tailscale.openaiApiKeyFile points to the Nix store!
+          Files in /nix/store are WORLD-READABLE. Your API key would be exposed.
+
+          Use agenix instead:
+            age.secrets.openai-api-key.file = ./secrets/openai-api-key.age;
+            services.n8n-tailscale.openaiApiKeyFile = config.age.secrets.openai-api-key.path;
+        '';
+      }
+      {
         assertion = cfg.adminPasswordFile == null ||
           !(hasPrefix "/nix/store" (toString cfg.adminPasswordFile));
         message = ''
@@ -389,6 +418,21 @@ in
                           fi
                           echo "OPENROUTER_API_KEY=$OPENROUTER_KEY" >> "$ENV_FILE"
                           echo "OpenRouter API key configured for workflow expressions"
+                        ''}
+
+                        # OpenAI API key (if provided) - for TTS/STT in workflows
+                        ${optionalString (cfg.openaiApiKeyFile != null) ''
+                          if [[ ! -f "${cfg.openaiApiKeyFile}" ]]; then
+                            echo "ERROR: OpenAI API key file not found: ${cfg.openaiApiKeyFile}" >&2
+                            exit 1
+                          fi
+                          OPENAI_KEY=$(cat "${cfg.openaiApiKeyFile}")
+                          if [[ -z "$OPENAI_KEY" ]]; then
+                            echo "ERROR: OpenAI API key file is empty: ${cfg.openaiApiKeyFile}" >&2
+                            exit 1
+                          fi
+                          echo "OPENAI_API_KEY=$OPENAI_KEY" >> "$ENV_FILE"
+                          echo "OpenAI API key configured for workflow expressions"
                         ''}
 
                         # Admin password (if provided) - for REST API authentication
