@@ -192,6 +192,7 @@ def main():
         image_card_count = 0
         text_card_count = 0
         audio_card_count = 0
+        audio_failed_count = 0
         error_count = 0
         words = []
 
@@ -226,9 +227,11 @@ def main():
                     media_files.append(audio_path)
                     audio_field = f'[sound:{audio_filename}]'
                     audio_card_count += 1
-                except Exception:
-                    # Audio failed - continue without audio for this card
+                except Exception as e:
+                    # Log audio failure for debugging, continue without audio
+                    print(f"WARNING: Audio processing failed for card {idx} ({word}): {e}", file=sys.stderr)
                     audio_field = ''
+                    audio_failed_count += 1
 
             # Card with image: use image model (image on front, word on back)
             if image_base64:
@@ -320,6 +323,7 @@ def main():
             'imageCardCount': image_card_count,
             'textCardCount': text_card_count,
             'audioCardCount': audio_card_count,
+            'audioFailedCount': audio_failed_count,
             'failedCount': error_count,
             'words': words,
             'deckId': deck_id,
