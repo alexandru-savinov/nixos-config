@@ -181,6 +181,10 @@
     # Workflows can reference it using: Bearer {{ $env.OPENROUTER_API_KEY }}
     openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
 
+    # OpenAI API key - for TTS pronunciation audio in image-to-anki workflow
+    # Workflows can reference it using: Bearer {{ $env.OPENAI_API_KEY }}
+    openaiApiKeyFile = config.age.secrets.openai-api-key.path;
+
     # Allow $env expressions in workflows (required for declarative API keys)
     # Safe here because workflows are controlled via workflowsDir, not user-created
     blockEnvAccessInCode = false;
