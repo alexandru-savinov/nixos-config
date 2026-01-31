@@ -254,8 +254,9 @@ def main():
                     deck.add_note(note)
                     image_card_count += 1
                     words.append(word)
-                except Exception:
-                    # Fall back to text card if image processing fails
+                except Exception as e:
+                    # Log image failure, fall back to text card if possible
+                    print(f"WARNING: Image processing failed for card {idx} ({word}): {e}", file=sys.stderr)
                     if escaped_description:
                         note = genanki.Note(
                             model=text_model,
@@ -306,8 +307,8 @@ def main():
             if os.path.isfile(old_path) and os.path.getmtime(old_path) < cutoff_time:
                 try:
                     os.remove(old_path)
-                except OSError:
-                    pass  # Ignore cleanup errors
+                except OSError as e:
+                    print(f"WARNING: Failed to cleanup old file {old_path}: {e}", file=sys.stderr)
 
         deck_id = str(uuid.uuid4())[:8]
         output_filename = f'{deck_id}.apkg'

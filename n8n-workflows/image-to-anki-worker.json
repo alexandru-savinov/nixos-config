@@ -86,7 +86,7 @@
       "typeVersion": 2,
       "position": [1100, 300],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\nconst initData = $('Initialize Job').first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.currentWord = item.index + 1;\n  // If audio enabled: images use 0-50%, audio uses 50-100%\n  // If audio disabled: images use 0-100%\n  const maxProgress = initData.includeAudio ? 50 : 100;\n  status.progress = Math.round(((item.index + 1) / item.totalItems) * maxProgress);\n  status.phase = `Generating image ${item.index + 1}/${item.totalItems}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { /* ignore */ }\n\nreturn [{ json: item }];\n"
+        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\nconst initData = $('Initialize Job').first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.currentWord = item.index + 1;\n  // If audio enabled: images use 0-50%, audio uses 50-100%\n  // If audio disabled: images use 0-100%\n  const maxProgress = initData.includeAudio ? 50 : 100;\n  status.progress = Math.round(((item.index + 1) / item.totalItems) * maxProgress);\n  status.phase = `Generating image ${item.index + 1}/${item.totalItems}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Status update failed:', e.message); }\n\nreturn [{ json: item }];\n"
       }
     },
     {
@@ -216,7 +216,7 @@
       "typeVersion": 2,
       "position": [2500, 0],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst aggregatedData = $('Aggregate All Items').first().json;\nconst items = aggregatedData.data || [];\n\ntry {\n  const status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\n  status.phase = 'Generating pronunciation audio...';\n  status.progress = 50;\n  status.audioProgress = 0;\n  status.audioTotal = items.length;\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { /* ignore */ }\n\n// Spread items for TTS loop\nreturn items.map((item, index) => ({\n  json: { ...item, audioIndex: index, audioTotal: items.length, statusFile: initData.statusFile }\n}));\n"
+        "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst aggregatedData = $('Aggregate All Items').first().json;\nconst items = aggregatedData.data || [];\n\ntry {\n  const status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\n  status.phase = 'Generating pronunciation audio...';\n  status.progress = 50;\n  status.audioProgress = 0;\n  status.audioTotal = items.length;\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Audio status update failed:', e.message); }\n\n// Spread items for TTS loop\nreturn items.map((item, index) => ({\n  json: { ...item, audioIndex: index, audioTotal: items.length, statusFile: initData.statusFile }\n}));\n"
       }
     },
     {
@@ -234,7 +234,7 @@
       "typeVersion": 2,
       "position": [2900, 0],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.audioProgress = item.audioIndex + 1;\n  status.progress = 50 + Math.round(((item.audioIndex + 1) / item.audioTotal) * 50);\n  status.phase = `Generating audio ${item.audioIndex + 1}/${item.audioTotal}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { /* ignore */ }\n\nreturn [{ json: item }];\n"
+        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.audioProgress = item.audioIndex + 1;\n  status.progress = 50 + Math.round(((item.audioIndex + 1) / item.audioTotal) * 50);\n  status.phase = `Generating audio ${item.audioIndex + 1}/${item.audioTotal}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('TTS progress update failed:', e.message); }\n\nreturn [{ json: item }];\n"
       }
     },
     {
