@@ -25,7 +25,8 @@ fi
 
 # Paths
 N8N_DIR="/var/lib/n8n"
-DB_PATH="$N8N_DIR/database.sqlite"
+# n8n stores its database in ~/.n8n/ which is /var/lib/n8n/.n8n/ when run as n8n user
+DB_PATH="$N8N_DIR/.n8n/database.sqlite"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 SOURCE_DIR="$REPO_ROOT/n8n-workflows"
