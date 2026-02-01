@@ -8,6 +8,14 @@
 
 set -euo pipefail
 
+# Check required dependencies
+for cmd in jq sqlite3 sha256sum sudo; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "ERROR: Required command '$cmd' not found" >&2
+    exit 1
+  fi
+done
+
 WORKFLOW_NAME="${1:-}"
 if [[ -z "$WORKFLOW_NAME" ]]; then
   echo "Usage: $0 <workflow-name>" >&2
@@ -18,7 +26,9 @@ fi
 # Paths
 N8N_DIR="/var/lib/n8n"
 DB_PATH="$N8N_DIR/database.sqlite"
-SOURCE_DIR="n8n-workflows"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+SOURCE_DIR="$REPO_ROOT/n8n-workflows"
 SOURCE_FILE="$SOURCE_DIR/${WORKFLOW_NAME}.json"
 
 # Colors for output
@@ -37,6 +47,12 @@ if [[ ! -f "$SOURCE_FILE" ]]; then
   exit 1
 fi
 
+# Validate source file is valid JSON
+if ! jq empty "$SOURCE_FILE" 2>/dev/null; then
+  echo -e "${RED}ERROR: Source file is not valid JSON: $SOURCE_FILE${NC}" >&2
+  exit 1
+fi
+
 # Check if database exists
 if [[ ! -f "$DB_PATH" ]]; then
   echo -e "${RED}ERROR: n8n database not found: $DB_PATH${NC}" >&2
@@ -45,6 +61,13 @@ fi
 
 # Extract workflow ID from source file
 WORKFLOW_ID=$(jq -r '.id' "$SOURCE_FILE")
+
+# Validate workflow ID format to prevent SQL injection
+if [[ ! "$WORKFLOW_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo -e "${RED}ERROR: Invalid workflow ID format: $WORKFLOW_ID${NC}" >&2
+  exit 1
+fi
+
 echo -e "${BLUE}[1] Source File Analysis${NC}"
 echo "  File: $SOURCE_FILE"
 echo "  Workflow ID: $WORKFLOW_ID"
@@ -65,15 +88,18 @@ fi
 
 # Export current workflow from database
 TEMP_EXPORT=$(mktemp)
-trap "rm -f $TEMP_EXPORT" EXIT
+trap 'rm -f "$TEMP_EXPORT"' EXIT
 
 echo -e "\n${BLUE}[3] Exporting Current Database Version${NC}"
-if sudo -u n8n n8n export:workflow --id="$WORKFLOW_ID" --output="$TEMP_EXPORT" 2>&1 | grep -q "Successfully exported"; then
-  echo -e "${GREEN}  ✓ Export successful${NC}"
-else
-  echo -e "${RED}  ✗ Export failed${NC}"
+if ! sudo -u n8n n8n export:workflow --id="$WORKFLOW_ID" --output="$TEMP_EXPORT" 2>/dev/null; then
+  echo -e "${RED}  ✗ Export command failed${NC}"
   exit 1
 fi
+if [[ ! -s "$TEMP_EXPORT" ]] || ! jq empty "$TEMP_EXPORT" 2>/dev/null; then
+  echo -e "${RED}  ✗ Export produced invalid output${NC}"
+  exit 1
+fi
+echo -e "${GREEN}  ✓ Export successful${NC}"
 
 # Compare node counts
 SOURCE_NODE_COUNT=$(jq '.nodes | length' "$SOURCE_FILE")
@@ -122,8 +148,8 @@ fi
 
 # Check webhook registration
 echo -e "\n${BLUE}[8] Webhook Registration${NC}"
-WEBHOOK_PATH=$(jq -r '.nodes[] | select(.type=="n8n-nodes-base.webhook") | .parameters.path' "$SOURCE_FILE" | head -1)
-if [[ -n "$WEBHOOK_PATH" ]]; then
+WEBHOOK_PATH=$(jq -r '.nodes[] | select(.type=="n8n-nodes-base.webhook") | .parameters.path // empty' "$SOURCE_FILE" | head -1)
+if [[ -n "$WEBHOOK_PATH" && "$WEBHOOK_PATH" != "null" ]]; then
   echo "  Expected webhook path: $WEBHOOK_PATH"
   WEBHOOK_COUNT=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM webhook_entity WHERE webhookPath='$WEBHOOK_PATH';")
   echo "  Registered webhooks: $WEBHOOK_COUNT"
