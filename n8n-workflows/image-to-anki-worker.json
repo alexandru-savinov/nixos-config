@@ -195,7 +195,7 @@
         "jsonBody": "={{ JSON.stringify({ model: 'tts-1-hd', input: 'hello', voice: 'nova', response_format: 'mp3' }) }}",
         "options": {
           "timeout": 10000,
-          "response": { "response": { "fullResponse": true, "responseFormat": "file" } }
+          "response": { "response": { "responseFormat": "file" } }
         }
       }
     },
@@ -271,7 +271,7 @@
       "typeVersion": 2,
       "position": [3300, 0],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst item = $input.first();\nconst inputData = item.json || {};\n\n// Extract audio binary data from HTTP response\nlet audioBase64 = null;\nlet mimeType = 'audio/mpeg';\n\nif (item.binary) {\n  for (const key of Object.keys(item.binary)) {\n    const bin = item.binary[key];\n    if (bin && bin.data) {\n      audioBase64 = bin.data;\n      mimeType = bin.mimeType || 'audio/mpeg';\n      break;\n    }\n  }\n}\n\n// Update status file with TTS progress\nif (inputData.statusFile) {\n  try {\n    const status = JSON.parse(fs.readFileSync(inputData.statusFile, 'utf-8'));\n    status.ttsState = audioBase64 ? `done:${audioBase64.length}` : 'no-data';\n    fs.writeFileSync(inputData.statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { /* ignore status file errors */ }\n}\n\n// Return item with audio data - preserve all fields for the loop\nreturn [{\n  json: {\n    ...inputData,\n    audioBase64: audioBase64 || null,\n    audioMimeType: audioBase64 ? mimeType : null,\n    audioError: audioBase64 ? null : 'No audio data received'\n  }\n}];\n"
+        "jsCode": "const fs = require('fs');\nconst item = $input.first();\nif (!item) throw new Error('Extract Audio Data received no input items');\nconst inputData = item.json || {};\n\n// Extract audio from HTTP response - n8n may use any key name for binary data\nlet audioBase64 = null;\nlet mimeType = 'audio/mpeg';\n\nif (item.binary) {\n  for (const key of Object.keys(item.binary)) {\n    const bin = item.binary[key];\n    if (bin && bin.data) {\n      audioBase64 = bin.data;\n      mimeType = bin.mimeType || 'audio/mpeg';\n      break;\n    }\n  }\n}\n\n// Update status file - non-fatal, audio extraction can still succeed\nif (inputData.statusFile) {\n  try {\n    const status = JSON.parse(fs.readFileSync(inputData.statusFile, 'utf-8'));\n    status.ttsState = audioBase64 ? `done:${audioBase64.length}` : 'no-data';\n    fs.writeFileSync(inputData.statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { console.error('TTS status update failed:', e.message); }\n}\n\n// Return with audio result - spread preserves context needed by TTS loop\nreturn [{\n  json: {\n    ...inputData,\n    audioBase64: audioBase64 || null,\n    audioMimeType: audioBase64 ? mimeType : null,\n    audioError: audioBase64 ? null : 'No audio data received'\n  }\n}];\n"
       }
     },
     {
@@ -281,7 +281,7 @@
       "typeVersion": 2,
       "position": [3300, 200],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst errorInfo = $input.first().json;\nconst statusFile = errorInfo.statusFile || $('Initialize Job').first().json.statusFile;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'TTS generation failed';\n\n// TTS failure = fail entire job\nconst status = { status: 'error', phase: 'TTS generation failed', error: 'OpenAI TTS failed: ' + errorMsg, failedAt: new Date().toISOString() };\nif (statusFile) fs.writeFileSync(statusFile, JSON.stringify(status, null, 2));\n\nthrow new Error('OpenAI TTS failed: ' + errorMsg);\n"
+        "jsCode": "const fs = require('fs');\nconst errorInfo = $input.first().json;\n// Fallback to Initialize Job if statusFile not in error context\nconst statusFile = errorInfo.statusFile || $('Initialize Job').first().json.statusFile;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'TTS generation failed';\n\n// TTS failure = fail entire job\nconst status = { status: 'error', phase: 'TTS generation failed', error: 'OpenAI TTS failed: ' + errorMsg, failedAt: new Date().toISOString() };\nif (statusFile) {\n  try {\n    fs.writeFileSync(statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { console.error('Failed to write error status:', e.message); }\n} else {\n  console.error('Cannot record TTS error (no statusFile):', errorMsg);\n}\n\nthrow new Error('OpenAI TTS failed: ' + errorMsg);\n"
       }
     },
     {
