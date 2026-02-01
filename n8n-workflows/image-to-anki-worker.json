@@ -376,7 +376,7 @@
       ]
     },
     "Handle Image Error": {
-      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
+      "main": []
     },
     "Extract Image Data": {
       "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
