@@ -28,6 +28,9 @@
       ripgrep
       fd
 
+      # Database tools
+      sqlite
+
       # Development tools
       nodejs_22
       gh
