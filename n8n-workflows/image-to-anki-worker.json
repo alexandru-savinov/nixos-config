@@ -7,7 +7,10 @@
       "name": "Worker Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [100, 300],
+      "position": [
+        100,
+        300
+      ],
       "webhookId": "anki-worker",
       "parameters": {
         "path": "anki-worker",
@@ -21,7 +24,10 @@
       "name": "Initialize Job",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [300, 300],
+      "position": [
+        300,
+        300
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst body = $input.first().json.body || {};\nconst jobId = body.jobId;\nconst imageSource = body.imageSource;\nconst deckName = body.deckName || 'Vocabulary';\nconst includeAudio = body.includeAudio !== false;\n\nif (!jobId) {\n  throw new Error('Missing jobId');\n}\n\n// Check OpenAI API key if audio is requested\nif (includeAudio && !$env.OPENAI_API_KEY) {\n  throw new Error('OPENAI_API_KEY not configured');\n}\n\nconst jobDir = path.join('/var/lib/n8n/jobs', jobId);\nconst statusFile = path.join(jobDir, 'status.json');\n\n// Update status to processing\nconst status = {\n  status: 'extracting',\n  phase: 'Extracting vocabulary from image...',\n  progress: 0,\n  wordCount: null,\n  currentWord: null,\n  includeAudio,\n  startedAt: new Date().toISOString()\n};\nfs.writeFileSync(statusFile, JSON.stringify(status, null, 2));\n\nreturn [{ json: { jobId, jobDir, statusFile, imageSource, deckName, includeAudio } }];\n"
       }
@@ -31,7 +37,10 @@
       "name": "Extract Vocabulary (Vision)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [500, 300],
+      "position": [
+        500,
+        300
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -40,15 +49,26 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
-            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
-            { "name": "X-Title", "value": "Image-to-Anki" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://rpi5.tail4249a9.ts.net"
+            },
+            {
+              "name": "X-Title",
+              "value": "Image-to-Anki"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash-001', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract ALL vocabulary words from this educational image for Anki flashcards.\\n\\nFor each vocabulary word, provide:\\n- word: the exact vocabulary word as labeled\\n- description: 2-4 words describing it (e.g., \"red round fruit\")\\n\\nReturn ONLY a JSON array - no markdown:\\n[{\"word\": \"apple\", \"description\": \"red round fruit\"}]' }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
-        "options": { "timeout": 120000 }
+        "options": {
+          "timeout": 120000
+        }
       }
     },
     {
@@ -56,7 +76,10 @@
       "name": "Handle Vision Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 500],
+      "position": [
+        700,
+        500
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'Vision API failed';\n\nconst status = {\n  status: 'error',\n  phase: 'Vision extraction failed',\n  error: errorMsg,\n  failedAt: new Date().toISOString()\n};\ntry {\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Failed to write vision error status:', e.message); }\n\nthrow new Error('Vision extraction failed: ' + errorMsg);\n"
       }
@@ -66,7 +89,10 @@
       "name": "Parse Vocabulary JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 300],
+      "position": [
+        700,
+        300
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst response = $input.first().json;\n\nfunction safeWriteStatus(file, data) {\n  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }\n  catch (e) { console.error('Status write failed:', e.message); }\n}\n\nlet content = response.choices?.[0]?.message?.content || '';\n\nif (!content) {\n  safeWriteStatus(initData.statusFile, { status: 'error', phase: 'No content from vision API', error: 'Empty response', failedAt: new Date().toISOString() });\n  throw new Error('No content in LLM response');\n}\n\nlet jsonStr = content.trim();\nif (jsonStr.includes('```')) {\n  const jsonMatch = jsonStr.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) jsonStr = jsonMatch[1].trim();\n}\nconst start = jsonStr.indexOf('[');\nconst end = jsonStr.lastIndexOf(']') + 1;\nif (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end);\n\nlet vocabulary;\ntry {\n  vocabulary = JSON.parse(jsonStr);\n} catch (e) {\n  safeWriteStatus(initData.statusFile, { status: 'error', phase: 'Failed to parse vocabulary', error: e.message, failedAt: new Date().toISOString() });\n  throw new Error('Invalid JSON: ' + e.message);\n}\n\nif (!Array.isArray(vocabulary) || vocabulary.length === 0) {\n  safeWriteStatus(initData.statusFile, { status: 'error', phase: 'No vocabulary found', error: 'Empty vocabulary array', failedAt: new Date().toISOString() });\n  throw new Error('No vocabulary found');\n}\n\n// Update status with word count\nsafeWriteStatus(initData.statusFile, {\n  status: 'generating',\n  phase: 'Generating images...',\n  progress: 0,\n  wordCount: vocabulary.length,\n  currentWord: 0,\n  words: vocabulary.map(v => v.word)\n});\n\nreturn vocabulary.map((item, index) => ({\n  json: { ...initData, index, word: item.word, description: item.description, totalItems: vocabulary.length }\n}));\n"
       }
@@ -76,15 +102,24 @@
       "name": "Loop Over Items",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [900, 300],
-      "parameters": { "batchSize": 1, "options": {} }
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
     },
     {
       "id": "update-progress",
       "name": "Update Progress",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 300],
+      "position": [
+        1100,
+        300
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\nconst initData = $('Initialize Job').first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.currentWord = item.index + 1;\n  // If audio enabled: images use 0-50%, audio uses 50-100%\n  // If audio disabled: images use 0-100%\n  const maxProgress = initData.includeAudio ? 50 : 100;\n  status.progress = Math.round(((item.index + 1) / item.totalItems) * maxProgress);\n  status.phase = `Generating image ${item.index + 1}/${item.totalItems}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Status update failed:', e.message); }\n\nreturn [{ json: item }];\n"
       }
@@ -94,7 +129,10 @@
       "name": "Generate Image",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1300, 300],
+      "position": [
+        1300,
+        300
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -103,15 +141,26 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
-            { "name": "HTTP-Referer", "value": "https://rpi5.tail4249a9.ts.net" },
-            { "name": "X-Title", "value": "Image-to-Anki" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://rpi5.tail4249a9.ts.net"
+            },
+            {
+              "name": "X-Title",
+              "value": "Image-to-Anki"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', modalities: ['text', 'image'], messages: [{ role: 'user', content: 'Create a fun blocky illustration of ' + $json.word + ' (' + $json.description + ') for a kids flashcard. Style: cute pixel-art inspired, colorful blocks, Minecraft-like but friendly and simple. White background, no text.' }] }) }}",
-        "options": { "timeout": 120000 }
+        "options": {
+          "timeout": 120000
+        }
       }
     },
     {
@@ -119,7 +168,10 @@
       "name": "Handle Image Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 500],
+      "position": [
+        1500,
+        500
+      ],
       "parameters": {
         "jsCode": "// Continue on error - track failed images but don't stop workflow\nconst prevData = $('Update Progress').first().json;\nconst { word, description, index } = prevData;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'Image generation failed';\nconsole.error(`Image generation failed for \"${word}\": ${errorMsg}`);\nreturn [{ json: { index, word, description, error: errorMsg, imageBase64: null, imageHash: null } }];\n"
       }
@@ -129,7 +181,10 @@
       "name": "Extract Image Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 300],
+      "position": [
+        1500,
+        300
+      ],
       "parameters": {
         "jsCode": "const crypto = require('crypto');\nconst response = $input.first().json;\nconst prevData = $('Update Progress').first().json;\nconst { word, description, index } = prevData;\n\ntry {\n  const message = response.choices?.[0]?.message;\n  let base64Data = null;\n\n  if (message?.images?.[0]) {\n    const img = message.images[0];\n    const url = img.image_url?.url || img.url || img;\n    if (typeof url === 'string' && url.includes('base64,')) {\n      base64Data = url.split('base64,')[1];\n    }\n  }\n\n  if (!base64Data && message?.content) {\n    const m = message.content.match(/data:image\\/([^;]+);base64,([A-Za-z0-9+/=]+)/);\n    if (m) { base64Data = m[2]; }\n  }\n\n  if (!base64Data) throw new Error('No image data in response');\n\n  const bytes = Buffer.from(base64Data, 'base64');\n  \n  // Detect actual image format from magic bytes (don't trust URL MIME type)\n  let mimeType = 'image/png';\n  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {\n    mimeType = 'image/png';\n  } else if (bytes[0] === 0xFF && bytes[1] === 0xD8) {\n    mimeType = 'image/jpeg';\n  } else if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {\n    mimeType = 'image/gif';\n  } else if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes.length > 11 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {\n    mimeType = 'image/webp';\n  } else {\n    const magicHex = bytes.slice(0, 8).toString('hex');\n    console.error(`Unknown image format for \"${word}\": magic bytes ${magicHex}, defaulting to PNG`);\n  }\n  \n  const hash = crypto.createHash('sha256').update(bytes).digest('hex');\n  return [{ json: { index, word, description, imageBase64: base64Data, imageHash: hash, mimeType, imageSizeBytes: bytes.length } }];\n} catch (e) {\n  // Continue on error - track failed images but don't stop workflow\n  console.error(`Image extraction failed for \"${word}\": ${e.message}`);\n  return [{ json: { index, word, description, error: e.message, imageBase64: null, imageHash: null } }];\n}\n"
       }
@@ -139,32 +194,54 @@
       "name": "Wait (Rate Limit)",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1700, 300],
-      "parameters": { "amount": 2, "unit": "seconds" }
+      "position": [
+        1700,
+        300
+      ],
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      }
     },
     {
       "id": "aggregate-items",
       "name": "Aggregate All Items",
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
-      "position": [1900, 100],
-      "parameters": { "aggregate": "aggregateAllItemData", "options": {} }
+      "position": [
+        1900,
+        100
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      }
     },
     {
       "id": "check-audio-flag",
       "name": "Check Audio Flag",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2100, 100],
+      "position": [
+        2100,
+        100
+      ],
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "id": "include-audio",
               "leftValue": "={{ $('Initialize Job').first().json.includeAudio }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -177,7 +254,10 @@
       "name": "TTS Pre-check",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2300, 0],
+      "position": [
+        2300,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -186,8 +266,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.OPENAI_API_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -195,7 +281,11 @@
         "jsonBody": "={{ JSON.stringify({ model: 'tts-1-hd', input: 'hello', voice: 'nova', response_format: 'mp3' }) }}",
         "options": {
           "timeout": 10000,
-          "response": { "response": { "responseFormat": "file" } }
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
         }
       }
     },
@@ -204,7 +294,10 @@
       "name": "Handle TTS Pre-check Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2400, 150],
+      "position": [
+        2400,
+        150
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst errorInfo = $input.first().json;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'TTS API pre-check failed';\n\nconst status = {\n  status: 'error',\n  phase: 'TTS pre-check failed',\n  error: 'OpenAI TTS failed: ' + errorMsg,\n  failedAt: new Date().toISOString()\n};\ntry {\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Failed to write TTS pre-check error status:', e.message); }\n\nthrow new Error('OpenAI TTS pre-check failed: ' + errorMsg);\n"
       }
@@ -214,7 +307,10 @@
       "name": "Update Audio Status",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2500, 0],
+      "position": [
+        2500,
+        0
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst initData = $('Initialize Job').first().json;\nconst aggregatedData = $('Aggregate All Items').first().json;\nconst items = aggregatedData.data || [];\n\ntry {\n  const status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\n  status.phase = 'Generating pronunciation audio...';\n  status.progress = 50;\n  status.audioProgress = 0;\n  status.audioTotal = items.length;\n  fs.writeFileSync(initData.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('Audio status update failed:', e.message); }\n\n// Spread items for TTS loop\nreturn items.map((item, index) => ({\n  json: { ...item, audioIndex: index, audioTotal: items.length, statusFile: initData.statusFile }\n}));\n"
       }
@@ -224,15 +320,24 @@
       "name": "TTS Loop",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [2700, 0],
-      "parameters": { "batchSize": 1, "options": {} }
+      "position": [
+        2700,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
     },
     {
       "id": "update-tts-progress",
       "name": "Update TTS Progress",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2900, 0],
+      "position": [
+        2900,
+        0
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\n\ntry {\n  const status = JSON.parse(fs.readFileSync(item.statusFile, 'utf-8'));\n  status.audioProgress = item.audioIndex + 1;\n  status.progress = 50 + Math.round(((item.audioIndex + 1) / item.audioTotal) * 50);\n  status.phase = `Generating audio ${item.audioIndex + 1}/${item.audioTotal}: ${item.word}`;\n  fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n} catch (e) { console.error('TTS progress update failed:', e.message); }\n\nreturn [{ json: item }];\n"
       }
@@ -242,7 +347,10 @@
       "name": "Generate TTS",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3100, 0],
+      "position": [
+        3100,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -251,8 +359,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.OPENAI_API_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -260,7 +374,11 @@
         "jsonBody": "={{ JSON.stringify({ model: 'tts-1-hd', input: $json.word, voice: 'nova', response_format: 'mp3' }) }}",
         "options": {
           "timeout": 30000,
-          "response": { "response": { "responseFormat": "file" } }
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
         }
       }
     },
@@ -269,7 +387,10 @@
       "name": "Extract Audio Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3300, 0],
+      "position": [
+        3300,
+        0
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst item = $input.first();\nif (!item) throw new Error('Extract Audio Data received no input items');\nconst inputData = item.json || {};\n\n// Extract audio from HTTP response - n8n may use any key name for binary data\nlet audioBase64 = null;\nlet mimeType = 'audio/mpeg';\n\nif (item.binary) {\n  for (const key of Object.keys(item.binary)) {\n    const bin = item.binary[key];\n    if (bin && bin.data) {\n      audioBase64 = bin.data;\n      mimeType = bin.mimeType || 'audio/mpeg';\n      break;\n    }\n  }\n}\n\n// Update status file - non-fatal, audio extraction can still succeed\nif (inputData.statusFile) {\n  try {\n    const status = JSON.parse(fs.readFileSync(inputData.statusFile, 'utf-8'));\n    status.ttsState = audioBase64 ? `done:${audioBase64.length}` : 'no-data';\n    fs.writeFileSync(inputData.statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { console.error('TTS status update failed:', e.message); }\n}\n\n// Return with audio result - spread preserves context needed by TTS loop\nreturn [{\n  json: {\n    ...inputData,\n    audioBase64: audioBase64 || null,\n    audioMimeType: audioBase64 ? mimeType : null,\n    audioError: audioBase64 ? null : 'No audio data received'\n  }\n}];\n"
       }
@@ -279,7 +400,10 @@
       "name": "Handle TTS Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3300, 200],
+      "position": [
+        3300,
+        200
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst errorInfo = $input.first().json;\n// Fallback to Initialize Job if statusFile not in error context\nconst statusFile = errorInfo.statusFile || $('Initialize Job').first().json.statusFile;\nconst errorMsg = errorInfo.error?.message || errorInfo.message || 'TTS generation failed';\n\n// TTS failure = fail entire job\nconst status = { status: 'error', phase: 'TTS generation failed', error: 'OpenAI TTS failed: ' + errorMsg, failedAt: new Date().toISOString() };\nif (statusFile) {\n  try {\n    fs.writeFileSync(statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { console.error('Failed to write error status:', e.message); }\n} else {\n  console.error('Cannot record TTS error (no statusFile):', errorMsg);\n}\n\nthrow new Error('OpenAI TTS failed: ' + errorMsg);\n"
       }
@@ -289,15 +413,24 @@
       "name": "Aggregate Audio Items",
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
-      "position": [3700, 0],
-      "parameters": { "aggregate": "aggregateAllItemData", "options": {} }
+      "position": [
+        3700,
+        0
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      }
     },
     {
       "id": "no-audio-passthrough",
       "name": "No Audio Passthrough",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2300, 200],
+      "position": [
+        2300,
+        200
+      ],
       "parameters": {
         "jsCode": "// Pass through items without audio data\nconst aggregatedData = $input.first().json;\nconst items = aggregatedData.data || [];\n\nconst itemsWithNullAudio = items.map(item => ({\n  ...item,\n  audioBase64: null,\n  audioMimeType: null,\n  audioError: null\n}));\n\nreturn [{ json: { data: itemsWithNullAudio } }];\n"
       }
@@ -307,7 +440,10 @@
       "name": "Prepare APKG Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3900, 100],
+      "position": [
+        3900,
+        100
+      ],
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst items = ($input.first().json.data || []);\nconst initData = $('Initialize Job').first().json;\n\nfunction safeWriteStatus(file, data) {\n  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }\n  catch (e) { console.error('Status write failed:', e.message); }\n}\n\n// Update status - non-fatal if fails\nlet status;\ntry {\n  status = JSON.parse(fs.readFileSync(initData.statusFile, 'utf-8'));\n  status.phase = 'Creating Anki deck...';\n  status.progress = 95;\n  safeWriteStatus(initData.statusFile, status);\n} catch (e) { console.error('Status read failed:', e.message); }\n\nconst valid = items.filter(i => i.word && (i.imageBase64 || i.description));\n\nif (valid.length === 0) {\n  safeWriteStatus(initData.statusFile, { status: 'error', phase: 'No valid cards', error: 'No valid items to create deck', failedAt: new Date().toISOString() });\n  throw new Error('No valid items');\n}\n\n// Track failed images for warning\nconst failedImages = items.filter(i => i.error && !i.imageBase64);\nconst failedImageWords = failedImages.map(i => i.word);\n\n// Count cards with audio and extract word list\nconst audioCardCount = valid.filter(i => i.audioBase64).length;\nconst words = valid.map(i => i.word);\n\nconst inputData = {\n  deckName: initData.deckName || 'Vocabulary',\n  cards: valid.map(item => ({\n    word: item.word,\n    description: item.description || '',\n    imageBase64: item.imageBase64 || null,\n    mimeType: item.mimeType || 'image/jpeg',\n    audioBase64: item.audioBase64 || null,\n    audioMimeType: item.audioMimeType || 'audio/mpeg'\n  }))\n};\n\nconst jsonStr = JSON.stringify(inputData);\nconst binaryData = Buffer.from(jsonStr, 'utf-8');\n\nreturn [{\n  json: { ...initData, hasError: false, cardCount: valid.length, imageCardCount: valid.filter(i => i.imageBase64).length, audioCardCount, words, failedImageCount: failedImages.length, failedImageWords },\n  binary: { data: { data: binaryData.toString('base64'), mimeType: 'application/json', fileName: 'input.json' } }\n}];\n"
       }
@@ -317,7 +453,10 @@
       "name": "Write Input File",
       "type": "n8n-nodes-base.writeBinaryFile",
       "typeVersion": 1,
-      "position": [4100, 100],
+      "position": [
+        4100,
+        100
+      ],
       "parameters": {
         "fileName": "/tmp/n8n-apkg-input.json",
         "options": {}
@@ -328,7 +467,10 @@
       "name": "Run APKG Generator",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
-      "position": [4200, 100],
+      "position": [
+        4200,
+        100
+      ],
       "parameters": {
         "command": "cat /tmp/n8n-apkg-input.json | generate-apkg && rm -f /tmp/n8n-apkg-input.json"
       }
@@ -338,104 +480,321 @@
       "name": "Finalize Job",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4300, 100],
+      "position": [
+        4300,
+        100
+      ],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst stdout = $input.first().json.stdout || '';\nconst initData = $('Prepare APKG Input').first().json;\n\nfunction safeWriteStatus(file, data) {\n  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }\n  catch (e) { console.error('Status write failed:', e.message); }\n}\n\ntry {\n  const output = JSON.parse(stdout);\n  \n  if (!output.success) {\n    safeWriteStatus(initData.statusFile, { status: 'error', phase: 'APKG generation failed', error: output.error || 'Unknown error', failedAt: new Date().toISOString() });\n    throw new Error(output.error);\n  }\n  \n  // Check if some images failed - show warning\n  const failedCount = initData.failedImageCount || 0;\n  const hasWarning = failedCount > 0;\n  const warningMsg = hasWarning ? `${failedCount} image(s) failed to generate` : null;\n  \n  const status = {\n    status: hasWarning ? 'partial' : 'complete',\n    phase: hasWarning ? `Complete with warnings` : 'Complete!',\n    progress: 100,\n    wordCount: initData.cardCount,\n    imageCardCount: initData.imageCardCount,\n    audioCardCount: initData.audioCardCount || 0,\n    words: initData.words || [],\n    warning: warningMsg,\n    failedImageWords: initData.failedImageWords || [],\n    deckId: output.deckId,\n    downloadUrl: `/webhook/anki-download?id=${output.deckId}`,\n    apkgSizeBytes: output.apkgSizeBytes,\n    completedAt: new Date().toISOString()\n  };\n  safeWriteStatus(initData.statusFile, status);\n  \n  return [{ json: { success: true, ...status } }];\n} catch (e) {\n  if (!e.message.includes('Unknown error')) {\n    safeWriteStatus(initData.statusFile, { status: 'error', phase: 'Parse error', error: e.message, failedAt: new Date().toISOString() });\n  }\n  throw e;\n}\n"
+        "jsCode": "const fs = require('fs');\nconst stdout = $input.first().json.stdout || '';\nconst initData = $('Prepare APKG Input').first().json;\n\nfunction safeWriteStatus(file, data) {\n  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }\n  catch (e) { console.error('Status write failed:', e.message); }\n}\n\ntry {\n  const output = JSON.parse(stdout);\n  \n  if (!output.success) {\n    safeWriteStatus(initData.statusFile, { status: 'error', phase: 'APKG generation failed', error: output.error || 'Unknown error', failedAt: new Date().toISOString() });\n    throw new Error(output.error);\n  }\n  \n  // Check if some images failed - show warning\n  const failedCount = initData.failedImageCount || 0;\n  const hasWarning = failedCount > 0;\n  const warningMsg = hasWarning ? `${failedCount} image(s) failed to generate` : null;\n  \n  const status = {\n    status: hasWarning ? 'partial' : 'complete',\n    phase: hasWarning ? `Complete with warnings` : 'Complete!',\n    progress: 100,\n    wordCount: initData.cardCount,\n    imageCardCount: initData.imageCardCount,\n    audioCardCount: initData.audioCardCount || 0,\n    words: initData.words || [],\n    warning: warningMsg,\n    failedImageWords: initData.failedImageWords || [],\n    deckId: output.deckId,\n    downloadUrl: `/webhook/anki-download?id=${output.deckId}`,\n    apkgSizeBytes: output.apkgSizeBytes,\n    completedAt: new Date().toISOString(),\n    deckName: initData.deckName || 'Vocabulary'\n  };\n  safeWriteStatus(initData.statusFile, status);\n  \n  return [{ json: { success: true, ...status } }];\n} catch (e) {\n  if (!e.message.includes('Unknown error')) {\n    safeWriteStatus(initData.statusFile, { status: 'error', phase: 'Parse error', error: e.message, failedAt: new Date().toISOString() });\n  }\n  throw e;\n}\n"
       }
     }
   ],
   "connections": {
     "Worker Webhook": {
-      "main": [[{ "node": "Initialize Job", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Initialize Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Initialize Job": {
-      "main": [[{ "node": "Extract Vocabulary (Vision)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Extract Vocabulary (Vision)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Extract Vocabulary (Vision)": {
       "main": [
-        [{ "node": "Parse Vocabulary JSON", "type": "main", "index": 0 }],
-        [{ "node": "Handle Vision Error", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Parse Vocabulary JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Vision Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Parse Vocabulary JSON": {
-      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Loop Over Items": {
       "main": [
-        [{ "node": "Aggregate All Items", "type": "main", "index": 0 }],
-        [{ "node": "Update Progress", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Aggregate All Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Update Progress": {
-      "main": [[{ "node": "Generate Image", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Generate Image": {
       "main": [
-        [{ "node": "Extract Image Data", "type": "main", "index": 0 }],
-        [{ "node": "Handle Image Error", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Extract Image Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Image Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Handle Image Error": {
-      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait (Rate Limit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Extract Image Data": {
-      "main": [[{ "node": "Wait (Rate Limit)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait (Rate Limit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Wait (Rate Limit)": {
-      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Aggregate All Items": {
-      "main": [[{ "node": "Check Audio Flag", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Check Audio Flag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Check Audio Flag": {
       "main": [
-        [{ "node": "TTS Pre-check", "type": "main", "index": 0 }],
-        [{ "node": "No Audio Passthrough", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "TTS Pre-check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Audio Passthrough",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "TTS Pre-check": {
       "main": [
-        [{ "node": "Update Audio Status", "type": "main", "index": 0 }],
-        [{ "node": "Handle TTS Pre-check Error", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Update Audio Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle TTS Pre-check Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Update Audio Status": {
-      "main": [[{ "node": "TTS Loop", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "TTS Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "TTS Loop": {
       "main": [
-        [{ "node": "Aggregate Audio Items", "type": "main", "index": 0 }],
-        [{ "node": "Update TTS Progress", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Aggregate Audio Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update TTS Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Update TTS Progress": {
-      "main": [[{ "node": "Generate TTS", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Generate TTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Generate TTS": {
       "main": [
-        [{ "node": "Extract Audio Data", "type": "main", "index": 0 }],
-        [{ "node": "Handle TTS Error", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Extract Audio Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle TTS Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Extract Audio Data": {
-      "main": [[{ "node": "TTS Loop", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "TTS Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Aggregate Audio Items": {
-      "main": [[{ "node": "Prepare APKG Input", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Prepare APKG Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "No Audio Passthrough": {
-      "main": [[{ "node": "Prepare APKG Input", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Prepare APKG Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Prepare APKG Input": {
-      "main": [[{ "node": "Write Input File", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Write Input File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Write Input File": {
-      "main": [[{ "node": "Run APKG Generator", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Run APKG Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Run APKG Generator": {
-      "main": [[{ "node": "Finalize Job", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Finalize Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "active": true
 }
