@@ -9,12 +9,29 @@
 set -euo pipefail
 
 # Check required dependencies
-for cmd in jq sqlite3 sha256sum sudo; do
+for cmd in jq sqlite3 sha256sum curl; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "ERROR: Required command '$cmd' not found" >&2
     exit 1
   fi
 done
+
+# Find n8n binary from systemd service (not in PATH by default on NixOS)
+# Note: systemctl show returns exit code 0 even for missing services, so check output instead
+EXEC_START=$(systemctl show n8n -p ExecStart --value 2>/dev/null)
+if [[ -z "$EXEC_START" ]]; then
+  echo "ERROR: n8n.service not found or has no ExecStart (is n8n installed?)" >&2
+  exit 1
+fi
+N8N_BIN=$(echo "$EXEC_START" | grep -oP '/nix/store/[^ ;]+/bin/n8n' | head -1)
+if [[ -z "$N8N_BIN" ]]; then
+  echo "ERROR: Could not extract n8n binary path from ExecStart: $EXEC_START" >&2
+  exit 1
+fi
+if [[ ! -x "$N8N_BIN" ]]; then
+  echo "ERROR: n8n binary not executable (garbage collected?): $N8N_BIN" >&2
+  exit 1
+fi
 
 WORKFLOW_NAME="${1:-}"
 if [[ -z "$WORKFLOW_NAME" ]]; then
@@ -89,14 +106,27 @@ fi
 
 # Export current workflow from database
 TEMP_EXPORT=$(mktemp)
-trap 'rm -f "$TEMP_EXPORT"' EXIT
+trap 'rm -f "$TEMP_EXPORT" "${TEMP_EXPORT}.tmp"' EXIT
 
 echo -e "\n${BLUE}[3] Exporting Current Database Version${NC}"
-if ! sudo -u n8n n8n export:workflow --id="$WORKFLOW_ID" --output="$TEMP_EXPORT" 2>/dev/null; then
+EXPORT_ERR=$(N8N_USER_FOLDER="$N8N_DIR" N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false "$N8N_BIN" export:workflow --id="$WORKFLOW_ID" --output="$TEMP_EXPORT" 2>&1 >/dev/null) || {
   echo -e "${RED}  ✗ Export command failed${NC}"
+  [[ -n "$EXPORT_ERR" ]] && echo "  $(echo "$EXPORT_ERR" | sed 's/\x1b\[[0-9;]*m//g' | head -5)"
   exit 1
+}
+# n8n export wraps output in an array; unwrap to plain object
+if jq -e 'type == "array"' "$TEMP_EXPORT" &>/dev/null; then
+  ARRAY_LEN=$(jq 'length' "$TEMP_EXPORT")
+  if [[ "$ARRAY_LEN" -eq 0 ]]; then
+    echo -e "${RED}  ✗ Export returned empty array${NC}"
+    exit 1
+  fi
+  if [[ "$ARRAY_LEN" -gt 1 ]]; then
+    echo -e "${YELLOW}  ⚠ Export returned $ARRAY_LEN workflows; using first element${NC}"
+  fi
+  jq '.[0]' "$TEMP_EXPORT" > "${TEMP_EXPORT}.tmp" && mv "${TEMP_EXPORT}.tmp" "$TEMP_EXPORT"
 fi
-if [[ ! -s "$TEMP_EXPORT" ]] || ! jq empty "$TEMP_EXPORT" 2>/dev/null; then
+if [[ ! -s "$TEMP_EXPORT" ]] || ! jq -e 'type == "object"' "$TEMP_EXPORT" &>/dev/null; then
   echo -e "${RED}  ✗ Export produced invalid output${NC}"
   exit 1
 fi
@@ -152,11 +182,38 @@ echo -e "\n${BLUE}[8] Webhook Registration${NC}"
 WEBHOOK_PATH=$(jq -r '.nodes[] | select(.type=="n8n-nodes-base.webhook") | .parameters.path // empty' "$SOURCE_FILE" | head -1)
 if [[ -n "$WEBHOOK_PATH" && "$WEBHOOK_PATH" != "null" ]]; then
   echo "  Expected webhook path: $WEBHOOK_PATH"
-  WEBHOOK_COUNT=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM webhook_entity WHERE webhookPath='$WEBHOOK_PATH';")
-  echo "  Registered webhooks: $WEBHOOK_COUNT"
+  # Validate path format before SQL query (prevent injection from crafted source files)
+  if [[ ! "$WEBHOOK_PATH" =~ ^[a-zA-Z0-9/_-]+$ ]]; then
+    echo -e "${YELLOW}  Webhook path contains unexpected characters, skipping DB check${NC}"
+    WEBHOOK_COUNT=0
+  else
+    WEBHOOK_COUNT=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM webhook_entity WHERE webhookPath='$WEBHOOK_PATH';")
+  fi
+  echo "  Registered in database: $WEBHOOK_COUNT"
   if [[ "$WEBHOOK_COUNT" -gt 1 ]]; then
     echo -e "${RED}  ✗ Multiple webhooks registered for same path!${NC}"
   fi
+
+  # Live check: verify webhook responds (catches stale DB registration)
+  # Only probe GET webhooks (read-only, safe to call); skip POST webhooks to avoid side effects
+  WEBHOOK_METHOD=$(jq -r '.nodes[] | select(.type=="n8n-nodes-base.webhook") | .parameters.httpMethod // "GET"' "$SOURCE_FILE" | head -1)
+  if [[ "$WEBHOOK_METHOD" != "GET" ]]; then
+    echo -e "${YELLOW}  Skipping live check ($WEBHOOK_METHOD webhook — probe would trigger execution)${NC}"
+  else
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:5678/webhook/$WEBHOOK_PATH" 2>/dev/null || echo "000")
+    if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" || "$HTTP_CODE" == "202" ]]; then
+      echo -e "${GREEN}  ✓ Webhook is live (HTTP $HTTP_CODE)${NC}"
+    elif [[ "$HTTP_CODE" == "404" ]]; then
+      echo -e "${RED}  ✗ Webhook returns 404 — not loaded in memory${NC}"
+      echo -e "  ${YELLOW}Action: sudo systemctl restart n8n${NC}"
+    elif [[ "$HTTP_CODE" == "000" ]]; then
+      echo -e "${YELLOW}  ⚠ Cannot reach n8n (is it running?)${NC}"
+    else
+      echo -e "${YELLOW}  ⚠ Webhook returned HTTP $HTTP_CODE${NC}"
+    fi
+  fi
+else
+  echo "  No webhook nodes found (skipped)"
 fi
 
 # Compare full workflow JSON (hash-based)
@@ -176,11 +233,13 @@ if [[ "$SOURCE_HASH" != "$DB_HASH" ]]; then
   echo "  - Database still contains old workflow definition"
   echo "  - Service restarts load old code from database"
   echo ""
+  N8N_ENV="N8N_USER_FOLDER=$N8N_DIR N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false"
   echo -e "${BLUE}Recommended fix:${NC}"
-  echo "  1. Delete existing workflow: sudo -u n8n n8n delete:workflow --id='$WORKFLOW_ID'"
-  echo "  2. Re-import from source: sudo -u n8n n8n import:workflow --input='$SOURCE_FILE'"
-  echo "  3. Activate workflow: sudo -u n8n n8n update:workflow --id='$WORKFLOW_ID' --active=true"
-  echo "  4. Verify: ./scripts/diagnose-n8n-workflow.sh $WORKFLOW_NAME"
+  echo "  1. Delete existing workflow: $N8N_ENV $N8N_BIN delete:workflow --id='$WORKFLOW_ID'"
+  echo "  2. Re-import from source: $N8N_ENV $N8N_BIN import:workflow --input='$SOURCE_FILE'"
+  echo "  3. Activate workflow: $N8N_ENV $N8N_BIN update:workflow --id='$WORKFLOW_ID' --active=true"
+  echo "  4. Restart n8n: sudo systemctl restart n8n"
+  echo "  5. Verify: ./scripts/diagnose-n8n-workflow.sh $WORKFLOW_NAME"
 else
   echo -e "${GREEN}  ✓ Workflows are IDENTICAL${NC}"
   echo "  The database version matches the source file."
