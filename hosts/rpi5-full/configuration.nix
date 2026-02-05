@@ -318,6 +318,14 @@
         conditions = [ "[STATUS] == 200" ];
       };
 
+      rpi5-anki-workflow = {
+        name = "Anki Workflow";
+        group = "rpi5";
+        url = "http://127.0.0.1:5678/webhook/image-to-anki-ui";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
       rpi5-qdrant = {
         name = "Qdrant";
         group = "rpi5";
