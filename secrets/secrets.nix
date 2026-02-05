@@ -46,6 +46,9 @@ in
   # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
 
+  # Qdrant vector database - shared across rpi5 (required for ARM where chromadb crashes)
+  "qdrant-api-key.age".publicKeys = allKeys;
+
   # E2E test credentials - shared across all hosts for testing
   "e2e-test-api-key.age".publicKeys = allKeys;
 

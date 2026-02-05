@@ -52,6 +52,13 @@
     # OpenAI API key (for TTS/STT)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
 
+    # Qdrant vector database API key
+    # Generate and encrypt the secret with:
+    #   openssl rand -hex 32 > /tmp/qdrant-api-key
+    #   cd secrets && agenix -e qdrant-api-key.age < /tmp/qdrant-api-key
+    #   rm /tmp/qdrant-api-key
+    qdrant-api-key.file = "${self}/secrets/qdrant-api-key.age";
+
     # E2E test credentials
     e2e-test-api-key.file = "${self}/secrets/e2e-test-api-key.age";
   };
@@ -85,6 +92,7 @@
       type = "qdrant";
       qdrant = {
         uri = "http://127.0.0.1:6333";
+        apiKeyFile = config.age.secrets.qdrant-api-key.path;
         onDisk = true; # Use mmap storage for low memory footprint
         multitenancy = true; # Reduces RAM usage
       };
@@ -231,6 +239,9 @@
     enable = true;
     port = 6333;
     grpcPort = 6334;
+
+    # API key authentication for defense-in-depth security
+    apiKeyFile = config.age.secrets.qdrant-api-key.path;
 
     # On-disk storage for low memory footprint (critical for 4GB RPi5)
     # Uses mmap - trades some query speed for significantly lower RAM

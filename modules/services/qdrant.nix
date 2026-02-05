@@ -94,6 +94,17 @@ in
       };
     };
 
+    apiKeyFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = "/run/secrets/qdrant-api-key";
+      description = ''
+        Path to file containing Qdrant API key for authentication.
+        When set, all API requests must include the API key header.
+        Use agenix or sops-nix for secret management.
+      '';
+    };
+
     extraSettings = mkOption {
       type = types.attrs;
       default = { };
@@ -111,12 +122,17 @@ in
       settings = mkMerge [
         {
           # Service binding
-          service = {
-            host = cfg.host;
-            http_port = cfg.port;
-            grpc_port = cfg.grpcPort;
-            max_workers = cfg.performance.maxWorkers;
-          };
+          service = mkMerge [
+            {
+              host = cfg.host;
+              http_port = cfg.port;
+              grpc_port = cfg.grpcPort;
+              max_workers = cfg.performance.maxWorkers;
+            }
+            # API key authentication (loaded from file at runtime)
+            # Set via environment variable QDRANT__SERVICE__API_KEY
+            (mkIf (cfg.apiKeyFile != null) { })
+          ];
 
           # Storage configuration
           storage = {
@@ -137,6 +153,41 @@ in
         }
         cfg.extraSettings
       ];
+    };
+
+    # Load API key from file at runtime using environment variable
+    # Qdrant reads QDRANT__SERVICE__API_KEY for service.api_key config
+    # Using ExecStartPre with + prefix to run as root for reading agenix secrets
+    systemd.services.qdrant = mkIf (cfg.apiKeyFile != null) {
+      serviceConfig = {
+        RuntimeDirectory = "qdrant-secrets";
+        EnvironmentFile = "-/run/qdrant-secrets/env";
+        # Run secrets setup script as root (+ prefix) to read agenix secrets
+        ExecStartPre = lib.mkBefore [
+          ("+" + pkgs.writeShellScript "qdrant-secrets" ''
+            set -euo pipefail
+
+            API_KEY_FILE="${cfg.apiKeyFile}"
+            ENV_FILE="/run/qdrant-secrets/env"
+
+            mkdir -p /run/qdrant-secrets
+
+            if [ -f "$API_KEY_FILE" ]; then
+              API_KEY=$(cat "$API_KEY_FILE")
+              if [ -z "$API_KEY" ]; then
+                echo "ERROR: Qdrant API key file is empty: $API_KEY_FILE" >&2
+                exit 1
+              fi
+              echo "QDRANT__SERVICE__API_KEY=$API_KEY" > "$ENV_FILE"
+              chmod 600 "$ENV_FILE"
+              chown qdrant:qdrant "$ENV_FILE"
+            else
+              echo "ERROR: Qdrant API key file not found: $API_KEY_FILE" >&2
+              exit 1
+            fi
+          '')
+        ];
+      };
     };
 
     # Tailscale Serve configuration for HTTPS access
