@@ -5,6 +5,8 @@
 
   # Boot and system maintenance
   boot.tmp.cleanOnBoot = true;
+
+  # Enable zram swap by default (hosts can override with full spec if needed)
   zramSwap.enable = true;
 
   # SSH is enabled by default for all hosts with keepalive settings
@@ -38,7 +40,4 @@
     # Terminal multiplexer
     zellij
   ];
-
-  # Default state version (override per host if needed)
-  system.stateVersion = "23.11";
 }

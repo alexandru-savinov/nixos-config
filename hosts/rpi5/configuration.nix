@@ -313,5 +313,5 @@
   time.timeZone = "UTC";
 
   # System state version - do NOT change on existing systems
-  system.stateVersion = lib.mkForce "24.05";
+  system.stateVersion = "24.05";
 }
