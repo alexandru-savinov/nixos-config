@@ -21,6 +21,10 @@
   # Nix settings
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
+  # Enable systemd cgroup accounting so MemoryMax/MemoryHigh/CPUQuota are enforced
+  # Without this, all systemd resource limits are ignored (Issue #179)
+  systemd.enableCgroupAccounting = true;
+
   # FHS compatibility: create /bin/bash symlink for scripts with hardcoded shebangs
   # Required for tools like Claude Code plugins that use #!/bin/bash
   system.activationScripts.binbash = lib.stringAfter [ "stdio" ] ''
