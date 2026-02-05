@@ -60,9 +60,8 @@
     enable = true;
     settings = {
       PermitRootLogin = "prohibit-password"; # Allow root login only via SSH keys
-      # MIGRATION: Keep password auth enabled until key-based access is verified
-      # Change to 'false' after confirming SSH key login works
-      PasswordAuthentication = lib.mkForce true;
+      # SSH key-based access verified working - password auth disabled for security
+      PasswordAuthentication = lib.mkForce false;
     };
   };
 
@@ -192,19 +191,23 @@
   users.users.nixos = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
-    initialPassword = "nixos";
+    # Password auth disabled - SSH key only access
+    initialPassword = lib.mkForce null;
+    hashedPassword = lib.mkForce "!"; # Lock password
   };
 
   # Claude YOLO mode user (runs claude --dangerously-skip-permissions)
   users.users.claude-yolo = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
-    initialPassword = "yolo";
+    # Password auth disabled - SSH key only access
+    initialPassword = lib.mkForce null;
+    hashedPassword = lib.mkForce "!"; # Lock password
     description = "Claude Code YOLO mode user";
   };
 
-  # Allow wheel group to sudo without password initially
-  security.sudo.wheelNeedsPassword = false;
+  # Require password for sudo (security hardening)
+  security.sudo.wheelNeedsPassword = true;
 
   # ============================================================
   # RESOURCE CONSTRAINTS & OPTIMIZATION FOR RPi5
