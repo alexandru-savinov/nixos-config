@@ -30,6 +30,7 @@
     # See: https://github.com/nvmd/nixos-raspberrypi
     nixos-raspberrypi = {
       url = "github:nvmd/nixos-raspberrypi";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
     # Claude Code - auto-updated hourly from npm
     # See: https://github.com/sadjow/claude-code-nix
