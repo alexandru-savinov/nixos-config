@@ -137,6 +137,9 @@
 
     # Don't run as persistent service - use stdio mode for Claude Code
     service.enable = false;
+
+    # Disable Docker since service is not running (saves ~150Mi RAM)
+    useDocker = false;
   };
 
   # ==========================================================================
