@@ -98,7 +98,8 @@
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
     unifi-password = {
       file = "${self}/secrets/unifi-password.age";
-      mode = "0444"; # Readable by all (needed for Claude Code MCP)
+      mode = "0440"; # Readable by owner and group only
+      group = "wheel"; # Allow wheel group members (nixos user) to access
     };
   };
 
