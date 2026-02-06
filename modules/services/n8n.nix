@@ -563,29 +563,28 @@ in
       path = [ pkgs.nodejs pkgs.gnutar pkgs.gzip pkgs.coreutils pkgs.bash generateApkgScript ];
     };
 
-    # Separate service for workflow import and active state sync
-    # CRITICAL: Must use same static user as main n8n service to avoid SQLite lock conflicts
-    # Using DynamicUser here creates a different temporary UID, causing database permission errors
-    # See issue #127 for detailed problem description
+    # Separate service for workflow import, active state sync, and post-import restart.
+    # Runs as root to issue systemctl restart; uses runuser for n8n CLI and sqlite3
+    # commands to preserve database file ownership (see issue #127).
     systemd.services.n8n-workflow-sync = mkIf (cfg.workflows != [ ] || cfg.workflowsDir != null) {
       description = "Import n8n workflows and sync active states";
       after = [ "n8n.service" ];
-      requires = [ "n8n.service" ];
+      # Use wants (not requires) so restarting n8n mid-script doesn't kill this unit
+      wants = [ "n8n.service" ];
       wantedBy = [ "multi-user.target" ];
 
-      # Use static n8n user matching main service to prevent database ownership conflicts
-      # StateDirectory creates /var/lib/n8n with n8n:n8n ownership on first run
+      # Run as root so we can restart n8n after import (required for webhook registration).
+      # n8n CLI and sqlite3 commands use runuser to execute as the n8n user,
+      # preventing database ownership conflicts (see issue #127).
       serviceConfig = {
         Type = "oneshot";
-        User = "n8n";
-        Group = "n8n";
-        StateDirectory = "n8n";
-        # Need read access to workflow JSON files in Nix store
-        ProtectSystem = "strict";
+        EnvironmentFile = "-/run/n8n/env";
+        # Security hardening compatible with root + systemctl restart
         ProtectHome = true;
         PrivateTmp = true;
-        # Use same environment file as main n8n service for encryption key
-        EnvironmentFile = "-/run/n8n/env";
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
       };
 
       # n8n needs N8N_USER_FOLDER to know where config/database is stored
@@ -595,30 +594,37 @@ in
         N8N_USER_FOLDER = "/var/lib/n8n";
       };
 
-      path = [ pkgs.curl pkgs.jq pkgs.sqlite pkgs.n8n ];
+      path = [ pkgs.curl pkgs.jq pkgs.sqlite pkgs.n8n pkgs.systemd pkgs.util-linux ];
 
       script = ''
         set -euo pipefail
 
-        # Wait for n8n to be FULLY ready (not just port open)
-        echo "Waiting for n8n to be ready..."
-        timeout=120
-        while ! curl -sf http://127.0.0.1:${toString cfg.port}/healthz >/dev/null 2>&1; do
-          # Fallback: also accept 200 from root path
-          if curl -sf http://127.0.0.1:${toString cfg.port}/ >/dev/null 2>&1; then
-            break
-          fi
-          timeout=$((timeout - 1))
-          if [ $timeout -le 0 ]; then
-            echo "ERROR: n8n not ready after 120 seconds, cannot import workflows" >&2
-            echo "  Check: systemctl status n8n / journalctl -u n8n" >&2
-            exit 1
-          fi
-          sleep 1
-        done
+        wait_for_n8n() {
+          local label="$1"
+          echo "Waiting for n8n to be ready ($label)..."
+          local remaining=120
+          while ! curl -sf http://127.0.0.1:${toString cfg.port}/healthz >/dev/null 2>&1; do
+            if curl -sf http://127.0.0.1:${toString cfg.port}/ >/dev/null 2>&1; then
+              break
+            fi
+            # Fail fast if n8n crashed instead of waiting the full timeout
+            if ! systemctl is-active --quiet n8n.service 2>/dev/null; then
+              echo "ERROR: n8n.service is not active ($label)" >&2
+              echo "  Check: journalctl -u n8n -n 50" >&2
+              exit 1
+            fi
+            remaining=$((remaining - 1))
+            if [ $remaining -le 0 ]; then
+              echo "ERROR: n8n not ready after 120s ($label)" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          # Extra delay for full initialization (webhook registration is async)
+          sleep 5
+        }
 
-        # Brief delay for database initialization
-        sleep 2
+        wait_for_n8n "initial startup"
 
         echo "Importing declarative workflows..."
         import_failed=0
@@ -626,7 +632,7 @@ in
         # Import individual workflow files
         ${concatMapStringsSep "\n" (wf: ''
           echo "Importing: ${wf}"
-          if ! import_output=$(n8n import:workflow --input="${wf}" 2>&1); then
+          if ! import_output=$(runuser -u n8n -- n8n import:workflow --input="${wf}" 2>&1); then
             echo "ERROR: Failed to import ${wf}" >&2
             echo "  n8n output: $import_output" >&2
             import_failed=1
@@ -638,7 +644,7 @@ in
           for wf in ${cfg.workflowsDir}/*.json; do
             if [ -f "$wf" ]; then
               echo "Importing: $wf"
-              if ! import_output=$(n8n import:workflow --input="$wf" 2>&1); then
+              if ! import_output=$(runuser -u n8n -- n8n import:workflow --input="$wf" 2>&1); then
                 echo "ERROR: Failed to import $wf" >&2
                 echo "  n8n output: $import_output" >&2
                 import_failed=1
@@ -679,8 +685,8 @@ in
             active_int=0
           fi
 
-          # Update database (runs as n8n user, not root)
-          sqlite3 "$DB_PATH" \
+          # Update database as n8n user to preserve file ownership
+          runuser -u n8n -- sqlite3 "$DB_PATH" \
             "UPDATE workflow_entity SET active=$active_int WHERE id='$wf_id';"
           echo "  Set $wf_id active=$wf_active"
         }
@@ -701,17 +707,23 @@ in
 
         echo "Workflow active state sync complete"
 
+        # Restart n8n to register webhooks for imported workflows.
+        # The n8n CLI import writes to the database but does NOT register webhooks
+        # in n8n's in-memory router. Only a restart triggers the startup activation
+        # path that properly populates the webhook_entity table and in-memory registry.
+        # See: https://github.com/n8n-io/n8n/issues/2155
+        echo "Restarting n8n to register imported webhooks..."
+        systemctl restart n8n.service
+        wait_for_n8n "post-import restart"
+
         ${optionalString (cfg.webhookHealthCheck != null) ''
-          # Verify webhooks are actually registered (not just "activated")
-          # n8n logs "Activated workflow" before webhooks are ready to receive requests
+          # Verify webhooks are actually registered after restart
           echo "Verifying webhook registration for: ${cfg.webhookHealthCheck}"
           webhook_timeout=60
           webhook_ready=0
           while [ $webhook_timeout -gt 0 ]; do
             http_code=$(curl -sf -o /dev/null -w "%{http_code}" \
               "http://127.0.0.1:${toString cfg.port}/webhook/${cfg.webhookHealthCheck}" 2>/dev/null || echo "000")
-            # Any response except 404 means webhook is registered
-            # (200=success, 405=wrong method, 500=error, but NOT 404=not found)
             if [ "$http_code" != "404" ] && [ "$http_code" != "000" ]; then
               echo "Webhook health check passed (HTTP $http_code) after $((60 - webhook_timeout))s"
               webhook_ready=1
@@ -722,9 +734,10 @@ in
           done
 
           if [ $webhook_ready -eq 0 ]; then
-            echo "WARNING: Webhook ${cfg.webhookHealthCheck} not ready after 60s (still returning 404)"
-            echo "  Webhooks may not be registered yet. Check: journalctl -u n8n"
-            # Don't fail - webhook might be legitimately disabled or have different path
+            echo "ERROR: Webhook ${cfg.webhookHealthCheck} not ready after 60s (still returning 404)" >&2
+            echo "  n8n was restarted to register webhooks but registration failed." >&2
+            echo "  Check: journalctl -u n8n for activation errors" >&2
+            exit 1
           fi
         ''}
       '';
