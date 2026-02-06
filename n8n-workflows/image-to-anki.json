@@ -7,7 +7,10 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [100, 300],
+      "position": [
+        100,
+        300
+      ],
       "webhookId": "image-to-anki",
       "parameters": {
         "path": "image-to-anki",
@@ -21,9 +24,12 @@
       "name": "Normalize Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [300, 300],
+      "position": [
+        300,
+        300
+      ],
       "parameters": {
-        "jsCode": "// Normalize and validate input - returns error JSON if invalid\nconst body = $input.first().json.body || {};\nconst deckName = (body.deckName && typeof body.deckName === 'string') ? body.deckName.trim() : 'Vocabulary';\n// Audio is ON by default (opt-out, not opt-in)\nconst includeAudio = body.includeAudio !== false;\n\nif (body.imageUrl && typeof body.imageUrl === 'string' && body.imageUrl.length > 0) {\n  return [{ json: { ...($input.first().json), imageSource: body.imageUrl, inputType: 'url', isValid: true, base64Only: null, deckName, includeAudio } }];\n}\n\nif (body.imageData && typeof body.imageData === 'string' && body.imageData.length > 0) {\n  let data = body.imageData;\n  if (!data.startsWith('data:')) {\n    data = 'data:image/png;base64,' + data;\n  }\n  const base64Only = data.split('base64,')[1] || null;\n  return [{ json: { ...($input.first().json), imageSource: data, inputType: 'base64', isValid: true, base64Only, deckName, includeAudio } }];\n}\n\nreturn [{ json: { isValid: false, error: 'Missing image. Send POST with {\"imageUrl\": \"...\"} or {\"imageData\": \"...\"}' } }];\n"
+        "jsCode": "// Normalize and validate input - returns error JSON if invalid\nconst body = $input.first().json.body || {};\nconst deckName = (body.deckName && typeof body.deckName === 'string') ? body.deckName.trim() : 'Vocabulary';\n// Audio is ON by default (opt-out, not opt-in)\nconst includeAudio = body.includeAudio !== false;\nconst mode = (body.mode === 'suffix') ? 'suffix' : 'vocabulary';\n\nif (body.imageUrl && typeof body.imageUrl === 'string' && body.imageUrl.length > 0) {\n  return [{ json: { ...($input.first().json), imageSource: body.imageUrl, inputType: 'url', isValid: true, base64Only: null, deckName, includeAudio, mode } }];\n}\n\nif (body.imageData && typeof body.imageData === 'string' && body.imageData.length > 0) {\n  let data = body.imageData;\n  if (!data.startsWith('data:')) {\n    data = 'data:image/png;base64,' + data;\n  }\n  const base64Only = data.split('base64,')[1] || null;\n  return [{ json: { ...($input.first().json), imageSource: data, inputType: 'base64', isValid: true, base64Only, deckName, includeAudio, mode } }];\n}\n\nreturn [{ json: { isValid: false, error: 'Missing image. Send POST with {\"imageUrl\": \"...\"} or {\"imageData\": \"...\"}' } }];\n"
       }
     },
     {
@@ -31,16 +37,26 @@
       "name": "Check Valid",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [500, 300],
+      "position": [
+        500,
+        300
+      ],
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "id": "is-valid",
               "leftValue": "={{ $json.isValid }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -53,11 +69,16 @@
       "name": "Error Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [700, 500],
+      "position": [
+        700,
+        500
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
-        "options": { "responseCode": 400 }
+        "options": {
+          "responseCode": 400
+        }
       }
     },
     {
@@ -65,9 +86,12 @@
       "name": "Create Job",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 300],
+      "position": [
+        700,
+        300
+      ],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\n\nconst item = $input.first().json;\nconst jobId = crypto.randomUUID();\nconst jobDir = path.join('/var/lib/n8n/jobs', jobId);\nconst includeAudio = item.includeAudio !== false;\n\n// Create job directory\nfs.mkdirSync(jobDir, { recursive: true });\n\n// Write initial status\nconst status = {\n  status: 'queued',\n  phase: 'Job queued, starting processing...',\n  progress: 0,\n  wordCount: null,\n  currentWord: null,\n  includeAudio,\n  createdAt: new Date().toISOString()\n};\nfs.writeFileSync(path.join(jobDir, 'status.json'), JSON.stringify(status, null, 2));\n\n// Build status URL\nconst host = item.headers?.host || 'localhost:5678';\nconst protocol = host.includes('ts.net') ? 'https' : 'http';\nconst statusUrl = `${protocol}://${host}/webhook/anki-status?id=${jobId}`;\nconst deckName = item.deckName || 'Vocabulary';\n\nreturn [{ json: { jobId, jobDir, statusUrl, imageSource: item.imageSource, deckName, includeAudio, host } }];\n"
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\n\nconst item = $input.first().json;\nconst jobId = crypto.randomUUID();\nconst jobDir = path.join('/var/lib/n8n/jobs', jobId);\nconst includeAudio = item.includeAudio !== false;\nconst mode = item.mode || 'vocabulary';\n\n// Create job directory\nfs.mkdirSync(jobDir, { recursive: true });\n\n// Write initial status\nconst status = {\n  status: 'queued',\n  phase: 'Job queued, starting processing...',\n  progress: 0,\n  wordCount: null,\n  currentWord: null,\n  includeAudio,\n  createdAt: new Date().toISOString()\n};\nfs.writeFileSync(path.join(jobDir, 'status.json'), JSON.stringify(status, null, 2));\n\n// Build status URL\nconst host = item.headers?.host || 'localhost:5678';\nconst protocol = host.includes('ts.net') ? 'https' : 'http';\nconst statusUrl = `${protocol}://${host}/webhook/anki-status?id=${jobId}`;\nconst deckName = item.deckName || 'Vocabulary';\n\nreturn [{ json: { jobId, jobDir, statusUrl, imageSource: item.imageSource, deckName, includeAudio, mode, host } }];\n"
       }
     },
     {
@@ -75,7 +99,10 @@
       "name": "Trigger Worker",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 300],
+      "position": [
+        900,
+        300
+      ],
       "continueOnFail": true,
       "parameters": {
         "method": "POST",
@@ -83,8 +110,10 @@
         "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ jobId: $json.jobId, imageSource: $json.imageSource, deckName: $json.deckName, includeAudio: $json.includeAudio }) }}",
-        "options": { "timeout": 1000 }
+        "jsonBody": "={{ JSON.stringify({ jobId: $json.jobId, imageSource: $json.imageSource, deckName: $json.deckName, includeAudio: $json.includeAudio, mode: $json.mode }) }}",
+        "options": {
+          "timeout": 1000
+        }
       }
     },
     {
@@ -92,34 +121,85 @@
       "name": "Accepted Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1100, 300],
+      "position": [
+        1100,
+        300
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ success: true, status: 'processing', jobId: $('Create Job').first().json.jobId, statusUrl: $('Create Job').first().json.statusUrl, message: 'Job accepted. Poll statusUrl for progress.' }) }}",
-        "options": { "responseCode": 202 }
+        "options": {
+          "responseCode": 202
+        }
       }
     }
   ],
   "connections": {
     "Webhook Trigger": {
-      "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Normalize Input": {
-      "main": [[{ "node": "Check Valid", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Check Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Check Valid": {
       "main": [
-        [{ "node": "Create Job", "type": "main", "index": 0 }],
-        [{ "node": "Error Response", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Create Job": {
-      "main": [[{ "node": "Trigger Worker", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Trigger Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Trigger Worker": {
-      "main": [[{ "node": "Accepted Response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Accepted Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "active": true
 }
