@@ -582,6 +582,9 @@ in
         # Security hardening compatible with root + systemctl restart
         ProtectHome = true;
         PrivateTmp = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
       };
 
       # n8n needs N8N_USER_FOLDER to know where config/database is stored
@@ -617,7 +620,8 @@ in
             fi
             sleep 1
           done
-          sleep 2
+          # Extra delay for full initialization (webhook registration is async)
+          sleep 5
         }
 
         wait_for_n8n "initial startup"
