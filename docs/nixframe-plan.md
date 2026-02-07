@@ -32,11 +32,11 @@ Boot → greetd (VT 1) → auto-login nixframe user → Sway compositor
                                                       └── Eww (sidebar: clock + date)
 
 Phone → n8n webhook (GET)  → HTML upload form
-     → n8n webhook (POST) → saves photo to /var/lib/nixframe/photos/
+     → n8n webhook (POST) → atomic write to /var/lib/nixframe/photos/
                                     ↓
                         systemd path unit detects change
                                     ↓
-                        imv restarts → new photo in rotation
+                        imv-msg adds new photo to running slideshow
 ```
 
 ### Display Layout
@@ -97,9 +97,10 @@ services.nixframe = {
 |-----------|---------|
 | **greetd** | VT 1, auto-login `nixframe` user, launches `sway --config <generated>` |
 | **Sway config** | HDMI-A-1 at 4K, no borders/bar/idle, execs imv wrapper + eww |
-| **imv wrapper** | Bash loop: checks for photos, runs `imv -f -t 60 dir/`, restarts when killed |
+| **imv wrapper** | Bash loop: checks for photos (falls back to placeholder), runs `imv -f -t 60 dir/`, restarts on crash |
 | **Eww config** | yuck + scss generated in Nix store, copied to `~nixframe/.config/eww/` at startup |
-| **Photo watcher** | `systemd.paths` with `PathModified` → kills imv so wrapper restarts with new files |
+| **Eww startup** | Wrapper runs `eww daemon` before `eww open sidebar` (daemon required first) |
+| **Photo watcher** | `systemd.paths` with `PathModified` → uses `imv-msg` IPC to add new photos without restarting |
 | **User/group** | `nixframe` user (normal), `nixframe` group. `n8n` user added to group for photo writes |
 | **Directories** | tmpfiles: `/var/lib/nixframe/photos` with 0775 group-writable |
 | **Fonts** | `fonts.packages = [ noto-fonts ]` |
@@ -128,7 +129,7 @@ default_floating_border none
 bar { mode invisible }
 
 # Disable idle/screen blanking
-exec swaymsg seat '*' idle_timeout 0
+seat * idle_timeout 0
 
 # Launch photo slideshow and sidebar
 exec nixframe-imv-start
@@ -160,7 +161,7 @@ bindsym Ctrl+Shift+q exit
 - Clock: 200px white Noto Sans bold
 - Date: 60px light gray Noto Sans
 
-The `exclusive: true` property reserves 800px on the right — Sway prevents imv from overlapping this area automatically.
+The `exclusive: true` property reserves 800px on the right — Sway should prevent tiled windows from overlapping this area. **Note:** imv's `-f` (fullscreen) may ignore exclusive zones. If so, use Sway `for_window` rules to constrain imv to the remaining 3040px instead of `-f`. This must be tested before implementation.
 
 ## Photo Upload (n8n Webhooks)
 
@@ -175,7 +176,7 @@ GET /webhook/nixframe → Code node (HTML) → Respond to Webhook (text/html)
 Mobile-friendly HTML form:
 - "Choose Photo" button → phone camera/gallery picker (`accept="image/*"`)
 - Image preview before upload
-- Upload button → `fetch('/webhook/nixframe-upload', { POST, JSON: { imageData, filename } })`
+- Upload button → standard `<form>` multipart/form-data POST to `/webhook/nixframe-upload`
 - Success/error feedback
 
 Accessible at: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe`
@@ -188,13 +189,17 @@ POST /webhook/nixframe-upload → Validate → If valid → Save Photo → Succe
 ```
 
 Processing:
-1. Validate base64 image data (check MIME: jpeg/png/webp, size <20MB)
-2. Generate unique filename: `YYYY-MM-DDTHH-MM-SS_hash8.ext`
-3. Decode base64, write to `/var/lib/nixframe/photos/`
-4. Set permissions 0664 (readable by nixframe group)
-5. Respond with `{ success: true, filename }`
+1. Validate uploaded file (check MIME: jpeg/png/webp/heic, size <20MB)
+2. Convert HEIC→JPEG if needed (ImageMagick, for iPhone compatibility)
+3. Auto-orient using EXIF data (handles rotated phone photos)
+4. Generate unique filename: `YYYY-MM-DDTHH-MM-SS_hash8.ext`
+5. Write to temp file, then atomic `rename()` into `/var/lib/nixframe/photos/` (prevents race with systemd.paths watcher)
+6. Set permissions 0664 (readable by nixframe group)
+7. Respond with `{ success: true, filename }`
 
 Security: filename sanitization, directory traversal prevention, MIME type validation.
+
+**Why multipart/form-data instead of base64 JSON:** Standard file upload avoids the ~33% base64 size inflation. No client-side encoding JavaScript needed. n8n webhooks handle multipart natively. Supports larger original files without hitting payload limits.
 
 ## Files Changed
 
@@ -227,7 +232,7 @@ After deploy:
 | Weather widget | wttr.in API → Eww widget. Trivial once Eww sidebar is working. |
 | Photo transitions | Would need mpv instead of imv, or a custom renderer. |
 | HDMI CEC | Screen on/off via CEC protocol. Nice-to-have. |
-| HEIC conversion | imagemagick in upload workflow for iPhone HEIC photos. |
+| ~~HEIC conversion~~ | ~~Moved to MVP — most iPhones default to HEIC.~~ |
 | Multiple albums | Album selection in upload form, subdirectories in photos dir. |
 | Immich integration | Deploy on sancta-choir, replace n8n upload with Immich API sync. |
 | REST management API | Thin wrapper around swaymsg + eww CLI for non-SSH management. |
@@ -240,7 +245,7 @@ After deploy:
 
 3. **Photo deletion**: Should the upload UI have a "manage photos" mode to remove photos, or is SSH-based file deletion sufficient?
 
-4. **Upload size limits**: n8n default payload is 16MB. Base64 inflates by ~33%, so photos >12MB original would fail. Most phone photos are 3-8MB. Should we increase the limit?
+4. **Upload size limits**: Using multipart/form-data (no base64 overhead), n8n's default 16MB payload limit supports most phone photos (3-8MB) directly. Should we increase the limit for edge cases?
 
 5. **Auto-cleanup**: Should old photos be automatically deleted when disk usage exceeds a threshold? Or is manual management preferred?
 
