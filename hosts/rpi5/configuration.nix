@@ -310,7 +310,7 @@
   '';
 
   # Timezone (adjust as needed)
-  time.timeZone = "UTC";
+  time.timeZone = "Europe/Chisinau";
 
   # System state version - do NOT change on existing systems
   system.stateVersion = lib.mkForce "24.05";

@@ -50,7 +50,7 @@
   # Networking-specific packages can be added here if needed
 
   # Time zone
-  time.timeZone = "UTC";
+  time.timeZone = "Europe/Chisinau";
 
   # Locale
   i18n.defaultLocale = "en_US.UTF-8";
