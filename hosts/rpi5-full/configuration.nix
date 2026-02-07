@@ -209,7 +209,7 @@
     # Enable Node.js built-in modules in Code nodes:
     # - crypto: efficient SHA256 hashing (pure JS is slow on ARM)
     # - fs, path: file-based job status tracking for async workflow patterns
-    # - child_process: ImageMagick convert/identify for NixFrame photo processing
+    # - child_process: ImageMagick convert for NixFrame photo processing (HEIC→JPEG, EXIF auto-orient)
     extraEnvironment = {
       NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto,child_process";
       # Enable n8n Public API for Claude Code MCP integration
