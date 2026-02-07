@@ -136,8 +136,9 @@ let
     default_floating_border none
     bar { mode invisible }
 
-    # Disable idle/screen blanking — always-on display
-    seat * idle_timeout 0
+    # Disable DPMS screen blanking — always-on display
+    output * dpms on
+    exec swaymsg output '*' dpms on
 
     # imv: tiled window, fills remaining space after Eww exclusive zone
     for_window [app_id="imv"] border none
@@ -174,8 +175,8 @@ in
 
     resolution = mkOption {
       type = types.str;
-      default = "3840x2160@60Hz";
-      description = "Display resolution and refresh rate.";
+      default = "3840x2160";
+      description = "Display resolution (Sway picks best refresh rate).";
     };
 
     sidebarWidth = mkOption {
@@ -213,6 +214,8 @@ in
     # Directories
     # ──────────────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
+      # Home dir needs group traverse (0750) so n8n can reach photos/
+      "d /var/lib/nixframe 0750 nixframe nixframe -"
       "d ${cfg.photoDir} 0775 nixframe nixframe -"
       # Seed the trigger file so systemd.paths has something to watch on first boot
       "f ${cfg.photoDir}/.trigger 0664 nixframe nixframe -"
@@ -270,10 +273,14 @@ in
       description = "Reload imv after photo directory changes";
       serviceConfig = {
         Type = "oneshot";
-        # imv uses IPC via Unix socket (imv-msg), not signals.
-        # Find running imv PID and tell it to re-open the photo directory.
+        # Run as nixframe user so imv-msg can find the IPC socket
+        # at $XDG_RUNTIME_DIR/imv-$PID.sock
+        User = "nixframe";
+        Group = "nixframe";
         ExecStart = pkgs.writeShellScript "nixframe-refresh-imv" ''
-          IMV_PID=$(${pkgs.procps}/bin/pgrep -u nixframe imv || true)
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          # Use newest imv PID (pgrep -n) to avoid stale processes
+          IMV_PID=$(${pkgs.procps}/bin/pgrep -n -u nixframe imv || true)
           if [ -n "$IMV_PID" ]; then
             ${pkgs.imv}/bin/imv-msg "$IMV_PID" close all
             ${pkgs.imv}/bin/imv-msg "$IMV_PID" open "${cfg.photoDir}"

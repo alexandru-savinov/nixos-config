@@ -473,5 +473,9 @@
   services.nixframe.enable = true;
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
-  systemd.services.n8n.path = [ pkgs.imagemagick ];
+  # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)
+  systemd.services.n8n = {
+    path = [ pkgs.imagemagick ];
+    serviceConfig.ReadWritePaths = [ "/var/lib/nixframe/photos" ];
+  };
 }
