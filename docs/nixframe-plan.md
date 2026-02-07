@@ -28,7 +28,7 @@ NixFrame **coexists** with the existing rpi5-full services (Open-WebUI, n8n, Qdr
 
 ```
 Boot → greetd (VT 1) → auto-login nixframe user → Sway compositor
-                                                      ├── imv (fullscreen photo slideshow)
+                                                      ├── imv (tiled photo slideshow, Sway-managed layout)
                                                       └── Eww (sidebar: clock + date)
 
 Phone → n8n webhook (GET)  → HTML upload form
@@ -64,7 +64,7 @@ Phone → n8n webhook (GET)  → HTML upload form
 |-----------|---------|------|
 | **Compositor** | Sway | Wayland compositor, manages layout |
 | **Login manager** | greetd | Auto-login nixframe user, starts Sway |
-| **Photo viewer** | imv | Fullscreen slideshow with `-t 60` (60s per photo) |
+| **Photo viewer** | imv | Tiled slideshow with `-t 60` (60s per photo), constrained by Sway `for_window` rules |
 | **Widgets** | Eww | gtk-layer-shell sidebar with exclusive zone |
 | **Photo upload** | n8n (existing) | Two webhook workflows: UI form + upload handler |
 | **Fonts** | Noto Sans | Readable on 4K TV from couch distance |
@@ -82,13 +82,44 @@ Phone → n8n webhook (GET)  → HTML upload form
 
 ```nix
 services.nixframe = {
-  enable = true;
-  # All defaults match our requirements:
-  #   photosDir = "/var/lib/nixframe/photos"
-  #   slideshowInterval = 60  (seconds)
-  #   output = "HDMI-A-1"
-  #   resolution = "3840x2160@60Hz"
+  enable = mkEnableOption "NixFrame digital photo frame";
+
+  photosDir = mkOption {
+    type = types.path;
+    default = "/var/lib/nixframe/photos";
+    description = "Directory for photo storage.";
+  };
+
+  slideshowInterval = mkOption {
+    type = types.int;
+    default = 60;
+    description = "Seconds between photo transitions.";
+  };
+
+  output = mkOption {
+    type = types.str;
+    default = "HDMI-A-1";
+    description = "Sway output name for the display.";
+  };
+
+  resolution = mkOption {
+    type = types.str;
+    default = "3840x2160@60Hz";
+    description = "Display resolution and refresh rate.";
+  };
+
+  sidebarWidth = mkOption {
+    type = types.int;
+    default = 800;
+    description = "Width of the Eww clock/date sidebar in pixels.";
+  };
 };
+```
+
+Usage in host config:
+```nix
+services.nixframe.enable = true;
+# All defaults match RPi5 + Samsung 4K TV setup
 ```
 
 ### What the Module Provides
@@ -97,11 +128,12 @@ services.nixframe = {
 |-----------|---------|
 | **greetd** | VT 1, auto-login `nixframe` user, launches `sway --config <generated>` |
 | **Sway config** | HDMI-A-1 at 4K, no borders/bar/idle, execs imv wrapper + eww |
-| **imv wrapper** | Bash loop: checks for photos (falls back to placeholder), runs `imv -f -t 60 dir/`, restarts on crash |
+| **imv service** | systemd user service: runs `imv -t 60 dir/` (no `-f`), Sway tiles it to fill remaining space. `Restart=always` with `RestartSec=5` for crash recovery. Falls back to placeholder if no photos. |
 | **Eww config** | yuck + scss generated in Nix store, copied to `~nixframe/.config/eww/` at startup |
-| **Eww startup** | Wrapper runs `eww daemon` before `eww open sidebar` (daemon required first) |
-| **Photo watcher** | `systemd.paths` with `PathModified` → uses `imv-msg` IPC to add new photos without restarting |
-| **User/group** | `nixframe` user (normal), `nixframe` group. `n8n` user added to group for photo writes |
+| **Eww service** | systemd user service: runs `eww daemon` then `eww open sidebar`. `Restart=always` for crash recovery. Daemon must start before windows can open. |
+| **Photo watcher** | `systemd.paths` with `PathModified` → triggers systemd service that runs `imv-msg` IPC to add new photos without restarting |
+| **User/group** | `nixframe` user (normal), `extraGroups = ["video"]` for DRM access. `nixframe` group with `n8n` user added for photo writes |
+| **DRM/GPU** | `hardware.graphics.enable = true` for GPU acceleration. `video` group grants `/dev/dri/*` access. `programs.sway.enable` only provides PAM/polkit/dbus — it does NOT add users to `video` group automatically |
 | **Directories** | tmpfiles: `/var/lib/nixframe/photos` with 0775 group-writable |
 | **Fonts** | `fonts.packages = [ noto-fonts ]` |
 | **Sway PAM** | `programs.sway.enable = true` for polkit/dbus/logind integration |
@@ -130,6 +162,10 @@ bar { mode invisible }
 
 # Disable idle/screen blanking
 seat * idle_timeout 0
+
+# imv: tile without borders, fills remaining space after Eww exclusive zone
+# Do NOT use fullscreen — it overlaps layer-shell exclusive zones
+for_window [app_id="imv"] border none
 
 # Launch photo slideshow and sidebar
 exec nixframe-imv-start
@@ -161,7 +197,9 @@ bindsym Ctrl+Shift+q exit
 - Clock: 200px white Noto Sans bold
 - Date: 60px light gray Noto Sans
 
-The `exclusive: true` property reserves 800px on the right — Sway should prevent tiled windows from overlapping this area. **Note:** imv's `-f` (fullscreen) may ignore exclusive zones. If so, use Sway `for_window` rules to constrain imv to the remaining 3040px instead of `-f`. This must be tested before implementation.
+The `exclusive: true` property reserves 800px on the right. Sway reduces the usable tiling area by this amount, so tiled windows (including imv) automatically fill only the remaining 3040px.
+
+**Important:** imv must NOT use `-f` (fullscreen). Sway fullscreen mode uses the full output geometry and overlaps layer-shell exclusive zones — this is by design in wlroots. Instead, imv runs as a normal tiled window and Sway automatically maximizes it in the remaining space (since it's the only tiled window).
 
 ## Photo Upload (n8n Webhooks)
 
@@ -190,7 +228,7 @@ POST /webhook/nixframe-upload → Validate → If valid → Save Photo → Succe
 
 Processing:
 1. Validate uploaded file (check MIME: jpeg/png/webp/heic, size <20MB)
-2. Convert HEIC→JPEG if needed (ImageMagick, for iPhone compatibility)
+2. Convert HEIC→JPEG if needed (ImageMagick — nixpkgs includes libheif by default, no override needed)
 3. Auto-orient using EXIF data (handles rotated phone photos)
 4. Generate unique filename: `YYYY-MM-DDTHH-MM-SS_hash8.ext`
 5. Write to temp file, then atomic `rename()` into `/var/lib/nixframe/photos/` (prevents race with systemd.paths watcher)
