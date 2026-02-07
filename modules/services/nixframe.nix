@@ -104,6 +104,13 @@ let
     FAIL_COUNT=0
     MAX_FAILS=5
     while true; do
+      # Exit if Sway is gone (e.g. after nixos-rebuild restarts getty@tty7).
+      # Without this check, orphaned imv spins at 100% CPU on a dead POLLHUP socket.
+      if [ -n "$SWAYSOCK" ] && [ ! -e "$SWAYSOCK" ]; then
+        echo "Sway socket gone ($SWAYSOCK), exiting." >&2
+        exit 0
+      fi
+
       START_TIME=$(date +%s)
       ${pkgs.imv}/bin/imv -t ${toString cfg.slideshowInterval} "$PHOTO_DIR"
       EXIT_CODE=$?
@@ -140,6 +147,12 @@ let
     FAIL_COUNT=0
     MAX_FAILS=5
     while true; do
+      # Exit if Sway is gone (e.g. after nixos-rebuild restarts getty@tty7)
+      if [ -n "$SWAYSOCK" ] && [ ! -e "$SWAYSOCK" ]; then
+        echo "Sway socket gone ($SWAYSOCK), exiting." >&2
+        exit 0
+      fi
+
       START_TIME=$(date +%s)
       ${pkgs.eww}/bin/eww daemon &
       EWW_PID=$!
