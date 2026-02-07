@@ -150,12 +150,12 @@ let
       # Exit if Sway is gone (e.g. after nixos-rebuild restarts getty@tty7)
       if [ -n "$SWAYSOCK" ] && [ ! -e "$SWAYSOCK" ]; then
         echo "Sway socket gone ($SWAYSOCK), exiting." >&2
-        ${pkgs.eww}/bin/eww kill 2>/dev/null || true
+        ${pkgs.eww}/bin/eww kill 2>&1 || true
         exit 0
       fi
 
       # Kill any stale eww instance from previous iteration or prior run
-      ${pkgs.eww}/bin/eww kill 2>/dev/null || true
+      ${pkgs.eww}/bin/eww kill 2>&1 || true
       sleep 1
 
       START_TIME=$(date +%s)
