@@ -87,6 +87,7 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 |--------|------|-------------|
 | `services.open-webui-tailscale` | 8080 | AI gateway (OpenRouter + Tavily Search) |
 | `services.n8n-tailscale` | 5678 | Workflow automation with execution pruning |
+| `services.nixframe` | VT 7 / HDMI-A-2 | Digital photo frame with n8n upload |
 | `services.uptime-kuma-tailscale` | 3001 | Status monitoring with auto-backups |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 
@@ -96,6 +97,7 @@ Access URLs (HTTPS only):
 - Open-WebUI: `https://sancta-choir.tail4249a9.ts.net`
 - Uptime Kuma: `https://sancta-choir.tail4249a9.ts.net:3001`
 - n8n: `https://sancta-choir.tail4249a9.ts.net:5678`
+- NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
 
 ## Secrets (Agenix)
 
