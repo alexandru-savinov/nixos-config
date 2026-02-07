@@ -30,6 +30,7 @@
     ../../modules/services/n8n.nix
     ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
     ../../modules/services/gatus.nix # Declarative status monitoring
+    ../../modules/services/nixframe.nix # Digital photo frame on HDMI-A-2
   ];
 
   # Agenix secrets for additional services
@@ -208,8 +209,9 @@
     # Enable Node.js built-in modules in Code nodes:
     # - crypto: efficient SHA256 hashing (pure JS is slow on ARM)
     # - fs, path: file-based job status tracking for async workflow patterns
+    # - child_process: ImageMagick convert/identify for NixFrame photo processing
     extraEnvironment = {
-      NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto";
+      NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto,child_process";
       # Enable n8n Public API for Claude Code MCP integration
       N8N_PUBLIC_API_DISABLED = "false";
     };
@@ -322,6 +324,14 @@
         name = "Anki Workflow";
         group = "rpi5";
         url = "http://127.0.0.1:5678/webhook/image-to-anki-ui";
+        interval = "1m";
+        conditions = [ "[STATUS] == 200" ];
+      };
+
+      rpi5-nixframe = {
+        name = "NixFrame Upload";
+        group = "rpi5";
+        url = "http://127.0.0.1:5678/webhook/nixframe-ui";
         interval = "1m";
         conditions = [ "[STATUS] == 200" ];
       };
@@ -454,4 +464,14 @@
     CPUQuota = "50%"; # Half a core max
     Nice = 15; # Lower priority than other services
   };
+
+  # ──────────────────────────────────────────────────────────────
+  # NixFrame — Digital photo frame on HDMI-A-2
+  # ──────────────────────────────────────────────────────────────
+  # Displays rotating slideshow with clock sidebar on the TV.
+  # Upload photos: https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui
+  services.nixframe.enable = true;
+
+  # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
+  systemd.services.n8n.path = [ pkgs.imagemagick ];
 }

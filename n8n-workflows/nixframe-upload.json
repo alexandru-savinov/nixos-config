@@ -1,0 +1,133 @@
+{
+  "id": "nixframe-upload",
+  "name": "NixFrame Upload Handler",
+  "nodes": [
+    {
+      "id": "upload-webhook",
+      "name": "Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "nixframe-upload",
+      "parameters": {
+        "path": "nixframe-upload",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-and-save",
+      "name": "Validate and Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\nconst { execSync } = require('child_process');\n\nconst PHOTO_DIR = '/var/lib/nixframe/photos';\nconst MAX_SIZE = 20 * 1024 * 1024; // 20MB\nconst ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];\n\ntry {\n  const body = $input.first().json.body || {};\n  const imageData = body.imageData;\n\n  if (!imageData || typeof imageData !== 'string') {\n    return [{ json: { success: false, error: 'Missing imageData field' } }];\n  }\n\n  // Extract base64 data and MIME type\n  let mimeType = 'image/jpeg';\n  let base64Data = imageData;\n\n  if (imageData.startsWith('data:')) {\n    const match = imageData.match(/^data:(image\\/[^;]+);base64,(.+)$/);\n    if (!match) {\n      return [{ json: { success: false, error: 'Invalid data URL format' } }];\n    }\n    mimeType = match[1];\n    base64Data = match[2];\n  }\n\n  // Validate MIME type\n  if (!ALLOWED_MIME.includes(mimeType)) {\n    return [{ json: { success: false, error: 'Unsupported format: ' + mimeType + '. Use JPG, PNG, WebP, or HEIC.' } }];\n  }\n\n  // Decode base64\n  const buffer = Buffer.from(base64Data, 'base64');\n\n  // Validate size\n  if (buffer.length > MAX_SIZE) {\n    return [{ json: { success: false, error: 'File too large (' + Math.round(buffer.length / 1024 / 1024) + 'MB). Max 20MB.' } }];\n  }\n\n  // Generate unique filename with timestamp\n  const hash = crypto.createHash('sha256').update(buffer).digest('hex').substring(0, 8);\n  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);\n  const tmpId = crypto.randomUUID();\n\n  // Determine input extension for ImageMagick\n  const isHeic = mimeType === 'image/heic' || mimeType === 'image/heif';\n  const inputExt = isHeic ? '.heic' : (mimeType === 'image/png' ? '.png' : (mimeType === 'image/webp' ? '.webp' : '.jpg'));\n  const outputExt = '.jpg'; // Always output JPEG for consistency\n\n  // Write raw input to temp file\n  const tmpInput = path.join(PHOTO_DIR, '.tmp-input-' + tmpId + inputExt);\n  const tmpOutput = path.join(PHOTO_DIR, '.tmp-output-' + tmpId + outputExt);\n  const finalName = timestamp + '_' + hash + outputExt;\n  const finalPath = path.join(PHOTO_DIR, finalName);\n\n  fs.writeFileSync(tmpInput, buffer);\n\n  try {\n    // Convert: auto-orient EXIF, strip metadata, convert HEIC→JPEG\n    execSync(\n      'convert \"' + tmpInput + '\" -auto-orient -strip \"' + tmpOutput + '\"',\n      { timeout: 30000 }\n    );\n\n    // Atomic rename to final location (prevents watcher from seeing partial file)\n    fs.renameSync(tmpOutput, finalPath);\n    fs.chmodSync(finalPath, 0o664);\n\n    // Signal systemd.paths watcher — PathModified watches this trigger file\n    // because inotify IN_MODIFY doesn't fire on atomic rename (systemd bug #20934)\n    fs.writeFileSync(path.join(PHOTO_DIR, '.trigger'), Date.now().toString());\n  } finally {\n    // Clean up temp files\n    try { fs.unlinkSync(tmpInput); } catch (e) {}\n    try { fs.unlinkSync(tmpOutput); } catch (e) {}\n  }\n\n  // Remove placeholder if real photos now exist\n  const placeholderPath = path.join(PHOTO_DIR, '000-placeholder.png');\n  try {\n    const files = fs.readdirSync(PHOTO_DIR).filter(f => /\\.(jpg|jpeg|png|webp)$/i.test(f) && !f.startsWith('.') && f !== '000-placeholder.png');\n    if (files.length > 0 && fs.existsSync(placeholderPath)) {\n      fs.unlinkSync(placeholderPath);\n    }\n  } catch (e) {}\n\n  // Count photos for response\n  const photoCount = fs.readdirSync(PHOTO_DIR).filter(f => /\\.(jpg|jpeg|png|webp)$/i.test(f) && !f.startsWith('.')).length;\n\n  return [{ json: { success: true, filename: finalName, photoCount } }];\n\n} catch (err) {\n  return [{ json: { success: false, error: 'Upload failed: ' + (err.message || 'Unknown error') } }];\n}\n"
+      }
+    },
+    {
+      "id": "check-success",
+      "name": "Check Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [500, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "is-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [700, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, filename: $json.filename, photoCount: $json.photoCount }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [700, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate and Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and Save": {
+      "main": [
+        [
+          {
+            "node": "Check Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Success": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": true
+}
