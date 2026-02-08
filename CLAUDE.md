@@ -271,6 +271,57 @@ tailscale status
 tailscale serve status
 ```
 
+## Profiling & Debugging
+
+### Installed Tools
+
+| Tool | Package | Purpose |
+|------|---------|---------|
+| `strace` | `strace` | Syscall tracer for debugging service issues |
+| `nix-tree` | `nix-tree` | Interactive closure size browser |
+
+### Nix Evaluation Profiling
+
+Profile where eval time is spent (built into Nix 2.31+, no extra tools needed):
+
+```bash
+# Generate collapsed stack trace
+nix eval --eval-profiler flamegraph --eval-profile-file /tmp/eval.folded \
+  .#nixosConfigurations.rpi5-full.config.system.build.toplevel
+
+# Visualize: upload /tmp/eval.folded to https://speedscope.app
+# Or generate SVG:
+nix shell nixpkgs#flamegraph -c flamegraph.pl /tmp/eval.folded > /tmp/eval.svg
+```
+
+**Note:** Sampling-based - trivial expressions produce empty output. Flake eval is complex enough to work.
+
+### On-Demand Tools (not installed, use via nix shell)
+
+```bash
+nix shell nixpkgs#flamegraph          # Flamegraph visualization
+nix shell nixpkgs#nix-output-monitor  # Pretty build output (nom)
+nix shell nixpkgs#nvd                 # Diff NixOS generations
+nix shell github:Kha/nixprof          # Deeper Nix eval tracing
+nix shell nixpkgs#statix              # Nix linter
+nix shell nixpkgs#deadnix             # Find unused Nix code
+```
+
+### RPi5 Memory & Resource Monitoring
+
+```bash
+systemd-cgtop                    # Per-service CPU/memory/IO (requires reboot for memory after PR #202)
+cat /proc/pressure/memory        # PSI memory pressure (requires reboot for psi=1)
+systemctl status earlyoom        # OOM killer status
+journalctl -u earlyoom -f        # Watch earlyoom decisions
+```
+
+**Important:** `cgroup_enable=memory` and `psi=1` boot params were added in PR #202 but require a **reboot** to take effect. Verify: `grep -q "cgroup_enable=memory" /proc/cmdline && echo "Applied" || echo "Reboot required"`. Until then, `systemd-cgtop` won't show memory columns and `/proc/pressure/` won't exist.
+
+### perf (NOT available)
+
+`linuxPackages.perf` has a kernel version mismatch (perf 6.18.2 vs running kernel 6.12.34). Do not add until the nixos-raspberrypi module updates.
+
 ## Service Configuration Notes
 
 ### Localhost Binding
