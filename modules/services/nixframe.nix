@@ -48,12 +48,22 @@ let
     mkdir -p "$CACHE_DIR"
 
     # Fetch if cache missing or >30min old
+    # Use flock to prevent concurrent fetches (all 5 defpolls fire at once on startup)
+    # and atomic mv to prevent partial reads
     NOW=$(${pkgs.coreutils}/bin/date +%s)
     if [ ! -f "$CACHE" ] || [ $(( NOW - $(${pkgs.coreutils}/bin/stat -c %Y "$CACHE") )) -gt 1800 ]; then
-      RESPONSE=$(${pkgs.curl}/bin/curl -sf --max-time 10 'https://wttr.in/${weatherCfg.location}?format=j1' 2>/dev/null || true)
-      if [ -n "$RESPONSE" ]; then
-        echo "$RESPONSE" > "$CACHE"
-      fi
+      (
+        ${pkgs.util-linux}/bin/flock -n 9 || exit 0  # Another slot is already fetching
+        # Re-check after acquiring lock (another process may have just written)
+        if [ ! -f "$CACHE" ] || [ $(( $(${pkgs.coreutils}/bin/date +%s) - $(${pkgs.coreutils}/bin/stat -c %Y "$CACHE") )) -gt 1800 ]; then
+          RESPONSE=$(${pkgs.curl}/bin/curl -sf --max-time 10 'https://wttr.in/${weatherCfg.location}?format=j1' 2>/dev/null || true)
+          if [ -n "$RESPONSE" ]; then
+            TMP="$CACHE_DIR/.weather-full.tmp.$$"
+            echo "$RESPONSE" > "$TMP"
+            ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
+          fi
+        fi
+      ) 9>"$CACHE_DIR/.weather.lock"
     fi
 
     if [ ! -f "$CACHE" ]; then
@@ -172,7 +182,6 @@ let
       padding: 0 20px;
       font-size: 36px;
       color: #e8a948;
-      white-space: pre-line;
     }
 
     .forecast-divider {
