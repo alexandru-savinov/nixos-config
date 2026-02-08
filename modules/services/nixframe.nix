@@ -25,6 +25,119 @@ with lib;
 
 let
   cfg = config.services.nixframe;
+  weatherCfg = cfg.weather;
+
+  # Width of forecast bar = display width minus sidebar, so it doesn't render under the sidebar
+  forecastWidth =
+    let
+      parts = lib.splitString "x" cfg.resolution;
+    in
+    lib.toInt (builtins.head parts) - cfg.sidebarWidth;
+
+  # Forecast script — fetches wttr.in JSON, caches it, outputs one field.
+  # Called as: nixframe-forecast-slot <slot-index> <field>
+  # Fields: label, temp, desc, feels
+  forecastScript = pkgs.writeShellScript "nixframe-forecast-slot" ''
+    set -euo pipefail
+
+    # Slot definitions: wttr.in hourly[] indices for 06,12,15,18,21
+    SLOTS=(2 4 5 6 7)
+    LABELS=("Morning" "Midday" "Afternoon" "Evening" "Night")
+
+    SLOT_IDX="''${1:-0}"
+    FIELD="''${2:-label}"
+    if [ "$SLOT_IDX" -lt 0 ] || [ "$SLOT_IDX" -gt 4 ]; then
+      echo "Error: slot index must be 0-4" >&2
+      exit 1
+    fi
+
+    # After 18:00, show tomorrow's forecast instead of today's.
+    # wttr.in returns .weather[0]=today, .weather[1]=tomorrow
+    HOUR=$(${pkgs.coreutils}/bin/date +%-H)
+    if [ "$HOUR" -ge 18 ]; then
+      DAY_IDX=1
+      # Get tomorrow's short day name for labels (e.g. "Mon")
+      TOMORROW=$(${pkgs.coreutils}/bin/date -d '+1 day' +%a)
+    else
+      DAY_IDX=0
+      TOMORROW=""
+    fi
+
+    CACHE_DIR="/var/lib/nixframe/.cache"
+    CACHE="$CACHE_DIR/weather-full.json"
+    mkdir -p "$CACHE_DIR"
+
+    # Fetch if cache missing or >30min old
+    # Use flock to prevent concurrent fetches (all 20 defpolls fire at once on startup)
+    # and atomic mv to prevent partial reads.
+    # stat can fail if the file is deleted between -f check and stat call (TOCTOU);
+    # default to 0 so the fetch proceeds.
+    CACHE_AGE=$(${pkgs.coreutils}/bin/stat -c %Y "$CACHE" 2>/dev/null || echo 0)
+    NOW=$(${pkgs.coreutils}/bin/date +%s)
+    if [ "$CACHE_AGE" -eq 0 ] || [ $(( NOW - CACHE_AGE )) -gt 1800 ]; then
+      (
+        ${pkgs.util-linux}/bin/flock -n 9 || exit 0  # Another slot is already fetching
+        # Re-check after acquiring lock (another process may have just written)
+        CACHE_AGE2=$(${pkgs.coreutils}/bin/stat -c %Y "$CACHE" 2>/dev/null || echo 0)
+        NOW2=$(${pkgs.coreutils}/bin/date +%s)
+        if [ "$CACHE_AGE2" -eq 0 ] || [ $(( NOW2 - CACHE_AGE2 )) -gt 1800 ]; then
+          TMP="$CACHE_DIR/.weather-full.tmp.$$"
+          trap 'rm -f "$TMP"' EXIT
+          RESPONSE=$(${pkgs.curl}/bin/curl -sf --max-time 10 'https://wttr.in/${weatherCfg.location}?format=j1' 2>&1 || true)
+          if echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e '.weather' >/dev/null 2>&1; then
+            echo "$RESPONSE" > "$TMP"
+            ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
+          elif [ -n "$RESPONSE" ]; then
+            echo "WARNING: wttr.in returned invalid data: ''${RESPONSE:0:200}" >&2
+          else
+            echo "WARNING: wttr.in fetch failed (network error or timeout)" >&2
+          fi
+        fi
+      ) 9>"$CACHE_DIR/.weather.lock"
+    fi
+
+    # "day" field doesn't need cache — just returns the context label
+    if [ "$FIELD" = "day" ]; then
+      if [ "$DAY_IDX" -eq 1 ]; then
+        echo "Tomorrow, $TOMORROW"
+      else
+        echo "Today"
+      fi
+      exit 0
+    fi
+
+    if [ ! -f "$CACHE" ]; then
+      case "$FIELD" in
+        label) echo "''${LABELS[$SLOT_IDX]}" ;;
+        temp)  echo "--" ;;
+        desc)  echo "No data" ;;
+        feels) echo "" ;;
+      esac
+      exit 0
+    fi
+
+    IDX=''${SLOTS[$SLOT_IDX]}
+    ENTRY=$(${pkgs.jq}/bin/jq -r ".weather[$DAY_IDX].hourly[$IDX] // empty" "$CACHE")
+
+    # Guard against null/missing entries (e.g. tomorrow's data not yet available)
+    if [ -z "$ENTRY" ] || [ "$ENTRY" = "null" ]; then
+      case "$FIELD" in
+        label) echo "''${LABELS[$SLOT_IDX]}" ;;
+        temp)  echo "--" ;;
+        desc)  echo "No data" ;;
+        feels) echo "" ;;
+      esac
+      exit 0
+    fi
+
+    case "$FIELD" in
+      label) echo "''${LABELS[$SLOT_IDX]}" ;;
+      temp)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.tempC // "--"')°C" ;;
+      desc)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.weatherDesc[0].value // "No data"')" ;;
+      feels) echo "Feels $(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.FeelsLikeC // "--"')°C" ;;
+      *)     echo "Error: unknown field '$FIELD'" >&2; exit 1 ;;
+    esac
+  '';
 
   # Placeholder SVG for when no photos exist yet
   placeholderImage = pkgs.writeText "nixframe-placeholder.svg" ''
@@ -61,6 +174,66 @@ let
       (box :class "sidebar" :orientation "v" :valign "center" :space-evenly false :spacing 20
         (label :class "clock" :text clock-time)
         (label :class "date"  :text clock-date)))
+
+    ${optionalString weatherCfg.enable ''
+    (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
+    (defpoll forecast-0-label :interval "300s" "${forecastScript} 0 label")
+    (defpoll forecast-0-temp  :interval "300s" "${forecastScript} 0 temp")
+    (defpoll forecast-0-desc  :interval "300s" "${forecastScript} 0 desc")
+    (defpoll forecast-0-feels :interval "300s" "${forecastScript} 0 feels")
+    (defpoll forecast-1-label :interval "300s" "${forecastScript} 1 label")
+    (defpoll forecast-1-temp  :interval "300s" "${forecastScript} 1 temp")
+    (defpoll forecast-1-desc  :interval "300s" "${forecastScript} 1 desc")
+    (defpoll forecast-1-feels :interval "300s" "${forecastScript} 1 feels")
+    (defpoll forecast-2-label :interval "300s" "${forecastScript} 2 label")
+    (defpoll forecast-2-temp  :interval "300s" "${forecastScript} 2 temp")
+    (defpoll forecast-2-desc  :interval "300s" "${forecastScript} 2 desc")
+    (defpoll forecast-2-feels :interval "300s" "${forecastScript} 2 feels")
+    (defpoll forecast-3-label :interval "300s" "${forecastScript} 3 label")
+    (defpoll forecast-3-temp  :interval "300s" "${forecastScript} 3 temp")
+    (defpoll forecast-3-desc  :interval "300s" "${forecastScript} 3 desc")
+    (defpoll forecast-3-feels :interval "300s" "${forecastScript} 3 feels")
+    (defpoll forecast-4-label :interval "300s" "${forecastScript} 4 label")
+    (defpoll forecast-4-temp  :interval "300s" "${forecastScript} 4 temp")
+    (defpoll forecast-4-desc  :interval "300s" "${forecastScript} 4 desc")
+    (defpoll forecast-4-feels :interval "300s" "${forecastScript} 4 feels")
+
+    (defwindow forecast
+      :monitor 0
+      :geometry (geometry :width "${toString forecastWidth}px" :height "${toString weatherCfg.forecastHeight}px" :anchor "bottom center")
+      :stacking "fg"
+      :exclusive true
+      :focusable false
+      (box :class "forecast-bar" :orientation "h" :halign "fill" :space-evenly false
+        (box :class "forecast-day-box" :orientation "v" :valign "center"
+          (label :class "forecast-day" :text forecast-day))
+        (box :orientation "h" :halign "fill" :space-evenly true :hexpand true
+        (box :class "forecast-slot" :orientation "v" :spacing 4
+          (label :class "forecast-label" :text forecast-0-label)
+          (label :class "forecast-temp"  :text forecast-0-temp)
+          (label :class "forecast-desc"  :text forecast-0-desc)
+          (label :class "forecast-feels" :text forecast-0-feels))
+        (box :class "forecast-slot" :orientation "v" :spacing 4
+          (label :class "forecast-label" :text forecast-1-label)
+          (label :class "forecast-temp"  :text forecast-1-temp)
+          (label :class "forecast-desc"  :text forecast-1-desc)
+          (label :class "forecast-feels" :text forecast-1-feels))
+        (box :class "forecast-slot" :orientation "v" :spacing 4
+          (label :class "forecast-label" :text forecast-2-label)
+          (label :class "forecast-temp"  :text forecast-2-temp)
+          (label :class "forecast-desc"  :text forecast-2-desc)
+          (label :class "forecast-feels" :text forecast-2-feels))
+        (box :class "forecast-slot" :orientation "v" :spacing 4
+          (label :class "forecast-label" :text forecast-3-label)
+          (label :class "forecast-temp"  :text forecast-3-temp)
+          (label :class "forecast-desc"  :text forecast-3-desc)
+          (label :class "forecast-feels" :text forecast-3-feels))
+        (box :class "forecast-slot" :orientation "v" :spacing 4
+          (label :class "forecast-label" :text forecast-4-label)
+          (label :class "forecast-temp"  :text forecast-4-temp)
+          (label :class "forecast-desc"  :text forecast-4-desc)
+          (label :class "forecast-feels" :text forecast-4-feels)))))
+    ''}
   '';
 
   # Eww styling (scss)
@@ -86,10 +259,80 @@ let
       font-weight: 400;
       color: #cccccc;
     }
+
+    ${optionalString weatherCfg.enable ''
+    .forecast-bar {
+      background-color: rgba(0, 0, 0, 0.90);
+      padding: 16px 40px;
+    }
+
+    .forecast-slot {
+      padding: 6px 38px;
+      border-left: 2px solid rgba(196, 168, 130, 0.25);
+    }
+
+    .forecast-slot:first-child {
+      border-left: none;
+    }
+
+    .forecast-day-box {
+      padding: 0 24px 0 0;
+    }
+
+    .forecast-day {
+      font-size: 28px;
+      font-weight: 600;
+      color: #c4a882;
+      letter-spacing: 2px;
+      padding-left: 38px;
+    }
+
+    .forecast-label {
+      font-size: 30px;
+      font-weight: 500;
+      color: #a89478;
+      letter-spacing: 1px;
+    }
+
+    .forecast-temp {
+      font-size: 64px;
+      font-weight: 700;
+      color: #eba63c;
+      margin-top: 2px;
+    }
+
+    .forecast-desc {
+      font-size: 30px;
+      color: #ecdcc8;
+      margin-top: 2px;
+    }
+
+    .forecast-feels {
+      font-size: 36px;
+      font-weight: 500;
+      color: #b89070;
+      margin-top: 4px;
+    }
+    ''}
   '';
 
   # imv wrapper script — starts slideshow with crash backoff
   imvStart = pkgs.writeShellScript "nixframe-imv-start" ''
+    # Ensure only one imv-start instance runs at a time.
+    # If an old script from a prior sway session holds the lock, kill its imv
+    # and wait for it to exit (the swaymsg check will make it exit on next loop).
+    LOCKFILE="/run/user/$(id -u)/.imv-start.lock"
+    exec 8>"$LOCKFILE"
+    if ! ${pkgs.util-linux}/bin/flock -n 8; then
+      echo "Lock held by old imv-start, killing stale imv to reclaim..." >&2
+      ${pkgs.procps}/bin/pkill -u "$(id -u)" imv-wayland 2>/dev/null || true
+      sleep 3
+      if ! ${pkgs.util-linux}/bin/flock -n 8; then
+        echo "FATAL: Still locked after kill, cannot start imv." >&2
+        exit 1
+      fi
+    fi
+
     PHOTO_DIR="${cfg.photoDir}"
 
     # Ensure placeholder exists if no photos uploaded yet
@@ -104,10 +347,11 @@ let
     FAIL_COUNT=0
     MAX_FAILS=5
     while true; do
-      # Exit if Sway is gone (e.g. after nixos-rebuild restarts getty@tty7).
-      # Without this check, orphaned imv spins at 100% CPU on a dead POLLHUP socket.
-      if [ -n "$SWAYSOCK" ] && [ ! -e "$SWAYSOCK" ]; then
-        echo "Sway socket gone ($SWAYSOCK), exiting." >&2
+      # Exit if Sway is gone. Use swaymsg instead of checking socket file
+      # existence, because stale sway sockets persist after sway exits.
+      # Timeout prevents hang if sway is stuck (e.g. GPU deadlock).
+      if [ -n "$SWAYSOCK" ] && ! ${pkgs.coreutils}/bin/timeout 5 ${pkgs.sway}/bin/swaymsg -t get_version >/dev/null 2>&1; then
+        echo "Sway not responding ($SWAYSOCK), exiting." >&2
         exit 0
       fi
 
@@ -135,58 +379,92 @@ let
     done
   '';
 
-  # Eww wrapper script — starts daemon then opens sidebar with crash backoff
+  # Eww wrapper script — starts daemon then opens sidebar (no crash-recovery loop).
+  # Previous version had a while-true loop that caused "blipping" — the old script
+  # from a prior sway session held the flock with a stale SWAYSOCK, and its loop
+  # kept killing/restarting the daemon every ~20 seconds.
   ewwStart = pkgs.writeShellScript "nixframe-eww-start" ''
     # Setup eww config directory
     mkdir -p "$HOME/.config/eww"
     ln -sf ${ewwYuck} "$HOME/.config/eww/eww.yuck"
     ln -sf ${ewwScss} "$HOME/.config/eww/eww.scss"
 
-    # Start eww daemon, then open sidebar
-    # Crash backoff: if eww crashes rapidly 5 times, stop to avoid CPU burn
-    FAIL_COUNT=0
-    MAX_FAILS=5
-    while true; do
-      # Exit if Sway is gone (e.g. after nixos-rebuild restarts getty@tty7)
-      if [ -n "$SWAYSOCK" ] && [ ! -e "$SWAYSOCK" ]; then
-        echo "Sway socket gone ($SWAYSOCK), exiting." >&2
-        ${pkgs.eww}/bin/eww kill 2>&1 || true
-        exit 0
-      fi
-
-      # Kill any stale eww instance from previous iteration or prior run
+    # Ensure only one eww-start instance runs at a time.
+    # If an old script from a previous sway session is still running,
+    # kill its eww daemon (which makes the old script's wait return and exit),
+    # then take the lock.
+    LOCKFILE="/run/user/$(id -u)/.eww-start.lock"
+    exec 8>"$LOCKFILE"
+    if ! ${pkgs.util-linux}/bin/flock -n 8; then
+      echo "Lock held by old eww-start, killing stale daemon to reclaim..." >&2
       ${pkgs.eww}/bin/eww kill 2>&1 || true
-      sleep 1
-
-      START_TIME=$(date +%s)
-      ${pkgs.eww}/bin/eww daemon --no-daemonize &
-      EWW_PID=$!
       sleep 2
-      if ! ${pkgs.eww}/bin/eww open sidebar; then
-        echo "WARNING: eww open sidebar failed" >&2
+      if ! ${pkgs.util-linux}/bin/flock -n 8; then
+        echo "FATAL: Still locked after kill, cannot start eww." >&2
+        exit 1
       fi
-      # Wait for eww daemon to exit (crash recovery)
-      wait $EWW_PID
-      EXIT_CODE=$?
-      RUNTIME=$(( $(date +%s) - START_TIME ))
+    fi
 
-      if [ $EXIT_CODE -ne 0 ]; then
-        echo "eww exited with code $EXIT_CODE after ''${RUNTIME}s" >&2
-        if [ $RUNTIME -lt 10 ]; then
-          FAIL_COUNT=$((FAIL_COUNT + 1))
-          echo "Rapid failure $FAIL_COUNT/$MAX_FAILS" >&2
-          if [ $FAIL_COUNT -ge $MAX_FAILS ]; then
-            echo "FATAL: eww crashed $MAX_FAILS times rapidly. Giving up. Check display configuration." >&2
-            exit 1
-          fi
-        else
-          FAIL_COUNT=0
+    # Clean up stale sway sockets from previous sessions (after flock,
+    # so only the lock holder touches sockets). Only remove sockets
+    # whose embedded PID is no longer alive.
+    if [ -n "$SWAYSOCK" ]; then
+      for sock in /run/user/$(id -u)/sway-ipc.*.sock; do
+        [ "$sock" = "$SWAYSOCK" ] && continue
+        # Extract PID from socket name: sway-ipc.<UID>.<PID>.sock
+        SOCK_PID=$(echo "$sock" | ${pkgs.gnused}/bin/sed -n 's/.*sway-ipc\.[0-9]*\.\([0-9]*\)\.sock/\1/p')
+        if [ -n "$SOCK_PID" ] && ! kill -0 "$SOCK_PID" 2>/dev/null; then
+          rm -f "$sock" 2>/dev/null
         fi
-      else
-        FAIL_COUNT=0
+      done
+    fi
+
+    # Clean up on signals (sway exit sends SIGHUP/SIGTERM to children)
+    cleanup() {
+      echo "Signal received, shutting down eww..." >&2
+      ${pkgs.eww}/bin/eww kill 2>&1 || true
+      exit 0
+    }
+    trap cleanup SIGTERM SIGHUP SIGINT
+
+    # Kill any stale eww daemon from a prior run
+    ${pkgs.eww}/bin/eww kill 2>&1 || true
+    sleep 1
+
+    # Start eww daemon in foreground-mode (backgrounded so we can open windows)
+    ${pkgs.eww}/bin/eww daemon --no-daemonize &
+    EWW_PID=$!
+
+    # Wait for eww daemon IPC to be ready before opening windows.
+    # Without this, `eww open` spawns a NEW daemon (race condition),
+    # causing duplicate windows and stacked exclusive zones.
+    EWW_READY=false
+    for i in $(seq 1 20); do
+      if ${pkgs.eww}/bin/eww ping 2>/dev/null; then
+        EWW_READY=true
+        break
       fi
-      sleep 5
+      sleep 0.5
     done
+    if [ "$EWW_READY" = false ]; then
+      echo "WARNING: eww daemon did not respond to ping after 10s, attempting to open windows anyway" >&2
+    fi
+
+    if ! ${pkgs.eww}/bin/eww open sidebar; then
+      echo "WARNING: eww open sidebar failed" >&2
+    fi
+    ${optionalString weatherCfg.enable ''
+    if ! ${pkgs.eww}/bin/eww open forecast; then
+      echo "WARNING: eww open forecast failed" >&2
+    fi
+    ''}
+
+    # Block until eww daemon exits. No restart loop — the daemon is stable.
+    # If sway restarts, it sends SIGHUP → cleanup trap fires → clean exit.
+    wait $EWW_PID
+    EWW_EXIT=$?
+    echo "eww daemon exited (code $EWW_EXIT), script ending." >&2
+    exit $EWW_EXIT
   '';
 
   # Generated Sway config
@@ -256,6 +534,22 @@ in
       default = 7;
       description = "Virtual terminal for nixframe auto-login (avoids conflict with TTY1 btop).";
     };
+
+    weather = {
+      enable = mkEnableOption "weather forecast bar at the bottom of the display";
+
+      location = mkOption {
+        type = types.str;
+        default = "Chisinau";
+        description = "Location for wttr.in weather queries.";
+      };
+
+      forecastHeight = mkOption {
+        type = types.int;
+        default = 280;
+        description = "Height of the bottom forecast bar in pixels.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -286,6 +580,8 @@ in
       "d ${cfg.photoDir} 0775 nixframe nixframe -"
       # Seed the trigger file so systemd.paths has something to watch on first boot
       "f ${cfg.photoDir}/.trigger 0664 nixframe nixframe -"
+    ] ++ optionals weatherCfg.enable [
+      "d /var/lib/nixframe/.cache 0750 nixframe nixframe -"
     ];
 
     # ──────────────────────────────────────────────────────────────
