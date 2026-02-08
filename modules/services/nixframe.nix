@@ -7,6 +7,10 @@
 #   getty auto-login (VT 7) → Sway compositor → imv slideshow + Eww sidebar
 #   n8n webhooks → validate → convert → atomic save → systemd.paths reload
 #
+# Optional widgets:
+#   Weather — polls wttr.in, shows temperature + description in sidebar
+#   Calendar — syncs iCloud CalDAV via vdirsyncer, shows upcoming events via khal
+#
 # Display isolation:
 #   VT 1: root auto-login + btop (plain console, output depends on fbcon)
 #   VT 7: nixframe auto-login + Sway (configured to target HDMI-A-2 only)
@@ -14,6 +18,8 @@
 #
 # Usage in host configuration:
 #   services.nixframe.enable = true;
+#   services.nixframe.weather.enable = true;
+#   services.nixframe.calendar.enable = true;
 #   # All defaults match RPi5 + Samsung 4K TV on HDMI-A-2
 #
 # Access upload form via Tailscale HTTPS:
@@ -25,6 +31,18 @@ with lib;
 
 let
   cfg = config.services.nixframe;
+
+  # ──────────────────────────────────────────────────────────────
+  # Theme: Warm Ambient palette
+  # ──────────────────────────────────────────────────────────────
+  colors = {
+    bg = "rgba(30, 25, 20, 0.80)";
+    clock = "#f5e6d3";
+    date = "#c4a882";
+    weather = "#e8a948";
+    calendar = "#a8b88c";
+    divider = "rgba(196, 168, 130, 0.25)";
+  };
 
   # Placeholder SVG for when no photos exist yet
   placeholderImage = pkgs.writeText "nixframe-placeholder.svg" ''
@@ -47,10 +65,121 @@ let
     convert ${placeholderImage} -resize 1920x1080 $out
   '';
 
-  # Eww widget definition (yuck)
+  # ──────────────────────────────────────────────────────────────
+  # Weather polling script
+  # ──────────────────────────────────────────────────────────────
+  weatherScript = pkgs.writeShellScript "nixframe-weather" ''
+    CACHE_DIR="/var/lib/nixframe/.cache"
+    CACHE_FILE="$CACHE_DIR/weather.json"
+    MAX_AGE=7200  # 2 hours in seconds
+
+    # Try fetching fresh data
+    RESPONSE=$(${pkgs.curl}/bin/curl -sf --max-time 10 \
+      'https://wttr.in/${cfg.weather.location}?format=j1' 2>/dev/null)
+
+    if [ -n "$RESPONSE" ]; then
+      # Parse temperature and description
+      RESULT=$(echo "$RESPONSE" | ${pkgs.jq}/bin/jq -r \
+        '.current_condition[0] | "\(.temp_C)°C  \(.weatherDesc[0].value)"' 2>/dev/null)
+      if [ -n "$RESULT" ] && [ "$RESULT" != "null" ]; then
+        echo "$RESULT"
+        # Cache the result
+        mkdir -p "$CACHE_DIR"
+        echo "$RESULT" > "$CACHE_FILE"
+        exit 0
+      fi
+    fi
+
+    # Fallback: use cache if fresh enough
+    if [ -f "$CACHE_FILE" ]; then
+      FILE_AGE=$(( $(date +%s) - $(stat -c %Y "$CACHE_FILE") ))
+      if [ "$FILE_AGE" -lt "$MAX_AGE" ]; then
+        cat "$CACHE_FILE"
+        exit 0
+      fi
+    fi
+
+    echo "—"
+  '';
+
+  # ──────────────────────────────────────────────────────────────
+  # Calendar polling script
+  # ──────────────────────────────────────────────────────────────
+  calendarScript = pkgs.writeShellScript "nixframe-calendar" ''
+    export XDG_CONFIG_HOME="/var/lib/nixframe/.config"
+
+    RESULT=$(${pkgs.khal}/bin/khal list \
+      --format "{start-time} {title}" \
+      now ${toString cfg.calendar.daysAhead}d 2>/dev/null \
+      | ${pkgs.gnugrep}/bin/grep -v '^$' \
+      | head -${toString cfg.calendar.maxEvents})
+
+    if [ -n "$RESULT" ]; then
+      echo "$RESULT"
+    else
+      echo "No upcoming events"
+    fi
+  '';
+
+  # ──────────────────────────────────────────────────────────────
+  # vdirsyncer configuration
+  # ──────────────────────────────────────────────────────────────
+  vdirsyncerConfig = pkgs.writeText "vdirsyncer-nixframe.conf" ''
+    [general]
+    status_path = "/var/lib/nixframe/.local/share/vdirsyncer/status/"
+
+    [pair icloud]
+    a = "icloud_local"
+    b = "icloud_remote"
+    collections = ["from a", "from b"]
+    conflict_resolution = "b wins"
+
+    [storage icloud_local]
+    type = "filesystem"
+    path = "/var/lib/nixframe/.local/share/vdirsyncer/icloud/"
+    fileext = ".ics"
+
+    [storage icloud_remote]
+    type = "caldav"
+    url = "https://caldav.icloud.com"
+    username = "${cfg.calendar.username}"
+    password.fetch = ["command", "cat", "${cfg.calendar.passwordFile}"]
+  '';
+
+  # ──────────────────────────────────────────────────────────────
+  # khal configuration
+  # ──────────────────────────────────────────────────────────────
+  khalConfig = pkgs.writeText "khal-nixframe.conf" ''
+    [calendars]
+
+    [[icloud]]
+    path = /var/lib/nixframe/.local/share/vdirsyncer/icloud/*
+    type = discover
+
+    [locale]
+    timeformat = %H:%M
+    dateformat = %d/%m
+    longdateformat = %d/%m/%Y
+    datetimeformat = %d/%m %H:%M
+    longdatetimeformat = %d/%m/%Y %H:%M
+
+    [default]
+    default_calendar = icloud
+    timedelta = ${toString cfg.calendar.daysAhead}d
+  '';
+
+  # ──────────────────────────────────────────────────────────────
+  # Eww widget definition (yuck) — warm ambient with optional widgets
+  # ──────────────────────────────────────────────────────────────
   ewwYuck = pkgs.writeText "eww-nixframe.yuck" ''
     (defpoll clock-time :interval "1s" "date +%H:%M")
     (defpoll clock-date :interval "60s" "date '+%A, %B %-d'")
+    ${optionalString cfg.weather.enable ''
+    (defpoll weather-info :interval "1800s" "${weatherScript}")
+    ''}
+    ${optionalString cfg.calendar.enable ''
+    (defpoll calendar-info :interval "300s" "${calendarScript}")
+    ''}
 
     (defwindow sidebar
       :monitor 0
@@ -58,12 +187,30 @@ let
       :stacking "fg"
       :exclusive true
       :focusable false
-      (box :class "sidebar" :orientation "v" :valign "center" :space-evenly false :spacing 20
-        (label :class "clock" :text clock-time)
-        (label :class "date"  :text clock-date)))
+      (box :class "sidebar" :orientation "v" :valign "center" :space-evenly false :spacing 0
+        ;; Clock section
+        (box :class "section" :orientation "v" :space-evenly false :spacing 10
+          (label :class "clock" :text clock-time)
+          (label :class "date"  :text clock-date))
+        ${optionalString cfg.weather.enable ''
+        ;; Divider
+        (box :class "divider" :orientation "h")
+        ;; Weather section
+        (box :class "section" :orientation "v" :space-evenly false
+          (label :class "weather" :text weather-info))
+        ''}
+        ${optionalString cfg.calendar.enable ''
+        ;; Divider
+        (box :class "divider" :orientation "h")
+        ;; Calendar section
+        (box :class "section" :orientation "v" :space-evenly false
+          (label :class "calendar" :text calendar-info))
+        ''}))
   '';
 
-  # Eww styling (scss)
+  # ──────────────────────────────────────────────────────────────
+  # Eww styling (scss) — warm ambient theme
+  # ──────────────────────────────────────────────────────────────
   ewwScss = pkgs.writeText "eww-nixframe.scss" ''
     * {
       all: unset;
@@ -71,20 +218,43 @@ let
     }
 
     .sidebar {
-      background-color: rgba(0, 0, 0, 0.75);
+      background-color: ${colors.bg};
       padding: 40px;
+    }
+
+    .section {
+      padding: 20px 0;
+    }
+
+    .divider {
+      min-height: 2px;
+      background-color: ${colors.divider};
+      margin: 10px 20px;
     }
 
     .clock {
       font-size: 200px;
       font-weight: 700;
-      color: #ffffff;
+      color: ${colors.clock};
     }
 
     .date {
       font-size: 60px;
       font-weight: 400;
-      color: #cccccc;
+      color: ${colors.date};
+    }
+
+    .weather {
+      font-size: 48px;
+      font-weight: 500;
+      color: ${colors.weather};
+    }
+
+    .calendar {
+      font-size: 36px;
+      font-weight: 400;
+      color: ${colors.calendar};
+      white-space: pre-line;
     }
   '';
 
@@ -256,6 +426,46 @@ in
       default = 7;
       description = "Virtual terminal for nixframe auto-login (avoids conflict with TTY1 btop).";
     };
+
+    # ── Weather widget options ──────────────────────────────────
+    weather = {
+      enable = mkEnableOption "weather widget in NixFrame sidebar";
+
+      location = mkOption {
+        type = types.str;
+        default = "Chisinau";
+        description = "Location for wttr.in weather queries.";
+      };
+    };
+
+    # ── Calendar widget options ─────────────────────────────────
+    calendar = {
+      enable = mkEnableOption "iCloud calendar widget in NixFrame sidebar";
+
+      username = mkOption {
+        type = types.str;
+        default = "";
+        description = "iCloud account email for CalDAV sync.";
+      };
+
+      passwordFile = mkOption {
+        type = types.str;
+        default = "";
+        description = "Path to agenix-managed password file for iCloud CalDAV.";
+      };
+
+      maxEvents = mkOption {
+        type = types.int;
+        default = 5;
+        description = "Maximum number of upcoming events to display.";
+      };
+
+      daysAhead = mkOption {
+        type = types.int;
+        default = 7;
+        description = "Number of days ahead to query for events.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -280,13 +490,23 @@ in
     # ──────────────────────────────────────────────────────────────
     # Directories
     # ──────────────────────────────────────────────────────────────
-    systemd.tmpfiles.rules = [
-      # Home dir needs group traverse (0750) so n8n can reach photos/
-      "d /var/lib/nixframe 0750 nixframe nixframe -"
-      "d ${cfg.photoDir} 0775 nixframe nixframe -"
-      # Seed the trigger file so systemd.paths has something to watch on first boot
-      "f ${cfg.photoDir}/.trigger 0664 nixframe nixframe -"
-    ];
+    systemd.tmpfiles.rules =
+      [
+        # Home dir needs group traverse (0750) so n8n can reach photos/
+        "d /var/lib/nixframe 0750 nixframe nixframe -"
+        "d ${cfg.photoDir} 0775 nixframe nixframe -"
+        # Seed the trigger file so systemd.paths has something to watch on first boot
+        "f ${cfg.photoDir}/.trigger 0664 nixframe nixframe -"
+      ]
+      ++ optionals cfg.weather.enable [
+        "d /var/lib/nixframe/.cache 0755 nixframe nixframe -"
+      ]
+      ++ optionals cfg.calendar.enable [
+        "d /var/lib/nixframe/.local/share/vdirsyncer/status 0700 nixframe nixframe -"
+        "d /var/lib/nixframe/.local/share/vdirsyncer/icloud 0700 nixframe nixframe -"
+        "d /var/lib/nixframe/.config/vdirsyncer 0700 nixframe nixframe -"
+        "d /var/lib/nixframe/.config/khal 0700 nixframe nixframe -"
+      ];
 
     # ──────────────────────────────────────────────────────────────
     # GPU / Display prerequisites
@@ -397,13 +617,66 @@ in
     };
 
     # ──────────────────────────────────────────────────────────────
+    # Calendar sync — vdirsyncer + khal (conditional)
+    # ──────────────────────────────────────────────────────────────
+    systemd.timers.nixframe-calendar-sync = mkIf cfg.calendar.enable {
+      description = "Sync iCloud calendar for NixFrame";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2min";
+        OnUnitActiveSec = "15min";
+        Persistent = true;
+      };
+    };
+
+    systemd.services.nixframe-calendar-sync = mkIf cfg.calendar.enable {
+      description = "Sync iCloud calendar via vdirsyncer";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        User = "nixframe";
+        Group = "nixframe";
+      };
+      # Link configs at runtime so vdirsyncer/khal find them
+      # Run discover on first sync to detect calendar collections
+      script = ''
+        mkdir -p /var/lib/nixframe/.config/vdirsyncer
+        mkdir -p /var/lib/nixframe/.config/khal
+        ln -sf ${vdirsyncerConfig} /var/lib/nixframe/.config/vdirsyncer/config
+        ln -sf ${khalConfig} /var/lib/nixframe/.config/khal/config
+
+        export XDG_CONFIG_HOME="/var/lib/nixframe/.config"
+        export XDG_DATA_HOME="/var/lib/nixframe/.local/share"
+
+        STATUS_DIR="/var/lib/nixframe/.local/share/vdirsyncer/status"
+        if [ ! -d "$STATUS_DIR" ] || [ -z "$(ls -A "$STATUS_DIR" 2>/dev/null)" ]; then
+          echo "First sync: running vdirsyncer discover..."
+          ${pkgs.vdirsyncer}/bin/vdirsyncer discover icloud || true
+        fi
+
+        ${pkgs.vdirsyncer}/bin/vdirsyncer sync icloud
+      '';
+    };
+
+    # ──────────────────────────────────────────────────────────────
     # Packages
     # ──────────────────────────────────────────────────────────────
-    environment.systemPackages = with pkgs; [
-      imv # Photo viewer
-      eww # Widget sidebar
-      sway # Compositor (for swaymsg CLI from SSH)
-      imagemagick # HEIC conversion + EXIF orient (used by n8n workflow)
-    ];
+    environment.systemPackages =
+      with pkgs;
+      [
+        imv # Photo viewer
+        eww # Widget sidebar
+        sway # Compositor (for swaymsg CLI from SSH)
+        imagemagick # HEIC conversion + EXIF orient (used by n8n workflow)
+      ]
+      ++ optionals cfg.weather.enable [
+        curl # Weather API calls
+        jq # JSON parsing
+      ]
+      ++ optionals cfg.calendar.enable [
+        vdirsyncer # CalDAV sync
+        khal # Calendar CLI
+      ];
   };
 }

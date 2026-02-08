@@ -470,7 +470,30 @@
   # ──────────────────────────────────────────────────────────────
   # Displays rotating slideshow with clock sidebar on the TV.
   # Upload photos: https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui
-  services.nixframe.enable = true;
+  services.nixframe = {
+    enable = true;
+
+    # Weather widget — shows temperature + description from wttr.in
+    weather = {
+      enable = true;
+      location = "Chisinau";
+    };
+
+    # Calendar widget — syncs iCloud CalDAV, shows upcoming events
+    calendar = {
+      enable = true;
+      username = "savinalexandru90@gmail.com";
+      passwordFile = config.age.secrets.icloud-nixframe-password.path;
+    };
+  };
+
+  # iCloud calendar password for NixFrame vdirsyncer sync
+  age.secrets.icloud-nixframe-password = {
+    file = "${self}/secrets/icloud-nixframe-password.age";
+    owner = "nixframe";
+    group = "nixframe";
+    mode = "0400";
+  };
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)
