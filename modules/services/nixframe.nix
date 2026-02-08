@@ -25,6 +25,56 @@ with lib;
 
 let
   cfg = config.services.nixframe;
+  weatherCfg = cfg.weather;
+
+  # Forecast script — fetches wttr.in JSON, caches it, outputs one slot's data.
+  # Called as: nixframe-forecast-slot <slot-index>
+  # Returns 4 lines: label, temp, description, feels-like
+  forecastScript = pkgs.writeShellScript "nixframe-forecast-slot" ''
+    set -euo pipefail
+
+    # Slot definitions: wttr.in hourly[] indices for 06,12,15,18,21
+    SLOTS=(2 4 5 6 7)
+    LABELS=("Morning" "Midday" "Afternoon" "Evening" "Night")
+
+    SLOT_IDX="''${1:-0}"
+    if [ "$SLOT_IDX" -lt 0 ] || [ "$SLOT_IDX" -gt 4 ]; then
+      echo "Error: slot index must be 0-4" >&2
+      exit 1
+    fi
+
+    CACHE_DIR="/var/lib/nixframe/.cache"
+    CACHE="$CACHE_DIR/weather-full.json"
+    mkdir -p "$CACHE_DIR"
+
+    # Fetch if cache missing or >30min old
+    NOW=$(${pkgs.coreutils}/bin/date +%s)
+    if [ ! -f "$CACHE" ] || [ $(( NOW - $(${pkgs.coreutils}/bin/stat -c %Y "$CACHE") )) -gt 1800 ]; then
+      RESPONSE=$(${pkgs.curl}/bin/curl -sf --max-time 10 'https://wttr.in/${weatherCfg.location}?format=j1' 2>/dev/null || true)
+      if [ -n "$RESPONSE" ]; then
+        echo "$RESPONSE" > "$CACHE"
+      fi
+    fi
+
+    if [ ! -f "$CACHE" ]; then
+      echo "''${LABELS[$SLOT_IDX]}"
+      echo "--"
+      echo "No data"
+      echo ""
+      exit 0
+    fi
+
+    IDX=''${SLOTS[$SLOT_IDX]}
+    ENTRY=$(${pkgs.jq}/bin/jq -r ".weather[0].hourly[$IDX]" "$CACHE")
+    TEMP=$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.tempC')
+    DESC=$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.weatherDesc[0].value')
+    FEELS=$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.FeelsLikeC')
+
+    echo "''${LABELS[$SLOT_IDX]}"
+    echo "''${TEMP}°C"
+    echo "$DESC"
+    echo "Feels ''${FEELS}°C"
+  '';
 
   # Placeholder SVG for when no photos exist yet
   placeholderImage = pkgs.writeText "nixframe-placeholder.svg" ''
@@ -61,6 +111,31 @@ let
       (box :class "sidebar" :orientation "v" :valign "center" :space-evenly false :spacing 20
         (label :class "clock" :text clock-time)
         (label :class "date"  :text clock-date)))
+
+    ${optionalString weatherCfg.enable ''
+    (defpoll forecast-0 :interval "1800s" "${forecastScript} 0")
+    (defpoll forecast-1 :interval "1800s" "${forecastScript} 1")
+    (defpoll forecast-2 :interval "1800s" "${forecastScript} 2")
+    (defpoll forecast-3 :interval "1800s" "${forecastScript} 3")
+    (defpoll forecast-4 :interval "1800s" "${forecastScript} 4")
+
+    (defwindow forecast
+      :monitor 0
+      :geometry (geometry :width "100%" :height "${toString weatherCfg.forecastHeight}px" :anchor "bottom center")
+      :stacking "fg"
+      :exclusive true
+      :focusable false
+      (box :class "forecast-bar" :orientation "h" :halign "fill" :space-evenly true
+        (label :class "forecast-slot" :text forecast-0)
+        (box :class "forecast-divider")
+        (label :class "forecast-slot" :text forecast-1)
+        (box :class "forecast-divider")
+        (label :class "forecast-slot" :text forecast-2)
+        (box :class "forecast-divider")
+        (label :class "forecast-slot" :text forecast-3)
+        (box :class "forecast-divider")
+        (label :class "forecast-slot" :text forecast-4)))
+    ''}
   '';
 
   # Eww styling (scss)
@@ -86,6 +161,25 @@ let
       font-weight: 400;
       color: #cccccc;
     }
+
+    ${optionalString weatherCfg.enable ''
+    .forecast-bar {
+      background-color: rgba(30, 25, 20, 0.80);
+      padding: 15px 40px;
+    }
+
+    .forecast-slot {
+      padding: 0 20px;
+      font-size: 36px;
+      color: #e8a948;
+      white-space: pre-line;
+    }
+
+    .forecast-divider {
+      min-width: 1px;
+      background-color: rgba(196, 168, 130, 0.3);
+    }
+    ''}
   '';
 
   # imv wrapper script — starts slideshow with crash backoff
@@ -165,6 +259,11 @@ let
       if ! ${pkgs.eww}/bin/eww open sidebar; then
         echo "WARNING: eww open sidebar failed" >&2
       fi
+      ${optionalString weatherCfg.enable ''
+      if ! ${pkgs.eww}/bin/eww open forecast; then
+        echo "WARNING: eww open forecast failed" >&2
+      fi
+      ''}
       # Wait for eww daemon to exit (crash recovery)
       wait $EWW_PID
       EXIT_CODE=$?
@@ -256,6 +355,22 @@ in
       default = 7;
       description = "Virtual terminal for nixframe auto-login (avoids conflict with TTY1 btop).";
     };
+
+    weather = {
+      enable = mkEnableOption "weather forecast bar at the bottom of the display";
+
+      location = mkOption {
+        type = types.str;
+        default = "Chisinau";
+        description = "Location for wttr.in weather queries.";
+      };
+
+      forecastHeight = mkOption {
+        type = types.int;
+        default = 160;
+        description = "Height of the bottom forecast bar in pixels.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -286,6 +401,8 @@ in
       "d ${cfg.photoDir} 0775 nixframe nixframe -"
       # Seed the trigger file so systemd.paths has something to watch on first boot
       "f ${cfg.photoDir}/.trigger 0664 nixframe nixframe -"
+    ] ++ optionals weatherCfg.enable [
+      "d /var/lib/nixframe/.cache 0750 nixframe nixframe -"
     ];
 
     # ──────────────────────────────────────────────────────────────
