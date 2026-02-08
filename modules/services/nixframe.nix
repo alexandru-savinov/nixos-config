@@ -267,6 +267,7 @@ in
       group = "nixframe";
       extraGroups = [ "video" "input" ]; # DRM access for GPU rendering + libinput for Sway
       home = "/var/lib/nixframe";
+      homeMode = "0750"; # Group traverse so n8n (in nixframe group) can reach photos/
       createHome = true;
       description = "NixFrame photo frame display user";
     };
