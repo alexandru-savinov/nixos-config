@@ -183,30 +183,31 @@ let
       :stacking "fg"
       :exclusive true
       :focusable false
-      (box :class "forecast-bar" :orientation "v" :spacing 4
-        (label :class "forecast-day" :text forecast-day :halign "start")
-        (box :orientation "h" :halign "fill" :space-evenly true
-        (box :class "forecast-slot" :orientation "v" :spacing 8
+      (box :class "forecast-bar" :orientation "h" :halign "fill" :space-evenly false
+        (box :class "forecast-day-box" :orientation "v" :valign "center"
+          (label :class "forecast-day" :text forecast-day))
+        (box :orientation "h" :halign "fill" :space-evenly true :hexpand true
+        (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-0-label)
           (label :class "forecast-temp"  :text forecast-0-temp)
           (label :class "forecast-desc"  :text forecast-0-desc)
           (label :class "forecast-feels" :text forecast-0-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 8
+        (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-1-label)
           (label :class "forecast-temp"  :text forecast-1-temp)
           (label :class "forecast-desc"  :text forecast-1-desc)
           (label :class "forecast-feels" :text forecast-1-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 8
+        (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-2-label)
           (label :class "forecast-temp"  :text forecast-2-temp)
           (label :class "forecast-desc"  :text forecast-2-desc)
           (label :class "forecast-feels" :text forecast-2-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 8
+        (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-3-label)
           (label :class "forecast-temp"  :text forecast-3-temp)
           (label :class "forecast-desc"  :text forecast-3-desc)
           (label :class "forecast-feels" :text forecast-3-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 8
+        (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-4-label)
           (label :class "forecast-temp"  :text forecast-4-temp)
           (label :class "forecast-desc"  :text forecast-4-desc)
@@ -241,7 +242,7 @@ let
     ${optionalString weatherCfg.enable ''
     .forecast-bar {
       background-color: rgba(0, 0, 0, 0.90);
-      padding: 28px 40px;
+      padding: 16px 40px;
     }
 
     .forecast-slot {
@@ -253,13 +254,16 @@ let
       border-left: none;
     }
 
+    .forecast-day-box {
+      padding: 0 24px 0 0;
+    }
+
     .forecast-day {
-      font-size: 32px;
+      font-size: 28px;
       font-weight: 600;
       color: #c4a882;
       letter-spacing: 2px;
       padding-left: 38px;
-      margin-bottom: -4px;
     }
 
     .forecast-label {
@@ -270,23 +274,23 @@ let
     }
 
     .forecast-temp {
-      font-size: 74px;
+      font-size: 64px;
       font-weight: 700;
       color: #eba63c;
-      margin-top: 6px;
+      margin-top: 2px;
     }
 
     .forecast-desc {
-      font-size: 34px;
+      font-size: 30px;
       color: #ecdcc8;
-      margin-top: 4px;
+      margin-top: 2px;
     }
 
     .forecast-feels {
-      font-size: 42px;
+      font-size: 36px;
       font-weight: 500;
       color: #b89070;
-      margin-top: 8px;
+      margin-top: 4px;
     }
     ''}
   '';
@@ -506,7 +510,7 @@ in
 
       forecastHeight = mkOption {
         type = types.int;
-        default = 360;
+        default = 280;
         description = "Height of the bottom forecast bar in pixels.";
       };
     };
