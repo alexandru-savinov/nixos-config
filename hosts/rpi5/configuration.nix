@@ -282,7 +282,7 @@
     freeSwapThreshold = 10;
     enableNotifications = true;
     extraArgs = [
-      "--prefer" "^(open-webui)"
+      "--prefer" "(open-webui)"
       "--avoid" "^(sshd|tailscaled|n8n)"
     ];
   };
