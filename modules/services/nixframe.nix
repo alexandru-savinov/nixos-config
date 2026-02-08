@@ -69,18 +69,28 @@ let
 
     # Fetch if cache missing or >30min old
     # Use flock to prevent concurrent fetches (all 20 defpolls fire at once on startup)
-    # and atomic mv to prevent partial reads
+    # and atomic mv to prevent partial reads.
+    # stat can fail if the file is deleted between -f check and stat call (TOCTOU);
+    # default to 0 so the fetch proceeds.
+    CACHE_AGE=$(${pkgs.coreutils}/bin/stat -c %Y "$CACHE" 2>/dev/null || echo 0)
     NOW=$(${pkgs.coreutils}/bin/date +%s)
-    if [ ! -f "$CACHE" ] || [ $(( NOW - $(${pkgs.coreutils}/bin/stat -c %Y "$CACHE") )) -gt 1800 ]; then
+    if [ "$CACHE_AGE" -eq 0 ] || [ $(( NOW - CACHE_AGE )) -gt 1800 ]; then
       (
         ${pkgs.util-linux}/bin/flock -n 9 || exit 0  # Another slot is already fetching
         # Re-check after acquiring lock (another process may have just written)
-        if [ ! -f "$CACHE" ] || [ $(( $(${pkgs.coreutils}/bin/date +%s) - $(${pkgs.coreutils}/bin/stat -c %Y "$CACHE") )) -gt 1800 ]; then
-          RESPONSE=$(${pkgs.curl}/bin/curl -sf --max-time 10 'https://wttr.in/${weatherCfg.location}?format=j1' 2>/dev/null || true)
-          if [ -n "$RESPONSE" ]; then
-            TMP="$CACHE_DIR/.weather-full.tmp.$$"
+        CACHE_AGE2=$(${pkgs.coreutils}/bin/stat -c %Y "$CACHE" 2>/dev/null || echo 0)
+        NOW2=$(${pkgs.coreutils}/bin/date +%s)
+        if [ "$CACHE_AGE2" -eq 0 ] || [ $(( NOW2 - CACHE_AGE2 )) -gt 1800 ]; then
+          TMP="$CACHE_DIR/.weather-full.tmp.$$"
+          trap 'rm -f "$TMP"' EXIT
+          RESPONSE=$(${pkgs.curl}/bin/curl -sf --max-time 10 'https://wttr.in/${weatherCfg.location}?format=j1' 2>&1 || true)
+          if echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e '.weather' >/dev/null 2>&1; then
             echo "$RESPONSE" > "$TMP"
             ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
+          elif [ -n "$RESPONSE" ]; then
+            echo "WARNING: wttr.in returned invalid data: ''${RESPONSE:0:200}" >&2
+          else
+            echo "WARNING: wttr.in fetch failed (network error or timeout)" >&2
           fi
         fi
       ) 9>"$CACHE_DIR/.weather.lock"
@@ -107,13 +117,24 @@ let
     fi
 
     IDX=''${SLOTS[$SLOT_IDX]}
-    ENTRY=$(${pkgs.jq}/bin/jq -r ".weather[$DAY_IDX].hourly[$IDX]" "$CACHE")
+    ENTRY=$(${pkgs.jq}/bin/jq -r ".weather[$DAY_IDX].hourly[$IDX] // empty" "$CACHE")
+
+    # Guard against null/missing entries (e.g. tomorrow's data not yet available)
+    if [ -z "$ENTRY" ] || [ "$ENTRY" = "null" ]; then
+      case "$FIELD" in
+        label) echo "''${LABELS[$SLOT_IDX]}" ;;
+        temp)  echo "--" ;;
+        desc)  echo "No data" ;;
+        feels) echo "" ;;
+      esac
+      exit 0
+    fi
 
     case "$FIELD" in
       label) echo "''${LABELS[$SLOT_IDX]}" ;;
-      temp)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.tempC')°C" ;;
-      desc)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.weatherDesc[0].value')" ;;
-      feels) echo "Feels $(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.FeelsLikeC')°C" ;;
+      temp)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.tempC // "--"')°C" ;;
+      desc)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.weatherDesc[0].value // "No data"')" ;;
+      feels) echo "Feels $(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.FeelsLikeC // "--"')°C" ;;
       *)     echo "Error: unknown field '$FIELD'" >&2; exit 1 ;;
     esac
   '';
@@ -156,26 +177,26 @@ let
 
     ${optionalString weatherCfg.enable ''
     (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
-    (defpoll forecast-0-label :interval "1800s" "${forecastScript} 0 label")
-    (defpoll forecast-0-temp  :interval "1800s" "${forecastScript} 0 temp")
-    (defpoll forecast-0-desc  :interval "1800s" "${forecastScript} 0 desc")
-    (defpoll forecast-0-feels :interval "1800s" "${forecastScript} 0 feels")
-    (defpoll forecast-1-label :interval "1800s" "${forecastScript} 1 label")
-    (defpoll forecast-1-temp  :interval "1800s" "${forecastScript} 1 temp")
-    (defpoll forecast-1-desc  :interval "1800s" "${forecastScript} 1 desc")
-    (defpoll forecast-1-feels :interval "1800s" "${forecastScript} 1 feels")
-    (defpoll forecast-2-label :interval "1800s" "${forecastScript} 2 label")
-    (defpoll forecast-2-temp  :interval "1800s" "${forecastScript} 2 temp")
-    (defpoll forecast-2-desc  :interval "1800s" "${forecastScript} 2 desc")
-    (defpoll forecast-2-feels :interval "1800s" "${forecastScript} 2 feels")
-    (defpoll forecast-3-label :interval "1800s" "${forecastScript} 3 label")
-    (defpoll forecast-3-temp  :interval "1800s" "${forecastScript} 3 temp")
-    (defpoll forecast-3-desc  :interval "1800s" "${forecastScript} 3 desc")
-    (defpoll forecast-3-feels :interval "1800s" "${forecastScript} 3 feels")
-    (defpoll forecast-4-label :interval "1800s" "${forecastScript} 4 label")
-    (defpoll forecast-4-temp  :interval "1800s" "${forecastScript} 4 temp")
-    (defpoll forecast-4-desc  :interval "1800s" "${forecastScript} 4 desc")
-    (defpoll forecast-4-feels :interval "1800s" "${forecastScript} 4 feels")
+    (defpoll forecast-0-label :interval "300s" "${forecastScript} 0 label")
+    (defpoll forecast-0-temp  :interval "300s" "${forecastScript} 0 temp")
+    (defpoll forecast-0-desc  :interval "300s" "${forecastScript} 0 desc")
+    (defpoll forecast-0-feels :interval "300s" "${forecastScript} 0 feels")
+    (defpoll forecast-1-label :interval "300s" "${forecastScript} 1 label")
+    (defpoll forecast-1-temp  :interval "300s" "${forecastScript} 1 temp")
+    (defpoll forecast-1-desc  :interval "300s" "${forecastScript} 1 desc")
+    (defpoll forecast-1-feels :interval "300s" "${forecastScript} 1 feels")
+    (defpoll forecast-2-label :interval "300s" "${forecastScript} 2 label")
+    (defpoll forecast-2-temp  :interval "300s" "${forecastScript} 2 temp")
+    (defpoll forecast-2-desc  :interval "300s" "${forecastScript} 2 desc")
+    (defpoll forecast-2-feels :interval "300s" "${forecastScript} 2 feels")
+    (defpoll forecast-3-label :interval "300s" "${forecastScript} 3 label")
+    (defpoll forecast-3-temp  :interval "300s" "${forecastScript} 3 temp")
+    (defpoll forecast-3-desc  :interval "300s" "${forecastScript} 3 desc")
+    (defpoll forecast-3-feels :interval "300s" "${forecastScript} 3 feels")
+    (defpoll forecast-4-label :interval "300s" "${forecastScript} 4 label")
+    (defpoll forecast-4-temp  :interval "300s" "${forecastScript} 4 temp")
+    (defpoll forecast-4-desc  :interval "300s" "${forecastScript} 4 desc")
+    (defpoll forecast-4-feels :interval "300s" "${forecastScript} 4 feels")
 
     (defwindow forecast
       :monitor 0
@@ -307,8 +328,8 @@ let
       ${pkgs.procps}/bin/pkill -u "$(id -u)" imv-wayland 2>/dev/null || true
       sleep 3
       if ! ${pkgs.util-linux}/bin/flock -n 8; then
-        echo "Still locked after kill, exiting." >&2
-        exit 0
+        echo "FATAL: Still locked after kill, cannot start imv." >&2
+        exit 1
       fi
     fi
 
@@ -328,7 +349,8 @@ let
     while true; do
       # Exit if Sway is gone. Use swaymsg instead of checking socket file
       # existence, because stale sway sockets persist after sway exits.
-      if [ -n "$SWAYSOCK" ] && ! ${pkgs.sway}/bin/swaymsg -t get_version >/dev/null 2>&1; then
+      # Timeout prevents hang if sway is stuck (e.g. GPU deadlock).
+      if [ -n "$SWAYSOCK" ] && ! ${pkgs.coreutils}/bin/timeout 5 ${pkgs.sway}/bin/swaymsg -t get_version >/dev/null 2>&1; then
         echo "Sway not responding ($SWAYSOCK), exiting." >&2
         exit 0
       fi
@@ -367,15 +389,6 @@ let
     ln -sf ${ewwYuck} "$HOME/.config/eww/eww.yuck"
     ln -sf ${ewwScss} "$HOME/.config/eww/eww.scss"
 
-    # Clean up stale sway sockets from previous sessions.
-    # These accumulate and confuse SWAYSOCK-based liveness checks.
-    if [ -n "$SWAYSOCK" ]; then
-      for sock in /run/user/$(id -u)/sway-ipc.*.sock; do
-        [ "$sock" = "$SWAYSOCK" ] && continue
-        rm -f "$sock" 2>/dev/null
-      done
-    fi
-
     # Ensure only one eww-start instance runs at a time.
     # If an old script from a previous sway session is still running,
     # kill its eww daemon (which makes the old script's wait return and exit),
@@ -387,9 +400,23 @@ let
       ${pkgs.eww}/bin/eww kill 2>&1 || true
       sleep 2
       if ! ${pkgs.util-linux}/bin/flock -n 8; then
-        echo "Still locked after kill, exiting." >&2
-        exit 0
+        echo "FATAL: Still locked after kill, cannot start eww." >&2
+        exit 1
       fi
+    fi
+
+    # Clean up stale sway sockets from previous sessions (after flock,
+    # so only the lock holder touches sockets). Only remove sockets
+    # whose embedded PID is no longer alive.
+    if [ -n "$SWAYSOCK" ]; then
+      for sock in /run/user/$(id -u)/sway-ipc.*.sock; do
+        [ "$sock" = "$SWAYSOCK" ] && continue
+        # Extract PID from socket name: sway-ipc.<UID>.<PID>.sock
+        SOCK_PID=$(echo "$sock" | ${pkgs.gnused}/bin/sed -n 's/.*sway-ipc\.[0-9]*\.\([0-9]*\)\.sock/\1/p')
+        if [ -n "$SOCK_PID" ] && ! kill -0 "$SOCK_PID" 2>/dev/null; then
+          rm -f "$sock" 2>/dev/null
+        fi
+      done
     fi
 
     # Clean up on signals (sway exit sends SIGHUP/SIGTERM to children)
@@ -411,10 +438,17 @@ let
     # Wait for eww daemon IPC to be ready before opening windows.
     # Without this, `eww open` spawns a NEW daemon (race condition),
     # causing duplicate windows and stacked exclusive zones.
+    EWW_READY=false
     for i in $(seq 1 20); do
-      if ${pkgs.eww}/bin/eww ping 2>/dev/null; then break; fi
+      if ${pkgs.eww}/bin/eww ping 2>/dev/null; then
+        EWW_READY=true
+        break
+      fi
       sleep 0.5
     done
+    if [ "$EWW_READY" = false ]; then
+      echo "WARNING: eww daemon did not respond to ping after 10s, attempting to open windows anyway" >&2
+    fi
 
     if ! ${pkgs.eww}/bin/eww open sidebar; then
       echo "WARNING: eww open sidebar failed" >&2
@@ -428,7 +462,9 @@ let
     # Block until eww daemon exits. No restart loop — the daemon is stable.
     # If sway restarts, it sends SIGHUP → cleanup trap fires → clean exit.
     wait $EWW_PID
-    echo "eww daemon exited (code $?), script ending." >&2
+    EWW_EXIT=$?
+    echo "eww daemon exited (code $EWW_EXIT), script ending." >&2
+    exit $EWW_EXIT
   '';
 
   # Generated Sway config
