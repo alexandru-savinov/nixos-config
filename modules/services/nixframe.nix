@@ -51,6 +51,18 @@ let
       exit 1
     fi
 
+    # After 18:00, show tomorrow's forecast instead of today's.
+    # wttr.in returns .weather[0]=today, .weather[1]=tomorrow
+    HOUR=$(${pkgs.coreutils}/bin/date +%-H)
+    if [ "$HOUR" -ge 18 ]; then
+      DAY_IDX=1
+      # Get tomorrow's short day name for labels (e.g. "Mon")
+      TOMORROW=$(${pkgs.coreutils}/bin/date -d '+1 day' +%a)
+    else
+      DAY_IDX=0
+      TOMORROW=""
+    fi
+
     CACHE_DIR="/var/lib/nixframe/.cache"
     CACHE="$CACHE_DIR/weather-full.json"
     mkdir -p "$CACHE_DIR"
@@ -74,6 +86,16 @@ let
       ) 9>"$CACHE_DIR/.weather.lock"
     fi
 
+    # "day" field doesn't need cache — just returns the context label
+    if [ "$FIELD" = "day" ]; then
+      if [ "$DAY_IDX" -eq 1 ]; then
+        echo "Tomorrow, $TOMORROW"
+      else
+        echo "Today"
+      fi
+      exit 0
+    fi
+
     if [ ! -f "$CACHE" ]; then
       case "$FIELD" in
         label) echo "''${LABELS[$SLOT_IDX]}" ;;
@@ -85,7 +107,7 @@ let
     fi
 
     IDX=''${SLOTS[$SLOT_IDX]}
-    ENTRY=$(${pkgs.jq}/bin/jq -r ".weather[0].hourly[$IDX]" "$CACHE")
+    ENTRY=$(${pkgs.jq}/bin/jq -r ".weather[$DAY_IDX].hourly[$IDX]" "$CACHE")
 
     case "$FIELD" in
       label) echo "''${LABELS[$SLOT_IDX]}" ;;
@@ -133,6 +155,7 @@ let
         (label :class "date"  :text clock-date)))
 
     ${optionalString weatherCfg.enable ''
+    (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
     (defpoll forecast-0-label :interval "1800s" "${forecastScript} 0 label")
     (defpoll forecast-0-temp  :interval "1800s" "${forecastScript} 0 temp")
     (defpoll forecast-0-desc  :interval "1800s" "${forecastScript} 0 desc")
@@ -160,32 +183,34 @@ let
       :stacking "fg"
       :exclusive true
       :focusable false
-      (box :class "forecast-bar" :orientation "h" :halign "fill" :space-evenly true
-        (box :class "forecast-slot" :orientation "v" :spacing 4
+      (box :class "forecast-bar" :orientation "v" :spacing 4
+        (label :class "forecast-day" :text forecast-day :halign "start")
+        (box :orientation "h" :halign "fill" :space-evenly true
+        (box :class "forecast-slot" :orientation "v" :spacing 8
           (label :class "forecast-label" :text forecast-0-label)
           (label :class "forecast-temp"  :text forecast-0-temp)
           (label :class "forecast-desc"  :text forecast-0-desc)
           (label :class "forecast-feels" :text forecast-0-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
+        (box :class "forecast-slot" :orientation "v" :spacing 8
           (label :class "forecast-label" :text forecast-1-label)
           (label :class "forecast-temp"  :text forecast-1-temp)
           (label :class "forecast-desc"  :text forecast-1-desc)
           (label :class "forecast-feels" :text forecast-1-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
+        (box :class "forecast-slot" :orientation "v" :spacing 8
           (label :class "forecast-label" :text forecast-2-label)
           (label :class "forecast-temp"  :text forecast-2-temp)
           (label :class "forecast-desc"  :text forecast-2-desc)
           (label :class "forecast-feels" :text forecast-2-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
+        (box :class "forecast-slot" :orientation "v" :spacing 8
           (label :class "forecast-label" :text forecast-3-label)
           (label :class "forecast-temp"  :text forecast-3-temp)
           (label :class "forecast-desc"  :text forecast-3-desc)
           (label :class "forecast-feels" :text forecast-3-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
+        (box :class "forecast-slot" :orientation "v" :spacing 8
           (label :class "forecast-label" :text forecast-4-label)
           (label :class "forecast-temp"  :text forecast-4-temp)
           (label :class "forecast-desc"  :text forecast-4-desc)
-          (label :class "forecast-feels" :text forecast-4-feels))))
+          (label :class "forecast-feels" :text forecast-4-feels)))))
     ''}
   '';
 
@@ -215,47 +240,72 @@ let
 
     ${optionalString weatherCfg.enable ''
     .forecast-bar {
-      background-color: rgba(0, 0, 0, 0.85);
-      padding: 14px 50px;
+      background-color: rgba(0, 0, 0, 0.90);
+      padding: 28px 40px;
     }
 
     .forecast-slot {
-      padding: 4px 30px;
+      padding: 6px 38px;
+      border-left: 2px solid rgba(196, 168, 130, 0.25);
+    }
+
+    .forecast-slot:first-child {
+      border-left: none;
+    }
+
+    .forecast-day {
+      font-size: 32px;
+      font-weight: 600;
+      color: #c4a882;
+      letter-spacing: 2px;
+      padding-left: 38px;
+      margin-bottom: -4px;
     }
 
     .forecast-label {
-      font-size: 36px;
-      font-weight: 600;
-      color: #c4a882;
+      font-size: 30px;
+      font-weight: 500;
+      color: #a89478;
+      letter-spacing: 1px;
     }
 
     .forecast-temp {
-      font-size: 68px;
+      font-size: 74px;
       font-weight: 700;
-      color: #e8a948;
+      color: #eba63c;
+      margin-top: 6px;
     }
 
     .forecast-desc {
-      font-size: 30px;
-      color: #f5e6d3;
+      font-size: 34px;
+      color: #ecdcc8;
+      margin-top: 4px;
     }
 
     .forecast-feels {
-      font-size: 68px;
-      font-weight: 700;
-      color: #d4944a;
+      font-size: 42px;
+      font-weight: 500;
+      color: #b89070;
+      margin-top: 8px;
     }
     ''}
   '';
 
   # imv wrapper script — starts slideshow with crash backoff
   imvStart = pkgs.writeShellScript "nixframe-imv-start" ''
-    # Ensure only one imv-start instance runs at a time (same pattern as eww-start)
+    # Ensure only one imv-start instance runs at a time.
+    # If an old script from a prior sway session holds the lock, kill its imv
+    # and wait for it to exit (the swaymsg check will make it exit on next loop).
     LOCKFILE="/run/user/$(id -u)/.imv-start.lock"
     exec 8>"$LOCKFILE"
     if ! ${pkgs.util-linux}/bin/flock -n 8; then
-      echo "Another imv-start is running, exiting." >&2
-      exit 0
+      echo "Lock held by old imv-start, killing stale imv to reclaim..." >&2
+      ${pkgs.procps}/bin/pkill -u "$(id -u)" imv-wayland 2>/dev/null || true
+      sleep 3
+      if ! ${pkgs.util-linux}/bin/flock -n 8; then
+        echo "Still locked after kill, exiting." >&2
+        exit 0
+      fi
     fi
 
     PHOTO_DIR="${cfg.photoDir}"
@@ -274,7 +324,7 @@ let
     while true; do
       # Exit if Sway is gone. Use swaymsg instead of checking socket file
       # existence, because stale sway sockets persist after sway exits.
-      if [ -n "$SWAYSOCK" ] && ! swaymsg -t get_version >/dev/null 2>&1; then
+      if [ -n "$SWAYSOCK" ] && ! ${pkgs.sway}/bin/swaymsg -t get_version >/dev/null 2>&1; then
         echo "Sway not responding ($SWAYSOCK), exiting." >&2
         exit 0
       fi
@@ -456,7 +506,7 @@ in
 
       forecastHeight = mkOption {
         type = types.int;
-        default = 300;
+        default = 360;
         description = "Height of the bottom forecast bar in pixels.";
       };
     };
