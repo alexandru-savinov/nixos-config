@@ -20,6 +20,9 @@ let
 
   # Keys for sancta-choir only
   sanctaChoirKeys = users ++ [ sancta-choir ];
+
+  # Keys for rpi5 only
+  rpi5Keys = users ++ [ rpi5 ];
 in
 {
   # Tailscale - shared across all hosts
@@ -51,4 +54,7 @@ in
 
   # UniFi Network MCP - controller password for AI-assisted network management
   "unifi-password.age".publicKeys = allKeys;
+
+  # NixFrame iCloud calendar - rpi5 only (calendar sync runs on nixframe host)
+  "icloud-nixframe-password.age".publicKeys = rpi5Keys;
 }
