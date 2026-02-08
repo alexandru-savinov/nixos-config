@@ -316,11 +316,11 @@ systemctl status earlyoom        # OOM killer status
 journalctl -u earlyoom -f        # Watch earlyoom decisions
 ```
 
-**Important:** `cgroup_enable=memory` and `psi=1` boot params were added in PR #202 but require a **reboot** to take effect. Until then, `systemd-cgtop` won't show memory columns and `/proc/pressure/` won't exist.
+**Important:** `cgroup_enable=memory` and `psi=1` boot params were added in PR #202 but require a **reboot** to take effect. Verify: `grep -q "cgroup_enable=memory" /proc/cmdline && echo "Applied" || echo "Reboot required"`. Until then, `systemd-cgtop` won't show memory columns and `/proc/pressure/` won't exist.
 
 ### perf (NOT available)
 
-`linuxPackages.perf` has a kernel version mismatch (perf 6.18 vs running kernel 6.12). Do not add until the nixos-raspberrypi module updates.
+`linuxPackages.perf` has a kernel version mismatch (perf 6.18.2 vs running kernel 6.12.34). Do not add until the nixos-raspberrypi module updates.
 
 ## Service Configuration Notes
 
