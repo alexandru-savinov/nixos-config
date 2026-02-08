@@ -39,6 +39,10 @@
       # Nix development tools
       nixpkgs-fmt
       nil # Nix language server
+
+      # Profiling and debugging
+      strace # Syscall tracer (proven useful, tiny)
+      nix-tree # Interactive closure size browser
     ];
   };
 }

@@ -269,6 +269,24 @@
     priority = 100; # Higher priority than disk swap
   };
 
+  # Fix cgroup memory controller (disabled by RPi5 firmware/bootloader defaults)
+  # Without this, all MemoryMax/MemoryHigh systemd limits are NOT enforced.
+  # Also enable PSI (Pressure Stall Information) for resource pressure monitoring.
+  boot.kernelParams = [ "cgroup_enable=memory" "psi=1" ];
+
+  # earlyoom - userspace OOM killer (defense-in-depth against kernel OOM killer)
+  # RPi5 has only 4GB RAM with heavy services; zram alone is not sufficient protection.
+  services.earlyoom = {
+    enable = true;
+    freeMemThreshold = 5;
+    freeSwapThreshold = 10;
+    enableNotifications = true;
+    extraArgs = [
+      "--prefer" "^(open-webui)"
+      "--avoid" "^(sshd|tailscaled|n8n)"
+    ];
+  };
+
   # Kernel tweaks for better memory management under pressure
   boot.kernel.sysctl = {
     # Be more aggressive about swapping to avoid OOM
