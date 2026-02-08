@@ -471,6 +471,7 @@
   # Displays rotating slideshow with clock sidebar on the TV.
   # Upload photos: https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui
   services.nixframe.enable = true;
+  services.nixframe.weather.enable = true;
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)
