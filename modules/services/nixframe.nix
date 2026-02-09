@@ -51,6 +51,18 @@ let
       exit 1
     fi
 
+    # Fallback values for when cache is missing or entry is null.
+    # Space " " (not empty "") prevents GTK 0-height label under `all: unset` CSS.
+    fallback_value() {
+      case "$FIELD" in
+        label) echo "''${LABELS[$SLOT_IDX]}" ;;
+        temp)  echo "--" ;;
+        desc)  echo "No data" ;;
+        feels) echo " " ;;
+        *)     echo "Error: unknown field '$FIELD'" >&2; exit 1 ;;
+      esac
+    }
+
     # After 18:00, show tomorrow's forecast instead of today's.
     # wttr.in returns .weather[0]=today, .weather[1]=tomorrow
     HOUR=$(${pkgs.coreutils}/bin/date +%-H)
@@ -107,12 +119,7 @@ let
     fi
 
     if [ ! -f "$CACHE" ]; then
-      case "$FIELD" in
-        label) echo "''${LABELS[$SLOT_IDX]}" ;;
-        temp)  echo "--" ;;
-        desc)  echo "No data" ;;
-        feels) echo " " ;;
-      esac
+      fallback_value
       exit 0
     fi
 
@@ -121,12 +128,7 @@ let
 
     # Guard against null/missing entries (e.g. tomorrow's data not yet available)
     if [ -z "$ENTRY" ] || [ "$ENTRY" = "null" ]; then
-      case "$FIELD" in
-        label) echo "''${LABELS[$SLOT_IDX]}" ;;
-        temp)  echo "--" ;;
-        desc)  echo "No data" ;;
-        feels) echo " " ;;
-      esac
+      fallback_value
       exit 0
     fi
 
@@ -160,6 +162,41 @@ let
     convert ${placeholderImage} -resize 1920x1080 $out
   '';
 
+  # Forecast slot definitions — single source of truth for labels and initial values.
+  # Used to generate both defpoll declarations and widget boxes in ewwYuck.
+  forecastSlots = [
+    { idx = 0; label = "Morning"; }
+    { idx = 1; label = "Midday"; }
+    { idx = 2; label = "Afternoon"; }
+    { idx = 3; label = "Evening"; }
+    { idx = 4; label = "Night"; }
+  ];
+
+  mkDefpoll = name: initial: cmd:
+    ''(defpoll ${name} :interval "300s" :initial "${initial}" "${cmd}")'';
+
+  # Generated defpoll declarations for all forecast variables.
+  # :initial values prevent GTK 0-height label bug under `all: unset` CSS.
+  forecastDefpolls = concatStringsSep "\n" (
+    [ (mkDefpoll "forecast-day" "Today" "${forecastScript} 0 day") ]
+    ++ concatMap (slot: [
+      (mkDefpoll "forecast-${toString slot.idx}-label" slot.label "${forecastScript} ${toString slot.idx} label")
+      (mkDefpoll "forecast-${toString slot.idx}-temp" "--" "${forecastScript} ${toString slot.idx} temp")
+      (mkDefpoll "forecast-${toString slot.idx}-desc" " " "${forecastScript} ${toString slot.idx} desc")
+      (mkDefpoll "forecast-${toString slot.idx}-feels" " " "${forecastScript} ${toString slot.idx} feels")
+    ]) forecastSlots
+  );
+
+  # Generated widget boxes for each forecast time slot
+  forecastSlotWidgets = concatMapStringsSep "\n    " (slot:
+    let i = toString slot.idx; in
+    ''(box :class "forecast-slot" :orientation "v" :spacing 4
+      (label :class "forecast-label" :text forecast-${i}-label)
+      (label :class "forecast-temp"  :text forecast-${i}-temp)
+      (label :class "forecast-desc"  :text forecast-${i}-desc)
+      (label :class "forecast-feels" :text forecast-${i}-feels))''
+  ) forecastSlots;
+
   # Eww widget definition (yuck)
   ewwYuck = pkgs.writeText "eww-nixframe.yuck" ''
     (defpoll clock-time :interval "1s" "date +%H:%M")
@@ -176,27 +213,7 @@ let
         (label :class "date"  :text clock-date)))
 
     ${optionalString weatherCfg.enable ''
-    (defpoll forecast-day   :interval "300s" :initial "Today" "${forecastScript} 0 day")
-    (defpoll forecast-0-label :interval "300s" :initial "Morning"   "${forecastScript} 0 label")
-    (defpoll forecast-0-temp  :interval "300s" :initial "--"        "${forecastScript} 0 temp")
-    (defpoll forecast-0-desc  :interval "300s" :initial " "         "${forecastScript} 0 desc")
-    (defpoll forecast-0-feels :interval "300s" :initial " "         "${forecastScript} 0 feels")
-    (defpoll forecast-1-label :interval "300s" :initial "Midday"    "${forecastScript} 1 label")
-    (defpoll forecast-1-temp  :interval "300s" :initial "--"        "${forecastScript} 1 temp")
-    (defpoll forecast-1-desc  :interval "300s" :initial " "         "${forecastScript} 1 desc")
-    (defpoll forecast-1-feels :interval "300s" :initial " "         "${forecastScript} 1 feels")
-    (defpoll forecast-2-label :interval "300s" :initial "Afternoon" "${forecastScript} 2 label")
-    (defpoll forecast-2-temp  :interval "300s" :initial "--"        "${forecastScript} 2 temp")
-    (defpoll forecast-2-desc  :interval "300s" :initial " "         "${forecastScript} 2 desc")
-    (defpoll forecast-2-feels :interval "300s" :initial " "         "${forecastScript} 2 feels")
-    (defpoll forecast-3-label :interval "300s" :initial "Evening"   "${forecastScript} 3 label")
-    (defpoll forecast-3-temp  :interval "300s" :initial "--"        "${forecastScript} 3 temp")
-    (defpoll forecast-3-desc  :interval "300s" :initial " "         "${forecastScript} 3 desc")
-    (defpoll forecast-3-feels :interval "300s" :initial " "         "${forecastScript} 3 feels")
-    (defpoll forecast-4-label :interval "300s" :initial "Night"     "${forecastScript} 4 label")
-    (defpoll forecast-4-temp  :interval "300s" :initial "--"        "${forecastScript} 4 temp")
-    (defpoll forecast-4-desc  :interval "300s" :initial " "         "${forecastScript} 4 desc")
-    (defpoll forecast-4-feels :interval "300s" :initial " "         "${forecastScript} 4 feels")
+    ${forecastDefpolls}
 
     (defwindow forecast
       :monitor 0
@@ -208,31 +225,7 @@ let
         (box :class "forecast-day-box" :orientation "v" :valign "center"
           (label :class "forecast-day" :text forecast-day))
         (box :orientation "h" :halign "fill" :space-evenly true :hexpand true
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-0-label)
-          (label :class "forecast-temp"  :text forecast-0-temp)
-          (label :class "forecast-desc"  :text forecast-0-desc)
-          (label :class "forecast-feels" :text forecast-0-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-1-label)
-          (label :class "forecast-temp"  :text forecast-1-temp)
-          (label :class "forecast-desc"  :text forecast-1-desc)
-          (label :class "forecast-feels" :text forecast-1-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-2-label)
-          (label :class "forecast-temp"  :text forecast-2-temp)
-          (label :class "forecast-desc"  :text forecast-2-desc)
-          (label :class "forecast-feels" :text forecast-2-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-3-label)
-          (label :class "forecast-temp"  :text forecast-3-temp)
-          (label :class "forecast-desc"  :text forecast-3-desc)
-          (label :class "forecast-feels" :text forecast-3-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-4-label)
-          (label :class "forecast-temp"  :text forecast-4-temp)
-          (label :class "forecast-desc"  :text forecast-4-desc)
-          (label :class "forecast-feels" :text forecast-4-feels)))))
+        ${forecastSlotWidgets})))
     ''}
   '';
 
@@ -457,17 +450,6 @@ let
     if ! ${pkgs.eww}/bin/eww open forecast; then
       echo "WARNING: eww open forecast failed" >&2
     fi
-
-    # Workaround for Eww GTK rendering bug: labels created before defpoll
-    # results arrive get 0-height layout and never repaint. Re-opening the
-    # forecast window after polls have had time to complete forces a fresh
-    # layout with the current state data.
-    (
-      sleep 8
-      ${pkgs.eww}/bin/eww close forecast 2>/dev/null
-      sleep 0.5
-      ${pkgs.eww}/bin/eww open forecast 2>/dev/null
-    ) &
     ''}
 
     # Block until eww daemon exits. No restart loop — the daemon is stable.
