@@ -379,10 +379,14 @@ let
     done
   '';
 
-  # Eww wrapper script — starts daemon then opens sidebar (no crash-recovery loop).
-  # Previous version had a while-true loop that caused "blipping" — the old script
-  # from a prior sway session held the flock with a stale SWAYSOCK, and its loop
-  # kept killing/restarting the daemon every ~20 seconds.
+  # Eww wrapper script — starts daemon, opens windows, restarts on failure.
+  # Uses a limited restart loop with sway-alive checks and rapid-failure
+  # detection (same pattern as imvStart). Safe because:
+  #   - Sway-alive check exits the script when sway dies (prevents stale
+  #     scripts from prior sessions interfering — the root cause of the
+  #     old "blipping" bug in PR #206)
+  #   - MAX_FAILS=3 gives up after rapid failures (broken config)
+  #   - flock ensures only one instance runs at a time
   ewwStart = pkgs.writeShellScript "nixframe-eww-start" ''
     # Setup eww config directory
     mkdir -p "$HOME/.config/eww"
@@ -427,44 +431,88 @@ let
     }
     trap cleanup SIGTERM SIGHUP SIGINT
 
-    # Kill any stale eww daemon from a prior run
-    ${pkgs.eww}/bin/eww kill 2>&1 || true
-    sleep 1
-
-    # Start eww daemon in foreground-mode (backgrounded so we can open windows)
-    ${pkgs.eww}/bin/eww daemon --no-daemonize &
-    EWW_PID=$!
-
-    # Wait for eww daemon IPC to be ready before opening windows.
-    # Without this, `eww open` spawns a NEW daemon (race condition),
-    # causing duplicate windows and stacked exclusive zones.
-    EWW_READY=false
-    for i in $(seq 1 20); do
-      if ${pkgs.eww}/bin/eww ping 2>/dev/null; then
-        EWW_READY=true
-        break
+    # Crash backoff: if eww fails rapidly 3 times, stop to avoid CPU burn
+    FAIL_COUNT=0
+    MAX_FAILS=3
+    while true; do
+      # Exit if Sway is gone. Use swaymsg instead of checking socket file
+      # existence, because stale sway sockets persist after sway exits.
+      # This also makes old scripts from prior sessions exit cleanly.
+      if [ -n "$SWAYSOCK" ] && ! ${pkgs.coreutils}/bin/timeout 5 ${pkgs.sway}/bin/swaymsg -t get_version >/dev/null 2>&1; then
+        echo "Sway not responding ($SWAYSOCK), exiting." >&2
+        ${pkgs.eww}/bin/eww kill 2>&1 || true
+        exit 0
       fi
-      sleep 0.5
+
+      START_TIME=$(${pkgs.coreutils}/bin/date +%s)
+
+      # Kill any stale eww daemon from a prior run
+      ${pkgs.eww}/bin/eww kill 2>&1 || true
+      sleep 1
+
+      # Start eww daemon in foreground-mode (backgrounded so we can open windows)
+      ${pkgs.eww}/bin/eww daemon --no-daemonize &
+      EWW_PID=$!
+
+      # Wait for eww daemon IPC to be ready before opening windows.
+      # Without this, `eww open` spawns a NEW daemon (race condition),
+      # causing duplicate windows and stacked exclusive zones.
+      EWW_READY=false
+      for i in $(seq 1 20); do
+        if ${pkgs.eww}/bin/eww ping 2>/dev/null; then
+          EWW_READY=true
+          break
+        fi
+        sleep 0.5
+      done
+      if [ "$EWW_READY" = false ]; then
+        echo "WARNING: eww daemon did not respond to ping after 10s" >&2
+      fi
+
+      # Open windows with retry (handles transient Wayland/IPC failures)
+      OPEN_OK=false
+      for OPEN_ATTEMPT in $(seq 1 3); do
+        OPEN_FAILED=false
+        if ! ${pkgs.eww}/bin/eww open sidebar; then
+          OPEN_FAILED=true
+        fi
+        ${optionalString weatherCfg.enable ''
+        if ! ${pkgs.eww}/bin/eww open forecast; then
+          OPEN_FAILED=true
+        fi
+        ''}
+        if [ "$OPEN_FAILED" = false ]; then
+          OPEN_OK=true
+          break
+        fi
+        echo "WARNING: eww window open failed (attempt $OPEN_ATTEMPT/3), retrying in 2s..." >&2
+        sleep 2
+      done
+
+      if [ "$OPEN_OK" = false ]; then
+        echo "ERROR: Failed to open eww windows after 3 attempts, killing daemon to retry" >&2
+        ${pkgs.eww}/bin/eww kill 2>&1 || true
+        wait $EWW_PID 2>/dev/null || true
+      else
+        # Windows opened successfully — block until daemon exits
+        wait $EWW_PID
+        EWW_EXIT=$?
+        echo "eww daemon exited (code $EWW_EXIT)" >&2
+      fi
+
+      RUNTIME=$(( $(${pkgs.coreutils}/bin/date +%s) - START_TIME ))
+      if [ $RUNTIME -lt 30 ]; then
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        echo "Rapid failure $FAIL_COUNT/$MAX_FAILS" >&2
+        if [ $FAIL_COUNT -ge $MAX_FAILS ]; then
+          echo "FATAL: eww failed $MAX_FAILS times rapidly. Giving up. Check display/eww config." >&2
+          exit 1
+        fi
+      else
+        FAIL_COUNT=0
+      fi
+      sleep 5
     done
-    if [ "$EWW_READY" = false ]; then
-      echo "WARNING: eww daemon did not respond to ping after 10s, attempting to open windows anyway" >&2
-    fi
-
-    if ! ${pkgs.eww}/bin/eww open sidebar; then
-      echo "WARNING: eww open sidebar failed" >&2
-    fi
-    ${optionalString weatherCfg.enable ''
-    if ! ${pkgs.eww}/bin/eww open forecast; then
-      echo "WARNING: eww open forecast failed" >&2
-    fi
-    ''}
-
-    # Block until eww daemon exits. No restart loop — the daemon is stable.
-    # If sway restarts, it sends SIGHUP → cleanup trap fires → clean exit.
-    wait $EWW_PID
-    EWW_EXIT=$?
-    echo "eww daemon exited (code $EWW_EXIT), script ending." >&2
-    exit $EWW_EXIT
   '';
 
   # Generated Sway config
