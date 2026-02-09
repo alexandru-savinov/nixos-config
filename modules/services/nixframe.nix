@@ -381,12 +381,14 @@ let
 
   # Eww wrapper script — starts daemon, opens windows, restarts on failure.
   # Uses a limited restart loop with sway-alive checks and rapid-failure
-  # detection (same pattern as imvStart). Safe because:
+  # detection (similar structure to imvStart, but with exit-code gating
+  # and different thresholds). Safe because:
   #   - Sway-alive check exits the script when sway dies (prevents stale
   #     scripts from prior sessions interfering — the root cause of the
   #     old "blipping" bug in PR #206)
   #   - MAX_FAILS=3 gives up after rapid failures (broken config)
-  #   - flock ensures only one instance runs at a time
+  #   - flock + kill ensures only one instance runs (new sessions
+  #     forcibly reclaim from stale ones)
   ewwStart = pkgs.writeShellScript "nixframe-eww-start" ''
     # Setup eww config directory
     mkdir -p "$HOME/.config/eww"
@@ -431,7 +433,7 @@ let
     }
     trap cleanup SIGTERM SIGHUP SIGINT
 
-    # Crash backoff: if eww fails rapidly 3 times, stop to avoid CPU burn
+    # Rapid-restart guard: if the loop completes 3 times in <30s, stop to avoid CPU burn
     FAIL_COUNT=0
     MAX_FAILS=3
     while true; do
@@ -469,9 +471,17 @@ let
         echo "WARNING: eww daemon did not respond to ping after 10s" >&2
       fi
 
-      # Open windows with retry (handles transient Wayland/IPC failures)
+      # Open windows with retry (handles transient Wayland/IPC failures).
+      # On total failure, kills daemon and falls through to outer restart loop.
       OPEN_OK=false
       for OPEN_ATTEMPT in $(seq 1 3); do
+        # Close any partially-opened windows before retrying
+        if [ "$OPEN_ATTEMPT" -gt 1 ]; then
+          ${pkgs.eww}/bin/eww close sidebar 2>/dev/null || true
+          ${optionalString weatherCfg.enable ''
+          ${pkgs.eww}/bin/eww close forecast 2>/dev/null || true
+          ''}
+        fi
         OPEN_FAILED=false
         if ! ${pkgs.eww}/bin/eww open sidebar; then
           OPEN_FAILED=true
@@ -489,19 +499,26 @@ let
         sleep 2
       done
 
+      ITERATION_FAILED=false
       if [ "$OPEN_OK" = false ]; then
         echo "ERROR: Failed to open eww windows after 3 attempts, killing daemon to retry" >&2
         ${pkgs.eww}/bin/eww kill 2>&1 || true
-        wait $EWW_PID 2>/dev/null || true
+        wait $EWW_PID 2>/dev/null
+        EWW_EXIT=$?
+        echo "eww daemon exited (code $EWW_EXIT) after window-open failure" >&2
+        ITERATION_FAILED=true
       else
         # Windows opened successfully — block until daemon exits
         wait $EWW_PID
         EWW_EXIT=$?
         echo "eww daemon exited (code $EWW_EXIT)" >&2
+        if [ $EWW_EXIT -ne 0 ]; then
+          ITERATION_FAILED=true
+        fi
       fi
 
       RUNTIME=$(( $(${pkgs.coreutils}/bin/date +%s) - START_TIME ))
-      if [ $RUNTIME -lt 30 ]; then
+      if [ "$ITERATION_FAILED" = true ] && [ $RUNTIME -lt 30 ]; then
         FAIL_COUNT=$((FAIL_COUNT + 1))
         echo "Rapid failure $FAIL_COUNT/$MAX_FAILS" >&2
         if [ $FAIL_COUNT -ge $MAX_FAILS ]; then
