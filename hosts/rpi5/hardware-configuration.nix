@@ -70,7 +70,7 @@
   };
 
   # CPU frequency scaling
-  powerManagement.cpuFreqGovernor = lib.mkDefault "ondemand";
+  powerManagement.cpuFreqGovernor = lib.mkDefault "schedutil";
 
   # DHCP enabled by default
   networking.useDHCP = lib.mkDefault true;
