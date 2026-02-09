@@ -111,7 +111,7 @@ let
         label) echo "''${LABELS[$SLOT_IDX]}" ;;
         temp)  echo "--" ;;
         desc)  echo "No data" ;;
-        feels) echo "" ;;
+        feels) echo " " ;;
       esac
       exit 0
     fi
@@ -125,7 +125,7 @@ let
         label) echo "''${LABELS[$SLOT_IDX]}" ;;
         temp)  echo "--" ;;
         desc)  echo "No data" ;;
-        feels) echo "" ;;
+        feels) echo " " ;;
       esac
       exit 0
     fi
@@ -176,27 +176,27 @@ let
         (label :class "date"  :text clock-date)))
 
     ${optionalString weatherCfg.enable ''
-    (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
-    (defpoll forecast-0-label :interval "300s" "${forecastScript} 0 label")
-    (defpoll forecast-0-temp  :interval "300s" "${forecastScript} 0 temp")
-    (defpoll forecast-0-desc  :interval "300s" "${forecastScript} 0 desc")
-    (defpoll forecast-0-feels :interval "300s" "${forecastScript} 0 feels")
-    (defpoll forecast-1-label :interval "300s" "${forecastScript} 1 label")
-    (defpoll forecast-1-temp  :interval "300s" "${forecastScript} 1 temp")
-    (defpoll forecast-1-desc  :interval "300s" "${forecastScript} 1 desc")
-    (defpoll forecast-1-feels :interval "300s" "${forecastScript} 1 feels")
-    (defpoll forecast-2-label :interval "300s" "${forecastScript} 2 label")
-    (defpoll forecast-2-temp  :interval "300s" "${forecastScript} 2 temp")
-    (defpoll forecast-2-desc  :interval "300s" "${forecastScript} 2 desc")
-    (defpoll forecast-2-feels :interval "300s" "${forecastScript} 2 feels")
-    (defpoll forecast-3-label :interval "300s" "${forecastScript} 3 label")
-    (defpoll forecast-3-temp  :interval "300s" "${forecastScript} 3 temp")
-    (defpoll forecast-3-desc  :interval "300s" "${forecastScript} 3 desc")
-    (defpoll forecast-3-feels :interval "300s" "${forecastScript} 3 feels")
-    (defpoll forecast-4-label :interval "300s" "${forecastScript} 4 label")
-    (defpoll forecast-4-temp  :interval "300s" "${forecastScript} 4 temp")
-    (defpoll forecast-4-desc  :interval "300s" "${forecastScript} 4 desc")
-    (defpoll forecast-4-feels :interval "300s" "${forecastScript} 4 feels")
+    (defpoll forecast-day   :interval "300s" :initial "Today" "${forecastScript} 0 day")
+    (defpoll forecast-0-label :interval "300s" :initial "Morning"   "${forecastScript} 0 label")
+    (defpoll forecast-0-temp  :interval "300s" :initial "--"        "${forecastScript} 0 temp")
+    (defpoll forecast-0-desc  :interval "300s" :initial " "         "${forecastScript} 0 desc")
+    (defpoll forecast-0-feels :interval "300s" :initial " "         "${forecastScript} 0 feels")
+    (defpoll forecast-1-label :interval "300s" :initial "Midday"    "${forecastScript} 1 label")
+    (defpoll forecast-1-temp  :interval "300s" :initial "--"        "${forecastScript} 1 temp")
+    (defpoll forecast-1-desc  :interval "300s" :initial " "         "${forecastScript} 1 desc")
+    (defpoll forecast-1-feels :interval "300s" :initial " "         "${forecastScript} 1 feels")
+    (defpoll forecast-2-label :interval "300s" :initial "Afternoon" "${forecastScript} 2 label")
+    (defpoll forecast-2-temp  :interval "300s" :initial "--"        "${forecastScript} 2 temp")
+    (defpoll forecast-2-desc  :interval "300s" :initial " "         "${forecastScript} 2 desc")
+    (defpoll forecast-2-feels :interval "300s" :initial " "         "${forecastScript} 2 feels")
+    (defpoll forecast-3-label :interval "300s" :initial "Evening"   "${forecastScript} 3 label")
+    (defpoll forecast-3-temp  :interval "300s" :initial "--"        "${forecastScript} 3 temp")
+    (defpoll forecast-3-desc  :interval "300s" :initial " "         "${forecastScript} 3 desc")
+    (defpoll forecast-3-feels :interval "300s" :initial " "         "${forecastScript} 3 feels")
+    (defpoll forecast-4-label :interval "300s" :initial "Night"     "${forecastScript} 4 label")
+    (defpoll forecast-4-temp  :interval "300s" :initial "--"        "${forecastScript} 4 temp")
+    (defpoll forecast-4-desc  :interval "300s" :initial " "         "${forecastScript} 4 desc")
+    (defpoll forecast-4-feels :interval "300s" :initial " "         "${forecastScript} 4 feels")
 
     (defwindow forecast
       :monitor 0
@@ -457,6 +457,17 @@ let
     if ! ${pkgs.eww}/bin/eww open forecast; then
       echo "WARNING: eww open forecast failed" >&2
     fi
+
+    # Workaround for Eww GTK rendering bug: labels created before defpoll
+    # results arrive get 0-height layout and never repaint. Re-opening the
+    # forecast window after polls have had time to complete forces a fresh
+    # layout with the current state data.
+    (
+      sleep 8
+      ${pkgs.eww}/bin/eww close forecast 2>/dev/null
+      sleep 0.5
+      ${pkgs.eww}/bin/eww open forecast 2>/dev/null
+    ) &
     ''}
 
     # Block until eww daemon exits. No restart loop — the daemon is stable.
