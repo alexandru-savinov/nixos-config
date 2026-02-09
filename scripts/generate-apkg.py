@@ -40,6 +40,48 @@ import time
 
 import genanki
 
+# Maximum image dimension for flashcard images (width or height)
+# Gemini generates 1024x1024 images; 512x512 is sufficient for mobile Anki review
+MAX_IMAGE_DIMENSION = 512
+
+
+def compress_image(image_data, index):
+    """Resize image if either dimension exceeds MAX_IMAGE_DIMENSION.
+
+    Uses PIL/Pillow for resizing with LANCZOS resampling.
+    Returns original bytes unchanged if PIL is unavailable or image is already small enough.
+    Always re-encodes as PNG to ensure consistent format.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return image_data
+
+    try:
+        from io import BytesIO
+        img = Image.open(BytesIO(image_data))
+        original_size = img.size
+
+        if max(original_size) <= MAX_IMAGE_DIMENSION:
+            return image_data
+
+        img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        compressed = buf.getvalue()
+
+        print(
+            f"  Image {index}: {original_size[0]}x{original_size[1]} -> "
+            f"{img.size[0]}x{img.size[1]} "
+            f"({len(image_data)} -> {len(compressed)} bytes, "
+            f"{100 - len(compressed) * 100 // len(image_data)}% smaller)",
+            file=sys.stderr,
+        )
+        return compressed
+    except Exception as e:
+        print(f"WARNING: Image compression failed for image {index}: {e}", file=sys.stderr)
+        return image_data
+
 
 def generate_model_id():
     """Generate a stable model ID based on timestamp."""
@@ -237,6 +279,7 @@ def main():
             if image_base64:
                 try:
                     image_data = base64.b64decode(image_base64)
+                    image_data = compress_image(image_data, idx)
                     ext = get_image_extension(mime_type)
                     image_filename = f'img_{idx}.{ext}'
                     image_path = os.path.join(tmpdir, image_filename)
@@ -294,10 +337,11 @@ def main():
         package = genanki.Package(deck)
         package.media_files = media_files
 
-        # Write APKG to persistent temp directory for download
+        # Write APKG to persistent directory for download
         # Use UUID for unique filename to avoid collisions
+        # APKG_OUTPUT_DIR env var allows tests to override the output location
         import uuid
-        apkg_dir = '/var/lib/n8n/anki-decks'
+        apkg_dir = os.environ.get('APKG_OUTPUT_DIR', '/var/lib/n8n/anki-decks')
         os.makedirs(apkg_dir, exist_ok=True)
 
         # Cleanup: delete files older than 1 hour to prevent accumulation

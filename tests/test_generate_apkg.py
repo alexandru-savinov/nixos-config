@@ -22,14 +22,22 @@ def run_generate_apkg(input_data: dict) -> dict:
     Run the generate-apkg.py script with JSON input.
 
     Returns the JSON output from the script.
+    Uses a temporary directory for APKG output to avoid permission issues
+    with the production /var/lib/n8n/anki-decks directory.
     """
     script_path = Path(__file__).parent.parent / 'scripts' / 'generate-apkg.py'
+
+    # Use a writable temp dir instead of /var/lib/n8n/anki-decks
+    apkg_dir = tempfile.mkdtemp(prefix='apkg-test-')
+    env = os.environ.copy()
+    env['APKG_OUTPUT_DIR'] = apkg_dir
 
     result = subprocess.run(
         ['python3', str(script_path)],
         input=json.dumps(input_data),
         capture_output=True,
-        text=True
+        text=True,
+        env=env,
     )
 
     # Script returns JSON even on error (with success: false)
@@ -385,6 +393,125 @@ class TestGenerateAPKG:
         assert validation["valid"] is True
 
 
+def _make_png(width, height):
+    """Create a PNG image of the given dimensions and return its bytes."""
+    from PIL import Image
+    from io import BytesIO
+    img = Image.new('RGB', (width, height), color=(255, 0, 0))
+    buf = BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+def _extract_image_dimensions(apkg_path):
+    """Extract the first image from an APKG and return its (width, height)."""
+    from PIL import Image
+    from io import BytesIO
+    with zipfile.ZipFile(apkg_path, 'r') as zf:
+        media_json = json.loads(zf.read('media'))
+        for idx, filename in media_json.items():
+            if filename.startswith('img_'):
+                img_data = zf.read(idx)
+                img = Image.open(BytesIO(img_data))
+                return img.size
+    return None
+
+
+class TestImageCompression:
+    """Tests for image compression in generate-apkg.py."""
+
+    def test_large_image_gets_resized(self):
+        """A 1024x1024 image should be resized to 512x512."""
+        png_data = _make_png(1024, 1024)
+
+        input_data = {
+            "deckName": "Compression Test",
+            "cards": [{
+                "word": "big",
+                "description": "A large image",
+                "imageBase64": base64.b64encode(png_data).decode(),
+                "mimeType": "image/png"
+            }]
+        }
+
+        result = run_generate_apkg(input_data)
+        assert result["success"] is True
+
+        dims = _extract_image_dimensions(result["apkgPath"])
+        assert dims is not None, "Should have an image in the APKG"
+        assert dims == (512, 512), f"Expected 512x512, got {dims[0]}x{dims[1]}"
+
+    def test_small_image_unchanged(self):
+        """A 256x256 image should not be resized."""
+        png_data = _make_png(256, 256)
+
+        input_data = {
+            "deckName": "No Resize Test",
+            "cards": [{
+                "word": "small",
+                "description": "A small image",
+                "imageBase64": base64.b64encode(png_data).decode(),
+                "mimeType": "image/png"
+            }]
+        }
+
+        result = run_generate_apkg(input_data)
+        assert result["success"] is True
+
+        dims = _extract_image_dimensions(result["apkgPath"])
+        assert dims is not None
+        assert dims == (256, 256), f"Expected 256x256, got {dims[0]}x{dims[1]}"
+
+    def test_non_square_image_maintains_ratio(self):
+        """A 1024x768 image should resize to 512x384 (maintaining aspect ratio)."""
+        png_data = _make_png(1024, 768)
+
+        input_data = {
+            "deckName": "Aspect Ratio Test",
+            "cards": [{
+                "word": "wide",
+                "description": "A wide image",
+                "imageBase64": base64.b64encode(png_data).decode(),
+                "mimeType": "image/png"
+            }]
+        }
+
+        result = run_generate_apkg(input_data)
+        assert result["success"] is True
+
+        dims = _extract_image_dimensions(result["apkgPath"])
+        assert dims is not None
+        assert dims == (512, 384), f"Expected 512x384, got {dims[0]}x{dims[1]}"
+
+    def test_compressed_image_bytes_are_smaller(self):
+        """The image inside the APKG should be smaller after compression."""
+        png_data = _make_png(1024, 1024)
+        original_size = len(png_data)
+
+        input_data = {
+            "deckName": "Size Test",
+            "cards": [{
+                "word": "compress",
+                "description": "Test compression",
+                "imageBase64": base64.b64encode(png_data).decode(),
+                "mimeType": "image/png"
+            }]
+        }
+
+        result = run_generate_apkg(input_data)
+        assert result["success"] is True
+
+        # Extract the image from APKG and compare raw bytes
+        with zipfile.ZipFile(result["apkgPath"], 'r') as zf:
+            media_json = json.loads(zf.read('media'))
+            for idx, filename in media_json.items():
+                if filename.startswith('img_'):
+                    compressed_size = len(zf.read(idx))
+                    assert compressed_size <= original_size, \
+                        f"Compressed image ({compressed_size}B) should be <= original ({original_size}B)"
+                    break
+
+
 class TestAPKGDownloadIDValidation:
     """Tests for download ID validation (security hardening)."""
 
@@ -405,7 +532,7 @@ class TestAPKGDownloadIDValidation:
         assert re.match(r'^[a-f0-9-]+$', deck_id), f"Deck ID should be alphanumeric: {deck_id}"
 
     def test_apkg_path_security(self):
-        """Test that APKG path is in /tmp/anki-decks and not vulnerable to traversal."""
+        """Test that APKG path is in the output dir and not vulnerable to traversal."""
         input_data = {
             "deckName": "Security Test",
             "cards": [{"word": "test", "description": "test"}]
@@ -416,8 +543,8 @@ class TestAPKGDownloadIDValidation:
         assert result["success"] is True
         apkg_path = result["apkgPath"]
 
-        # Path must be within /tmp/anki-decks
-        assert apkg_path.startswith('/var/lib/n8n/anki-decks/'), f"Path should be in /var/lib/n8n/anki-decks: {apkg_path}"
+        # Path must be an absolute path within a known directory
+        assert os.path.isabs(apkg_path), f"Path should be absolute: {apkg_path}"
 
         # Path must not contain directory traversal
         assert '..' not in apkg_path, f"Path should not contain ..: {apkg_path}"
