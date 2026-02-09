@@ -543,14 +543,20 @@ class TestAPKGDownloadIDValidation:
         assert result["success"] is True
         apkg_path = result["apkgPath"]
 
-        # Path must be an absolute path within a known directory
+        # Path must be within its parent directory (the configured output dir)
+        # In tests this is a temp dir; in production it's /var/lib/n8n/anki-decks
+        parent_dir = os.path.dirname(apkg_path)
         assert os.path.isabs(apkg_path), f"Path should be absolute: {apkg_path}"
+        assert os.path.basename(apkg_path) == os.path.basename(apkg_path).strip('/'), \
+            f"Filename should not contain slashes: {apkg_path}"
 
         # Path must not contain directory traversal
         assert '..' not in apkg_path, f"Path should not contain ..: {apkg_path}"
 
-        # Filename should end with .apkg
+        # Filename should be <uuid>.apkg with no extra path components
         assert apkg_path.endswith('.apkg'), f"Path should end with .apkg: {apkg_path}"
+        assert apkg_path == os.path.join(parent_dir, os.path.basename(apkg_path)), \
+            f"Path should be a direct child of output dir: {apkg_path}"
 
 
 # =============================================================================

@@ -50,12 +50,19 @@ def compress_image(image_data, index):
 
     Uses PIL/Pillow for resizing with LANCZOS resampling.
     Returns original bytes unchanged if PIL is unavailable or image is already small enough.
-    Always re-encodes as PNG to ensure consistent format.
+    Re-encodes resized images as PNG.
+
+    Returns:
+        (image_bytes, 'resized' | 'skipped' | 'unchanged') where:
+        - 'resized': image was compressed and re-encoded as PNG
+        - 'skipped': compression was needed but failed (PIL missing or error)
+        - 'unchanged': image was already within size limits
     """
     try:
         from PIL import Image
     except ImportError:
-        return image_data
+        print(f"WARNING: Pillow (PIL) not installed, skipping image compression for image {index}", file=sys.stderr)
+        return image_data, 'skipped'
 
     try:
         from io import BytesIO
@@ -63,7 +70,7 @@ def compress_image(image_data, index):
         original_size = img.size
 
         if max(original_size) <= MAX_IMAGE_DIMENSION:
-            return image_data
+            return image_data, 'unchanged'
 
         img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.LANCZOS)
         buf = BytesIO()
@@ -77,10 +84,10 @@ def compress_image(image_data, index):
             f"{100 - len(compressed) * 100 // len(image_data)}% smaller)",
             file=sys.stderr,
         )
-        return compressed
-    except Exception as e:
+        return compressed, 'resized'
+    except (OSError, ValueError) as e:
         print(f"WARNING: Image compression failed for image {index}: {e}", file=sys.stderr)
-        return image_data
+        return image_data, 'skipped'
 
 
 def generate_model_id():
@@ -235,6 +242,7 @@ def main():
         text_card_count = 0
         audio_card_count = 0
         audio_failed_count = 0
+        compression_skipped_count = 0
         error_count = 0
         words = []
 
@@ -279,8 +287,10 @@ def main():
             if image_base64:
                 try:
                     image_data = base64.b64decode(image_base64)
-                    image_data = compress_image(image_data, idx)
-                    ext = get_image_extension(mime_type)
+                    image_data, compress_result = compress_image(image_data, idx)
+                    if compress_result == 'skipped':
+                        compression_skipped_count += 1
+                    ext = 'png' if compress_result == 'resized' else get_image_extension(mime_type)
                     image_filename = f'img_{idx}.{ext}'
                     image_path = os.path.join(tmpdir, image_filename)
 
@@ -369,6 +379,7 @@ def main():
             'textCardCount': text_card_count,
             'audioCardCount': audio_card_count,
             'audioFailedCount': audio_failed_count,
+            'compressionSkippedCount': compression_skipped_count,
             'failedCount': error_count,
             'words': words,
             'deckId': deck_id,
