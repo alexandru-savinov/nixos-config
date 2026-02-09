@@ -43,6 +43,16 @@
       # Profiling and debugging
       strace # Syscall tracer (proven useful, tiny)
       nix-tree # Interactive closure size browser
+
+      # Browser automation
+      playwright-test # CLI: playwright test, codegen, screenshot, pdf
+      playwright-driver.browsers # Pre-built Chromium for NixOS
     ];
+
+    # Playwright needs to find nix-provided browsers instead of downloading its own
+    environment.sessionVariables = {
+      PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
+    };
   };
 }
