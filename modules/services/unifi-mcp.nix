@@ -275,8 +275,9 @@ in
       }
     ];
 
-    # Enable Docker if using container mode
-    virtualisation.docker.enable = mkIf cfg.useDocker true;
+    # Enable Docker only when running as a service in container mode
+    # stdio mode uses the binary directly and never needs Docker
+    virtualisation.docker.enable = mkIf (cfg.service.enable && cfg.useDocker) true;
 
     # Generate environment file for both modes
     environment.etc."unifi-mcp/env.template".text = ''
