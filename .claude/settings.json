@@ -7,6 +7,7 @@
     "ralph-wiggum@claude-plugins-official": true,
     "explanatory-output-style@claude-plugins-official": true,
     ".claude/plugins/local-review": true,
-    ".claude/plugins/nix-commit": true
+    ".claude/plugins/nix-commit": true,
+    ".claude/plugins/screenshot": true
   }
 }
