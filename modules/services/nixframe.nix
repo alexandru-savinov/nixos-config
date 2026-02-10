@@ -36,9 +36,38 @@ let
 
   # Forecast script — fetches wttr.in JSON, caches it, outputs one field.
   # Called as: nixframe-forecast-slot <slot-index> <field>
-  # Fields: label, temp, desc, feels
+  # Fields: label, temp, icon, feels, day (desc retained but unused by UI)
   forecastScript = pkgs.writeShellScript "nixframe-forecast-slot" ''
     set -euo pipefail
+
+    # Map wttr.in WWO weather codes to Weather Icons font PUA glyphs
+    weather_icon() {
+      local CODE="$1"
+      local IS_NIGHT="''${2:-0}"
+      local GLYPH=""
+      case "$CODE" in
+        113) [ "$IS_NIGHT" = "1" ] && GLYPH="f02e" || GLYPH="f00d" ;;
+        116) [ "$IS_NIGHT" = "1" ] && GLYPH="f081" || GLYPH="f00c" ;;
+        119) [ "$IS_NIGHT" = "1" ] && GLYPH="f086" || GLYPH="f002" ;;
+        122) GLYPH="f013" ;;
+        143|248|260) [ "$IS_NIGHT" = "1" ] && GLYPH="f04a" || GLYPH="f003" ;;
+        176|263|353) [ "$IS_NIGHT" = "1" ] && GLYPH="f029" || GLYPH="f009" ;;
+        266|293|296) [ "$IS_NIGHT" = "1" ] && GLYPH="f028" || GLYPH="f008" ;;
+        299|305|356) [ "$IS_NIGHT" = "1" ] && GLYPH="f029" || GLYPH="f009" ;;
+        302|308|359) GLYPH="f019" ;;
+        179|182|185|281|284|311|314|317|350|377) [ "$IS_NIGHT" = "1" ] && GLYPH="f0b4" || GLYPH="f0b2" ;;
+        362|365|374) [ "$IS_NIGHT" = "1" ] && GLYPH="f0b4" || GLYPH="f0b2" ;;
+        227|320) [ "$IS_NIGHT" = "1" ] && GLYPH="f02a" || GLYPH="f00a" ;;
+        323|326|368) [ "$IS_NIGHT" = "1" ] && GLYPH="f02a" || GLYPH="f00a" ;;
+        230|329|332|338) [ "$IS_NIGHT" = "1" ] && GLYPH="f067" || GLYPH="f065" ;;
+        335|371|395) [ "$IS_NIGHT" = "1" ] && GLYPH="f067" || GLYPH="f065" ;;
+        200|386) [ "$IS_NIGHT" = "1" ] && GLYPH="f02d" || GLYPH="f010" ;;
+        389) GLYPH="f01e" ;;
+        392) [ "$IS_NIGHT" = "1" ] && GLYPH="f06d" || GLYPH="f06b" ;;
+        *) GLYPH="f07b" ;;
+      esac
+      printf '<span font_family="Weather Icons">&#x%s;</span>\n' "$GLYPH"
+    }
 
     # Slot definitions: wttr.in hourly[] indices for 06,12,15,18,21
     SLOTS=(2 4 5 6 7)
@@ -112,6 +141,7 @@ let
         temp)  echo "--" ;;
         desc)  echo "No data" ;;
         feels) echo "" ;;
+        icon)  echo "" ;;
       esac
       exit 0
     fi
@@ -126,8 +156,19 @@ let
         temp)  echo "--" ;;
         desc)  echo "No data" ;;
         feels) echo "" ;;
+        icon)  echo "" ;;
       esac
       exit 0
+    fi
+
+    # Determine day/night from hourly time field (e.g. "600", "2100")
+    HOUR_TIME=$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.time // "0"')
+    if [[ ! "''${HOUR_TIME:-0}" =~ ^[0-9]+$ ]]; then
+      IS_NIGHT=0
+    elif [ "''${HOUR_TIME:-0}" -ge 2000 ]; then
+      IS_NIGHT=1
+    else
+      IS_NIGHT=0
     fi
 
     case "$FIELD" in
@@ -135,6 +176,7 @@ let
       temp)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.tempC // "--"')°C" ;;
       desc)  echo "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.weatherDesc[0].value // "No data"')" ;;
       feels) echo "Feels $(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.FeelsLikeC // "--"')°C" ;;
+      icon)  weather_icon "$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.weatherCode // ""')" "$IS_NIGHT" ;;
       *)     echo "Error: unknown field '$FIELD'" >&2; exit 1 ;;
     esac
   '';
@@ -179,23 +221,23 @@ let
     (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
     (defpoll forecast-0-label :interval "300s" "${forecastScript} 0 label")
     (defpoll forecast-0-temp  :interval "300s" "${forecastScript} 0 temp")
-    (defpoll forecast-0-desc  :interval "300s" "${forecastScript} 0 desc")
+    (defpoll forecast-0-icon  :interval "300s" "${forecastScript} 0 icon")
     (defpoll forecast-0-feels :interval "300s" "${forecastScript} 0 feels")
     (defpoll forecast-1-label :interval "300s" "${forecastScript} 1 label")
     (defpoll forecast-1-temp  :interval "300s" "${forecastScript} 1 temp")
-    (defpoll forecast-1-desc  :interval "300s" "${forecastScript} 1 desc")
+    (defpoll forecast-1-icon  :interval "300s" "${forecastScript} 1 icon")
     (defpoll forecast-1-feels :interval "300s" "${forecastScript} 1 feels")
     (defpoll forecast-2-label :interval "300s" "${forecastScript} 2 label")
     (defpoll forecast-2-temp  :interval "300s" "${forecastScript} 2 temp")
-    (defpoll forecast-2-desc  :interval "300s" "${forecastScript} 2 desc")
+    (defpoll forecast-2-icon  :interval "300s" "${forecastScript} 2 icon")
     (defpoll forecast-2-feels :interval "300s" "${forecastScript} 2 feels")
     (defpoll forecast-3-label :interval "300s" "${forecastScript} 3 label")
     (defpoll forecast-3-temp  :interval "300s" "${forecastScript} 3 temp")
-    (defpoll forecast-3-desc  :interval "300s" "${forecastScript} 3 desc")
+    (defpoll forecast-3-icon  :interval "300s" "${forecastScript} 3 icon")
     (defpoll forecast-3-feels :interval "300s" "${forecastScript} 3 feels")
     (defpoll forecast-4-label :interval "300s" "${forecastScript} 4 label")
     (defpoll forecast-4-temp  :interval "300s" "${forecastScript} 4 temp")
-    (defpoll forecast-4-desc  :interval "300s" "${forecastScript} 4 desc")
+    (defpoll forecast-4-icon  :interval "300s" "${forecastScript} 4 icon")
     (defpoll forecast-4-feels :interval "300s" "${forecastScript} 4 feels")
 
     (defwindow forecast
@@ -211,27 +253,27 @@ let
         (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-0-label)
           (label :class "forecast-temp"  :text forecast-0-temp)
-          (label :class "forecast-desc"  :text forecast-0-desc)
+          (label :class "forecast-icon"  :markup forecast-0-icon)
           (label :class "forecast-feels" :text forecast-0-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-1-label)
           (label :class "forecast-temp"  :text forecast-1-temp)
-          (label :class "forecast-desc"  :text forecast-1-desc)
+          (label :class "forecast-icon"  :markup forecast-1-icon)
           (label :class "forecast-feels" :text forecast-1-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-2-label)
           (label :class "forecast-temp"  :text forecast-2-temp)
-          (label :class "forecast-desc"  :text forecast-2-desc)
+          (label :class "forecast-icon"  :markup forecast-2-icon)
           (label :class "forecast-feels" :text forecast-2-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-3-label)
           (label :class "forecast-temp"  :text forecast-3-temp)
-          (label :class "forecast-desc"  :text forecast-3-desc)
+          (label :class "forecast-icon"  :markup forecast-3-icon)
           (label :class "forecast-feels" :text forecast-3-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
           (label :class "forecast-label" :text forecast-4-label)
           (label :class "forecast-temp"  :text forecast-4-temp)
-          (label :class "forecast-desc"  :text forecast-4-desc)
+          (label :class "forecast-icon"  :markup forecast-4-icon)
           (label :class "forecast-feels" :text forecast-4-feels)))))
     ''}
   '';
@@ -301,10 +343,11 @@ let
       margin-top: 2px;
     }
 
-    .forecast-desc {
-      font-size: 30px;
+    .forecast-icon {
+      font-size: 64px;
       color: #ecdcc8;
-      margin-top: 2px;
+      margin-top: 4px;
+      margin-bottom: 4px;
     }
 
     .forecast-feels {
@@ -657,8 +700,8 @@ in
     # Sway PAM/polkit/dbus integration (provides security.pam.services.sway)
     programs.sway.enable = true;
 
-    # Fonts for Eww sidebar
-    fonts.packages = [ pkgs.noto-fonts ];
+    # Fonts for Eww widgets (sidebar + forecast bar)
+    fonts.packages = [ pkgs.noto-fonts pkgs.weather-icons ];
 
     # ──────────────────────────────────────────────────────────────
     # Auto-login on VT 7
