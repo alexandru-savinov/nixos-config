@@ -4,37 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current Environment
 
-**You are running on rpi5** (Raspberry Pi 5, aarch64-linux). This affects what you can build and deploy:
+**You are running on rpi5** (Raspberry Pi 5, aarch64-linux). The **primary and only active deploy target** is `rpi5-full`.
 
-| Task | Can do on rpi5? | Notes |
-|------|-----------------|-------|
-| `nix flake check` | ✅ Yes | Evaluates all configs |
-| `nixos-rebuild build --flake .#rpi5-full` | ✅ Yes | Native build (use `rpi5-full`, not `rpi5`) |
-| `nixos-rebuild build --flake .#sancta-choir` | ❌ No | x86_64 requires cross-compilation |
-| Deploy to rpi5 | ✅ Yes | Local rebuild with `rpi5-full` |
-| Deploy to sancta-choir | ⚠️ Via SSH | Must SSH and rebuild remotely |
+| Task | Command | Notes |
+|------|---------|-------|
+| Build & validate | `nix flake check` | Evaluates all configs |
+| Build for deploy | `nixos-rebuild build --flake .#rpi5-full` | **Always use `rpi5-full`**, not `rpi5` |
+| Deploy locally | `sudo nixos-rebuild switch --flake .#rpi5-full` | Native rebuild on RPi5 |
+| SD image (rare) | `nix build .#images.rpi5-sd-image` | Uses minimal `rpi5` config |
 
-### Deploying to sancta-choir from rpi5
+### Default Deploy Target
 
-Since you cannot build x86_64 binaries on aarch64, deploy via SSH:
+**When the user says "deploy", "build", or "rebuild" without specifying a target, ALWAYS use `rpi5-full`.**
 
-```bash
-# Option 1: SSH and pull from GitHub (after PR merged)
-ssh sancta-choir "cd ~/nixos-config && git pull && sudo nixos-rebuild switch --flake .#sancta-choir"
+The `sancta-choir` configuration (x86_64 Hetzner VPS) is **deprecated** and not actively deployed. It remains in `flake.nix` for CI evaluation only. Do NOT build, deploy, or SSH to `sancta-choir` unless the user explicitly asks for it by name.
 
-# Option 2: SSH and build from GitHub directly
-ssh sancta-choir "sudo nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#sancta-choir"
-```
-
-**Tailscale hostnames:**
-- `sancta-choir` or `sancta-choir.tail4249a9.ts.net`
+**Tailscale hostname:**
 - `rpi5` or `rpi5.tail4249a9.ts.net`
 
 ## Project Overview
 
-Flake-based NixOS configuration for multi-machine deployment:
-- **rpi5** (aarch64-linux): Raspberry Pi 5 ← **You are here** (MAIN site)
-- **sancta-choir** (x86_64-linux): Hetzner Cloud VPS (backup site)
+Flake-based NixOS configuration:
+- **rpi5-full** (aarch64-linux): Raspberry Pi 5 ← **You are here** (only active host)
+- **rpi5** (aarch64-linux): Minimal config for SD image builds only
+- **sancta-choir** (x86_64-linux): Hetzner VPS — **DEPRECATED**, kept for CI only
 
 ## Commands
 
@@ -42,10 +35,10 @@ Flake-based NixOS configuration for multi-machine deployment:
 # Build and validate
 nix flake check
 nix fmt
-nixos-rebuild build --flake .#sancta-choir
+nixos-rebuild build --flake .#rpi5-full
 
-# Deploy
-nix run .#deploy -- sancta-choir
+# Deploy (local)
+sudo nixos-rebuild switch --flake .#rpi5-full
 
 # Tests
 nix-shell --run "pytest tests/ -v"
@@ -54,7 +47,7 @@ nix-shell --run "pytest tests/ -v"
 cd secrets && agenix -e <secret>.age    # Edit secret
 cd secrets && agenix -r                  # Re-encrypt all
 
-# RPi5 SD image
+# RPi5 SD image (rare, for fresh installs only)
 nix build .#images.rpi5-sd-image
 ```
 
@@ -93,10 +86,9 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. No firewall rules needed - localhost binding provides defense-in-depth.
 
-Access URLs (HTTPS only):
-- Open-WebUI: `https://sancta-choir.tail4249a9.ts.net`
-- Uptime Kuma: `https://sancta-choir.tail4249a9.ts.net:3001`
-- n8n: `https://sancta-choir.tail4249a9.ts.net:5678`
+Access URLs (HTTPS via Tailscale Serve, rpi5 only):
+- Open-WebUI: `https://rpi5.tail4249a9.ts.net`
+- n8n: `https://rpi5.tail4249a9.ts.net:5678`
 - NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
 
 ## Secrets (Agenix)
@@ -130,9 +122,8 @@ nix fmt
 # 2. Flake validation + tests
 nix flake check
 
-# 3. Build current host (architecture-specific)
-nixos-rebuild build --flake .#sancta-choir  # x86_64 only
-nixos-rebuild build --flake .#rpi5          # aarch64 only
+# 3. Build current host
+nixos-rebuild build --flake .#rpi5-full
 ```
 
 This ensures broken code isn't left behind when context-switching.
@@ -249,19 +240,17 @@ See PR #154 for reference implementation (`image-to-anki-*.json` workflows).
 rm -rf ~/.cache/nix/eval-cache*
 
 # Check specific host (fast, catches config errors without building)
-nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel
-nix eval .#nixosConfigurations.rpi5.config.system.build.toplevel
+nix eval .#nixosConfigurations.rpi5-full.config.system.build.toplevel
 ```
 
 ### Service Issues
 
 ```bash
-# Check service status
-ssh sancta-choir "systemctl status <service>"
-ssh rpi5 "systemctl status <service>"
+# Check service status (local on rpi5)
+systemctl status <service>
 
 # View logs
-ssh sancta-choir "journalctl -u <service> -f"
+journalctl -u <service> -f
 ```
 
 ### Tailscale Issues
