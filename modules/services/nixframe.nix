@@ -36,7 +36,7 @@ let
 
   # Forecast script — fetches wttr.in JSON, caches it, outputs one field.
   # Called as: nixframe-forecast-slot <slot-index> <field>
-  # Fields: label, temp, desc, feels
+  # Fields: label, temp, icon, feels, day (desc retained but unused by UI)
   forecastScript = pkgs.writeShellScript "nixframe-forecast-slot" ''
     set -euo pipefail
 
@@ -66,7 +66,7 @@ let
         392) [ "$IS_NIGHT" = "1" ] && GLYPH="f06d" || GLYPH="f06b" ;;
         *) GLYPH="f07b" ;;
       esac
-      [ -n "$GLYPH" ] && printf '<span font_family="Weather Icons">&#x%s;</span>\n' "$GLYPH"
+      printf '<span font_family="Weather Icons">&#x%s;</span>\n' "$GLYPH"
     }
 
     # Slot definitions: wttr.in hourly[] indices for 06,12,15,18,21
@@ -149,14 +149,6 @@ let
     IDX=''${SLOTS[$SLOT_IDX]}
     ENTRY=$(${pkgs.jq}/bin/jq -r ".weather[$DAY_IDX].hourly[$IDX] // empty" "$CACHE")
 
-    # Determine day/night from hourly time field (e.g. "600", "2100")
-    HOUR_TIME=$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.time // "0"')
-    if [ "''${HOUR_TIME:-0}" -ge 2000 ]; then
-      IS_NIGHT=1
-    else
-      IS_NIGHT=0
-    fi
-
     # Guard against null/missing entries (e.g. tomorrow's data not yet available)
     if [ -z "$ENTRY" ] || [ "$ENTRY" = "null" ]; then
       case "$FIELD" in
@@ -167,6 +159,16 @@ let
         icon)  echo "" ;;
       esac
       exit 0
+    fi
+
+    # Determine day/night from hourly time field (e.g. "600", "2100")
+    HOUR_TIME=$(echo "$ENTRY" | ${pkgs.jq}/bin/jq -r '.time // "0"')
+    if [[ ! "''${HOUR_TIME:-0}" =~ ^[0-9]+$ ]]; then
+      IS_NIGHT=0
+    elif [ "''${HOUR_TIME:-0}" -ge 2000 ]; then
+      IS_NIGHT=1
+    else
+      IS_NIGHT=0
     fi
 
     case "$FIELD" in
@@ -219,24 +221,24 @@ let
     (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
     (defpoll forecast-0-label :interval "300s" "${forecastScript} 0 label")
     (defpoll forecast-0-temp  :interval "300s" "${forecastScript} 0 temp")
+    (defpoll forecast-0-icon  :interval "300s" "${forecastScript} 0 icon")
     (defpoll forecast-0-feels :interval "300s" "${forecastScript} 0 feels")
     (defpoll forecast-1-label :interval "300s" "${forecastScript} 1 label")
     (defpoll forecast-1-temp  :interval "300s" "${forecastScript} 1 temp")
+    (defpoll forecast-1-icon  :interval "300s" "${forecastScript} 1 icon")
     (defpoll forecast-1-feels :interval "300s" "${forecastScript} 1 feels")
     (defpoll forecast-2-label :interval "300s" "${forecastScript} 2 label")
     (defpoll forecast-2-temp  :interval "300s" "${forecastScript} 2 temp")
+    (defpoll forecast-2-icon  :interval "300s" "${forecastScript} 2 icon")
     (defpoll forecast-2-feels :interval "300s" "${forecastScript} 2 feels")
     (defpoll forecast-3-label :interval "300s" "${forecastScript} 3 label")
     (defpoll forecast-3-temp  :interval "300s" "${forecastScript} 3 temp")
+    (defpoll forecast-3-icon  :interval "300s" "${forecastScript} 3 icon")
     (defpoll forecast-3-feels :interval "300s" "${forecastScript} 3 feels")
     (defpoll forecast-4-label :interval "300s" "${forecastScript} 4 label")
     (defpoll forecast-4-temp  :interval "300s" "${forecastScript} 4 temp")
-    (defpoll forecast-4-feels :interval "300s" "${forecastScript} 4 feels")
-    (defpoll forecast-0-icon  :interval "300s" "${forecastScript} 0 icon")
-    (defpoll forecast-1-icon  :interval "300s" "${forecastScript} 1 icon")
-    (defpoll forecast-2-icon  :interval "300s" "${forecastScript} 2 icon")
-    (defpoll forecast-3-icon  :interval "300s" "${forecastScript} 3 icon")
     (defpoll forecast-4-icon  :interval "300s" "${forecastScript} 4 icon")
+    (defpoll forecast-4-feels :interval "300s" "${forecastScript} 4 feels")
 
     (defwindow forecast
       :monitor 0
@@ -698,7 +700,7 @@ in
     # Sway PAM/polkit/dbus integration (provides security.pam.services.sway)
     programs.sway.enable = true;
 
-    # Fonts for Eww sidebar
+    # Fonts for Eww widgets (sidebar + forecast bar)
     fonts.packages = [ pkgs.noto-fonts pkgs.weather-icons ];
 
     # ──────────────────────────────────────────────────────────────
