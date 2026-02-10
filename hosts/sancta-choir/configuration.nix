@@ -65,10 +65,6 @@
     # n8n workflow automation
     n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
 
-    # OpenCode API key (Open WebUI API key for LLM gateway)
-    # TEMPORARILY DISABLED due to missing secret file
-    # opencode-api-key.file = "${self}/secrets/opencode-api-key.age";
-
     # OpenAI API key (for TTS/STT - separate from OpenRouter)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
   };

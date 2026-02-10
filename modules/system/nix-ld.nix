@@ -2,7 +2,7 @@
 
 {
   # Enable nix-ld for running dynamically linked binaries
-  # Required for: opencode, VS Code extensions, external language servers
+  # Required for: VS Code extensions, external language servers
   programs.nix-ld = {
     enable = true;
 
