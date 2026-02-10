@@ -157,7 +157,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', modalities: ['text', 'image'], messages: [{ role: 'user', content: 'Create a fun blocky illustration of ' + $json.word + ' (' + $json.description + ') for a kids flashcard. Style: cute pixel-art inspired, colorful blocks, Minecraft-like but friendly and simple. White background, no text.' }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash-image', modalities: ['text', 'image'], image_config: { aspect_ratio: '1:1' }, messages: [{ role: 'user', content: 'A single centered illustration of ' + $json.word + ' (' + $json.description + ') on a clean white background. The style is a friendly, colorful pixel-art scene with chunky blocky shapes and bright saturated colors, inspired by Minecraft. The image should be simple and cheerful, suitable for a children\\'s vocabulary flashcard. No text, labels, or words anywhere in the image.' }] }) }}",
         "options": {
           "timeout": 120000
         }

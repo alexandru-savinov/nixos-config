@@ -27,6 +27,7 @@ let
   # Used by image-to-anki workflow to create Anki deck files
   pythonWithGenanki = pkgs.python3.withPackages (ps: [
     ps.genanki
+    ps.pillow
   ]);
 
   # APKG generator script for n8n workflows
