@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **When the user says "deploy", "build", or "rebuild" without specifying a target, ALWAYS use `rpi5-full`.**
 
-The `sancta-choir` configuration (x86_64 Hetzner VPS) is **deprecated** and not actively deployed. It remains in `flake.nix` for CI evaluation only. Do NOT build, deploy, or SSH to `sancta-choir` unless the user explicitly asks for it by name.
+The `sancta-choir` configuration (x86_64 Hetzner VPS) is **deprecated** and not actively deployed. It remains in `flake.nix` for CI build verification only. Do NOT build, deploy, or SSH to `sancta-choir` unless the user explicitly asks for it by name.
 
 **Tailscale hostname:**
 - `rpi5` or `rpi5.tail4249a9.ts.net`
@@ -27,7 +27,7 @@ The `sancta-choir` configuration (x86_64 Hetzner VPS) is **deprecated** and not 
 Flake-based NixOS configuration:
 - **rpi5-full** (aarch64-linux): Raspberry Pi 5 ← **You are here** (only active host)
 - **rpi5** (aarch64-linux): Minimal config for SD image builds only
-- **sancta-choir** (x86_64-linux): Hetzner VPS — **DEPRECATED**, kept for CI only
+- **sancta-choir** (x86_64-linux): Hetzner VPS — **DEPRECATED**, kept for CI build verification only
 
 ## Commands
 
@@ -81,7 +81,8 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.open-webui-tailscale` | 8080 | AI gateway (OpenRouter + Tavily Search) |
 | `services.n8n-tailscale` | 5678 | Workflow automation with execution pruning |
 | `services.nixframe` | VT 7 / HDMI-A-2 | Digital photo frame with n8n upload |
-| `services.uptime-kuma-tailscale` | 3001 | Status monitoring with auto-backups |
+| `services.gatus-tailscale` | 3001 | Declarative status monitoring |
+| `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. No firewall rules needed - localhost binding provides defense-in-depth.
@@ -90,6 +91,8 @@ Access URLs (HTTPS via Tailscale Serve, rpi5 only):
 - Open-WebUI: `https://rpi5.tail4249a9.ts.net`
 - n8n: `https://rpi5.tail4249a9.ts.net:5678`
 - NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
+- Gatus: `https://rpi5.tail4249a9.ts.net:3001`
+- Qdrant: `https://rpi5.tail4249a9.ts.net:6333`
 
 ## Secrets (Agenix)
 
@@ -101,11 +104,11 @@ age.secrets.my-secret.file = "${self}/secrets/my-secret.age";
 someService.secretFile = config.age.secrets.my-secret.path;
 ```
 
-Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `tailscale-auth-key`, `open-webui-secret-key`
+Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `n8n-admin-password`, `n8n-api-key`, `tailscale-auth-key`, `open-webui-secret-key`, `e2e-test-api-key`, `unifi-password`
 
 ## CI/CD
 
-GitHub Actions on push/PR: `nix flake check`, build all hosts, format check. Main branch protected - use PRs.
+GitHub Actions on push/PR: `nix flake check`, build sancta-choir (x86_64), evaluate rpi5 (aarch64 minimal), format check. **Note:** `rpi5-full` is NOT verified in CI — validate locally with `nixos-rebuild build --flake .#rpi5-full`. Main branch protected - use PRs.
 
 ## Git Workflow
 
@@ -320,8 +323,9 @@ Each service has its own environment variable for binding:
 | Service | Variable | Value |
 |---------|----------|-------|
 | Open-WebUI | `host` option | `127.0.0.1` (default) |
-| Uptime Kuma | `HOST` setting | `127.0.0.1` |
 | n8n | `N8N_LISTEN_ADDRESS` env | `127.0.0.1` |
+| Gatus | `address` setting | `127.0.0.1` |
+| Qdrant | `host` option | `127.0.0.1` (default) |
 
 **Note:** n8n uses `N8N_LISTEN_ADDRESS`, not `N8N_HOST`. Always check official docs for correct variable names.
 
