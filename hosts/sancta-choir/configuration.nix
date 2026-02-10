@@ -50,7 +50,6 @@
   # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
   customModules.claude.enable = true;
-  customModules.claude.agentTeams.enable = true;
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets = {
