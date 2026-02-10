@@ -40,9 +40,6 @@ in
   # OIDC client secret - sancta-choir only (tsidp not on rpi5)
   "oidc-client-secret.age".publicKeys = sanctaChoirKeys;
 
-  # OpenCode API key (Open WebUI API key for LLM gateway)
-  "opencode-api-key.age".publicKeys = sanctaChoirKeys;
-
   # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
 
