@@ -250,30 +250,30 @@ let
         (box :class "forecast-day-box" :orientation "v" :valign "center"
           (label :class "forecast-day" :text forecast-day))
         (box :orientation "h" :halign "fill" :space-evenly true :hexpand true
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-icon"  :markup forecast-0-icon)
-          (label :class "forecast-temp"  :text forecast-0-temp)
+        (box :class "forecast-slot" :orientation "v" :spacing 2
           (label :class "forecast-label" :text forecast-0-label)
+          (label :class "forecast-temp"  :text forecast-0-temp)
+          (label :class "forecast-icon"  :markup forecast-0-icon)
           (label :class "forecast-feels" :text forecast-0-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-icon"  :markup forecast-1-icon)
-          (label :class "forecast-temp"  :text forecast-1-temp)
+        (box :class "forecast-slot" :orientation "v" :spacing 2
           (label :class "forecast-label" :text forecast-1-label)
+          (label :class "forecast-temp"  :text forecast-1-temp)
+          (label :class "forecast-icon"  :markup forecast-1-icon)
           (label :class "forecast-feels" :text forecast-1-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-icon"  :markup forecast-2-icon)
-          (label :class "forecast-temp"  :text forecast-2-temp)
+        (box :class "forecast-slot" :orientation "v" :spacing 2
           (label :class "forecast-label" :text forecast-2-label)
+          (label :class "forecast-temp"  :text forecast-2-temp)
+          (label :class "forecast-icon"  :markup forecast-2-icon)
           (label :class "forecast-feels" :text forecast-2-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-icon"  :markup forecast-3-icon)
-          (label :class "forecast-temp"  :text forecast-3-temp)
+        (box :class "forecast-slot" :orientation "v" :spacing 2
           (label :class "forecast-label" :text forecast-3-label)
+          (label :class "forecast-temp"  :text forecast-3-temp)
+          (label :class "forecast-icon"  :markup forecast-3-icon)
           (label :class "forecast-feels" :text forecast-3-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-icon"  :markup forecast-4-icon)
-          (label :class "forecast-temp"  :text forecast-4-temp)
+        (box :class "forecast-slot" :orientation "v" :spacing 2
           (label :class "forecast-label" :text forecast-4-label)
+          (label :class "forecast-temp"  :text forecast-4-temp)
+          (label :class "forecast-icon"  :markup forecast-4-icon)
           (label :class "forecast-feels" :text forecast-4-feels)))))
     ''}
   '';
@@ -341,14 +341,14 @@ let
     }
 
     .forecast-temp {
-      font-size: 72px;
+      font-size: 64px;
       font-weight: 700;
       color: #f5a942;
       margin-top: 2px;
     }
 
     .forecast-icon {
-      font-size: 72px;
+      font-size: 64px;
       color: #ecdcc8;
       margin-top: 4px;
       margin-bottom: 4px;
