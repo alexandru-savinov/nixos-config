@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(sudo -u nixframe:*), Bash(id:*), Bash(ls:*), Bash(magick:*), Read(*)
+allowed-tools: Bash(sudo -u nixframe:*), Bash(id:*), Bash(magick:*), Read(*)
 description: Capture a screenshot of the NixFrame display
 ---
 
@@ -26,10 +26,13 @@ Run this as a single bash command to discover the environment:
 
 ```bash
 NIXFRAME_UID=$(id -u nixframe) && \
-SWAYSOCK=$(ls -t /run/user/$NIXFRAME_UID/sway-ipc.*.sock 2>/dev/null | head -1) && \
-WAYLAND=$(ls /run/user/$NIXFRAME_UID/wayland-* 2>/dev/null | grep -v '\.lock$' | head -1) && \
-if [ -z "$SWAYSOCK" ] || [ -z "$WAYLAND" ]; then echo "NOT_RUNNING"; else \
-echo "UID=$NIXFRAME_UID SWAYSOCK=$SWAYSOCK WAYLAND=$(basename "$WAYLAND")"; fi
+sudo -u nixframe bash -c '
+  SWAYSOCK=$(ls -t /run/user/'"$NIXFRAME_UID"'/sway-ipc.*.sock 2>/dev/null | head -1)
+  WAYLAND=$(ls /run/user/'"$NIXFRAME_UID"'/wayland-* 2>/dev/null | grep -v "\.lock$" | head -1)
+  if [ -z "$SWAYSOCK" ] || [ -z "$WAYLAND" ]; then echo "NOT_RUNNING"; else
+    echo "UID='"$NIXFRAME_UID"' SWAYSOCK=$SWAYSOCK WAYLAND=$(basename "$WAYLAND")"
+  fi
+'
 ```
 
 If no Sway socket is found, tell the user that NixFrame's Sway session is not running.
