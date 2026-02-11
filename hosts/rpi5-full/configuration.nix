@@ -481,8 +481,8 @@
       ReadWritePaths = [ "/var/lib/nixframe/photos" ];
       MemoryMax = "1536M";
       MemoryHigh = "1G";
-      CPUQuota = "200%";
-      Nice = 7;
+      CPUQuota = "200%"; # 2 cores max
+      Nice = 7; # Between Open-WebUI (5) and qdrant (10)
     };
   };
 }
