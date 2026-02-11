@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(sudo:*), Bash(id:*), Bash(ls:*), Bash(grim:*), Bash(magick:*), Read(*)
+allowed-tools: Bash(sudo -u nixframe:*), Bash(id:*), Bash(ls:*), Bash(magick:*), Read(*)
 description: Capture a screenshot of the NixFrame display
 ---
 
@@ -13,7 +13,7 @@ Optional region argument: $ARGUMENTS
 
 Valid regions:
 - (empty) — Full display (3840x2160)
-- `forecast` — Bottom forecast bar only (3040x280)
+- `forecast` — Bottom forecast bar only (3040x280, captures 4 of 5 slots; the Night slot is under the sidebar)
 - `sidebar` — Right sidebar clock area only (800x2160)
 
 ## Steps
@@ -26,9 +26,10 @@ Run this as a single bash command to discover the environment:
 
 ```bash
 NIXFRAME_UID=$(id -u nixframe) && \
-SWAYSOCK=$(ls /run/user/$NIXFRAME_UID/sway-ipc.*.sock 2>/dev/null | head -1) && \
+SWAYSOCK=$(ls -t /run/user/$NIXFRAME_UID/sway-ipc.*.sock 2>/dev/null | head -1) && \
 WAYLAND=$(ls /run/user/$NIXFRAME_UID/wayland-* 2>/dev/null | grep -v '\.lock$' | head -1) && \
-echo "UID=$NIXFRAME_UID SWAYSOCK=$SWAYSOCK WAYLAND=$(basename $WAYLAND)"
+if [ -z "$SWAYSOCK" ] || [ -z "$WAYLAND" ]; then echo "NOT_RUNNING"; else \
+echo "UID=$NIXFRAME_UID SWAYSOCK=$SWAYSOCK WAYLAND=$(basename "$WAYLAND")"; fi
 ```
 
 If no Sway socket is found, tell the user that NixFrame's Sway session is not running.
@@ -65,11 +66,11 @@ Use the Read tool to display `/tmp/nixframe-screenshot.png`. This will render th
 
 ### 5. Brief description
 
-After showing the image, provide a one-line description of what's visible (e.g., "Forecast bar showing 5 slots with weather icons for Tomorrow").
+After showing the image, provide a one-line description of what's visible (e.g., "Forecast bar showing weather slots with temperatures and icons").
 
 ## Notes
 
 - The nixframe user runs Sway on a dedicated VT (tty7) driving an HDMI-connected Samsung 4K TV
 - Display layout: 3840x2160, sidebar 800px on right, forecast bar 280px at bottom (3040px wide)
-- grim is already installed system-wide
+- grim is available via the NixOS sway module defaults (programs.sway.enable)
 - Requires sudo access to run commands as the nixframe user
