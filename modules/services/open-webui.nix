@@ -280,7 +280,7 @@ in
 
     webuiUrl = mkOption {
       type = types.str;
-      default = "https://sancta-choir.tail4249a9.ts.net";
+      default = "https://rpi5.tail4249a9.ts.net";
       example = "https://myhost.tail<hex>.ts.net";
       description = "Public URL for OpenWebUI (used for OAuth callbacks).";
     };
