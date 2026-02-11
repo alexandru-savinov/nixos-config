@@ -477,6 +477,12 @@
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)
   systemd.services.n8n = {
     path = [ pkgs.imagemagick ];
-    serviceConfig.ReadWritePaths = [ "/var/lib/nixframe/photos" ];
+    serviceConfig = {
+      ReadWritePaths = [ "/var/lib/nixframe/photos" ];
+      MemoryMax = "1536M";
+      MemoryHigh = "1G";
+      CPUQuota = "200%"; # 2 cores max
+      Nice = 7; # Between Open-WebUI (5) and qdrant (10)
+    };
   };
 }
