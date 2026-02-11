@@ -251,29 +251,29 @@ let
           (label :class "forecast-day" :text forecast-day))
         (box :orientation "h" :halign "fill" :space-evenly true :hexpand true
         (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-0-label)
-          (label :class "forecast-temp"  :text forecast-0-temp)
           (label :class "forecast-icon"  :markup forecast-0-icon)
+          (label :class "forecast-temp"  :text forecast-0-temp)
+          (label :class "forecast-label" :text forecast-0-label)
           (label :class "forecast-feels" :text forecast-0-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-1-label)
-          (label :class "forecast-temp"  :text forecast-1-temp)
           (label :class "forecast-icon"  :markup forecast-1-icon)
+          (label :class "forecast-temp"  :text forecast-1-temp)
+          (label :class "forecast-label" :text forecast-1-label)
           (label :class "forecast-feels" :text forecast-1-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-2-label)
-          (label :class "forecast-temp"  :text forecast-2-temp)
           (label :class "forecast-icon"  :markup forecast-2-icon)
+          (label :class "forecast-temp"  :text forecast-2-temp)
+          (label :class "forecast-label" :text forecast-2-label)
           (label :class "forecast-feels" :text forecast-2-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-3-label)
-          (label :class "forecast-temp"  :text forecast-3-temp)
           (label :class "forecast-icon"  :markup forecast-3-icon)
+          (label :class "forecast-temp"  :text forecast-3-temp)
+          (label :class "forecast-label" :text forecast-3-label)
           (label :class "forecast-feels" :text forecast-3-feels))
         (box :class "forecast-slot" :orientation "v" :spacing 4
-          (label :class "forecast-label" :text forecast-4-label)
-          (label :class "forecast-temp"  :text forecast-4-temp)
           (label :class "forecast-icon"  :markup forecast-4-icon)
+          (label :class "forecast-temp"  :text forecast-4-temp)
+          (label :class "forecast-label" :text forecast-4-label)
           (label :class "forecast-feels" :text forecast-4-feels)))))
     ''}
   '';
@@ -282,35 +282,38 @@ let
   ewwScss = pkgs.writeText "eww-nixframe.scss" ''
     * {
       all: unset;
-      font-family: "Noto Sans", sans-serif;
+      font-family: "Inter", "Noto Sans", sans-serif;
     }
 
     .sidebar {
-      background-color: rgba(0, 0, 0, 0.75);
+      background-color: rgba(0, 0, 0, 0.85);
       padding: 40px;
+      border-left: 1px solid rgba(196, 168, 130, 0.15);
     }
 
     .clock {
       font-size: 200px;
-      font-weight: 700;
-      color: #ffffff;
+      font-weight: 400;
+      color: #f5f1e8;
+      font-family: "Lora", Georgia, serif;
     }
 
     .date {
       font-size: 60px;
       font-weight: 400;
-      color: #cccccc;
+      color: #c4a882;
     }
 
     ${optionalString weatherCfg.enable ''
     .forecast-bar {
-      background-color: rgba(0, 0, 0, 0.90);
+      background-color: rgba(0, 0, 0, 0.85);
       padding: 16px 40px;
+      border-top: 1px solid rgba(196, 168, 130, 0.15);
     }
 
     .forecast-slot {
       padding: 6px 38px;
-      border-left: 2px solid rgba(196, 168, 130, 0.25);
+      border-left: 1px solid rgba(196, 168, 130, 0.15);
     }
 
     .forecast-slot:first-child {
@@ -330,31 +333,33 @@ let
     }
 
     .forecast-label {
-      font-size: 30px;
-      font-weight: 500;
+      font-size: 26px;
+      font-weight: 400;
       color: #a89478;
       letter-spacing: 1px;
+      opacity: 0.75;
     }
 
     .forecast-temp {
-      font-size: 64px;
+      font-size: 72px;
       font-weight: 700;
-      color: #eba63c;
+      color: #f5a942;
       margin-top: 2px;
     }
 
     .forecast-icon {
-      font-size: 64px;
+      font-size: 72px;
       color: #ecdcc8;
       margin-top: 4px;
       margin-bottom: 4px;
     }
 
     .forecast-feels {
-      font-size: 36px;
-      font-weight: 500;
+      font-size: 30px;
+      font-weight: 400;
       color: #b89070;
       margin-top: 4px;
+      opacity: 0.65;
     }
     ''}
   '';
@@ -701,7 +706,7 @@ in
     programs.sway.enable = true;
 
     # Fonts for Eww widgets (sidebar + forecast bar)
-    fonts.packages = [ pkgs.noto-fonts pkgs.weather-icons ];
+    fonts.packages = [ pkgs.noto-fonts pkgs.weather-icons pkgs.lora pkgs.inter ];
 
     # ──────────────────────────────────────────────────────────────
     # Auto-login on VT 7
