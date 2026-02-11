@@ -159,6 +159,7 @@ Use these plugin commands when working on this project:
 | `/clean_gone` | After merging PRs to clean up stale local branches |
 | `/review-pr` | Before creating pull requests to catch issues early |
 | `/feature-dev` | For complex feature implementations requiring architecture planning |
+| `/screenshot:screenshot` | Capture NixFrame display screenshot (args: `forecast`, `sidebar`, or empty for full) |
 
 ### Project-Local Plugins
 
@@ -168,6 +169,7 @@ This repo has custom Claude Code plugins in `.claude/plugins/` that override mar
 |--------|----------|---------|
 | `nix-commit` | `.claude/plugins/nix-commit/` | Runs `nix fmt` before commits to pass CI formatting checks |
 | `local-review` | `.claude/plugins/local-review/` | Pre-commit code review |
+| `screenshot` | `.claude/plugins/screenshot/` | Capture NixFrame display screenshots |
 
 **Important:** Use `/nix-commit:commit` instead of `/commit` to ensure Nix files are formatted before committing. This prevents CI failures from formatting mismatches.
 

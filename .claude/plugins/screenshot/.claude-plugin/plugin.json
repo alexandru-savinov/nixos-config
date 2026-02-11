@@ -1,0 +1,11 @@
+{
+  "name": "screenshot",
+  "description": "Capture screenshots of the NixFrame digital photo frame display",
+  "version": "1.0.0",
+  "author": {
+    "name": "nixos-config"
+  },
+  "license": "MIT",
+  "keywords": ["nixframe", "screenshot", "display", "sway", "wayland"],
+  "commands": "./commands/"
+}
