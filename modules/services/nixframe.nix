@@ -293,14 +293,12 @@ let
 
     .clock {
       font-size: 200px;
-      font-weight: 400;
       color: #f5f1e8;
       font-family: "Lora", Georgia, serif;
     }
 
     .date {
       font-size: 60px;
-      font-weight: 400;
       color: #c4a882;
     }
 
@@ -334,7 +332,6 @@ let
 
     .forecast-label {
       font-size: 26px;
-      font-weight: 400;
       color: #a89478;
       letter-spacing: 1px;
       opacity: 0.75;
@@ -356,7 +353,6 @@ let
 
     .forecast-feels {
       font-size: 30px;
-      font-weight: 400;
       color: #b89070;
       margin-top: 4px;
       opacity: 0.65;
