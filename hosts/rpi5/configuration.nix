@@ -14,7 +14,7 @@
 # - Basic development tools (helix, neovim, nodejs, etc.)
 # - Claude Code CLI
 #
-# For Open-WebUI, n8n, Uptime Kuma → use rpi5-full after first boot
+# For Open-WebUI, n8n, Gatus → use rpi5-full after first boot
 
 { config
 , pkgs
@@ -43,7 +43,7 @@
     ../../modules/services/n8n-skills.nix
     ../../modules/services/n8n-mcp-claude.nix
     # Additional services are in rpi5-full config:
-    # - open-webui, n8n, uptime-kuma
+    # - open-webui, n8n, gatus
   ];
 
   # Enable development tools and Claude Code
