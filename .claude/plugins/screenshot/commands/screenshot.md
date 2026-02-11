@@ -26,13 +26,11 @@ Run this as a single bash command to discover the environment:
 
 ```bash
 NIXFRAME_UID=$(id -u nixframe) && \
-sudo -u nixframe bash -c '
-  SWAYSOCK=$(ls -t /run/user/'"$NIXFRAME_UID"'/sway-ipc.*.sock 2>/dev/null | head -1)
-  WAYLAND=$(ls /run/user/'"$NIXFRAME_UID"'/wayland-* 2>/dev/null | grep -v "\.lock$" | head -1)
-  if [ -z "$SWAYSOCK" ] || [ -z "$WAYLAND" ]; then echo "NOT_RUNNING"; else
-    echo "UID='"$NIXFRAME_UID"' SWAYSOCK=$SWAYSOCK WAYLAND=$(basename "$WAYLAND")"
-  fi
-'
+RUNTIME="/run/user/$NIXFRAME_UID" && \
+SWAYSOCK="$RUNTIME/$(sudo -u nixframe ls -t "$RUNTIME" 2>/dev/null | grep '^sway-ipc\..*\.sock$' | head -1)" && \
+WAYLAND=$(sudo -u nixframe ls "$RUNTIME" 2>/dev/null | grep '^wayland-[0-9]*$' | head -1) && \
+if [ "$SWAYSOCK" = "$RUNTIME/" ] || [ -z "$WAYLAND" ]; then echo "NOT_RUNNING"; else \
+echo "UID=$NIXFRAME_UID SWAYSOCK=$SWAYSOCK WAYLAND=$WAYLAND"; fi
 ```
 
 If no Sway socket is found, tell the user that NixFrame's Sway session is not running.
