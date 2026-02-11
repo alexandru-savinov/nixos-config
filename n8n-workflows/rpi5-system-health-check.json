@@ -44,8 +44,8 @@
       "continueOnFail": true
     },
     {
-      "id": "check-uptime-kuma",
-      "name": "Check Uptime Kuma",
+      "id": "check-gatus",
+      "name": "Check Gatus",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [350, 500],
@@ -75,7 +75,7 @@
       "typeVersion": 2,
       "position": [800, 400],
       "parameters": {
-        "jsCode": "const results = $input.all();\nconst timestamp = new Date().toISOString();\n\n// After merge (append mode), we get TWO separate items:\n// - Item 0: Open-WebUI response {status: true}\n// - Item 1: Uptime Kuma response {data: 'HTML...'}\n\n// Find Open-WebUI response (has status field)\nconst openWebUIResult = results.find(r => r.json.status !== undefined);\nconst openWebUIHealthy = openWebUIResult?.json?.status === true;\n\n// Find Uptime Kuma response (has data field with HTML)\nconst uptimeKumaResult = results.find(r => {\n  const data = r.json.data;\n  return typeof data === 'string' && data.includes('Uptime Kuma');\n});\nconst uptimeKumaHealthy = uptimeKumaResult !== undefined;\n\nconst report = {\n  timestamp,\n  hostname: 'rpi5',\n  services: {\n    'open-webui': {\n      status: openWebUIHealthy ? 'healthy' : 'unhealthy',\n      response: openWebUIResult?.json || 'no response'\n    },\n    'uptime-kuma': {\n      status: uptimeKumaHealthy ? 'healthy' : 'unhealthy',\n      response: uptimeKumaHealthy ? 'HTML page loaded' : 'no response'\n    }\n  },\n  allHealthy: openWebUIHealthy && uptimeKumaHealthy\n};\n\nreturn [{ json: report }];"
+        "jsCode": "const results = $input.all();\nconst timestamp = new Date().toISOString();\n\n// After merge (append mode), we get TWO separate items:\n// - Item 0: Open-WebUI response {status: true}\n// - Item 1: Gatus response {data: 'HTML...'}\n\n// Find Open-WebUI response (has status field)\nconst openWebUIResult = results.find(r => r.json.status !== undefined);\nconst openWebUIHealthy = openWebUIResult?.json?.status === true;\n\n// Find Gatus response (has data field with HTML)\nconst gatusResult = results.find(r => {\n  const data = r.json.data;\n  return typeof data === 'string' && data.includes('Gatus');\n});\nconst gatusHealthy = gatusResult !== undefined;\n\nconst report = {\n  timestamp,\n  hostname: 'rpi5',\n  services: {\n    'open-webui': {\n      status: openWebUIHealthy ? 'healthy' : 'unhealthy',\n      response: openWebUIResult?.json || 'no response'\n    },\n    'gatus': {\n      status: gatusHealthy ? 'healthy' : 'unhealthy',\n      response: gatusHealthy ? 'HTML page loaded' : 'no response'\n    }\n  },\n  allHealthy: openWebUIHealthy && gatusHealthy\n};\n\nreturn [{ json: report }];"
       }
     },
     {
@@ -85,7 +85,7 @@
       "typeVersion": 2,
       "position": [1000, 400],
       "parameters": {
-        "jsCode": "const report = $input.first().json;\n\nconsole.log('=== RPi5 Health Check ===' );\nconsole.log('Timestamp:', report.timestamp);\nconsole.log('Open-WebUI:', report.services['open-webui'].status);\nconsole.log('Uptime-Kuma:', report.services['uptime-kuma'].status);\nconsole.log('All Healthy:', report.allHealthy);\n\nreturn $input.all();"
+        "jsCode": "const report = $input.first().json;\n\nconsole.log('=== RPi5 Health Check ===' );\nconsole.log('Timestamp:', report.timestamp);\nconsole.log('Open-WebUI:', report.services['open-webui'].status);\nconsole.log('Gatus:', report.services['gatus'].status);\nconsole.log('All Healthy:', report.allHealthy);\n\nreturn $input.all();"
       }
     }
   ],
@@ -94,7 +94,7 @@
       "main": [
         [
           { "node": "Check Open-WebUI", "type": "main", "index": 0 },
-          { "node": "Check Uptime Kuma", "type": "main", "index": 0 }
+          { "node": "Check Gatus", "type": "main", "index": 0 }
         ]
       ]
     },
@@ -102,7 +102,7 @@
       "main": [
         [
           { "node": "Check Open-WebUI", "type": "main", "index": 0 },
-          { "node": "Check Uptime Kuma", "type": "main", "index": 0 }
+          { "node": "Check Gatus", "type": "main", "index": 0 }
         ]
       ]
     },
@@ -111,7 +111,7 @@
         [{ "node": "Merge Results", "type": "main", "index": 0 }]
       ]
     },
-    "Check Uptime Kuma": {
+    "Check Gatus": {
       "main": [
         [{ "node": "Merge Results", "type": "main", "index": 1 }]
       ]
