@@ -288,7 +288,6 @@ let
     .sidebar {
       background-color: rgba(0, 0, 0, 0.85);
       padding: 40px;
-      border-left: 1px solid rgba(196, 168, 130, 0.15);
     }
 
     .clock {
@@ -306,7 +305,6 @@ let
     .forecast-bar {
       background-color: rgba(0, 0, 0, 0.85);
       padding: 16px 40px;
-      border-top: 1px solid rgba(196, 168, 130, 0.15);
     }
 
     .forecast-slot {
