@@ -35,8 +35,6 @@ let
         ps: with ps; [
           caldav
           vobject
-          recurring-ical-events
-          icalendar
         ]
       );
     in
@@ -47,11 +45,11 @@ let
       import os
       import sys
       from datetime import datetime, timedelta, date
-      from recurring_ical_events import of as recurring_of
 
       def main():
           creds_file = os.environ.get("CALDAV_CREDENTIALS_FILE", "")
           if not creds_file or not os.path.isfile(creds_file):
+              print(f"WARNING: credentials file not found: {creds_file}", file=sys.stderr)
               print("[]")
               return
 
@@ -68,6 +66,7 @@ let
           url = os.environ.get("CALDAV_URL", "https://caldav.icloud.com/")
 
           if not username or not password:
+              print("WARNING: CALDAV_USERNAME or CALDAV_PASSWORD missing in credentials", file=sys.stderr)
               print("[]")
               return
 
@@ -75,7 +74,7 @@ let
           look_ahead = int(os.environ.get("CALDAV_LOOK_AHEAD_DAYS", "14"))
 
           try:
-              client = caldav.DAVClient(url=url, username=username, password=password)
+              client = caldav.DAVClient(url=url, username=username, password=password, timeout=30)
               principal = client.principal()
               calendars = principal.calendars()
           except Exception as e:
@@ -99,7 +98,8 @@ let
               for event in raw_events:
                   try:
                       vcal = event.vobject_instance
-                  except Exception:
+                  except Exception as e:
+                      print(f"Error parsing event: {e}", file=sys.stderr)
                       continue
                   for component in vcal.contents.get("vevent", []):
                       try:
@@ -136,7 +136,8 @@ let
                               "all_day": all_day,
                               "sort_key": sort_key.isoformat(),
                           })
-                      except Exception:
+                      except Exception as e:
+                          print(f"Error processing event component: {e}", file=sys.stderr)
                           continue
 
           events.sort(key=lambda e: e["sort_key"])
@@ -192,15 +193,13 @@ let
           export CALDAV_URL="${calendarCfg.caldavUrl}"
           export CALDAV_MAX_EVENTS="${toString calendarCfg.maxEvents}"
           export CALDAV_LOOK_AHEAD_DAYS="${toString calendarCfg.lookAheadDays}"
-          RESPONSE=$(${calendarPython} 2>&1 || true)
-          if echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e '.[0]' >/dev/null 2>&1; then
-            echo "$RESPONSE" > "$TMP"
-            ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
-          elif echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e 'length == 0' >/dev/null 2>&1; then
+          RESPONSE=$(${calendarPython} 2>/tmp/nixframe-calendar-err.log || true)
+          if echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e 'type == "array"' >/dev/null 2>&1; then
             echo "$RESPONSE" > "$TMP"
             ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
           else
-            echo "WARNING: calendar fetch failed: ''${RESPONSE:0:200}" >&2
+            echo "WARNING: calendar fetch returned invalid JSON: ''${RESPONSE:0:200}" >&2
+            [ -s /tmp/nixframe-calendar-err.log ] && cat /tmp/nixframe-calendar-err.log >&2
           fi
         fi
       ) 9>"$CACHE_DIR/.calendar.lock"
@@ -211,10 +210,9 @@ let
       exit 0
     fi
 
-    VALUE=$(${pkgs.jq}/bin/jq -r ".[$SLOT_IDX].$FIELD // empty" "$CACHE" 2>/dev/null || true)
-    if [ "$FIELD" = "date" ]; then
-      VALUE=$(${pkgs.jq}/bin/jq -r ".[$SLOT_IDX].date_label // empty" "$CACHE" 2>/dev/null || true)
-    fi
+    JQ_FIELD="$FIELD"
+    [ "$FIELD" = "date" ] && JQ_FIELD="date_label"
+    VALUE=$(${pkgs.jq}/bin/jq -r ".[$SLOT_IDX].$JQ_FIELD // empty" "$CACHE" 2>/dev/null || true)
     echo "''${VALUE:-}"
   '';
 
