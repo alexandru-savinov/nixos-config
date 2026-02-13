@@ -55,6 +55,12 @@
 
     # E2E test credentials
     e2e-test-api-key.file = "${self}/secrets/e2e-test-api-key.age";
+
+    # CalDAV credentials for NixFrame calendar sidebar
+    caldav-credentials = {
+      file = "${self}/secrets/caldav-credentials.age";
+      owner = "nixframe";
+    };
   };
 
   # Open-WebUI with OpenRouter backend
@@ -472,6 +478,10 @@
   # Upload photos: https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui
   services.nixframe.enable = true;
   services.nixframe.weather.enable = true;
+  services.nixframe.calendar = {
+    enable = true;
+    credentialsFile = config.age.secrets.caldav-credentials.path;
+  };
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)

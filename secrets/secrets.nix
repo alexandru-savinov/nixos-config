@@ -48,4 +48,7 @@ in
 
   # UniFi Network MCP - controller password for AI-assisted network management
   "unifi-password.age".publicKeys = allKeys;
+
+  # CalDAV credentials for NixFrame calendar (Apple ID + app-specific password)
+  "caldav-credentials.age".publicKeys = allKeys;
 }
