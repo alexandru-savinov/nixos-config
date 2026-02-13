@@ -4,26 +4,27 @@
 # Tasks arrive via a file-based inbox (systemd.path watcher) or manual trigger.
 #
 # Flow:
+#   Boot → openclaw-git-setup.service (clone repo, provision secrets)
 #   Task file → /var/lib/openclaw/inbox/
-#   systemd.path → openclaw-task-runner.service
+#   systemd.path → openclaw-task-runner.service (processes all queued tasks)
 #   claude -p "task" --allowedTools "..." → works in git clone
 #   Results → /var/lib/openclaw/results/<task-id>/output.json
 #   Optional → POST notification to n8n webhook
 #
 # Security:
 #   - Dedicated openclaw user with restricted sudo (build wrapper only)
-#   - Network restricted via nftables (Anthropic API + GitHub only)
-#   - All secrets loaded from agenix via ExecStartPre (never in Nix store)
+#   - Network restricted via nftables (Anthropic API + GitHub + DNS resolvers)
+#   - Secret values loaded at runtime from agenix paths into /run/openclaw/env
 #   - Claude Code tools whitelist limits filesystem/shell access
 #
 # Usage in host configuration:
 #   services.openclaw = {
 #     enable = true;
 #     anthropicApiKeyFile = config.age.secrets.anthropic-api-key.path;
-#     githubTokenFile = config.age.secrets.github-token.path;
+#     githubTokenFile = config.age.secrets.openclaw-github-token.path;
 #   };
 
-{ config, pkgs, lib, claude-code, ... }:
+{ config, pkgs, lib, claude-code ? null, ... }:
 
 with lib;
 
@@ -72,7 +73,7 @@ let
         exec ${pkgs.nix}/bin/nix fmt /var/lib/openclaw/nixos-config
         ;;
       *)
-        echo "ERROR: unknown command '''${1:-}'. Allowed: build <target>, check, fmt" >&2
+        echo "ERROR: unknown command: ''${1:-}. Allowed: build <target>, check, fmt" >&2
         exit 1
         ;;
     esac
@@ -87,97 +88,101 @@ let
     COMPLETED="/var/lib/openclaw/completed"
     FAILED="/var/lib/openclaw/failed"
 
-    # Pick the oldest task file
-    TASK_FILE=$(${pkgs.findutils}/bin/find "$INBOX" -maxdepth 1 -type f -name '*.task' -printf '%T+ %p\n' 2>/dev/null | ${pkgs.coreutils}/bin/sort | ${pkgs.coreutils}/bin/head -n1 | ${pkgs.coreutils}/bin/cut -d' ' -f2-)
+    # Move current task to failed/ on unexpected errors (jq crash, disk full, etc.)
+    PROCESSING_FILE=""
+    trap '[ -n "$PROCESSING_FILE" ] && [ -f "$PROCESSING_FILE" ] && ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/" 2>/dev/null || true' ERR
 
-    if [ -z "$TASK_FILE" ]; then
-      echo "No task files found in $INBOX"
-      exit 0
-    fi
+    # Process all available tasks (DirectoryNotEmpty only triggers on transition)
+    while true; do
+      TASK_FILE=$(${pkgs.findutils}/bin/find "$INBOX" -maxdepth 1 -type f -name '*.task' -printf '%T+ %p\n' | ${pkgs.coreutils}/bin/sort | ${pkgs.coreutils}/bin/head -n1 | ${pkgs.coreutils}/bin/cut -d' ' -f2-)
 
-    echo "Processing task: $TASK_FILE"
+      if [ -z "$TASK_FILE" ]; then
+        break
+      fi
 
-    # Generate task ID from filename + timestamp
-    TASK_BASENAME=$(${pkgs.coreutils}/bin/basename "$TASK_FILE" .task)
-    TASK_ID="$(${pkgs.coreutils}/bin/date +%Y%m%d-%H%M%S)-$TASK_BASENAME"
-    RESULT_DIR="$RESULTS/$TASK_ID"
-    ${pkgs.coreutils}/bin/mkdir -p "$RESULT_DIR" "$FAILED"
+      echo "Processing task: $TASK_FILE"
 
-    # Move task out of inbox BEFORE processing (prevents OOM restart loops)
-    PROCESSING_FILE="$RESULT_DIR/$(${pkgs.coreutils}/bin/basename "$TASK_FILE")"
-    ${pkgs.coreutils}/bin/mv "$TASK_FILE" "$PROCESSING_FILE"
+      # Generate task ID from filename + timestamp
+      TASK_BASENAME=$(${pkgs.coreutils}/bin/basename "$TASK_FILE" .task)
+      TASK_ID="$(${pkgs.coreutils}/bin/date +%Y%m%d-%H%M%S)-$TASK_BASENAME"
+      RESULT_DIR="$RESULTS/$TASK_ID"
+      ${pkgs.coreutils}/bin/mkdir -p "$RESULT_DIR" "$FAILED"
 
-    # Read task content
-    TASK_CONTENT=$(${pkgs.coreutils}/bin/cat "$PROCESSING_FILE")
+      # Move task out of inbox BEFORE processing. Without this, an OOM kill would
+      # leave the task in inbox, DirectoryNotEmpty would re-trigger, and it would
+      # OOM again in a loop.
+      PROCESSING_FILE="$RESULT_DIR/$(${pkgs.coreutils}/bin/basename "$TASK_FILE")"
+      ${pkgs.coreutils}/bin/mv "$TASK_FILE" "$PROCESSING_FILE"
 
-    if [ -z "$TASK_CONTENT" ]; then
-      echo "ERROR: Task file is empty: $PROCESSING_FILE" >&2
-      echo '{"error": "empty task file"}' > "$RESULT_DIR/output.json"
-      ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/"
-      exit 1
-    fi
+      TASK_CONTENT=$(${pkgs.coreutils}/bin/cat "$PROCESSING_FILE")
 
-    # Build allowedTools argument
-    ALLOWED_TOOLS="${concatStringsSep "," cfg.allowedTools}"
+      if [ -z "$TASK_CONTENT" ]; then
+        echo "ERROR: Task file is empty: $PROCESSING_FILE" >&2
+        echo '{"error": "empty task file"}' > "$RESULT_DIR/output.json"
+        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/"
+        PROCESSING_FILE=""
+        continue
+      fi
 
-    # Build claude command
-    CLAUDE_ARGS=( -p "$TASK_CONTENT" )
-    CLAUDE_ARGS+=( --allowedTools "$ALLOWED_TOOLS" )
-    CLAUDE_ARGS+=( --max-turns ${toString cfg.maxTurns} )
-    CLAUDE_ARGS+=( --model "${cfg.model}" )
-    CLAUDE_ARGS+=( --output-format json )
+      ALLOWED_TOOLS="${concatStringsSep "," cfg.allowedTools}"
 
-    ${optionalString (cfg.maxBudgetUsd > 0) ''
-      CLAUDE_ARGS+=( --max-budget-usd ${toString cfg.maxBudgetUsd} )
-    ''}
+      CLAUDE_ARGS=( -p "$TASK_CONTENT" )
+      CLAUDE_ARGS+=( --allowedTools "$ALLOWED_TOOLS" )
+      CLAUDE_ARGS+=( --max-turns ${toString cfg.maxTurns} )
+      CLAUDE_ARGS+=( --model "${cfg.model}" )
+      CLAUDE_ARGS+=( --output-format json )
 
-    ${optionalString (cfg.systemPrompt != null) ''
-      CLAUDE_ARGS+=( --system-prompt ${escapeShellArg cfg.systemPrompt} )
-    ''}
+      ${optionalString (cfg.maxBudgetUsd > 0) ''
+        CLAUDE_ARGS+=( --max-budget-usd ${toString cfg.maxBudgetUsd} )
+      ''}
 
-    ${optionalString (cfg.mcpConfigFile != null) ''
-      CLAUDE_ARGS+=( --mcp-config "${cfg.mcpConfigFile}" )
-    ''}
+      ${optionalString (cfg.systemPrompt != null) ''
+        CLAUDE_ARGS+=( --system-prompt ${escapeShellArg cfg.systemPrompt} )
+      ''}
 
-    echo "Running claude with args: ''${CLAUDE_ARGS[*]}"
-    echo "Working directory: /var/lib/openclaw/nixos-config"
+      ${optionalString (cfg.mcpConfigFile != null) ''
+        CLAUDE_ARGS+=( --mcp-config "${cfg.mcpConfigFile}" )
+      ''}
 
-    # Run Claude Code CLI, capture output
-    EXIT_CODE=0
-    ${claudeCodePkg}/bin/claude "''${CLAUDE_ARGS[@]}" \
-      > "$RESULT_DIR/output.json" \
-      2> "$RESULT_DIR/stderr.log" \
-      || EXIT_CODE=$?
+      echo "Running claude with args: ''${CLAUDE_ARGS[*]}"
+      echo "Working directory: /var/lib/openclaw/nixos-config"
 
-    echo "Claude exited with code: $EXIT_CODE"
+      EXIT_CODE=0
+      ${claudeCodePkg}/bin/claude "''${CLAUDE_ARGS[@]}" \
+        > "$RESULT_DIR/output.json" \
+        2> "$RESULT_DIR/stderr.log" \
+        || EXIT_CODE=$?
 
-    # Add metadata to results
-    ${pkgs.jq}/bin/jq -n \
-      --arg task_id "$TASK_ID" \
-      --arg task_file "$(${pkgs.coreutils}/bin/basename "$PROCESSING_FILE")" \
-      --arg exit_code "$EXIT_CODE" \
-      --arg timestamp "$(${pkgs.coreutils}/bin/date -Iseconds)" \
-      '{task_id: $task_id, task_file: $task_file, exit_code: ($exit_code | tonumber), timestamp: $timestamp}' \
-      > "$RESULT_DIR/metadata.json"
+      echo "Claude exited with code: $EXIT_CODE"
 
-    # Move to completed or failed based on exit code
-    if [ "$EXIT_CODE" -eq 0 ]; then
-      ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$COMPLETED/"
-    else
-      ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/"
-    fi
+      ${pkgs.jq}/bin/jq -n \
+        --arg task_id "$TASK_ID" \
+        --arg task_file "$(${pkgs.coreutils}/bin/basename "$PROCESSING_FILE")" \
+        --arg exit_code "$EXIT_CODE" \
+        --arg timestamp "$(${pkgs.coreutils}/bin/date -Iseconds)" \
+        '{task_id: $task_id, task_file: $task_file, exit_code: ($exit_code | tonumber), timestamp: $timestamp}' \
+        > "$RESULT_DIR/metadata.json"
 
-    ${optionalString (cfg.notifications.n8nWebhookUrl != null) ''
-      # POST result summary to n8n webhook
-      SUMMARY=$(${pkgs.jq}/bin/jq -c '{task_id: .task_id, exit_code: .exit_code, timestamp: .timestamp}' "$RESULT_DIR/metadata.json")
-      ${pkgs.curl}/bin/curl -sf -X POST \
-        -H "Content-Type: application/json" \
-        -d "$SUMMARY" \
-        "${cfg.notifications.n8nWebhookUrl}" \
-        || echo "WARNING: Failed to send notification to n8n webhook" >&2
-    ''}
+      if [ "$EXIT_CODE" -eq 0 ]; then
+        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$COMPLETED/"
+      else
+        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/"
+      fi
 
-    echo "Task $TASK_ID completed (exit code: $EXIT_CODE)"
+      ${optionalString (cfg.notifications.n8nWebhookUrl != null) ''
+        SUMMARY=$(${pkgs.jq}/bin/jq -c '{task_id: .task_id, exit_code: .exit_code, timestamp: .timestamp}' "$RESULT_DIR/metadata.json")
+        ${pkgs.curl}/bin/curl -sf -X POST \
+          -H "Content-Type: application/json" \
+          -d "$SUMMARY" \
+          "${cfg.notifications.n8nWebhookUrl}" \
+          || echo "WARNING: Failed to notify n8n webhook (task $TASK_ID)" >&2
+      ''}
+
+      PROCESSING_FILE=""
+      echo "Task $TASK_ID completed (exit code: $EXIT_CODE)"
+    done
+
+    echo "All inbox tasks processed"
   '';
 
   # Git setup script
@@ -206,34 +211,37 @@ let
       ${pkgs.git}/bin/git fetch origin
       ${pkgs.git}/bin/git checkout "${cfg.repoBranch}"
       ${pkgs.git}/bin/git pull --ff-only origin "${cfg.repoBranch}" || {
-        echo "WARNING: Fast-forward pull failed, resetting to origin/${cfg.repoBranch}" >&2
-        ${pkgs.git}/bin/git reset --hard "origin/${cfg.repoBranch}"
+        echo "ERROR: Fast-forward pull failed. Local state has diverged from origin/${cfg.repoBranch}." >&2
+        echo "Current HEAD: $(${pkgs.git}/bin/git rev-parse HEAD)" >&2
+        echo "Unpushed commits:" >&2
+        ${pkgs.git}/bin/git log --oneline "origin/${cfg.repoBranch}..HEAD" >&2 || true
+        echo "Manual intervention required. Refusing to reset --hard." >&2
+        exit 1
       }
     fi
 
     echo "Git setup complete"
   '';
 
-  # DNS resolver script for nftables sets (separate IPv4/IPv6)
+  # DNS resolver script for nftables sets
   nftDnsScript = pkgs.writeShellScript "openclaw-nft-dns-update" ''
     set -euo pipefail
 
-    # Collect IPv4 addresses
     V4_ELEMENTS=""
+    V6_ELEMENTS=""
+
     for domain in ${concatStringsSep " " (map escapeShellArg cfg.networkRestriction.allowedDomains)}; do
-      IPS=$(${pkgs.dnsutils}/bin/dig +short "$domain" A 2>/dev/null || true)
+      # IPv4 — per-domain failure is OK (|| true), but log errors
+      IPS=$(${pkgs.dnsutils}/bin/dig +short "$domain" A 2>&1 || true)
       for ip in $IPS; do
         if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
           [ -n "$V4_ELEMENTS" ] && V4_ELEMENTS="$V4_ELEMENTS, "
           V4_ELEMENTS="$V4_ELEMENTS$ip"
         fi
       done
-    done
 
-    # Collect IPv6 addresses
-    V6_ELEMENTS=""
-    for domain in ${concatStringsSep " " (map escapeShellArg cfg.networkRestriction.allowedDomains)}; do
-      IPS6=$(${pkgs.dnsutils}/bin/dig +short "$domain" AAAA 2>/dev/null || true)
+      # IPv6
+      IPS6=$(${pkgs.dnsutils}/bin/dig +short "$domain" AAAA 2>&1 || true)
       for ip in $IPS6; do
         if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^[0-9a-f:]+$'; then
           [ -n "$V6_ELEMENTS" ] && V6_ELEMENTS="$V6_ELEMENTS, "
@@ -242,22 +250,23 @@ let
       done
     done
 
-    # Update IPv4 set
+    if [ -z "$V4_ELEMENTS" ] && [ -z "$V6_ELEMENTS" ]; then
+      echo "ERROR: No IPs resolved for any allowed domain. nftables sets are empty." >&2
+      exit 1
+    fi
+
+    # Update IPv4 set — let nft fail loudly if table is missing
     if [ -n "$V4_ELEMENTS" ]; then
-      ${pkgs.nftables}/bin/nft flush set inet openclaw-restrict allowed_dns_ips_v4 2>/dev/null || true
-      ${pkgs.nftables}/bin/nft add element inet openclaw-restrict allowed_dns_ips_v4 "{ $V4_ELEMENTS }" 2>/dev/null || true
+      ${pkgs.nftables}/bin/nft flush set inet openclaw-restrict allowed_dns_ips_v4
+      ${pkgs.nftables}/bin/nft add element inet openclaw-restrict allowed_dns_ips_v4 "{ $V4_ELEMENTS }"
       echo "Updated nftables IPv4 set: $V4_ELEMENTS"
     fi
 
     # Update IPv6 set
     if [ -n "$V6_ELEMENTS" ]; then
-      ${pkgs.nftables}/bin/nft flush set inet openclaw-restrict allowed_dns_ips_v6 2>/dev/null || true
-      ${pkgs.nftables}/bin/nft add element inet openclaw-restrict allowed_dns_ips_v6 "{ $V6_ELEMENTS }" 2>/dev/null || true
+      ${pkgs.nftables}/bin/nft flush set inet openclaw-restrict allowed_dns_ips_v6
+      ${pkgs.nftables}/bin/nft add element inet openclaw-restrict allowed_dns_ips_v6 "{ $V6_ELEMENTS }"
       echo "Updated nftables IPv6 set: $V6_ELEMENTS"
-    fi
-
-    if [ -z "$V4_ELEMENTS" ] && [ -z "$V6_ELEMENTS" ]; then
-      echo "WARNING: No IPs resolved for allowed domains" >&2
     fi
   '';
 
@@ -426,8 +435,20 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Security assertions: prevent secrets in Nix store (world-readable!)
+    # Assertions: require claude-code flake input + prevent secrets in Nix store
     assertions = [
+      {
+        assertion = claude-code != null;
+        message = ''
+          The openclaw module requires the claude-code flake input via specialArgs.
+
+          Add to flake inputs:
+            claude-code.url = "github:sadjow/claude-code-nix";
+
+          Then pass to specialArgs:
+            specialArgs = { inherit claude-code; };
+        '';
+      }
       {
         assertion = !(hasPrefix "/nix/store" (toString cfg.anthropicApiKeyFile));
         message = ''
@@ -530,7 +551,7 @@ in
         User = "openclaw";
         Group = "openclaw";
         WorkingDirectory = "/var/lib/openclaw";
-        EnvironmentFile = "-/run/openclaw/env";
+        EnvironmentFile = "/run/openclaw/env";
         ExecStart = gitSetupScript;
 
         # Run secret setup as root (+ prefix) before git operations
@@ -547,12 +568,12 @@ in
               echo "ERROR: Anthropic API key file not found: ${cfg.anthropicApiKeyFile}" >&2
               exit 1
             fi
-            ANTHROPIC_KEY=$(cat "${cfg.anthropicApiKeyFile}")
+            ANTHROPIC_KEY=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.anthropicApiKeyFile}")
             if [ -z "$ANTHROPIC_KEY" ]; then
               echo "ERROR: Anthropic API key file is empty: ${cfg.anthropicApiKeyFile}" >&2
               exit 1
             fi
-            echo "ANTHROPIC_API_KEY=$ANTHROPIC_KEY" >> "$ENV_FILE"
+            printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_KEY" >> "$ENV_FILE"
 
             # Isolate Claude config directory
             echo "CLAUDE_CONFIG_DIR=/var/lib/openclaw/.claude" >> "$ENV_FILE"
@@ -563,12 +584,12 @@ in
                 echo "ERROR: GitHub token file not found: ${cfg.githubTokenFile}" >&2
                 exit 1
               fi
-              GH_TOKEN=$(cat "${cfg.githubTokenFile}")
+              GH_TOKEN=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.githubTokenFile}")
               if [ -z "$GH_TOKEN" ]; then
                 echo "ERROR: GitHub token file is empty: ${cfg.githubTokenFile}" >&2
                 exit 1
               fi
-              echo "GH_TOKEN=$GH_TOKEN" >> "$ENV_FILE"
+              printf 'GH_TOKEN=%s\n' "$GH_TOKEN" >> "$ENV_FILE"
             ''}
 
             chmod 600 "$ENV_FILE"
@@ -593,7 +614,7 @@ in
         User = "openclaw";
         Group = "openclaw";
         WorkingDirectory = "/var/lib/openclaw/nixos-config";
-        EnvironmentFile = "-/run/openclaw/env";
+        EnvironmentFile = "/run/openclaw/env";
         ExecStartPre = pkgs.writeShellScript "openclaw-check-env" ''
           set -euo pipefail
           if [ ! -f /run/openclaw/env ]; then
@@ -613,7 +634,6 @@ in
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
-        NoNewPrivileges = true;
 
         # Timeout for long-running tasks (30 minutes)
         TimeoutStartSec = "1800";
@@ -636,7 +656,6 @@ in
       description = "Watch OpenClaw inbox for new task files";
       wantedBy = [ "multi-user.target" ];
       pathConfig = {
-        PathExists = "/var/lib/openclaw/inbox";
         DirectoryNotEmpty = "/var/lib/openclaw/inbox";
         Unit = "openclaw-task-runner.service";
       };
