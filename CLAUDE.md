@@ -83,18 +83,17 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.nixframe` | VT 7 / HDMI-A-2 | Digital photo frame with n8n upload |
 | `services.gatus-tailscale` | 3001 | Declarative status monitoring |
 | `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
-| `services.openclaw` | 8443 | AI programming partner (Claude Code) |
+| `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 
-**Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. No firewall rules needed - localhost binding provides defense-in-depth.
+**Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. OpenClaw uses a different model: file-based inbox with per-UID nftables network restriction (no listener).
 
-Access URLs (HTTPS via Tailscale Serve, rpi5 only):
+Access URLs (HTTPS via Tailscale Serve):
 - Open-WebUI: `https://rpi5.tail4249a9.ts.net`
 - n8n: `https://rpi5.tail4249a9.ts.net:5678`
 - NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
 - Gatus: `https://rpi5.tail4249a9.ts.net:3001`
 - Qdrant: `https://rpi5.tail4249a9.ts.net:6333`
-- OpenClaw: `https://sancta-choir.tail4249a9.ts.net:8443` (Phase 2, not active yet)
 
 ## Secrets (Agenix)
 

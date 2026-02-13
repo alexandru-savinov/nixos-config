@@ -36,7 +36,10 @@ let
   openclawUid = 991;
   openclawGid = 991;
 
-  claudeCodePkg = claude-code.packages.${pkgs.system}.default;
+  claudeCodePkg =
+    if claude-code != null
+    then claude-code.packages.${pkgs.system}.default
+    else null;
 
   # Sudo wrapper script that ONLY allows specific safe commands
   openclawSudo = pkgs.writeShellScript "openclaw-sudo" ''
@@ -95,7 +98,11 @@ let
 
     # Move current task to failed/ on unexpected errors (jq crash, disk full, etc.)
     PROCESSING_FILE=""
-    trap '[ -n "$PROCESSING_FILE" ] && [ -f "$PROCESSING_FILE" ] && ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/" 2>/dev/null || true' ERR
+    trap '
+      if [ -n "$PROCESSING_FILE" ] && [ -f "$PROCESSING_FILE" ]; then
+        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/" 2>&1 || echo "ERROR: ERR trap failed to move $PROCESSING_FILE to $FAILED/" >&2
+      fi
+    ' ERR
 
     # Process all available tasks (DirectoryNotEmpty only triggers on transition)
     while true; do
@@ -166,7 +173,8 @@ let
         --arg exit_code "$EXIT_CODE" \
         --arg timestamp "$(${pkgs.coreutils}/bin/date -Iseconds)" \
         '{task_id: $task_id, task_file: $task_file, exit_code: ($exit_code | tonumber), timestamp: $timestamp}' \
-        > "$RESULT_DIR/metadata.json"
+        > "$RESULT_DIR/metadata.json.tmp" \
+        && ${pkgs.coreutils}/bin/mv "$RESULT_DIR/metadata.json.tmp" "$RESULT_DIR/metadata.json"
 
       if [ "$EXIT_CODE" -eq 0 ]; then
         ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$COMPLETED/"
@@ -176,11 +184,11 @@ let
 
       ${optionalString (cfg.notifications.n8nWebhookUrl != null) ''
         SUMMARY=$(${pkgs.jq}/bin/jq -c '{task_id: .task_id, exit_code: .exit_code, timestamp: .timestamp}' "$RESULT_DIR/metadata.json")
-        ${pkgs.curl}/bin/curl -sf -X POST \
+        HTTP_CODE=$(${pkgs.curl}/bin/curl --no-progress-meter -o /dev/null -w "%{http_code}" -X POST \
           -H "Content-Type: application/json" \
           -d "$SUMMARY" \
-          "${cfg.notifications.n8nWebhookUrl}" \
-          || echo "WARNING: Failed to notify n8n webhook (task $TASK_ID)" >&2
+          "${cfg.notifications.n8nWebhookUrl}" 2>&1) \
+          || echo "WARNING: Failed to notify n8n webhook (task $TASK_ID, HTTP $HTTP_CODE)" >&2
       ''}
 
       PROCESSING_FILE=""
@@ -236,8 +244,11 @@ let
     V6_ELEMENTS=""
 
     for domain in ${concatStringsSep " " (map escapeShellArg cfg.networkRestriction.allowedDomains)}; do
-      # IPv4 — per-domain failure is OK (|| true), but log errors
-      IPS=$(${pkgs.dnsutils}/bin/dig +short "$domain" A 2>&1 || true)
+      # IPv4 — per-domain failure is OK, but log it
+      IPS=$(${pkgs.dnsutils}/bin/dig +short "$domain" A 2>/dev/null) || {
+        echo "WARNING: Failed to resolve $domain A record" >&2
+        IPS=""
+      }
       for ip in $IPS; do
         if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
           [ -n "$V4_ELEMENTS" ] && V4_ELEMENTS="$V4_ELEMENTS, "
@@ -245,10 +256,13 @@ let
         fi
       done
 
-      # IPv6
-      IPS6=$(${pkgs.dnsutils}/bin/dig +short "$domain" AAAA 2>&1 || true)
+      # IPv6 — stricter regex requiring colon-separated hex groups
+      IPS6=$(${pkgs.dnsutils}/bin/dig +short "$domain" AAAA 2>/dev/null) || {
+        echo "WARNING: Failed to resolve $domain AAAA record" >&2
+        IPS6=""
+      }
       for ip in $IPS6; do
-        if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^[0-9a-f:]+$'; then
+        if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^([0-9a-f]{1,4}:)+[0-9a-f]{1,4}$'; then
           [ -n "$V6_ELEMENTS" ] && V6_ELEMENTS="$V6_ELEMENTS, "
           V6_ELEMENTS="$V6_ELEMENTS$ip"
         fi
@@ -260,17 +274,20 @@ let
       exit 1
     fi
 
-    # Update IPv4 set — let nft fail loudly if table is missing
+    # Atomic update — flush+add in a single nft transaction to avoid empty-set window
     if [ -n "$V4_ELEMENTS" ]; then
-      ${pkgs.nftables}/bin/nft flush set inet openclaw-restrict allowed_dns_ips_v4
-      ${pkgs.nftables}/bin/nft add element inet openclaw-restrict allowed_dns_ips_v4 "{ $V4_ELEMENTS }"
+      ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
+flush set inet openclaw-restrict allowed_dns_ips_v4
+add element inet openclaw-restrict allowed_dns_ips_v4 { $V4_ELEMENTS }
+NFT_EOF
       echo "Updated nftables IPv4 set: $V4_ELEMENTS"
     fi
 
-    # Update IPv6 set
     if [ -n "$V6_ELEMENTS" ]; then
-      ${pkgs.nftables}/bin/nft flush set inet openclaw-restrict allowed_dns_ips_v6
-      ${pkgs.nftables}/bin/nft add element inet openclaw-restrict allowed_dns_ips_v6 "{ $V6_ELEMENTS }"
+      ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
+flush set inet openclaw-restrict allowed_dns_ips_v6
+add element inet openclaw-restrict allowed_dns_ips_v6 { $V6_ELEMENTS }
+NFT_EOF
       echo "Updated nftables IPv6 set: $V6_ELEMENTS"
     fi
   '';
@@ -736,7 +753,8 @@ in
 
       preStop = ''
         echo "Removing Tailscale Serve configuration for OpenClaw..."
-        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off \
+          || echo "WARNING: Failed to remove Tailscale Serve route for port ${toString cfg.tailscaleServe.httpsPort}" >&2
       '';
     };
 
