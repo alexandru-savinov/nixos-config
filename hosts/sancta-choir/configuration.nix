@@ -45,6 +45,7 @@
     ../../modules/services/open-webui.nix
     ../../modules/services/gatus.nix
     ../../modules/services/n8n.nix
+    ../../modules/services/openclaw.nix
   ];
 
   # Enable development tools and Claude Code
@@ -67,6 +68,10 @@
 
     # OpenAI API key (for TTS/STT - separate from OpenRouter)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
+
+    # OpenClaw AI programming partner
+    anthropic-api-key.file = "${self}/secrets/anthropic-api-key.age";
+    openclaw-github-token.file = "${self}/secrets/openclaw-github-token.age";
   };
 
   # Open-WebUI with OpenRouter and Tailscale OAuth
@@ -257,6 +262,29 @@
 
     # HTTPS access via Tailscale Serve (service binds to localhost only)
     tailscaleServe.enable = true;
+  };
+
+  # OpenClaw AI programming partner
+  # Uses Claude Code CLI in one-shot mode for automated task execution
+  # Tasks arrive via file-based inbox, results written to /var/lib/openclaw/results/
+  services.openclaw = {
+    enable = true;
+    anthropicApiKeyFile = config.age.secrets.anthropic-api-key.path;
+    githubTokenFile = config.age.secrets.openclaw-github-token.path;
+    repoUrl = "https://github.com/alexandru-savinov/nixos-config.git";
+    repoBranch = "main";
+    model = "sonnet";
+    maxTurns = 50;
+    maxBudgetUsd = 5.0;
+    allowedBuildTargets = [ "sancta-choir" ];
+    resourceLimits = {
+      memoryMax = "4G";
+      cpuQuota = "200%";
+    };
+    tailscaleServe = {
+      enable = false; # Phase 2: enable when HTTP server is implemented
+    };
+    networkRestriction.enable = true;
   };
 
   # Hostname
