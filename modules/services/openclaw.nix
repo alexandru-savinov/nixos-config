@@ -238,58 +238,58 @@ let
 
   # DNS resolver script for nftables sets
   nftDnsScript = pkgs.writeShellScript "openclaw-nft-dns-update" ''
-    set -euo pipefail
+        set -euo pipefail
 
-    V4_ELEMENTS=""
-    V6_ELEMENTS=""
+        V4_ELEMENTS=""
+        V6_ELEMENTS=""
 
-    for domain in ${concatStringsSep " " (map escapeShellArg cfg.networkRestriction.allowedDomains)}; do
-      # IPv4 — per-domain failure is OK, but log it
-      IPS=$(${pkgs.dnsutils}/bin/dig +short "$domain" A 2>/dev/null) || {
-        echo "WARNING: Failed to resolve $domain A record" >&2
-        IPS=""
-      }
-      for ip in $IPS; do
-        if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-          [ -n "$V4_ELEMENTS" ] && V4_ELEMENTS="$V4_ELEMENTS, "
-          V4_ELEMENTS="$V4_ELEMENTS$ip"
+        for domain in ${concatStringsSep " " (map escapeShellArg cfg.networkRestriction.allowedDomains)}; do
+          # IPv4 — per-domain failure is OK, but log it
+          IPS=$(${pkgs.dnsutils}/bin/dig +short "$domain" A 2>/dev/null) || {
+            echo "WARNING: Failed to resolve $domain A record" >&2
+            IPS=""
+          }
+          for ip in $IPS; do
+            if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+              [ -n "$V4_ELEMENTS" ] && V4_ELEMENTS="$V4_ELEMENTS, "
+              V4_ELEMENTS="$V4_ELEMENTS$ip"
+            fi
+          done
+
+          # IPv6 — stricter regex requiring colon-separated hex groups
+          IPS6=$(${pkgs.dnsutils}/bin/dig +short "$domain" AAAA 2>/dev/null) || {
+            echo "WARNING: Failed to resolve $domain AAAA record" >&2
+            IPS6=""
+          }
+          for ip in $IPS6; do
+            if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^([0-9a-f]{1,4}:)+[0-9a-f]{1,4}$'; then
+              [ -n "$V6_ELEMENTS" ] && V6_ELEMENTS="$V6_ELEMENTS, "
+              V6_ELEMENTS="$V6_ELEMENTS$ip"
+            fi
+          done
+        done
+
+        if [ -z "$V4_ELEMENTS" ] && [ -z "$V6_ELEMENTS" ]; then
+          echo "ERROR: No IPs resolved for any allowed domain. nftables sets are empty." >&2
+          exit 1
         fi
-      done
 
-      # IPv6 — stricter regex requiring colon-separated hex groups
-      IPS6=$(${pkgs.dnsutils}/bin/dig +short "$domain" AAAA 2>/dev/null) || {
-        echo "WARNING: Failed to resolve $domain AAAA record" >&2
-        IPS6=""
-      }
-      for ip in $IPS6; do
-        if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^([0-9a-f]{1,4}:)+[0-9a-f]{1,4}$'; then
-          [ -n "$V6_ELEMENTS" ] && V6_ELEMENTS="$V6_ELEMENTS, "
-          V6_ELEMENTS="$V6_ELEMENTS$ip"
+        # Atomic update — flush+add in a single nft transaction to avoid empty-set window
+        if [ -n "$V4_ELEMENTS" ]; then
+          ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
+    flush set inet openclaw-restrict allowed_dns_ips_v4
+    add element inet openclaw-restrict allowed_dns_ips_v4 { $V4_ELEMENTS }
+    NFT_EOF
+          echo "Updated nftables IPv4 set: $V4_ELEMENTS"
         fi
-      done
-    done
 
-    if [ -z "$V4_ELEMENTS" ] && [ -z "$V6_ELEMENTS" ]; then
-      echo "ERROR: No IPs resolved for any allowed domain. nftables sets are empty." >&2
-      exit 1
-    fi
-
-    # Atomic update — flush+add in a single nft transaction to avoid empty-set window
-    if [ -n "$V4_ELEMENTS" ]; then
-      ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
-flush set inet openclaw-restrict allowed_dns_ips_v4
-add element inet openclaw-restrict allowed_dns_ips_v4 { $V4_ELEMENTS }
-NFT_EOF
-      echo "Updated nftables IPv4 set: $V4_ELEMENTS"
-    fi
-
-    if [ -n "$V6_ELEMENTS" ]; then
-      ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
-flush set inet openclaw-restrict allowed_dns_ips_v6
-add element inet openclaw-restrict allowed_dns_ips_v6 { $V6_ELEMENTS }
-NFT_EOF
-      echo "Updated nftables IPv6 set: $V6_ELEMENTS"
-    fi
+        if [ -n "$V6_ELEMENTS" ]; then
+          ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
+    flush set inet openclaw-restrict allowed_dns_ips_v6
+    add element inet openclaw-restrict allowed_dns_ips_v6 { $V6_ELEMENTS }
+    NFT_EOF
+          echo "Updated nftables IPv6 set: $V6_ELEMENTS"
+        fi
   '';
 
   # Cleanup script
