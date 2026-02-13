@@ -31,6 +31,11 @@ with lib;
 let
   cfg = config.services.openclaw;
 
+  # Static UID/GID so nftables can reference by number at build time
+  # (username lookup fails in CI where the openclaw user doesn't exist)
+  openclawUid = 991;
+  openclawGid = 991;
+
   claudeCodePkg = claude-code.packages.${pkgs.system}.default;
 
   # Sudo wrapper script that ONLY allows specific safe commands
@@ -502,13 +507,16 @@ in
     # ──────────────────────────────────────────────────────────────
     users.users.openclaw = {
       isSystemUser = true;
+      uid = openclawUid;
       group = "openclaw";
       home = "/var/lib/openclaw";
       description = "OpenClaw AI programming partner";
       shell = pkgs.bash;
     };
 
-    users.groups.openclaw = { };
+    users.groups.openclaw = {
+      gid = openclawGid;
+    };
 
     # ──────────────────────────────────────────────────────────────
     # Directories
@@ -766,7 +774,7 @@ in
           type filter hook output priority 0; policy accept;
 
           # Only apply restrictions to the openclaw user
-          meta skuid != "openclaw" accept
+          meta skuid != ${toString openclawUid} accept
 
           # Allow loopback
           oifname "lo" accept
