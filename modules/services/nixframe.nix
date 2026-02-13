@@ -49,9 +49,8 @@ let
       def main():
           creds_file = os.environ.get("CALDAV_CREDENTIALS_FILE", "")
           if not creds_file or not os.path.isfile(creds_file):
-              print(f"WARNING: credentials file not found: {creds_file}", file=sys.stderr)
-              print("[]")
-              return
+              print(f"ERROR: credentials file not found: {creds_file}", file=sys.stderr)
+              sys.exit(1)
 
           creds = {}
           with open(creds_file) as f:
@@ -66,9 +65,8 @@ let
           url = os.environ.get("CALDAV_URL", "https://caldav.icloud.com/")
 
           if not username or not password:
-              print("WARNING: CALDAV_USERNAME or CALDAV_PASSWORD missing in credentials", file=sys.stderr)
-              print("[]")
-              return
+              print("ERROR: CALDAV_USERNAME or CALDAV_PASSWORD missing in credentials", file=sys.stderr)
+              sys.exit(1)
 
           max_events = int(os.environ.get("CALDAV_MAX_EVENTS", "3"))
           look_ahead = int(os.environ.get("CALDAV_LOOK_AHEAD_DAYS", "14"))
@@ -79,8 +77,7 @@ let
               calendars = principal.calendars()
           except Exception as e:
               print(f"CalDAV connection error: {e}", file=sys.stderr)
-              print("[]")
-              return
+              sys.exit(1)
 
           from datetime import timezone
           now = datetime.now(timezone.utc).astimezone()  # timezone-aware local time
@@ -194,8 +191,14 @@ let
           export CALDAV_MAX_EVENTS="${toString calendarCfg.maxEvents}"
           export CALDAV_LOOK_AHEAD_DAYS="${toString calendarCfg.lookAheadDays}"
           ERR_LOG="$CACHE_DIR/.calendar-err.log"
-          RESPONSE=$(${calendarPython} 2>"$ERR_LOG" || true)
-          if echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e 'type == "array"' >/dev/null 2>&1; then
+          set +e
+          RESPONSE=$(${calendarPython} 2>"$ERR_LOG")
+          PY_EXIT=$?
+          set -e
+          if [ $PY_EXIT -ne 0 ]; then
+            echo "ERROR: calendar fetch failed (exit $PY_EXIT), keeping stale cache" >&2
+            [ -s "$ERR_LOG" ] && cat "$ERR_LOG" >&2
+          elif echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e 'type == "array"' >/dev/null 2>&1; then
             echo "$RESPONSE" > "$TMP"
             ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
           else
@@ -213,7 +216,7 @@ let
 
     JQ_FIELD="$FIELD"
     [ "$FIELD" = "date" ] && JQ_FIELD="date_label"
-    VALUE=$(${pkgs.jq}/bin/jq -r ".[$SLOT_IDX].$JQ_FIELD // empty" "$CACHE" 2>/dev/null || true)
+    VALUE=$(${pkgs.jq}/bin/jq -r ".[$SLOT_IDX].$JQ_FIELD // empty" "$CACHE" || true)
     echo "''${VALUE:-}"
   '';
 
@@ -893,7 +896,7 @@ in
     };
 
     calendar = {
-      enable = mkEnableOption "iCloud calendar events in the sidebar";
+      enable = mkEnableOption "CalDAV calendar events in the sidebar";
 
       credentialsFile = mkOption {
         type = types.path;
