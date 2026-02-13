@@ -52,4 +52,7 @@ in
   # OpenClaw AI programming partner
   "anthropic-api-key.age".publicKeys = allKeys;
   "openclaw-github-token.age".publicKeys = allKeys;
+
+  # CalDAV credentials for NixFrame calendar (Apple ID + app-specific password)
+  "caldav-credentials.age".publicKeys = allKeys;
 }

@@ -26,6 +26,199 @@ with lib;
 let
   cfg = config.services.nixframe;
   weatherCfg = cfg.weather;
+  calendarCfg = cfg.calendar;
+
+  # Python script to fetch CalDAV events and output JSON
+  calendarPython =
+    let
+      python = pkgs.python3.withPackages (
+        ps: with ps; [
+          caldav
+          vobject
+        ]
+      );
+    in
+    pkgs.writeScript "nixframe-calendar-fetch" ''
+      #!${python}/bin/python3
+      import caldav
+      import json
+      import os
+      import sys
+      from datetime import datetime, timedelta, date
+
+      def main():
+          creds_file = os.environ.get("CALDAV_CREDENTIALS_FILE", "")
+          if not creds_file or not os.path.isfile(creds_file):
+              print(f"ERROR: credentials file not found: {creds_file}", file=sys.stderr)
+              sys.exit(1)
+
+          creds = {}
+          with open(creds_file) as f:
+              for line in f:
+                  line = line.strip()
+                  if "=" in line and not line.startswith("#"):
+                      k, v = line.split("=", 1)
+                      creds[k.strip()] = v.strip()
+
+          username = creds.get("CALDAV_USERNAME", "")
+          password = creds.get("CALDAV_PASSWORD", "")
+          url = os.environ.get("CALDAV_URL", "https://caldav.icloud.com/")
+
+          if not username or not password:
+              print("ERROR: CALDAV_USERNAME or CALDAV_PASSWORD missing in credentials", file=sys.stderr)
+              sys.exit(1)
+
+          max_events = int(os.environ.get("CALDAV_MAX_EVENTS", "3"))
+          look_ahead = int(os.environ.get("CALDAV_LOOK_AHEAD_DAYS", "14"))
+
+          try:
+              client = caldav.DAVClient(url=url, username=username, password=password, timeout=30)
+              principal = client.principal()
+              calendars = principal.calendars()
+          except Exception as e:
+              print(f"CalDAV connection error: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          from datetime import timezone
+          now = datetime.now(timezone.utc).astimezone()  # timezone-aware local time
+          start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+          end = start + timedelta(days=look_ahead)
+
+          events = []
+          for cal in calendars:
+              try:
+                  raw_events = cal.search(start=start, end=end, event=True, expand=True)
+              except Exception as e:
+                  print(f"Error fetching from {cal.name}: {e}", file=sys.stderr)
+                  continue
+
+              for event in raw_events:
+                  try:
+                      vcal = event.vobject_instance
+                  except Exception as e:
+                      print(f"Error parsing event: {e}", file=sys.stderr)
+                      continue
+                  for component in vcal.contents.get("vevent", []):
+                      try:
+                          dtstart = component.dtstart.value
+                          summary = str(component.summary.value) if hasattr(component, "summary") else "Event"
+
+                          if isinstance(dtstart, datetime):
+                              all_day = False
+                              event_date = dtstart.date() if hasattr(dtstart, "date") else dtstart
+                              event_time = dtstart.strftime("%H:%M")
+                              # Make timezone-aware for comparison
+                              if dtstart.tzinfo is None:
+                                  sort_key = dtstart.replace(tzinfo=now.tzinfo)
+                              else:
+                                  sort_key = dtstart
+                          elif isinstance(dtstart, date):
+                              all_day = True
+                              event_date = dtstart
+                              event_time = ""
+                              sort_key = datetime.combine(dtstart, datetime.min.time(), tzinfo=now.tzinfo)
+                          else:
+                              continue
+
+                          # Skip past events (but keep all-day events for today)
+                          if not all_day and sort_key < now:
+                              continue
+                          if all_day and event_date < now.date():
+                              continue
+
+                          events.append({
+                              "summary": summary,
+                              "date": event_date.isoformat(),
+                              "time": event_time,
+                              "all_day": all_day,
+                              "sort_key": sort_key.isoformat(),
+                          })
+                      except Exception as e:
+                          print(f"Error processing event component: {e}", file=sys.stderr)
+                          continue
+
+          events.sort(key=lambda e: e["sort_key"])
+          events = events[:max_events]
+
+          # Format relative date labels
+          today = now.date()
+          tomorrow = today + timedelta(days=1)
+          for evt in events:
+              d = date.fromisoformat(evt["date"])
+              if d == today:
+                  evt["date_label"] = "Today"
+              elif d == tomorrow:
+                  evt["date_label"] = "Tomorrow"
+              elif (d - today).days < 7:
+                  evt["date_label"] = d.strftime("%a")
+              else:
+                  evt["date_label"] = d.strftime("%b %-d")
+              del evt["sort_key"]
+
+          print(json.dumps(events))
+
+      if __name__ == "__main__":
+          main()
+    '';
+
+  # Shell wrapper for calendar — mirrors forecastScript pattern:
+  # flock + cache check + Python fetch + jq field extraction
+  # Called as: nixframe-calendar-slot <slot> <field>
+  # Fields: date, summary, time
+  calendarScript = pkgs.writeShellScript "nixframe-calendar-slot" ''
+    set -euo pipefail
+
+    SLOT_IDX="''${1:-0}"
+    FIELD="''${2:-summary}"
+
+    CACHE_DIR="/var/lib/nixframe/.cache"
+    CACHE="$CACHE_DIR/calendar.json"
+    mkdir -p "$CACHE_DIR"
+
+    # Fetch if cache missing or older than poll interval (default 900s)
+    CACHE_AGE=$(${pkgs.coreutils}/bin/stat -c %Y "$CACHE" 2>/dev/null || echo 0)
+    NOW=$(${pkgs.coreutils}/bin/date +%s)
+    if [ "$CACHE_AGE" -eq 0 ] || [ $(( NOW - CACHE_AGE )) -gt ${toString calendarCfg.pollInterval} ]; then
+      (
+        ${pkgs.util-linux}/bin/flock -n 9 || exit 0
+        CACHE_AGE2=$(${pkgs.coreutils}/bin/stat -c %Y "$CACHE" 2>/dev/null || echo 0)
+        NOW2=$(${pkgs.coreutils}/bin/date +%s)
+        if [ "$CACHE_AGE2" -eq 0 ] || [ $(( NOW2 - CACHE_AGE2 )) -gt ${toString calendarCfg.pollInterval} ]; then
+          TMP="$CACHE_DIR/.calendar.tmp.$$"
+          trap 'rm -f "$TMP"' EXIT
+          export CALDAV_CREDENTIALS_FILE="${calendarCfg.credentialsFile}"
+          export CALDAV_URL="${calendarCfg.caldavUrl}"
+          export CALDAV_MAX_EVENTS="${toString calendarCfg.maxEvents}"
+          export CALDAV_LOOK_AHEAD_DAYS="${toString calendarCfg.lookAheadDays}"
+          ERR_LOG="$CACHE_DIR/.calendar-err.log"
+          set +e
+          RESPONSE=$(${calendarPython} 2>"$ERR_LOG")
+          PY_EXIT=$?
+          set -e
+          if [ $PY_EXIT -ne 0 ]; then
+            echo "ERROR: calendar fetch failed (exit $PY_EXIT), keeping stale cache" >&2
+            [ -s "$ERR_LOG" ] && cat "$ERR_LOG" >&2
+          elif echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e 'type == "array"' >/dev/null 2>&1; then
+            echo "$RESPONSE" > "$TMP"
+            ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
+          else
+            echo "WARNING: calendar fetch returned invalid JSON: ''${RESPONSE:0:200}" >&2
+            [ -s "$ERR_LOG" ] && cat "$ERR_LOG" >&2
+          fi
+        fi
+      ) 9>"$CACHE_DIR/.calendar.lock"
+    fi
+
+    if [ ! -f "$CACHE" ]; then
+      echo ""
+      exit 0
+    fi
+
+    JQ_FIELD="$FIELD"
+    [ "$FIELD" = "date" ] && JQ_FIELD="date_label"
+    VALUE=$(${pkgs.jq}/bin/jq -r ".[$SLOT_IDX].$JQ_FIELD // empty" "$CACHE" || true)
+    echo "''${VALUE:-}"
+  '';
 
   # Width of forecast bar = display width minus sidebar, so it doesn't render under the sidebar
   forecastWidth =
@@ -215,7 +408,24 @@ let
       :focusable false
       (box :class "sidebar" :orientation "v" :valign "center" :space-evenly false :spacing 20
         (label :class "clock" :text clock-time)
-        (label :class "date"  :text clock-date)))
+        (label :class "date"  :text clock-date)
+        ${optionalString calendarCfg.enable ''
+        (box :class "cal-section" :orientation "v" :spacing 16 :halign "center" :width 560
+          ${concatStringsSep "\n      " (genList (i: ''
+          (box :class "cal-event-row" :orientation "h" :spacing 20 :space-evenly false
+            :visible {cal-${toString i}-summary != ""}
+            (label :class "cal-date" :text cal-${toString i}-date :width 170 :xalign 1)
+            (label :class "cal-summary" :text cal-${toString i}-summary
+              :hexpand true :xalign 0 :limit-width 16)
+            (label :class "cal-time" :text cal-${toString i}-time :width 90 :xalign 1))
+          '') calendarCfg.maxEvents)}
+        )
+        ''}))
+
+    ${optionalString calendarCfg.enable (concatStringsSep "\n" (concatLists (genList (i:
+      map (field: ''    (defpoll cal-${toString i}-${field} :interval "${toString calendarCfg.pollInterval}s" "${calendarScript} ${toString i} ${field}")'')
+        [ "date" "summary" "time" ]
+    ) calendarCfg.maxEvents)))}
 
     ${optionalString weatherCfg.enable ''
     (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
@@ -300,6 +510,32 @@ let
       font-size: 60px;
       color: #c4a882;
     }
+
+    ${optionalString calendarCfg.enable ''
+    .cal-section {
+      margin-top: 40px;
+      padding-top: 36px;
+      border-top: 2px solid rgba(196, 168, 130, 0.15);
+    }
+
+    .cal-date {
+      font-size: 32px;
+      font-weight: 600;
+      color: #c4a882;
+    }
+
+    .cal-summary {
+      font-size: 32px;
+      font-weight: 400;
+      color: #e8e4de;
+    }
+
+    .cal-time {
+      font-size: 32px;
+      font-weight: 400;
+      color: #a89478;
+    }
+    ''}
 
     ${optionalString weatherCfg.enable ''
     .forecast-bar {
@@ -657,6 +893,39 @@ in
         description = "Height of the bottom forecast bar in pixels.";
       };
     };
+
+    calendar = {
+      enable = mkEnableOption "CalDAV calendar events in the sidebar";
+
+      credentialsFile = mkOption {
+        type = types.path;
+        description = "Path to env-file with CALDAV_USERNAME and CALDAV_PASSWORD.";
+      };
+
+      caldavUrl = mkOption {
+        type = types.str;
+        default = "https://caldav.icloud.com/";
+        description = "CalDAV server URL.";
+      };
+
+      maxEvents = mkOption {
+        type = types.int;
+        default = 3;
+        description = "Maximum number of upcoming events to display.";
+      };
+
+      lookAheadDays = mkOption {
+        type = types.int;
+        default = 14;
+        description = "Number of days to look ahead for events.";
+      };
+
+      pollInterval = mkOption {
+        type = types.int;
+        default = 900;
+        description = "Seconds between calendar fetches.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -687,7 +956,7 @@ in
       "d ${cfg.photoDir} 0775 nixframe nixframe -"
       # Seed the trigger file so systemd.paths has something to watch on first boot
       "f ${cfg.photoDir}/.trigger 0664 nixframe nixframe -"
-    ] ++ optionals weatherCfg.enable [
+    ] ++ optionals (weatherCfg.enable || calendarCfg.enable) [
       "d /var/lib/nixframe/.cache 0750 nixframe nixframe -"
     ];
 
