@@ -193,13 +193,14 @@ let
           export CALDAV_URL="${calendarCfg.caldavUrl}"
           export CALDAV_MAX_EVENTS="${toString calendarCfg.maxEvents}"
           export CALDAV_LOOK_AHEAD_DAYS="${toString calendarCfg.lookAheadDays}"
-          RESPONSE=$(${calendarPython} 2>/tmp/nixframe-calendar-err.log || true)
+          ERR_LOG="$CACHE_DIR/.calendar-err.log"
+          RESPONSE=$(${calendarPython} 2>"$ERR_LOG" || true)
           if echo "$RESPONSE" | ${pkgs.jq}/bin/jq -e 'type == "array"' >/dev/null 2>&1; then
             echo "$RESPONSE" > "$TMP"
             ${pkgs.coreutils}/bin/mv -f "$TMP" "$CACHE"
           else
             echo "WARNING: calendar fetch returned invalid JSON: ''${RESPONSE:0:200}" >&2
-            [ -s /tmp/nixframe-calendar-err.log ] && cat /tmp/nixframe-calendar-err.log >&2
+            [ -s "$ERR_LOG" ] && cat "$ERR_LOG" >&2
           fi
         fi
       ) 9>"$CACHE_DIR/.calendar.lock"
@@ -406,17 +407,14 @@ let
         (label :class "clock" :text clock-time)
         (label :class "date"  :text clock-date)
         ${optionalString calendarCfg.enable ''
-        (box :class "cal-section" :orientation "v" :spacing 0 :halign "center"
+        (box :class "cal-section" :orientation "v" :spacing 16 :halign "center" :width 560
           ${concatStringsSep "\n      " (genList (i: ''
-          (box :class "cal-event-row" :orientation "h" :spacing 0 :space-evenly false
+          (box :class "cal-event-row" :orientation "h" :spacing 20 :space-evenly false
             :visible {cal-${toString i}-summary != ""}
-            (box :class "cal-accent" :width 4)
-            (box :class "cal-event" :orientation "v" :spacing 2 :hexpand true
-              (box :orientation "h" :spacing 0 :halign "start" :space-evenly false
-                (label :class "cal-date" :text cal-${toString i}-date :width 200 :xalign 0)
-                (label :class "cal-time" :text cal-${toString i}-time :xalign 0))
-              (label :class "cal-summary" :text cal-${toString i}-summary
-                :halign "start" :limit-width 22)))
+            (label :class "cal-date" :text cal-${toString i}-date :width 170 :xalign 1)
+            (label :class "cal-summary" :text cal-${toString i}-summary
+              :hexpand true :xalign 0 :limit-width 16)
+            (label :class "cal-time" :text cal-${toString i}-time :width 90 :xalign 1))
           '') calendarCfg.maxEvents)}
         )
         ''}))
@@ -518,38 +516,22 @@ let
       border-top: 2px solid rgba(196, 168, 130, 0.15);
     }
 
-    .cal-event-row {
-      margin-bottom: 20px;
-    }
-
-    .cal-accent {
-      background-color: rgba(196, 168, 130, 0.35);
-      margin-top: 8px;
-      margin-bottom: 8px;
-      border-radius: 2px;
-    }
-
-    .cal-event {
-      padding: 4px 0 4px 18px;
-    }
-
     .cal-date {
-      font-size: 34px;
+      font-size: 32px;
       font-weight: 600;
       color: #c4a882;
     }
 
-    .cal-time {
-      font-size: 34px;
-      font-weight: 400;
-      color: #a89478;
-    }
-
     .cal-summary {
-      font-size: 44px;
+      font-size: 32px;
       font-weight: 400;
       color: #e8e4de;
-      margin-top: 2px;
+    }
+
+    .cal-time {
+      font-size: 32px;
+      font-weight: 400;
+      color: #a89478;
     }
     ''}
 
