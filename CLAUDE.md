@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current Environment
 
-**You are running on rpi5** (Raspberry Pi 5, aarch64-linux). The **primary and only active deploy target** is `rpi5-full`.
+**You are running on rpi5** (Raspberry Pi 5, aarch64-linux). The **primary deploy target** is `rpi5-full`. The `sancta-choir` VPS hosts the OpenClaw AI gateway.
 
 | Task | Command | Notes |
 |------|---------|-------|
@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **When the user says "deploy", "build", or "rebuild" without specifying a target, ALWAYS use `rpi5-full`.**
 
-The `sancta-choir` configuration (x86_64 Hetzner VPS) is **deprecated** and not actively deployed. It remains in `flake.nix` for CI build verification only. Do NOT build, deploy, or SSH to `sancta-choir` unless the user explicitly asks for it by name.
+The `sancta-choir` configuration (x86_64 Hetzner VPS) hosts the **OpenClaw AI gateway**. It is built in CI but deployed separately. Only build or deploy `sancta-choir` when the user explicitly asks for it by name.
 
 **Tailscale hostname:**
 - `rpi5` or `rpi5.tail4249a9.ts.net`
@@ -27,7 +27,7 @@ The `sancta-choir` configuration (x86_64 Hetzner VPS) is **deprecated** and not 
 Flake-based NixOS configuration:
 - **rpi5-full** (aarch64-linux): Raspberry Pi 5 ← **You are here** (only active host)
 - **rpi5** (aarch64-linux): Minimal config for SD image builds only
-- **sancta-choir** (x86_64-linux): Hetzner VPS — **DEPRECATED**, kept for CI build verification only
+- **sancta-choir** (x86_64-linux): Hetzner VPS — OpenClaw AI gateway
 
 ## Commands
 
@@ -83,11 +83,12 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.nixframe` | VT 7 / HDMI-A-2 | Digital photo frame with n8n upload |
 | `services.gatus-tailscale` | 3001 | Declarative status monitoring |
 | `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
+| `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 
-**Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. No firewall rules needed - localhost binding provides defense-in-depth.
+**Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. OpenClaw uses a different model: file-based inbox with per-UID nftables network restriction (no listener).
 
-Access URLs (HTTPS via Tailscale Serve, rpi5 only):
+Access URLs (HTTPS via Tailscale Serve):
 - Open-WebUI: `https://rpi5.tail4249a9.ts.net`
 - n8n: `https://rpi5.tail4249a9.ts.net:5678`
 - NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
@@ -104,7 +105,7 @@ age.secrets.my-secret.file = "${self}/secrets/my-secret.age";
 someService.secretFile = config.age.secrets.my-secret.path;
 ```
 
-Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `n8n-admin-password`, `n8n-api-key`, `tailscale-auth-key`, `open-webui-secret-key`, `e2e-test-api-key`, `unifi-password`, `caldav-credentials`
+Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `n8n-admin-password`, `n8n-api-key`, `tailscale-auth-key`, `open-webui-secret-key`, `e2e-test-api-key`, `unifi-password`, `anthropic-api-key`, `openclaw-github-token`, `caldav-credentials`
 
 ## CI/CD
 

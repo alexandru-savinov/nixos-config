@@ -49,6 +49,10 @@ in
   # UniFi Network MCP - controller password for AI-assisted network management
   "unifi-password.age".publicKeys = allKeys;
 
+  # OpenClaw AI programming partner
+  "anthropic-api-key.age".publicKeys = allKeys;
+  "openclaw-github-token.age".publicKeys = allKeys;
+
   # CalDAV credentials for NixFrame calendar (Apple ID + app-specific password)
   "caldav-credentials.age".publicKeys = allKeys;
 }
