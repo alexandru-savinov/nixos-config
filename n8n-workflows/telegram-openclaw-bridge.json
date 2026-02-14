@@ -1,0 +1,342 @@
+{
+  "id": "telegram-openclaw-bridge",
+  "name": "Telegram → OpenClaw Bridge",
+  "nodes": [
+    {
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "telegram-openclaw",
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-credential",
+          "name": "Telegram Bot API"
+        }
+      },
+      "parameters": {
+        "updates": ["message"]
+      }
+    },
+    {
+      "id": "filter-commands",
+      "name": "Filter Commands",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "text-exists",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            },
+            {
+              "id": "not-command",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/",
+              "operator": {
+                "type": "string",
+                "operation": "notStartsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "generate-task-id",
+      "name": "Generate Task ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const now = new Date();\nconst taskId = `tg-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;\n\nconst chatId = $input.first().json.message.chat.id;\nconst messageText = $input.first().json.message.text;\nconst userName = $input.first().json.message.from.username || $input.first().json.message.from.first_name;\n\nreturn [{\n  taskId,\n  chatId,\n  messageText,\n  userName,\n  taskFile: `${taskId}.task`\n}];"
+      }
+    },
+    {
+      "id": "submit-to-openclaw",
+      "name": "Submit to OpenClaw",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "ssh-sancta-choir",
+          "name": "SSH sancta-choir"
+        }
+      },
+      "parameters": {
+        "host": "sancta-choir",
+        "port": 22,
+        "command": "=cat > /var/lib/openclaw/inbox/{{ $json.taskFile }} << 'TASK_EOF'\n{{ $json.messageText }}\nTASK_EOF\necho \"Task submitted: {{ $json.taskId }}\"",
+        "user": "root"
+      }
+    },
+    {
+      "id": "send-confirmation",
+      "name": "Send Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1050, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-credential",
+          "name": "Telegram Bot API"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "=✅ Task submitted to OpenClaw!\n\n🆔 Task ID: {{ $json.taskId }}\n📝 Task: {{ $json.messageText.substring(0, 100) }}{{ $json.messageText.length > 100 ? '...' : '' }}\n\n⏳ Processing... I'll send you the results when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      }
+    },
+    {
+      "id": "store-task-mapping",
+      "name": "Store Task Mapping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Store mapping of taskId -> chatId for result delivery\n// In production, use a database or persistent storage\n// For now, we'll use n8n's internal workflow data\nconst fs = require('fs');\nconst path = '/var/lib/n8n/telegram-openclaw-tasks.json';\n\nlet tasks = {};\ntry {\n  if (fs.existsSync(path)) {\n    tasks = JSON.parse(fs.readFileSync(path, 'utf8'));\n  }\n} catch (e) {\n  console.log('Creating new task mapping file');\n}\n\nconst item = $input.first().json;\ntasks[item.taskId] = {\n  chatId: item.chatId,\n  userName: item.userName,\n  submittedAt: new Date().toISOString()\n};\n\nfs.writeFileSync(path, JSON.stringify(tasks, null, 2));\n\nreturn [$input.first().json];"
+      }
+    },
+    {
+      "id": "help-command",
+      "name": "Help Command",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 1,
+      "position": [450, 500],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "is-help",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/help",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "send-help",
+      "name": "Send Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [650, 500],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-credential",
+          "name": "Telegram Bot API"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "🤖 *OpenClaw Telegram Bot*\n\nI'm your AI programming assistant connected to the nixos-config repository.\n\n*How to use:*\nJust send me a message with your task, and I'll submit it to OpenClaw for processing.\n\n*Examples:*\n• \"List all NixOS services in the config\"\n• \"Add a health check for the n8n service\"\n• \"Fix the bug in modules/services/gatus.nix\"\n\n*Commands:*\n/help - Show this message\n/status - Check OpenClaw status\n\n*Note:* Tasks cost ~$0.15-0.50 USD each. Complex tasks may take 30-60 seconds.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      }
+    },
+    {
+      "id": "status-command",
+      "name": "Status Command",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 1,
+      "position": [450, 700],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "is-status",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/status",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "check-openclaw-status",
+      "name": "Check OpenClaw Status",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [650, 700],
+      "credentials": {
+        "sshPassword": {
+          "id": "ssh-sancta-choir",
+          "name": "SSH sancta-choir"
+        }
+      },
+      "parameters": {
+        "host": "sancta-choir",
+        "port": 22,
+        "command": "systemctl is-active openclaw-task-watcher.path && echo 'ACTIVE' || echo 'INACTIVE'",
+        "user": "root"
+      }
+    },
+    {
+      "id": "send-status",
+      "name": "Send Status",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [850, 700],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-credential",
+          "name": "Telegram Bot API"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "=📊 *OpenClaw Status*\n\nService: {{ $('Check OpenClaw Status').item.json.stdout.trim() === 'ACTIVE' ? '✅ Active' : '❌ Inactive' }}\nHost: sancta-choir (Hetzner VPS)\nModel: Claude Sonnet 4.5\nMax Budget: $5 USD per task\n\nReady to receive tasks! 🚀",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter Commands",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Help Command",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Status Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Commands": {
+      "main": [
+        [
+          {
+            "node": "Generate Task ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Task ID": {
+      "main": [
+        [
+          {
+            "node": "Submit to OpenClaw",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit to OpenClaw": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Store Task Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Help Command": {
+      "main": [
+        [
+          {
+            "node": "Send Help",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Command": {
+      "main": [
+        [
+          {
+            "node": "Check OpenClaw Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check OpenClaw Status": {
+      "main": [
+        [
+          {
+            "node": "Send Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "nixos-config-n8n"
+  },
+  "tags": []
+}
