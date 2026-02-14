@@ -36,15 +36,21 @@
   # Package overrides for memory-constrained ARM builds
   nixpkgs.overlays = [
     (final: prev: {
-      # Override n8n to increase Node.js heap size during build
-      # RPi5 has 4GB RAM + 10GB swap, but Node.js defaults to ~4GB heap limit
-      # n8n 1.123+ requires ~6GB heap for TypeScript compilation on ARM
+      # Override n8n to increase Node.js heap size during TypeScript compilation
+      #
+      # Problem: n8n 1.123+ build OOMs on ARM with default Node.js heap
+      # Root cause: Node.js calculates heap based on available RAM at build time.
+      #             On RPi5 with active services, only ~2-3GB RAM available → ~1.5-2GB default heap
+      #             ARM TypeScript compilation requires ~6GB (more than x86_64 due to architecture)
+      #
+      # System resources: RPi5 4GB RAM + 8GB swapfile + ~2GB zram (dynamic)
+      # Solution: Set 6GB heap limit to utilize swap effectively during build
+      #
+      # Note: This is a build-time requirement only. Runtime n8n uses default heap.
+      #
+      # TODO: Monitor n8n upstream - may be optimized in future releases
       n8n = prev.n8n.overrideAttrs (old: {
-        NODE_OPTIONS = "--max-old-space-size=6144"; # 6GB heap limit
-        buildPhase = ''
-          export NODE_OPTIONS="--max-old-space-size=6144"
-          ${old.buildPhase or ""}
-        '';
+        NODE_OPTIONS = "--max-old-space-size=6144"; # 6GB heap for build-time TypeScript compilation
       });
     })
   ];
