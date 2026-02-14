@@ -1,7 +1,7 @@
 # OpenClaw Container Module
 # Runs OpenClaw in a systemd-nspawn container with network isolation
 
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, claude-code ? null, ... }:
 
 with lib;
 
@@ -11,7 +11,7 @@ let
   # Container configuration (inner NixOS system)
   containerConfig = { config, pkgs, ... }: {
     imports = [
-      ./openclaw.nix
+      (import ./openclaw.nix { inherit config pkgs lib claude-code; })
     ];
 
     boot.isContainer = true;
