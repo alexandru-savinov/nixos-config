@@ -33,6 +33,22 @@
     ../../modules/services/nixframe.nix # Digital photo frame on HDMI-A-2
   ];
 
+  # Package overrides for memory-constrained ARM builds
+  nixpkgs.overlays = [
+    (final: prev: {
+      # Override n8n to increase Node.js heap size during build
+      # RPi5 has 4GB RAM + 10GB swap, but Node.js defaults to ~4GB heap limit
+      # n8n 1.123+ requires ~6GB heap for TypeScript compilation on ARM
+      n8n = prev.n8n.overrideAttrs (old: {
+        NODE_OPTIONS = "--max-old-space-size=6144"; # 6GB heap limit
+        buildPhase = ''
+          export NODE_OPTIONS="--max-old-space-size=6144"
+          ${old.buildPhase or ""}
+        '';
+      });
+    })
+  ];
+
   # Agenix secrets for additional services
   age.secrets = {
     # Open-WebUI secrets
