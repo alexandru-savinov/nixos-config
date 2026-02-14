@@ -20,6 +20,7 @@ let
     networking = {
       useHostResolvConf = false;
       nameservers = [ "1.1.1.1" "8.8.8.8" ];
+      defaultGateway = "192.168.84.1";
     };
 
     # OpenClaw service (reuse existing module)

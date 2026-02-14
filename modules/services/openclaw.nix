@@ -204,16 +204,20 @@ let
 
     REPO_DIR="/var/lib/openclaw/nixos-config"
 
-    # Configure git identity
-    ${pkgs.git}/bin/git config --global user.name "OpenClaw Bot"
-    ${pkgs.git}/bin/git config --global user.email "openclaw@sancta-choir"
+    # Configure git identity (skip if .gitconfig is read-only)
+    if [ ! -w "/var/lib/openclaw/.gitconfig" ] && [ -f "/var/lib/openclaw/.gitconfig" ]; then
+      echo "Using existing .gitconfig (read-only mount)"
+    else
+      ${pkgs.git}/bin/git config --global user.name "OpenClaw Bot"
+      ${pkgs.git}/bin/git config --global user.email "openclaw@sancta-choir"
 
-    ${optionalString (cfg.githubTokenFile != null) ''
-      # Configure credential helper for HTTPS with GH_TOKEN
-      # GH_TOKEN is set via EnvironmentFile
-      ${pkgs.git}/bin/git config --global credential.helper \
-        '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'
-    ''}
+      ${optionalString (cfg.githubTokenFile != null) ''
+        # Configure credential helper for HTTPS with GH_TOKEN
+        # GH_TOKEN is set via EnvironmentFile
+        ${pkgs.git}/bin/git config --global credential.helper \
+          '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'
+      ''}
+    fi
 
     if [ ! -d "$REPO_DIR/.git" ]; then
       echo "Cloning repository: ${cfg.repoUrl}"
@@ -584,41 +588,41 @@ in
           ("+" + pkgs.writeShellScript "openclaw-git-setup-env" ''
             set -euo pipefail
 
-            mkdir -p /run/openclaw
+            ${pkgs.coreutils}/bin/mkdir -p /run/openclaw
             ENV_FILE="/run/openclaw/env"
             : > "$ENV_FILE"
 
             # Anthropic API key
             if [ ! -f "${cfg.anthropicApiKeyFile}" ]; then
-              echo "ERROR: Anthropic API key file not found: ${cfg.anthropicApiKeyFile}" >&2
+              ${pkgs.coreutils}/bin/echo "ERROR: Anthropic API key file not found: ${cfg.anthropicApiKeyFile}" >&2
               exit 1
             fi
             ANTHROPIC_KEY=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.anthropicApiKeyFile}")
             if [ -z "$ANTHROPIC_KEY" ]; then
-              echo "ERROR: Anthropic API key file is empty: ${cfg.anthropicApiKeyFile}" >&2
+              ${pkgs.coreutils}/bin/echo "ERROR: Anthropic API key file is empty: ${cfg.anthropicApiKeyFile}" >&2
               exit 1
             fi
             printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_KEY" >> "$ENV_FILE"
 
             # Isolate Claude config directory
-            echo "CLAUDE_CONFIG_DIR=/var/lib/openclaw/.claude" >> "$ENV_FILE"
+            ${pkgs.coreutils}/bin/echo "CLAUDE_CONFIG_DIR=/var/lib/openclaw/.claude" >> "$ENV_FILE"
 
             # GitHub token (if provided)
             ${optionalString (cfg.githubTokenFile != null) ''
               if [ ! -f "${cfg.githubTokenFile}" ]; then
-                echo "ERROR: GitHub token file not found: ${cfg.githubTokenFile}" >&2
+                ${pkgs.coreutils}/bin/echo "ERROR: GitHub token file not found: ${cfg.githubTokenFile}" >&2
                 exit 1
               fi
               GH_TOKEN=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.githubTokenFile}")
               if [ -z "$GH_TOKEN" ]; then
-                echo "ERROR: GitHub token file is empty: ${cfg.githubTokenFile}" >&2
+                ${pkgs.coreutils}/bin/echo "ERROR: GitHub token file is empty: ${cfg.githubTokenFile}" >&2
                 exit 1
               fi
               printf 'GH_TOKEN=%s\n' "$GH_TOKEN" >> "$ENV_FILE"
             ''}
 
-            chmod 600 "$ENV_FILE"
-            chown openclaw:openclaw "$ENV_FILE"
+            ${pkgs.coreutils}/bin/chmod 600 "$ENV_FILE"
+            ${pkgs.coreutils}/bin/chown openclaw:openclaw "$ENV_FILE"
           '')
         ];
       };
