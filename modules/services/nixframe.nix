@@ -753,27 +753,77 @@ let
       # On total failure, kills daemon and falls through to outer restart loop.
       OPEN_OK=false
       for OPEN_ATTEMPT in $(seq 1 3); do
-        # Close any partially-opened windows before retrying
-        if [ "$OPEN_ATTEMPT" -gt 1 ]; then
-          ${pkgs.eww}/bin/eww close sidebar 2>/dev/null || true
-          ${optionalString weatherCfg.enable ''
-          ${pkgs.eww}/bin/eww close forecast 2>/dev/null || true
-          ''}
+        # ALWAYS close windows before (re)opening to prevent duplicates.
+        # Eww auto-reloads config on monitor hotplug, opening new windows
+        # BEFORE closing old ones, causing 2+ windows to exist simultaneously.
+
+        # Detect if windows already exist (indicates eww auto-reload occurred)
+        RELOAD_DETECTED=false
+        if [ "$OPEN_ATTEMPT" -eq 1 ]; then
+          if ${pkgs.eww}/bin/eww list-windows 2>/dev/null | ${pkgs.gnugrep}/bin/grep -qE "sidebar|forecast"; then
+            RELOAD_DETECTED=true
+            echo "WARNING: Windows exist before first open - eww auto-reload detected" >&2
+            echo "INFO: This may indicate monitor hotplug events or config changes" >&2
+          fi
         fi
-        OPEN_FAILED=false
-        if ! ${pkgs.eww}/bin/eww open sidebar; then
-          OPEN_FAILED=true
+
+        # Close sidebar - log errors except "window not found"
+        CLOSE_ERR=$(${pkgs.eww}/bin/eww close sidebar 2>&1) || true
+        if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
+          echo "WARNING: eww close sidebar failed: $CLOSE_ERR" >&2
         fi
+
         ${optionalString weatherCfg.enable ''
-        if ! ${pkgs.eww}/bin/eww open forecast; then
-          OPEN_FAILED=true
+        # Close forecast - log errors except "window not found"
+        CLOSE_ERR=$(${pkgs.eww}/bin/eww close forecast 2>&1) || true
+        if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
+          echo "WARNING: eww close forecast failed: $CLOSE_ERR" >&2
         fi
         ''}
+
+        # Wait for windows to actually close (synchronous verification)
+        # Prevents race condition where open happens before close completes
+        CLOSE_TIMEOUT=20  # 2 seconds max (20 * 100ms)
+        for i in $(seq 1 $CLOSE_TIMEOUT); do
+          WINDOWS_OPEN=$(${pkgs.eww}/bin/eww list-windows 2>/dev/null | ${pkgs.gnugrep}/bin/grep -cE "sidebar|forecast" || echo 0)
+          if [ "$WINDOWS_OPEN" -eq 0 ]; then
+            break
+          fi
+          sleep 0.1
+        done
+
+        if [ "$WINDOWS_OPEN" -ne 0 ]; then
+          echo "WARNING: Windows still open after 2s close timeout (attempt $OPEN_ATTEMPT/3)" >&2
+        fi
+
+        # Open windows and track which ones fail for better error messages
+        OPEN_FAILED=false
+        FAILED_WINDOWS=""
+
+        if ! ${pkgs.eww}/bin/eww open sidebar 2>&1; then
+          OPEN_FAILED=true
+          FAILED_WINDOWS="sidebar"
+          echo "WARNING: Failed to open sidebar window (attempt $OPEN_ATTEMPT/3)" >&2
+        fi
+
+        ${optionalString weatherCfg.enable ''
+        if ! ${pkgs.eww}/bin/eww open forecast 2>&1; then
+          OPEN_FAILED=true
+          if [ -n "$FAILED_WINDOWS" ]; then
+            FAILED_WINDOWS="sidebar+forecast"
+          else
+            FAILED_WINDOWS="forecast"
+          fi
+          echo "WARNING: Failed to open forecast window (attempt $OPEN_ATTEMPT/3)" >&2
+        fi
+        ''}
+
         if [ "$OPEN_FAILED" = false ]; then
           OPEN_OK=true
           break
         fi
-        echo "WARNING: eww window open failed (attempt $OPEN_ATTEMPT/3), retrying in 2s..." >&2
+
+        echo "WARNING: eww window open failed: $FAILED_WINDOWS (attempt $OPEN_ATTEMPT/3), retrying in 2s..." >&2
         sleep 2
       done
 
