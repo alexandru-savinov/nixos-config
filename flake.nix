@@ -108,6 +108,30 @@
           ];
         };
 
+        # x86_64 VPS server - OpenClaw container host (repurposed from sancta-choir)
+        sancta-kuzea = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = {
+            pkgs-unstable = import nixpkgs-unstable {
+              system = "x86_64-linux";
+              config.allowUnfree = true;
+            };
+            inherit self; # Pass self for accessing flake root
+            inherit claude-code; # Pass claude-code flake
+          };
+          modules = [
+            ./hosts/sancta-kuzea/configuration.nix
+            home-manager.nixosModules.home-manager
+            vscode-server.nixosModules.default
+            agenix.nixosModules.default
+            ({ pkgs, ... }: {
+              environment.systemPackages = with pkgs; [
+                agenix
+              ];
+            })
+          ];
+        };
+
         # Raspberry Pi 5 (aarch64) - Minimal config for SD image builds
         # Uses nvmd/nixos-raspberrypi for kernel 6.12.34 (same as pre-built SD image)
         # Cache: nixos-raspberrypi.cachix.org

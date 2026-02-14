@@ -1,0 +1,326 @@
+{
+  "id": "openclaw-results-to-telegram",
+  "name": "OpenClaw Results → Telegram",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Check Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "list-recent-results",
+      "name": "List Recent Results",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "ssh-sancta-choir",
+          "name": "SSH sancta-choir"
+        }
+      },
+      "parameters": {
+        "host": "sancta-choir",
+        "port": 22,
+        "command": "find /var/lib/openclaw/results/ -name 'tg-*' -type d -mmin -5 | sort",
+        "user": "root"
+      }
+    },
+    {
+      "id": "split-results",
+      "name": "Split Results",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "parameters": {
+        "fieldToSplitOut": "={{ $json.stdout.split('\\n').filter(line => line.trim()) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "get-result-data",
+      "name": "Get Result Data",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "ssh-sancta-choir",
+          "name": "SSH sancta-choir"
+        }
+      },
+      "parameters": {
+        "host": "sancta-choir",
+        "port": 22,
+        "command": "=RESULT_DIR=\"{{ $json.line }}\"\nif [ -f \"$RESULT_DIR/metadata.json\" ] && [ -f \"$RESULT_DIR/output.json\" ]; then\n  METADATA=$(cat \"$RESULT_DIR/metadata.json\")\n  OUTPUT=$(cat \"$RESULT_DIR/output.json\")\n  echo \"$METADATA|||$OUTPUT\"\nelse\n  echo \"NOT_READY\"\nfi",
+        "user": "root"
+      }
+    },
+    {
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const stdout = $input.item.json.stdout.trim();\n\nif (stdout === 'NOT_READY') {\n  return null; // Skip if not ready\n}\n\nconst [metadataStr, outputStr] = stdout.split('|||');\nconst metadata = JSON.parse(metadataStr);\nconst output = JSON.parse(outputStr);\n\nconst taskId = metadata.task_id;\nconst exitCode = metadata.exit_code;\nconst result = output.result || 'No result available';\nconst error = output.error || null;\nconst cost = output.total_cost_usd || 0;\n\n// Extract original task ID from the result directory name\nconst originalTaskId = taskId.split('-').slice(0, 3).join('-'); // e.g., tg-20260214-184400\n\nreturn {\n  taskId: originalTaskId,\n  fullTaskId: taskId,\n  exitCode,\n  result,\n  error,\n  cost,\n  success: exitCode === 0\n};"
+      }
+    },
+    {
+      "id": "load-task-mapping",
+      "name": "Load Task Mapping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst path = '/var/lib/n8n/telegram-openclaw-tasks.json';\n\nlet tasks = {};\ntry {\n  if (fs.existsSync(path)) {\n    tasks = JSON.parse(fs.readFileSync(path, 'utf8'));\n  }\n} catch (e) {\n  console.log('No task mapping file found');\n  return null;\n}\n\nconst taskId = $input.item.json.taskId;\nconst taskInfo = tasks[taskId];\n\nif (!taskInfo) {\n  console.log(`No Telegram chat found for task ${taskId}`);\n  return null;\n}\n\nreturn {\n  ...$input.item.json,\n  chatId: taskInfo.chatId,\n  userName: taskInfo.userName\n};"
+      }
+    },
+    {
+      "id": "send-success-result",
+      "name": "Send Success Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1450, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-credential",
+          "name": "Telegram Bot API"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "=✅ *Task Complete!*\n\n🆔 Task ID: {{ $json.taskId }}\n💰 Cost: ${{ $json.cost.toFixed(4) }}\n\n📄 *Result:*\n{{ $json.result.substring(0, 3500) }}{{ $json.result.length > 3500 ? '\\n\\n_(Output truncated - result too long)_' : '' }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      }
+    },
+    {
+      "id": "send-error-result",
+      "name": "Send Error Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1450, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-credential",
+          "name": "Telegram Bot API"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "=❌ *Task Failed*\n\n🆔 Task ID: {{ $json.taskId }}\n💰 Cost: ${{ $json.cost.toFixed(4) }}\n\n⚠️ *Error:*\n{{ $json.error || 'Unknown error' }}\n\nPlease try rephrasing your task or check the OpenClaw logs for details.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      }
+    },
+    {
+      "id": "cleanup-task-mapping",
+      "name": "Cleanup Task Mapping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Remove processed task from mapping to avoid re-sending\nconst fs = require('fs');\nconst path = '/var/lib/n8n/telegram-openclaw-tasks.json';\n\nlet tasks = {};\ntry {\n  if (fs.existsSync(path)) {\n    tasks = JSON.parse(fs.readFileSync(path, 'utf8'));\n  }\n} catch (e) {\n  return $input.item.json;\n}\n\nconst taskId = $input.item.json.taskId;\ndelete tasks[taskId];\n\nfs.writeFileSync(path, JSON.stringify(tasks, null, 2));\n\nreturn $input.item.json;"
+      }
+    },
+    {
+      "id": "route-by-status",
+      "name": "Route by Status",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1250, 300],
+      "parameters": {
+        "options": {},
+        "rules": {
+          "rules": [
+            {
+              "id": "success",
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "is-success",
+                    "leftValue": "={{ $json.success }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "id": "error",
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "is-error",
+                    "leftValue": "={{ $json.success }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Check Every Minute": {
+      "main": [
+        [
+          {
+            "node": "List Recent Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Recent Results": {
+      "main": [
+        [
+          {
+            "node": "Split Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Results": {
+      "main": [
+        [
+          {
+            "node": "Get Result Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Result Data": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Load Task Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Task Mapping": {
+      "main": [
+        [
+          {
+            "node": "Route by Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Status": {
+      "main": [
+        [
+          {
+            "node": "Send Success Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Success Result": {
+      "main": [
+        [
+          {
+            "node": "Cleanup Task Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Result": {
+      "main": [
+        [
+          {
+            "node": "Cleanup Task Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "nixos-config-n8n"
+  },
+  "tags": []
+}

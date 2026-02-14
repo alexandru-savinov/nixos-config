@@ -4,7 +4,7 @@ let
   root-sancta-choir = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir";
 
   # System host keys (can decrypt on the target system)
-  sancta-choir = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILkqRZZKLsSV7L67Rzh38UDU6F2GeMmgyiVLlQgS70zP root@sancta-choir";
+  sancta-kuzea = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILkqRZZKLsSV7L67Rzh38UDU6F2GeMmgyiVLlQgS70zP root@sancta-choir";
 
   # Raspberry Pi 5 host key
   rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjZXKDY8Ve/wfMHpjsJGR7guDQFndGoNxDZKXegEfjr root@rpi5";
@@ -13,13 +13,10 @@ let
   users = [ root-sancta-choir ];
 
   # Systems that can decrypt
-  systems = [ sancta-choir rpi5 ];
+  systems = [ sancta-kuzea rpi5 ];
 
   # All keys (for secrets shared across all hosts)
   allKeys = users ++ systems;
-
-  # Keys for sancta-choir only
-  sanctaChoirKeys = users ++ [ sancta-choir ];
 in
 {
   # Tailscale - shared across all hosts
@@ -37,8 +34,8 @@ in
   # Generate in n8n: Settings > API > Create API Key
   "n8n-api-key.age".publicKeys = allKeys;
 
-  # OIDC client secret - sancta-choir only (tsidp not on rpi5)
-  "oidc-client-secret.age".publicKeys = sanctaChoirKeys;
+  # OIDC client secret - legacy (was sancta-choir only, tsidp removed from kuzea)
+  "oidc-client-secret.age".publicKeys = allKeys;
 
   # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
