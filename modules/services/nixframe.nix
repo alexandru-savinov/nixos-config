@@ -753,13 +753,16 @@ let
       # On total failure, kills daemon and falls through to outer restart loop.
       OPEN_OK=false
       for OPEN_ATTEMPT in $(seq 1 3); do
-        # Close any partially-opened windows before retrying
-        if [ "$OPEN_ATTEMPT" -gt 1 ]; then
-          ${pkgs.eww}/bin/eww close sidebar 2>/dev/null || true
-          ${optionalString weatherCfg.enable ''
-          ${pkgs.eww}/bin/eww close forecast 2>/dev/null || true
-          ''}
-        fi
+        # ALWAYS close windows before (re)opening to prevent duplicates
+        # during eww's auto-reload on monitor hotplug events
+        ${pkgs.eww}/bin/eww close sidebar 2>/dev/null || true
+        ${optionalString weatherCfg.enable ''
+        ${pkgs.eww}/bin/eww close forecast 2>/dev/null || true
+        ''}
+
+        # Brief delay to let window close complete before reopening
+        sleep 0.2
+
         OPEN_FAILED=false
         if ! ${pkgs.eww}/bin/eww open sidebar; then
           OPEN_FAILED=true
