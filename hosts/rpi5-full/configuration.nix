@@ -33,6 +33,28 @@
     ../../modules/services/nixframe.nix # Digital photo frame on HDMI-A-2
   ];
 
+  # Package overrides for memory-constrained ARM builds
+  nixpkgs.overlays = [
+    (final: prev: {
+      # Override n8n to increase Node.js heap size during TypeScript compilation
+      #
+      # Problem: n8n 1.123+ build OOMs on ARM with default Node.js heap
+      # Root cause: Node.js calculates heap based on available RAM at build time.
+      #             On RPi5 with active services, only ~2-3GB RAM available → ~1.5-2GB default heap
+      #             ARM TypeScript compilation requires ~6GB (more than x86_64 due to architecture)
+      #
+      # System resources: RPi5 4GB RAM + 8GB swapfile + ~2GB zram (dynamic)
+      # Solution: Set 6GB heap limit to utilize swap effectively during build
+      #
+      # Note: This is a build-time requirement only. Runtime n8n uses default heap.
+      #
+      # TODO: Monitor n8n upstream - may be optimized in future releases
+      n8n = prev.n8n.overrideAttrs (old: {
+        NODE_OPTIONS = "--max-old-space-size=6144"; # 6GB heap for build-time TypeScript compilation
+      });
+    })
+  ];
+
   # Agenix secrets for additional services
   age.secrets = {
     # Open-WebUI secrets
