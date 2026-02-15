@@ -48,6 +48,15 @@
   networking.hostName = "sancta-choir";
   networking.domain = "";
 
+  # Swap space (prevents OOM during builds on 4GB VPS)
+  # 2GB swap provides buffer for memory-intensive builds (Node.js, Rust, etc)
+  swapDevices = [
+    {
+      device = "/swapfile";
+      size = 2048; # 2GB
+    }
+  ];
+
   # SSH authorized keys for remote access
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
