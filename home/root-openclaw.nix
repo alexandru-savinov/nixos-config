@@ -11,6 +11,9 @@
   programs.openclaw = {
     enable = true;
 
+    # Explicitly provide the package from nix-openclaw flake
+    package = nix-openclaw.packages.${pkgs.system}.default;
+
     # Configuration will be managed by onboarding wizard
     # The wizard creates ~/.openclaw/config.json with:
     # - Gateway auth token
