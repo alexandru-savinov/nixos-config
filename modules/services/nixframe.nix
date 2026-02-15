@@ -726,6 +726,32 @@ let
 
       START_TIME=$(${pkgs.coreutils}/bin/date +%s)
 
+      # Defensive cleanup: Close any windows from a still-running eww daemon before kill.
+      # If a prior service stop failed to fully terminate the daemon, windows may still
+      # be open. Explicitly closing them before 'eww kill' ensures a clean restart.
+      # Note: If daemon is not running, these close commands harmlessly fail.
+
+      # Close sidebar - log errors except "window not found"
+      CLOSE_ERR=$(${pkgs.eww}/bin/eww close sidebar 2>&1) || true
+      if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
+        echo "WARNING: Startup cleanup - eww close sidebar failed: $CLOSE_ERR" >&2
+      fi
+
+      ${optionalString weatherCfg.enable ''
+      # Close forecast - log errors except "window not found"
+      CLOSE_ERR=$(${pkgs.eww}/bin/eww close forecast 2>&1) || true
+      if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
+        echo "WARNING: Startup cleanup - eww close forecast failed: $CLOSE_ERR" >&2
+      fi
+      ''}
+
+      # Verify cleanup succeeded
+      REMAINING_WINDOWS=$(${pkgs.eww}/bin/eww list-windows 2>/dev/null | ${pkgs.gnugrep}/bin/grep -cE "sidebar|forecast" || echo 0)
+      if [ "$REMAINING_WINDOWS" -ne 0 ]; then
+        echo "WARNING: Startup cleanup incomplete - $REMAINING_WINDOWS windows still open" >&2
+        echo "INFO: Force-killing daemon to ensure clean state" >&2
+      fi
+
       # Kill any stale eww daemon from a prior run
       ${pkgs.eww}/bin/eww kill 2>&1 || true
       sleep 1
@@ -757,13 +783,21 @@ let
         # Eww auto-reloads config on monitor hotplug, opening new windows
         # BEFORE closing old ones, causing 2+ windows to exist simultaneously.
 
-        # Detect if windows already exist (indicates eww auto-reload occurred)
+        # Detect if windows already exist AFTER startup cleanup
+        # This indicates: (1) mid-session eww auto-reload (expected), or
+        # (2) zombie eww daemon from prior session (startup cleanup should have handled this)
         RELOAD_DETECTED=false
         if [ "$OPEN_ATTEMPT" -eq 1 ]; then
           if ${pkgs.eww}/bin/eww list-windows 2>/dev/null | ${pkgs.gnugrep}/bin/grep -qE "sidebar|forecast"; then
             RELOAD_DETECTED=true
-            echo "WARNING: Windows exist before first open - eww auto-reload detected" >&2
-            echo "INFO: This may indicate monitor hotplug events or config changes" >&2
+            ELAPSED=$(( $(${pkgs.coreutils}/bin/date +%s) - START_TIME ))
+            if [ "$ELAPSED" -lt 30 ]; then
+              echo "ERROR: Windows exist $ELAPSED seconds after startup - cleanup may have failed!" >&2
+              echo "INFO: This suggests IPC/compositor issues, check logs above for errors" >&2
+            else
+              echo "WARNING: Windows exist - mid-session eww auto-reload detected" >&2
+              echo "INFO: This may indicate monitor hotplug events" >&2
+            fi
           fi
         fi
 
