@@ -37,7 +37,8 @@
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
-    ../../modules/services/openclaw-container.nix
+    # Disable old container-based OpenClaw (replaced with nix-openclaw)
+    # ../../modules/services/openclaw-container.nix
   ];
 
   # Enable development tools and Claude Code
@@ -47,20 +48,17 @@
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-    anthropic-api-key.file = "${self}/secrets/anthropic-api-key.age";
-    openclaw-github-token.file = "${self}/secrets/openclaw-github-token.age";
+    # These secrets will be created during OpenClaw onboarding
+    # anthropic-api-key.file = "${self}/secrets/anthropic-api-key.age";
+    # telegram-bot-token.file = "${self}/secrets/telegram-bot-token.age";
   };
 
-  # OpenClaw in systemd-nspawn container (main purpose of this host)
-  services.openclaw-container = {
-    enable = true;
-    anthropicApiKeyFile = config.age.secrets.anthropic-api-key.path;
-    githubTokenFile = config.age.secrets.openclaw-github-token.path;
-    repoUrl = "https://github.com/alexandru-savinov/nixos-config.git";
-    repoBranch = "main";
-    model = "sonnet";
-    maxTurns = 50;
-    maxBudgetUsd = 5.0;
+  # Home Manager for root user (OpenClaw)
+  home-manager = {
+    useGlobalPkgs = true;
+    useUserPackages = true;
+    users.root = import ../../home/root-openclaw.nix;
+    extraSpecialArgs = { inherit self nix-openclaw; };
   };
 
   # Swap space (prevents OOM during builds on 4GB VPS)
