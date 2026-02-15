@@ -7,6 +7,9 @@
 }:
 
 {
+  # Pin kernel to 6.6 LTS to avoid store corruption from incomplete 6.12 build
+  boot.kernelPackages = pkgs.linuxPackages_6_6;
+
   # Enable aarch64 emulation for cross-building RPi5 images
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
 
