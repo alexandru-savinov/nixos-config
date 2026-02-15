@@ -3,7 +3,7 @@
 {
   # Import nix-openclaw home-manager module
   imports = [
-    nix-openclaw.homeManagerModules.default
+    nix-openclaw.homeManagerModules.openclaw
   ];
 
   # Enable OpenClaw
