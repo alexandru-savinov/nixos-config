@@ -8,6 +8,11 @@
 }:
 
 {
+  # Add nix-openclaw overlay to provide pkgs.openclaw
+  nixpkgs.overlays = [
+    nix-openclaw.overlays.default
+  ];
+
   imports = [
     ./hardware-configuration.nix
     ../common.nix
