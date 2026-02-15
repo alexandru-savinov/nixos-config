@@ -726,6 +726,15 @@ let
 
       START_TIME=$(${pkgs.coreutils}/bin/date +%s)
 
+      # Clean up any pre-existing eww windows from prior sessions BEFORE killing daemon.
+      # This prevents duplicate windows from persisting across service restarts when
+      # eww auto-reload occurred (monitor hotplug) in previous session.
+      # Explicitly close all windows before daemon kill to ensure compositor cleanup.
+      ${pkgs.eww}/bin/eww close sidebar 2>/dev/null || true
+      ${optionalString weatherCfg.enable ''
+      ${pkgs.eww}/bin/eww close forecast 2>/dev/null || true
+      ''}
+
       # Kill any stale eww daemon from a prior run
       ${pkgs.eww}/bin/eww kill 2>&1 || true
       sleep 1
@@ -757,13 +766,15 @@ let
         # Eww auto-reloads config on monitor hotplug, opening new windows
         # BEFORE closing old ones, causing 2+ windows to exist simultaneously.
 
-        # Detect if windows already exist (indicates eww auto-reload occurred)
+        # Detect if windows already exist (should be rare after startup cleanup)
+        # This now indicates either: (1) mid-session eww auto-reload, or
+        # (2) startup cleanup failed to remove pre-existing windows
         RELOAD_DETECTED=false
         if [ "$OPEN_ATTEMPT" -eq 1 ]; then
           if ${pkgs.eww}/bin/eww list-windows 2>/dev/null | ${pkgs.gnugrep}/bin/grep -qE "sidebar|forecast"; then
             RELOAD_DETECTED=true
             echo "WARNING: Windows exist before first open - eww auto-reload detected" >&2
-            echo "INFO: This may indicate monitor hotplug events or config changes" >&2
+            echo "INFO: This may indicate monitor hotplug events or incomplete startup cleanup" >&2
           fi
         fi
 
