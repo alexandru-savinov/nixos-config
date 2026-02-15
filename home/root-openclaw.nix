@@ -1,4 +1,4 @@
-{ config, pkgs, nix-openclaw, ... }:
+{ config, pkgs, lib, nix-openclaw, ... }:
 
 {
   # Import nix-openclaw home-manager module
@@ -19,6 +19,6 @@
     # - Channel configurations
   };
 
-  # Home Manager state version
-  home.stateVersion = "24.11";
+  # Home Manager state version (use mkForce to override modules/users/root.nix)
+  home.stateVersion = lib.mkForce "24.11";
 }
