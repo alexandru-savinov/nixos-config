@@ -8,11 +8,6 @@
 }:
 
 {
-  # Add nix-openclaw overlay to provide pkgs.openclaw
-  nixpkgs.overlays = [
-    nix-openclaw.overlays.default
-  ];
-
   imports = [
     ./hardware-configuration.nix
     ../common.nix
@@ -22,13 +17,21 @@
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
-    # Using nix-openclaw instead of custom container-based OpenClaw
-    # ../../modules/services/openclaw-container.nix
+    # Will install Official OpenClaw via npm instead of nix-openclaw
+    # nix-openclaw has upstream bugs (bird2/bird3 ambiguity)
   ];
 
   # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
   customModules.claude.enable = true;
+
+  # Build tools for OpenClaw npm installation (llama.cpp compilation)
+  environment.systemPackages = with pkgs; [
+    cmake
+    gnumake
+    gcc
+    python3
+  ];
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets = {
@@ -38,13 +41,9 @@
     # telegram-bot-token.file = "${self}/secrets/telegram-bot-token.age";
   };
 
-  # Home Manager for root user (Official OpenClaw with Telegram)
-  home-manager = {
-    useGlobalPkgs = true;
-    useUserPackages = true;
-    users.root = import ../../home/root-openclaw.nix;
-    extraSpecialArgs = { inherit self nix-openclaw; };
-  };
+  # OpenClaw will be installed via npm globally after deployment
+  # Run: npm install -g openclaw@latest --prefix /usr/local
+  # Then: openclaw onboard --flow quickstart
 
   # CRITICAL: Keep hostname as "sancta-choir" for Phase 1 deployment
   # This maintains Tailscale access during migration
