@@ -204,6 +204,147 @@ ssh root@sancta-choir.tail4249a9.ts.net "
 - `/var/lib/openclaw/results` (rw) - Task outputs
 - `/run/secrets` (ro) - Staged secrets from host
 
+## 🔥 LESSONS LEARNED - Boot Failure Incident (Feb 15, 2026)
+
+### What Happened
+
+**Incident:** VPS completely unbootable after failed `nixos-rebuild switch`
+**Duration:** ~10 hours to diagnose and repair
+**Root Cause:** `nixos-rebuild switch` updated bootloader BEFORE build completed
+
+### The Failure Chain
+
+1. ❌ **OOM during build** → Node.js build consumed all 4GB RAM
+2. ❌ **Bootloader updated anyway** → GRUB pointed to non-existent store path
+3. ❌ **Kernel panic on boot** → "stage 2 init script not found"
+4. ❌ **All generations inaccessible** → Default entry broken, no time to select from menu
+5. ✅ **Rescue mode repair** → Manually fixed GRUB to boot generation 100
+
+### Critical Insight: nixos-rebuild switch Is NOT Atomic
+
+```
+WHAT ACTUALLY HAPPENS:
+1. Build new system          → CAN FAIL (OOM, network, etc)
+2. Update GRUB bootloader    → RUNS REGARDLESS (DANGEROUS!)
+3. Activate services         → Never reached if build fails
+
+Result: Bootloader corruption if build fails mid-way
+```
+
+**Why this is dangerous on remote VPS:**
+- Can't access GRUB menu to select old generation (web console timeout)
+- Can't see error messages (no physical display)
+- Must use rescue mode (slow, requires provider access)
+
+### 🔴 CRITICAL: Never Do This Again
+
+```bash
+# ❌ DANGEROUS on remote VPS with risky configs:
+nixos-rebuild switch --flake .#new-config
+
+# ✅ SAFE - Test build first:
+nixos-rebuild build --flake .#new-config --max-jobs 1 --cores 1
+# If build succeeds, THEN switch:
+nixos-rebuild switch --flake .#new-config
+```
+
+### 🟡 Required Safety Measures for Remote VPS Deployments
+
+#### 1. **Always Use Memory Limits** (Prevents OOM)
+```bash
+nixos-rebuild switch --flake .#config --max-jobs 1 --cores 1
+```
+
+#### 2. **Test Build Before Switch** (Prevents Bootloader Corruption)
+```bash
+# Step 1: Build only (no system changes)
+ssh root@vps "nixos-rebuild build --flake .#config --max-jobs 1 --cores 1"
+
+# Step 2: If build succeeds, switch
+ssh root@vps "nixos-rebuild switch --flake .#config"
+```
+
+#### 3. **Use 'boot' for Risky Changes** (Safer Than 'switch')
+```bash
+# Updates bootloader but requires manual reboot to activate
+nixos-rebuild boot --flake .#config --max-jobs 1 --cores 1
+# Then verify system boots before making it permanent
+```
+
+#### 4. **Add Swap Space** (Buffer for Memory Spikes)
+```nix
+# In configuration.nix:
+swapDevices = [ { device = "/swapfile"; size = 2048; } ];  # 2GB swap
+```
+
+#### 5. **Keep Rescue Credentials Handy**
+- Hetzner Console: https://console.hetzner.cloud/
+- Know how to enable rescue mode
+- Have diagnostic scripts ready
+
+### Recovery Procedure (If Boot Fails Again)
+
+**If VPS becomes unbootable after deployment:**
+
+1. **Enable Hetzner Rescue Mode**
+   - Console → Server → Rescue → Enable & Reboot
+   - Note IP and password
+
+2. **Install sshpass** (if connecting remotely)
+   ```bash
+   apt-get update && apt-get install -y sshpass
+   ```
+
+3. **Run Diagnostics**
+   ```bash
+   mount /dev/sda1 /mnt
+   ls -la /mnt/nix/var/nix/profiles/system-*-link  # Check generations
+   readlink /mnt/nix/var/nix/profiles/system       # Current generation
+   cat /mnt/boot/grub/grub.cfg | grep menuentry    # Bootloader config
+   ```
+
+4. **Fix GRUB** (point to last working generation)
+   ```bash
+   cp /mnt/boot/grub/grub.cfg /mnt/boot/grub/grub.cfg.backup
+   # Edit grub.cfg to use working generation's store path
+   # (See detailed commands in incident notes)
+   ```
+
+5. **Unmount and Reboot**
+   ```bash
+   umount /mnt
+   # Exit rescue mode via Hetzner Console
+   ```
+
+### Why Memory Limits Are Non-Negotiable
+
+| Build Type | Memory Usage | 4GB VPS Without Limits | With --max-jobs 1 --cores 1 |
+|------------|--------------|----------------------|---------------------------|
+| Node.js/npm (open-webui) | ~1.5GB per job | 4 parallel jobs = **6GB** ❌ OOM | 1 job = 1.5GB ✅ Safe |
+| Rust compilation | ~1GB per job | 4 parallel jobs = **4GB** ⚠️ Risky | 1 job = 1GB ✅ Safe |
+| Python packages | ~500MB per job | Usually safe | Always safe |
+
+**Rule of thumb:** If VPS has <8GB RAM, ALWAYS use `--max-jobs 1 --cores 1`
+
+### Prevention Checklist for Future Deployments
+
+Before running `nixos-rebuild switch` on remote VPS:
+
+- [ ] Swap space configured (`swapDevices`)
+- [ ] Memory limits specified (`--max-jobs 1 --cores 1`)
+- [ ] Build tested locally or in CI
+- [ ] OR: Build tested on VPS with `nixos-rebuild build` first
+- [ ] Rescue mode credentials accessible
+- [ ] Time allocated for recovery if needed (not deploying before sleep!)
+
+### The One-Liner That Prevents 99% of Boot Failures
+
+```bash
+# Always use this pattern for remote VPS deployments:
+ssh root@vps "nixos-rebuild build --flake .#config --max-jobs 1 --cores 1 && nixos-rebuild switch --flake .#config"
+#              ^^^^^^^^^^^^^ TEST BUILD FIRST ^^^^^^^^^^^^^     ^^^ Only switch if build succeeds ^^^
+```
+
 ---
 
-**Next step:** Reboot the VPS via Hetzner Console, then run Step 3 command above. That's it! 🚀
+**Next step:** Reboot the VPS via Hetzner Console, then run Step 3 command above (which now includes `--max-jobs 1 --cores 1`). That's it! 🚀
