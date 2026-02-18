@@ -50,6 +50,17 @@
   customModules.dev-tools.enable = true;
   customModules.claude.enable = true;
 
+  # Home Manager: use system pkgs and suppress the version mismatch warning.
+  # rpi5 uses nvmd/nixos-raspberrypi's internal nixpkgs fork as system pkgs;
+  # the HM input tracks NixOS/nixpkgs release-25.05. There is no matching HM
+  # release for the raspberrypi fork, so the mismatch is intentional and
+  # accepted — suppress the warning for all HM-managed users via sharedModules.
+  home-manager = {
+    useGlobalPkgs = true;
+    useUserPackages = true;
+    sharedModules = [ { home.enableNixpkgsReleaseCheck = false; } ];
+  };
+
   # Allow unfree packages (Open-WebUI license changed in v0.6+)
   # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides
   # the correct kernel for RPi5 via flake.nix module configuration.
@@ -90,6 +101,9 @@
 
     # Hardware monitoring
     lm_sensors
+
+    # Nix tooling
+    cachix
   ];
 
   # Agenix secrets (minimal - only Tailscale for this config)
@@ -274,6 +288,10 @@
   # Without this, all MemoryMax/MemoryHigh systemd limits are NOT enforced.
   # Also enable PSI (Pressure Stall Information) for resource pressure monitoring.
   boot.kernelParams = [ "cgroup_enable=memory" "psi=1" ];
+
+  # Explicitly opt in to the modern direct-kernel-boot path (avoids deprecated "kernelboot" default)
+  # See: https://github.com/nvmd/nixos-raspberrypi/pull/61
+  boot.loader.raspberry-pi.bootloader = "kernel";
 
   # earlyoom - userspace OOM killer (defense-in-depth against kernel OOM killer)
   # RPi5 has only 4GB RAM with heavy services; zram alone is not sufficient protection.
