@@ -92,7 +92,7 @@ Before changing any NixOS option:
 
 > **Hypothesis:** The Home Manager warning about `useGlobalPkgs` is caused by the option being explicitly set to `true` in `hosts/rpi5/configuration.nix`, which triggers a warning in this version of Home Manager.
 >
-> **Test:** `grep -r "useGlobalPkgs" /home/nixos/nixos-config/`
+> **Test:** `grep -r "useGlobalPkgs" .`
 >
 > **Output:** Found in `hosts/rpi5/configuration.nix:60: useGlobalPkgs = true;`
 >
