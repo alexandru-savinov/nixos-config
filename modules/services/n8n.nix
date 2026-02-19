@@ -679,16 +679,19 @@ in
             return
           fi
 
-          # Convert JSON boolean to SQLite integer
+          # Update database as n8n user to preserve file ownership.
+          # When activating, also set activeVersionId = versionId so n8n recognises
+          # the workflow as properly activated on startup.  n8n checks activeVersionId
+          # IS NOT NULL when deciding which workflows to activate; without this the
+          # workflow remains in the DB as active=1 but is silently skipped at boot.
+          # When deactivating, clear activeVersionId back to NULL.
           if [ "$wf_active" = "true" ]; then
-            active_int=1
+            runuser -u n8n -- sqlite3 "$DB_PATH" \
+              "UPDATE workflow_entity SET active=1, activeVersionId=versionId WHERE id='$wf_id';"
           else
-            active_int=0
+            runuser -u n8n -- sqlite3 "$DB_PATH" \
+              "UPDATE workflow_entity SET active=0, activeVersionId=NULL WHERE id='$wf_id';"
           fi
-
-          # Update database as n8n user to preserve file ownership
-          runuser -u n8n -- sqlite3 "$DB_PATH" \
-            "UPDATE workflow_entity SET active=$active_int WHERE id='$wf_id';"
           echo "  Set $wf_id active=$wf_active"
         }
 
@@ -723,8 +726,16 @@ in
           webhook_timeout=60
           webhook_ready=0
           while [ $webhook_timeout -gt 0 ]; do
-            http_code=$(curl -sf -o /dev/null -w "%{http_code}" \
-              "http://127.0.0.1:${toString cfg.port}/webhook/${cfg.webhookHealthCheck}" 2>/dev/null || echo "000")
+            # Omit -f: with -f, curl exits non-zero on 4xx and the command substitution
+            # captures both the %{http_code} output and the appended "|| echo 000",
+            # yielding "404000" instead of "404" so the != "404" check never matches.
+            # Without -f, curl exits 0 for any HTTP-level response (4xx included) so
+            # %{http_code} gives the real code.  Transport failures (connection refused)
+            # produce "000" from %{http_code} directly; the empty-string guard below is
+            # belt-and-suspenders for edge cases where curl emits no output at all.
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              "http://127.0.0.1:${toString cfg.port}/webhook/${cfg.webhookHealthCheck}" 2>/dev/null)
+            [ -z "$http_code" ] && http_code="000"
             if [ "$http_code" != "404" ] && [ "$http_code" != "000" ]; then
               echo "Webhook health check passed (HTTP $http_code) after $((60 - webhook_timeout))s"
               webhook_ready=1
