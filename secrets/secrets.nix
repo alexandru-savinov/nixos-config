@@ -52,4 +52,7 @@ in
 
   # CalDAV credentials for NixFrame calendar (Apple ID + app-specific password)
   "caldav-credentials.age".publicKeys = allKeys;
+
+  # Hetzner Cloud API token (rpi5 only — not needed on VPS instances)
+  "hcloud-api-token.age".publicKeys = users ++ [ rpi5 ];
 }

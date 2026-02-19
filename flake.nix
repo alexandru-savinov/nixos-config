@@ -248,6 +248,16 @@
             ];
             text = builtins.readFile ./scripts/bootstrap.sh;
           };
+
+          # Hetzner Cloud CLI wrapper (injects API token from agenix)
+          hcloud-wrap = pkgs.writeShellApplication {
+            name = "hcloud-wrap";
+            runtimeInputs = with pkgs; [
+              hcloud
+              coreutils
+            ];
+            text = builtins.readFile ./scripts/hcloud-wrap.sh;
+          };
         });
 
       # Apps - makes packages runnable with `nix run`
@@ -271,6 +281,12 @@
         bootstrap = {
           type = "app";
           program = "${self.packages.${system}.bootstrap}/bin/nixos-bootstrap";
+        };
+
+        # Hetzner Cloud CLI (with API token injection)
+        hcloud-wrap = {
+          type = "app";
+          program = "${self.packages.${system}.hcloud-wrap}/bin/hcloud-wrap";
         };
       });
     };
