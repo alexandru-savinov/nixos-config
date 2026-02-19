@@ -28,6 +28,8 @@ Flake-based NixOS configuration:
 - **rpi5-full** (aarch64-linux): Raspberry Pi 5 ← **You are here** (only active host)
 - **rpi5** (aarch64-linux): Minimal config for SD image builds only
 - **sancta-choir** (x86_64-linux): Hetzner VPS — OpenClaw AI gateway
+- **sancta-kuzea** (x86_64-linux): Hetzner VPS — OpenClaw container host
+- **hetzner-ephemeral** (x86_64-linux): On-demand Hetzner VPS (disposable)
 
 ## Commands
 
@@ -51,6 +53,47 @@ cd secrets && agenix -r                  # Re-encrypt all
 nix build .#images.rpi5-sd-image
 ```
 
+## Hetzner Cloud VPS Management
+
+RPi5 serves as the control plane for Hetzner Cloud VPS provisioning. All operations use `--build-on-remote` (RPi5 evaluates the flake, target VPS builds its own x86_64 closure).
+
+```
+RPi5 (aarch64) ──hcloud──→ Hetzner API (create/destroy/manage VPS)
+       │
+       └──nixos-anywhere──→ Fresh VPS (x86_64, --build-on-remote)
+               │
+               └── NixOS config + Tailscale auto-join
+```
+
+### Hetzner Commands
+
+| Task | Command | Notes |
+|------|---------|-------|
+| CLI with token | `sudo nix run .#hcloud-wrap -- server list` | Reads token from agenix |
+| Create VPS | `sudo nix run .#hetzner-create -- --name NAME` | Full provisioning via nixos-anywhere |
+| Destroy VPS | `sudo nix run .#hetzner-destroy -- --name NAME` | With Tailscale cleanup |
+| List servers | `nix run .#hetzner-manage -- list` | No sudo needed |
+| SSH into VPS | `nix run .#hetzner-manage -- ssh --name NAME` | Resolves IP automatically |
+| Snapshot | `nix run .#hetzner-manage -- snapshot --name NAME` | Creates timestamped image |
+| Resize | `nix run .#hetzner-manage -- resize --name NAME --type cx32` | Poweroff → resize → poweron |
+| Deploy update | `nix run .#hetzner-manage -- deploy --name NAME` | git pull + nixos-rebuild |
+
+### Shared Module
+
+VPS configs use `modules/system/hetzner-cloud.nix`:
+```nix
+hetzner-cloud.enable = true;
+hetzner-cloud.ipv4Address = "116.203.223.113";  # null for DHCP (ephemeral)
+hetzner-cloud.macAddress = "92:00:06:bb:96:03";  # optional
+```
+
+Disk layout for new instances: `modules/system/hetzner-disko.nix` (GPT + BIOS boot + ext4).
+
+### Secrets Bootstrapping
+
+- **Ephemeral instances**: Tailscale auth key injected via `--extra-files` (no agenix)
+- **Persistent instances**: Two-phase deploy — first with `--extra-files`, then add host key to `secrets.nix`, re-encrypt, and `nixos-rebuild switch`
+
 ## Architecture
 
 ```
@@ -70,6 +113,8 @@ secrets/                         # Agenix .age files
 | Host-specific config | `hosts/<hostname>/configuration.nix` |
 | Shared across all hosts | `hosts/common.nix` |
 | New secret | `secrets/<name>.age` + `secrets/secrets.nix` |
+| Hetzner VPS module | `modules/system/hetzner-cloud.nix` (shared) |
+| Hetzner disk layout | `modules/system/hetzner-disko.nix` (for nixos-anywhere) |
 | Flake input | `flake.nix` inputs section |
 
 ## Services
@@ -105,7 +150,7 @@ age.secrets.my-secret.file = "${self}/secrets/my-secret.age";
 someService.secretFile = config.age.secrets.my-secret.path;
 ```
 
-Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `n8n-admin-password`, `n8n-api-key`, `tailscale-auth-key`, `open-webui-secret-key`, `e2e-test-api-key`, `unifi-password`, `anthropic-api-key`, `openclaw-github-token`, `caldav-credentials`
+Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `n8n-admin-password`, `n8n-api-key`, `tailscale-auth-key`, `open-webui-secret-key`, `e2e-test-api-key`, `unifi-password`, `anthropic-api-key`, `openclaw-github-token`, `caldav-credentials`, `hcloud-api-token` (rpi5 only)
 
 ## CI/CD
 
