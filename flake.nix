@@ -43,9 +43,15 @@
       url = "github:openclaw/nix-openclaw";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Disko - declarative disk partitioning for nixos-anywhere
+    # See: https://github.com/nix-community/disko
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, nix-openclaw, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, nix-openclaw, disko, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -85,6 +91,14 @@
         #   specialArgs = { pkgs-unstable = import nixpkgs-unstable { system = "..."; }; };
         # Enable with: customModules.dev-tools.enable = true;
         dev-tools = ./modules/system/dev-tools.nix;
+
+        # Hetzner Cloud VPS configuration (boot, networking, SSH, firewall)
+        # Enable with: hetzner-cloud.enable = true; hetzner-cloud.ipv4Address = "...";
+        hetzner-cloud = ./modules/system/hetzner-cloud.nix;
+
+        # Disko disk layout for Hetzner (GPT + BIOS boot + ext4)
+        # Used with nixos-anywhere for automated provisioning
+        hetzner-disko = ./modules/system/hetzner-disko.nix;
       };
 
       # NixOS system configurations
