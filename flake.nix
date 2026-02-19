@@ -153,6 +153,27 @@
           ];
         };
 
+        # Ephemeral Hetzner Cloud VPS (x86_64) — on-demand, short-lived
+        # Provisioned via nixos-anywhere with --build-on-remote
+        # Tailscale bootstrapped via --extra-files (no agenix on first boot)
+        hetzner-ephemeral = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = {
+            pkgs-unstable = import nixpkgs-unstable {
+              system = "x86_64-linux";
+              config.allowUnfree = true;
+            };
+            inherit self;
+            inherit claude-code;
+          };
+          modules = [
+            ./hosts/hetzner-ephemeral/configuration.nix
+            disko.nixosModules.disko
+            home-manager.nixosModules.home-manager
+            vscode-server.nixosModules.default
+          ];
+        };
+
         # Raspberry Pi 5 (aarch64) - Minimal config for SD image builds
         # Uses nvmd/nixos-raspberrypi for kernel 6.12.34 (same as pre-built SD image)
         # Cache: nixos-raspberrypi.cachix.org
