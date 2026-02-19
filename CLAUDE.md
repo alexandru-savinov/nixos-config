@@ -174,6 +174,28 @@ This repo has custom Claude Code plugins in `.claude/plugins/` that override mar
 
 **Important:** Use `/nix-commit:commit` instead of `/commit` to ensure Nix files are formatted before committing. This prevents CI failures from formatting mismatches.
 
+## Verify Before Fixing
+
+**Before applying any fix, follow this protocol — no exceptions:**
+
+1. **State the hypothesis** — one sentence: *"I believe the root cause is X because Y."* Name the exact option, file, or behavior.
+2. **Design a minimal test** — the smallest command that confirms or refutes the hypothesis *without making changes*:
+   ```bash
+   nixos-rebuild dry-build --flake .#rpi5-full 2>&1 | grep -iE "warn|error"  # capture current state
+   nix eval .#nixosConfigurations.rpi5-full.config.<option>                   # inspect value
+   grep -r "optionName" modules/                                              # find where it's set
+   ```
+3. **Run the test** — if it refutes the hypothesis, revise and repeat from step 1. Do NOT apply the fix anyway.
+4. **Apply the fix** — minimal change only, exactly what the hypothesis identified.
+5. **Verify** — re-run the same test. Confirm the problem is gone and no new warnings appeared.
+
+**Anti-patterns to avoid:**
+- Applying a fix that "seems right" without testing first
+- Fixing multiple things at once (can't tell what caused what)
+- Using `2>/dev/null` to suppress errors without understanding them
+
+See also: `~/.claude/skills/verify-first/SKILL.md` (installed via `services.claude-skills`).
+
 ## Nix Code Style
 
 - Use `lib.mkIf` for conditional options, not inline `if`
