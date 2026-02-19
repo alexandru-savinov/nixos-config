@@ -92,11 +92,15 @@ Before changing any NixOS option:
 
 > **Hypothesis:** The Home Manager warning about `useGlobalPkgs` is caused by the option being explicitly set to `true` in `hosts/rpi5/configuration.nix`, which triggers a warning in this version of Home Manager.
 >
-> **Test:** `grep -r "useGlobalPkgs" .`
+> **Test:** `grep -r "useGlobalPkgs" hosts/`
 >
-> **Output:** Found in `hosts/rpi5/configuration.nix:60: useGlobalPkgs = true;`
+> **Output:**
+> ```
+> hosts/sancta-choir/configuration.nix:58:    useGlobalPkgs = true;
+> hosts/rpi5/configuration.nix:60:    useGlobalPkgs = true;
+> ```
 >
-> **Confirmed.** Removing that line should resolve the warning.
+> **Confirmed.** Both hosts set it; the rpi5 instance on line 60 is the one triggering the warning.
 >
 > **Fix:** Remove line 60.
 >
