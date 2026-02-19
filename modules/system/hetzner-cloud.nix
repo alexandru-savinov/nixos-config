@@ -13,6 +13,9 @@ let
   cfg = config.hetzner-cloud;
 in
 {
+  # QEMU guest profile must be at top level (imports can't be conditional)
+  imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
+
   options.hetzner-cloud = {
     enable = lib.mkEnableOption "Hetzner Cloud VPS configuration";
 
@@ -44,8 +47,6 @@ in
 
   config = lib.mkIf cfg.enable {
     # ── Boot ─────────────────────────────────────────────────────
-    imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
-
     boot.loader.grub.device = "/dev/sda";
     boot.initrd.availableKernelModules = [ "ata_piix" "uhci_hcd" "xen_blkfront" "vmw_pvscsi" ];
     boot.initrd.kernelModules = [ "nvme" ];
