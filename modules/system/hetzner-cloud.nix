@@ -4,13 +4,18 @@
 # Usage in host config:
 #   imports = [ ../../modules/system/hetzner-cloud.nix ];
 #   hetzner-cloud.enable = true;
-#   hetzner-cloud.ipv4Address = "1.2.3.4";
+#   hetzner-cloud.ipv4Address = "1.2.3.4";       # static IP (persistent instances)
 #   hetzner-cloud.macAddress = "aa:bb:cc:dd:ee:ff";  # optional
+#
+# For ephemeral instances with DHCP:
+#   hetzner-cloud.enable = true;
+#   # omit ipv4Address — defaults to DHCP
 
 { config, pkgs, lib, modulesPath, ... }:
 
 let
   cfg = config.hetzner-cloud;
+  useStaticIp = cfg.ipv4Address != null;
 in
 {
   # QEMU guest profile must be at top level (imports can't be conditional)
@@ -20,8 +25,9 @@ in
     enable = lib.mkEnableOption "Hetzner Cloud VPS configuration";
 
     ipv4Address = lib.mkOption {
-      type = lib.types.str;
-      description = "Static IPv4 address assigned by Hetzner";
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Static IPv4 address assigned by Hetzner. Null for DHCP (ephemeral instances).";
       example = "116.203.223.113";
     };
 
@@ -45,58 +51,69 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    # ── Boot ─────────────────────────────────────────────────────
-    boot.loader.grub.device = "/dev/sda";
-    boot.initrd.availableKernelModules = [ "ata_piix" "uhci_hcd" "xen_blkfront" "vmw_pvscsi" ];
-    boot.initrd.kernelModules = [ "nvme" ];
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+    # ── Common config (both static and DHCP) ───────────────────
+    {
+      # Boot
+      boot.loader.grub.device = "/dev/sda";
+      boot.initrd.availableKernelModules = [ "ata_piix" "uhci_hcd" "xen_blkfront" "vmw_pvscsi" ];
+      boot.initrd.kernelModules = [ "nvme" ];
 
-    # ── Networking ───────────────────────────────────────────────
-    networking.useDHCP = false;
-    networking.usePredictableInterfaceNames = lib.mkForce false;
-    networking.dhcpcd.enable = false;
-    networking.nameservers = cfg.nameservers;
+      # Networking base
+      networking.usePredictableInterfaceNames = lib.mkForce false;
 
-    networking.interfaces.eth0 = {
-      useDHCP = false;
-      ipv4.addresses = [{
-        address = cfg.ipv4Address;
-        prefixLength = 32;
+      # MAC address binding (stable interface naming)
+      services.udev.extraRules = lib.mkIf (cfg.macAddress != null) ''
+        ATTR{address}=="${cfg.macAddress}", NAME="eth0"
+      '';
+
+      # Swap
+      swapDevices = [{
+        device = "/swapfile";
+        size = 2048; # 2GB — prevents OOM during builds on 4GB VPS
       }];
-      ipv4.routes = [{ address = cfg.ipv4Gateway; prefixLength = 32; }];
-    };
 
-    networking.defaultGateway = {
-      address = cfg.ipv4Gateway;
-      interface = "eth0";
-    };
-
-    # MAC address binding (stable interface naming)
-    services.udev.extraRules = lib.mkIf (cfg.macAddress != null) ''
-      ATTR{address}=="${cfg.macAddress}", NAME="eth0"
-    '';
-
-    # ── Swap ─────────────────────────────────────────────────────
-    swapDevices = [{
-      device = "/swapfile";
-      size = 2048; # 2GB — prevents OOM during builds on 4GB VPS
-    }];
-
-    # ── SSH ──────────────────────────────────────────────────────
-    services.openssh = {
-      enable = true;
-      settings = {
-        PermitRootLogin = "prohibit-password";
-        PasswordAuthentication = false;
+      # SSH
+      services.openssh = {
+        enable = true;
+        settings = {
+          PermitRootLogin = "prohibit-password";
+          PasswordAuthentication = false;
+        };
       };
-    };
 
-    # ── Firewall ─────────────────────────────────────────────────
-    networking.firewall.enable = true;
-    networking.firewall.allowedTCPPorts = [ 22 ];
+      # Firewall
+      networking.firewall.enable = true;
+      networking.firewall.allowedTCPPorts = [ 22 ];
 
-    # ── Filesystem (for existing instances without disko) ────────
-    # New instances should use hetzner-disko.nix instead
-    fileSystems."/" = lib.mkDefault { device = "/dev/sda1"; fsType = "ext4"; };
-  };
+      # Filesystem (default for existing instances without disko)
+      fileSystems."/" = lib.mkDefault { device = "/dev/sda1"; fsType = "ext4"; };
+    }
+
+    # ── Static IP mode (persistent instances) ──────────────────
+    (lib.mkIf useStaticIp {
+      networking.useDHCP = false;
+      networking.dhcpcd.enable = false;
+      networking.nameservers = cfg.nameservers;
+
+      networking.interfaces.eth0 = {
+        useDHCP = false;
+        ipv4.addresses = [{
+          address = cfg.ipv4Address;
+          prefixLength = 32;
+        }];
+        ipv4.routes = [{ address = cfg.ipv4Gateway; prefixLength = 32; }];
+      };
+
+      networking.defaultGateway = {
+        address = cfg.ipv4Gateway;
+        interface = "eth0";
+      };
+    })
+
+    # ── DHCP mode (ephemeral instances) ────────────────────────
+    (lib.mkIf (!useStaticIp) {
+      networking.useDHCP = true;
+    })
+  ]);
 }
