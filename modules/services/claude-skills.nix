@@ -1,7 +1,9 @@
 # Claude Code Skills — project-local skills stored in this repo.
 #
-# Installs skills from modules/claude-skills/ into ~/.claude/skills/
+# Installs project-local Claude Code skills into ~/.claude/skills/
 # for each specified user via home-manager symlinks.
+# Note: each skill must be explicitly listed in home.file — the directory
+# is not scanned automatically. Add new skills alongside verify-first.
 #
 # Usage:
 #   services.claude-skills = {

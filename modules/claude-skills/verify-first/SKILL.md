@@ -26,8 +26,8 @@ Identify the smallest possible command or check that would **confirm or refute**
 Good tests for NixOS:
 ```bash
 nix eval .#nixosConfigurations.rpi5-full.config.<option>   # inspect current value
-nixos-rebuild dry-build --flake .#rpi5-full 2>&1 | grep -i warn  # capture current warnings
-nix repl --expr 'import ./. {}' # interactive exploration
+nixos-rebuild dry-build --flake .#rpi5-full 2>&1 | grep -iE "warn|error"  # capture current warnings/errors
+nix repl .#  # interactive flake exploration
 grep -r "optionName" modules/                               # find where it's set
 ```
 
@@ -83,22 +83,22 @@ Before changing any NixOS option:
 
 - [ ] Run `nixos-rebuild dry-build` and capture current warnings/errors
 - [ ] Confirm which module sets the option causing the issue (use `grep -r` or `nix eval`)
-- [ ] Verify the option exists at the version in use: `nix eval nixpkgs#lib.version`
+- [ ] Verify the option exists: `nix eval .#nixosConfigurations.rpi5-full.config.<option>` (eval error = option does not exist)
 - [ ] After the change, re-run `nixos-rebuild dry-build` and diff the output
 
 ---
 
 ## Example (Good)
 
-> **Hypothesis:** The Home Manager warning about `useGlobalPkgs` is caused by the option being explicitly set to `true` in `hosts/rpi5-full/configuration.nix`, which triggers a warning in this version of Home Manager.
+> **Hypothesis:** The Home Manager warning about `useGlobalPkgs` is caused by the option being explicitly set to `true` in `hosts/rpi5/configuration.nix`, which triggers a warning in this version of Home Manager.
 >
 > **Test:** `grep -r "useGlobalPkgs" /home/nixos/nixos-config/`
 >
-> **Output:** Found in `hosts/rpi5-full/configuration.nix:42: useGlobalPkgs = true;`
+> **Output:** Found in `hosts/rpi5/configuration.nix:59: useGlobalPkgs = true;`
 >
 > **Confirmed.** Removing that line should resolve the warning.
 >
-> **Fix:** Remove line 42.
+> **Fix:** Remove line 59.
 >
 > **Verify:** Re-run dry-build. Warning is gone.
 
