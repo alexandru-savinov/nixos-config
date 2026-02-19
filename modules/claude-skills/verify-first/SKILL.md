@@ -94,11 +94,11 @@ Before changing any NixOS option:
 >
 > **Test:** `grep -r "useGlobalPkgs" /home/nixos/nixos-config/`
 >
-> **Output:** Found in `hosts/rpi5/configuration.nix:59: useGlobalPkgs = true;`
+> **Output:** Found in `hosts/rpi5/configuration.nix:60: useGlobalPkgs = true;`
 >
 > **Confirmed.** Removing that line should resolve the warning.
 >
-> **Fix:** Remove line 59.
+> **Fix:** Remove line 60.
 >
 > **Verify:** Re-run dry-build. Warning is gone.
 
