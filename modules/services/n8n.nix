@@ -679,16 +679,19 @@ in
             return
           fi
 
-          # Convert JSON boolean to SQLite integer
+          # Update database as n8n user to preserve file ownership.
+          # When activating, also set activeVersionId = versionId so n8n recognises
+          # the workflow as properly activated on startup.  n8n checks activeVersionId
+          # IS NOT NULL when deciding which workflows to activate; without this the
+          # workflow remains in the DB as active=1 but is silently skipped at boot.
+          # When deactivating, clear activeVersionId back to NULL.
           if [ "$wf_active" = "true" ]; then
-            active_int=1
+            runuser -u n8n -- sqlite3 "$DB_PATH" \
+              "UPDATE workflow_entity SET active=1, activeVersionId=versionId WHERE id='$wf_id';"
           else
-            active_int=0
+            runuser -u n8n -- sqlite3 "$DB_PATH" \
+              "UPDATE workflow_entity SET active=0, activeVersionId=NULL WHERE id='$wf_id';"
           fi
-
-          # Update database as n8n user to preserve file ownership
-          runuser -u n8n -- sqlite3 "$DB_PATH" \
-            "UPDATE workflow_entity SET active=$active_int WHERE id='$wf_id';"
           echo "  Set $wf_id active=$wf_active"
         }
 
@@ -723,8 +726,13 @@ in
           webhook_timeout=60
           webhook_ready=0
           while [ $webhook_timeout -gt 0 ]; do
-            http_code=$(curl -sf -o /dev/null -w "%{http_code}" \
-              "http://127.0.0.1:${toString cfg.port}/webhook/${cfg.webhookHealthCheck}" 2>/dev/null || echo "000")
+            # Use -s without -f: -f causes curl to exit non-zero on 4xx, and combined
+            # with "|| echo 000" this produces "404000" instead of "404", making the
+            # check always pass.  Without -f, curl outputs the real HTTP code and
+            # exits 0; an empty result (connect failure) is treated as "000".
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              "http://127.0.0.1:${toString cfg.port}/webhook/${cfg.webhookHealthCheck}" 2>/dev/null)
+            [ -z "$http_code" ] && http_code="000"
             if [ "$http_code" != "404" ] && [ "$http_code" != "000" ]; then
               echo "Webhook health check passed (HTTP $http_code) after $((60 - webhook_timeout))s"
               webhook_ready=1
