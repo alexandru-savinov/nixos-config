@@ -41,6 +41,7 @@
     ../../modules/services/tailscale.nix
     ../../modules/services/unifi-mcp.nix
     ../../modules/services/n8n-skills.nix
+    ../../modules/services/claude-skills.nix
     ../../modules/services/n8n-mcp-claude.nix
     # Additional services are in rpi5-full config:
     # - open-webui, n8n, gatus
@@ -161,6 +162,11 @@
   # Documentation-only mode (no API key) - for full workflow management,
   # use rpi5-full config which has local n8n running.
   services.n8n-skills = {
+    enable = true;
+    users = [ "nixos" "root" ];
+  };
+
+  services.claude-skills = {
     enable = true;
     users = [ "nixos" "root" ];
   };
