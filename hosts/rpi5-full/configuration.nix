@@ -83,6 +83,9 @@
       file = "${self}/secrets/caldav-credentials.age";
       owner = "nixframe";
     };
+
+    # Hetzner Cloud API token for VPS provisioning
+    hcloud-api-token.file = "${self}/secrets/hcloud-api-token.age";
   };
 
   # Open-WebUI with OpenRouter backend
@@ -504,6 +507,9 @@
     enable = true;
     credentialsFile = config.age.secrets.caldav-credentials.path;
   };
+
+  # Hetzner Cloud CLI for VPS provisioning (RPi5 is the control plane)
+  environment.systemPackages = [ pkgs.hcloud ];
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)
