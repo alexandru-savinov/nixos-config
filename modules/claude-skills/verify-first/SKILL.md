@@ -25,10 +25,10 @@ Identify the smallest possible command or check that would **confirm or refute**
 
 Good tests for NixOS:
 ```bash
+grep -r "optionName" modules/                               # find where it's set (fast, no eval)
 nix eval .#nixosConfigurations.rpi5-full.config.<option>   # inspect current value
-nixos-rebuild dry-build --flake .#rpi5-full 2>&1 | grep -iE "warn|error"  # capture current warnings/errors
 nix repl .#  # interactive flake exploration
-grep -r "optionName" modules/                               # find where it's set
+nixos-rebuild dry-build --flake .#rpi5-full 2>&1 | grep -iE "warn|error"  # capture current warnings/errors
 ```
 
 Good tests for services:
@@ -81,10 +81,10 @@ If the fix introduced new issues, **revert it**, update your hypothesis, and res
 
 Before changing any NixOS option:
 
-- [ ] Run `nixos-rebuild dry-build` and capture current warnings/errors
+- [ ] Run `nixos-rebuild dry-build --flake .#rpi5-full` and capture current warnings/errors
 - [ ] Confirm which module sets the option causing the issue (use `grep -r` or `nix eval`)
 - [ ] Verify the option exists: `nix eval .#nixosConfigurations.rpi5-full.config.<option>` (eval error = option does not exist)
-- [ ] After the change, re-run `nixos-rebuild dry-build` and diff the output
+- [ ] After the change, re-run `nixos-rebuild dry-build --flake .#rpi5-full` and diff the output
 
 ---
 
@@ -92,15 +92,19 @@ Before changing any NixOS option:
 
 > **Hypothesis:** The Home Manager warning about `useGlobalPkgs` is caused by the option being explicitly set to `true` in `hosts/rpi5/configuration.nix`, which triggers a warning in this version of Home Manager.
 >
-> **Test:** `grep -r "useGlobalPkgs" /home/nixos/nixos-config/`
+> **Test:** `grep -r "useGlobalPkgs" hosts/`
 >
-> **Output:** Found in `hosts/rpi5/configuration.nix:60: useGlobalPkgs = true;`
+> **Output:**
+> ```
+> hosts/sancta-choir/configuration.nix:58:    useGlobalPkgs = true;
+> hosts/rpi5/configuration.nix:60:    useGlobalPkgs = true;
+> ```
 >
-> **Confirmed.** Removing that line should resolve the warning.
+> **Confirmed.** Both hosts set it; the rpi5 instance on line 60 is the one triggering the warning.
 >
 > **Fix:** Remove line 60.
 >
-> **Verify:** Re-run dry-build. Warning is gone.
+> **Verify:** Re-run `nixos-rebuild dry-build --flake .#rpi5-full`. Warning is gone.
 
 ## Example (Bad — do not do this)
 
