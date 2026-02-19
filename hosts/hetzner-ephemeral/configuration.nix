@@ -94,5 +94,6 @@
   time.timeZone = "Europe/Chisinau";
   i18n.defaultLocale = "en_US.UTF-8";
 
-  system.stateVersion = "25.05";
+  # Override stateVersion from common.nix (new instance, use current release)
+  system.stateVersion = lib.mkForce "25.05";
 }
