@@ -293,6 +293,41 @@
             ];
             text = builtins.readFile ./scripts/hcloud-wrap.sh;
           };
+
+          # Hetzner VPS lifecycle: create + provision via nixos-anywhere
+          hetzner-create = pkgs.writeShellApplication {
+            name = "hetzner-create";
+            runtimeInputs = with pkgs; [
+              hcloud
+              openssh
+              coreutils
+              nixos-anywhere
+            ];
+            text = builtins.readFile ./scripts/hetzner-create.sh;
+          };
+
+          # Hetzner VPS lifecycle: destroy with Tailscale cleanup
+          hetzner-destroy = pkgs.writeShellApplication {
+            name = "hetzner-destroy";
+            runtimeInputs = with pkgs; [
+              hcloud
+              jq
+              tailscale
+              coreutils
+            ];
+            text = builtins.readFile ./scripts/hetzner-destroy.sh;
+          };
+
+          # Hetzner VPS management: list, status, ssh, reboot, snapshot, resize, deploy
+          hetzner-manage = pkgs.writeShellApplication {
+            name = "hetzner-manage";
+            runtimeInputs = with pkgs; [
+              hcloud
+              openssh
+              coreutils
+            ];
+            text = builtins.readFile ./scripts/hetzner-manage.sh;
+          };
         });
 
       # Apps - makes packages runnable with `nix run`
@@ -322,6 +357,20 @@
         hcloud-wrap = {
           type = "app";
           program = "${self.packages.${system}.hcloud-wrap}/bin/hcloud-wrap";
+        };
+
+        # Hetzner VPS lifecycle
+        hetzner-create = {
+          type = "app";
+          program = "${self.packages.${system}.hetzner-create}/bin/hetzner-create";
+        };
+        hetzner-destroy = {
+          type = "app";
+          program = "${self.packages.${system}.hetzner-destroy}/bin/hetzner-destroy";
+        };
+        hetzner-manage = {
+          type = "app";
+          program = "${self.packages.${system}.hetzner-manage}/bin/hetzner-manage";
         };
       });
     };
