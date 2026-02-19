@@ -726,10 +726,13 @@ in
           webhook_timeout=60
           webhook_ready=0
           while [ $webhook_timeout -gt 0 ]; do
-            # Use -s without -f: -f causes curl to exit non-zero on 4xx, and combined
-            # with "|| echo 000" this produces "404000" instead of "404", making the
-            # check always pass.  Without -f, curl outputs the real HTTP code and
-            # exits 0; an empty result (connect failure) is treated as "000".
+            # Omit -f: with -f, curl exits non-zero on 4xx and the command substitution
+            # captures both the %{http_code} output and the appended "|| echo 000",
+            # yielding "404000" instead of "404" so the != "404" check never matches.
+            # Without -f, curl exits 0 for any HTTP-level response (4xx included) so
+            # %{http_code} gives the real code.  Transport failures (connection refused)
+            # produce "000" from %{http_code} directly; the empty-string guard below is
+            # belt-and-suspenders for edge cases where curl emits no output at all.
             http_code=$(curl -s -o /dev/null -w "%{http_code}" \
               "http://127.0.0.1:${toString cfg.port}/webhook/${cfg.webhookHealthCheck}" 2>/dev/null)
             [ -z "$http_code" ] && http_code="000"
