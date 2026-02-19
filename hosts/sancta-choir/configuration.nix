@@ -29,17 +29,23 @@
   };
 
   imports = [
-    ./hardware-configuration.nix
     ../common.nix
-    ../../modules/system/host.nix
-    ../../modules/system/networking.nix
+    ../../modules/system/hetzner-cloud.nix
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
-    # Disable old container-based OpenClaw (replaced with nix-openclaw)
-    # ../../modules/services/openclaw-container.nix
   ];
+
+  # Hetzner Cloud VPS configuration
+  hetzner-cloud = {
+    enable = true;
+    ipv4Address = "116.203.223.113";
+    macAddress = "92:00:06:bb:96:03";
+  };
+
+  # Allow unfree packages
+  nixpkgs.config.allowUnfree = true;
 
   # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
@@ -61,17 +67,16 @@
     extraSpecialArgs = { inherit self nix-openclaw; };
   };
 
-  # Swap space (prevents OOM during builds on 4GB VPS)
-  swapDevices = [
-    {
-      device = "/swapfile";
-      size = 2048; # 2GB
-    }
-  ];
-
   # Hostname
   networking.hostName = "sancta-choir";
   networking.domain = "";
+
+  # VSCode Server support
+  services.vscode-server.enable = true;
+
+  # Time zone and locale
+  time.timeZone = "Europe/Chisinau";
+  i18n.defaultLocale = "en_US.UTF-8";
 
   # SSH authorized keys for remote access
   users.users.root.openssh.authorizedKeys.keys = [

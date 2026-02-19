@@ -9,17 +9,23 @@
 
 {
   imports = [
-    ./hardware-configuration.nix
     ../common.nix
-    ../../modules/system/host.nix
-    ../../modules/system/networking.nix
+    ../../modules/system/hetzner-cloud.nix
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
-    # Will install Official OpenClaw via npm instead of nix-openclaw
-    # nix-openclaw has upstream bugs (bird2/bird3 ambiguity)
   ];
+
+  # Hetzner Cloud VPS configuration (shares IP with sancta-choir during migration)
+  hetzner-cloud = {
+    enable = true;
+    ipv4Address = "116.203.223.113";
+    macAddress = "92:00:06:bb:96:03";
+  };
+
+  # Allow unfree packages
+  nixpkgs.config.allowUnfree = true;
 
   # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
@@ -41,24 +47,18 @@
     # telegram-bot-token.file = "${self}/secrets/telegram-bot-token.age";
   };
 
-  # OpenClaw will be installed via npm globally after deployment
-  # Run: npm install -g openclaw@latest --prefix /usr/local
-  # Then: openclaw onboard --flow quickstart
-
   # CRITICAL: Keep hostname as "sancta-choir" for Phase 1 deployment
   # This maintains Tailscale access during migration
   # Will be changed to "sancta-kuzea" in Phase 2 after verification
   networking.hostName = "sancta-choir";
   networking.domain = "";
 
-  # Swap space (prevents OOM during builds on 4GB VPS)
-  # 2GB swap provides buffer for memory-intensive builds (Node.js, Rust, etc)
-  swapDevices = [
-    {
-      device = "/swapfile";
-      size = 2048; # 2GB
-    }
-  ];
+  # VSCode Server support
+  services.vscode-server.enable = true;
+
+  # Time zone and locale
+  time.timeZone = "Europe/Chisinau";
+  i18n.defaultLocale = "en_US.UTF-8";
 
   # SSH authorized keys for remote access
   users.users.root.openssh.authorizedKeys.keys = [
