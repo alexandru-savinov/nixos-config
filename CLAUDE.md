@@ -115,6 +115,17 @@ GitHub Actions on push/PR: `nix flake check`, build sancta-choir (x86_64), evalu
 
 **IMPORTANT:** Always use git worktrees when making code changes. Never commit directly to main.
 
+### Worktree Discipline
+
+**Before editing files or running any git operation** (commit, branch switch, cherry-pick), verify you are in the right place:
+
+```bash
+pwd                  # confirm directory
+git branch --show-current  # confirm branch
+```
+
+Never commit one feature's changes into another feature's worktree.
+
 ### Pre-Switch Validation
 
 **Before creating or switching to a worktree**, validate the current work:
@@ -203,6 +214,15 @@ See also: `~/.claude/skills/verify-first/SKILL.md` (installed via `services.clau
 - Module options: use `lib.mkEnableOption` for boolean enables
 - Imports: group by type (modules, services, system)
 - Secrets: always use `age.secrets.<name>.path`, never hardcode paths
+
+## NixOS Module Patterns
+
+Known pitfalls — do not repeat these:
+
+- **Imports must be top-level** — never place `imports = [ ... ]` inside a `lib.mkIf` block; `imports` is evaluated before conditional logic by the NixOS module system, so conditional imports cause a module system type error at evaluation time
+- **`stateVersion` conflicts** — bare assignments in host configs normally override `common.nix`, but upstream modules (e.g. `nixos-raspberrypi`) may set `system.stateVersion` at a higher priority; use `lib.mkForce` in the host config to override those
+- **`useGlobalPkgs = true` does NOT suppress Home Manager version mismatch warnings** — it changes package scope, not version pinning; when the mismatch is intentional (e.g. the `nixos-raspberrypi` fork diverges from NixOS/nixpkgs), suppress it with `sharedModules = [ { home.enableNixpkgsReleaseCheck = false; } ]` and document the reason in a comment
+- **Always run `nix fmt` before committing** — CI runs `nix fmt -- --check .` and will fail if files are not formatted; use `/nix-commit:commit` to handle this automatically
 
 ## Adding New Services
 
