@@ -115,6 +115,17 @@ GitHub Actions on push/PR: `nix flake check`, build sancta-choir (x86_64), evalu
 
 **IMPORTANT:** Always use git worktrees when making code changes. Never commit directly to main.
 
+### Worktree Discipline
+
+**Before any git operation** (commit, edit, branch switch), verify you are in the right place:
+
+```bash
+pwd                  # confirm directory
+git branch --show-current  # confirm branch
+```
+
+Never commit changes meant for a feature branch into main, and never commit one feature's changes into another feature's worktree.
+
 ### Pre-Switch Validation
 
 **Before creating or switching to a worktree**, validate the current work:
@@ -203,6 +214,15 @@ See also: `~/.claude/skills/verify-first/SKILL.md` (installed via `services.clau
 - Module options: use `lib.mkEnableOption` for boolean enables
 - Imports: group by type (modules, services, system)
 - Secrets: always use `age.secrets.<name>.path`, never hardcode paths
+
+## NixOS Module Patterns
+
+Known pitfalls — do not repeat these:
+
+- **Imports must be top-level** — never place `imports = [ ... ]` inside a `lib.mkIf` block; this causes eval errors
+- **`stateVersion` conflicts** — when `common.nix` and a host config both set `system.stateVersion`, use `lib.mkForce` in the host config to resolve
+- **`useGlobalPkgs = true` does NOT suppress Home Manager version mismatch warnings** — it changes package scope, not version pinning; investigate the actual root cause instead
+- **Always run `nix fmt` before committing** — CI runs `nix fmt --check` and will fail without it; use `/nix-commit:commit` to handle this automatically
 
 ## Adding New Services
 
