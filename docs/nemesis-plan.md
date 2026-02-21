@@ -36,9 +36,10 @@ primitive: nothing on sancta-choir is permanent until rpi5's 10-minute
 external verification window passes without incident.
 
 **Why Claude Code as brain:** rpi5 already has the Claude Code CLI installed.
-Nemesis invokes `claude -p` under a dedicated `nemesis` user with Pro
-subscription auth (`claude auth login`) — no per-token billing, natural
-rate limiting, and full CC tool execution. CC reads the repo, inspects the
+Nemesis invokes `claude -p` under a dedicated `nemesis` user with Pro/Max
+subscription auth via `CLAUDE_CODE_OAUTH_TOKEN` (provisioned through
+agenix) — no per-token billing, natural rate limiting, and full CC tool
+execution. CC reads the repo, inspects the
 target's current options, and writes an overlay — without a custom
 tool-calling harness. The invocation pattern is modeled on the existing
 OpenClaw task runner (`modules/services/openclaw.nix`).
@@ -306,15 +307,46 @@ On violation during an active test window, it immediately runs:
 ssh root@sancta-choir "nixos-rebuild switch --rollback"
 ```
 
-### Pro subscription auth
+### Pro subscription auth (setup-token + agenix)
 
-Nemesis invokes `claude` CLI authenticated via `claude auth login` (OAuth
-with the Claude.ai account), not an `ANTHROPIC_API_KEY`. The `nemesis` user
-on rpi5 gets its own dedicated `CLAUDE_CONFIG_DIR=/var/lib/nemesis/.claude`,
-provisioned with a one-time `sudo -u nemesis claude auth login` during
-setup. (Sharing `CLAUDE_CONFIG_DIR` across users would require world-readable
-OAuth token files, exposing credentials to all local processes.)
-Rate limits from Pro naturally cap planning cycles per day.
+Nemesis authenticates `claude` CLI via the `CLAUDE_CODE_OAUTH_TOKEN`
+environment variable, **not** interactive `claude auth login` (which
+requires a browser redirect and produces short-lived tokens with unreliable
+auto-refresh).
+
+**Provisioning flow (one-time, on a machine with a browser):**
+
+1. Run `claude setup-token` — this opens a browser OAuth flow and produces
+   a long-lived (1-year) token: `sk-ant-oat01-...`
+2. Encrypt the token: `cd secrets && agenix -e nemesis-oauth-token.age`
+3. The `nemesis-planner.service` uses the standard agenix `ExecStartPre "+"`
+   pattern to read the secret and export it as `CLAUDE_CODE_OAUTH_TOKEN`:
+
+```bash
+# ExecStartPre "+" (runs as root, reads agenix secret)
+OAUTH_TOKEN=$(cat "${cfg.oauthTokenFile}")
+echo "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN" >> "$ENV_FILE"
+```
+
+**Token lifecycle:**
+- Validity: 1 year from creation
+- Renewal: re-run `claude setup-token`, re-encrypt with `agenix -e`
+- Billing: charges against Pro/Max subscription quota, not per-token API rates
+- Rate limits: 5-hour rolling window + 7-day weekly cap (Pro naturally
+  limits planning cycles — this is a feature, not a bug)
+
+**Why not `ANTHROPIC_API_KEY`?** API keys never expire and are simpler,
+but bill per-token. The setup-token approach uses the existing Pro/Max
+subscription at no marginal cost. If subscription rate caps become
+problematic, switching to `ANTHROPIC_API_KEY` requires only changing
+which agenix secret is read (the `anthropic-api-key.age` secret already
+exists in this repo).
+
+**Why not `claude auth login`?** Interactive OAuth produces short-lived
+access tokens (hours) with a refresh token that has [known bugs](https://github.com/anthropics/claude-code/issues/12447)
+— race conditions with concurrent sessions and unreliable automatic
+refresh. A device-code flow (RFC 8628) has been [requested](https://github.com/anthropics/claude-code/issues/22992)
+but is not implemented as of February 2026.
 
 ### Evaluation Constitution
 
@@ -501,6 +533,11 @@ options.services.nemesis = {
   notifications.n8nWebhookUrl = mkOption {
     type    = types.nullOr types.str;
     default = null;
+  };
+
+  oauthTokenFile = mkOption {
+    type    = types.path;
+    description = "Path to file containing CLAUDE_CODE_OAUTH_TOKEN (agenix).";
   };
 
   limits.maxSwitchesPerDay  = mkOption { type = types.int; default = 3; };
@@ -909,8 +946,14 @@ month) runs `meta-review.py`:
 
 ```nix
 # secrets/secrets.nix — add:
-"nemesis-ssh-key.age".publicKeys = allKeys;      # SSH key for rpi5 nemesis→sancta-choir
-"nemesis-github-token.age".publicKeys = allKeys;  # GitHub PAT for PR creation
+"nemesis-ssh-key.age".publicKeys = allKeys;        # SSH key for rpi5 nemesis→sancta-choir
+"nemesis-github-token.age".publicKeys = allKeys;   # GitHub PAT for PR creation
+"nemesis-oauth-token.age".publicKeys = allKeys;    # CC setup-token (1-year, Pro/Max)
+```
+
+```nix
+# hosts/rpi5-full/configuration.nix — age.secrets:
+age.secrets.nemesis-oauth-token.file = "${self}/secrets/nemesis-oauth-token.age";
 ```
 
 ### rpi5 Host Configuration
@@ -925,6 +968,7 @@ services.nemesis = {
   targetFlakeAttr   = "sancta-choir";
   targetRepoPath    = "/var/lib/nemesis/nixos-config";
   sshKeyFile        = config.age.secrets.nemesis-ssh-key.path;
+  oauthTokenFile    = config.age.secrets.nemesis-oauth-token.path;
   qdrantUrl         = "http://127.0.0.1:6333";
   gatusUrl          = "http://127.0.0.1:3001";
   tier1.services    = [ "openclaw-task-runner" ];
@@ -1224,10 +1268,13 @@ remain stratum 0 (human-only).
    (`authorized_keys`). This bootstrapping step is Tier 3 (requires a
    human-reviewed PR). Must be done before Phase 2.
 
-2. **Pro subscription OAuth flow headless:** `claude auth login` requires an
-   interactive browser step. Do a one-time `sudo -u nemesis claude auth login`
-   during provisioning (writes to `/var/lib/nemesis/.claude`). Do not share
-   `CLAUDE_CONFIG_DIR` with other users — this would expose OAuth tokens.
+2. **~~Pro subscription OAuth flow headless~~ (Resolved):** Use
+   `claude setup-token` on a browser-equipped machine to produce a 1-year
+   `CLAUDE_CODE_OAUTH_TOKEN`. Encrypt as `nemesis-oauth-token.age` and
+   provision via the standard agenix `ExecStartPre "+"` pattern. No
+   `CLAUDE_CONFIG_DIR` sharing needed — the token is an env var, not a
+   file tree. Renewal: annual re-run of `claude setup-token` + `agenix -e`.
+   See "Pro subscription auth" in Key Design Decisions for full details.
 
 3. **Embedding model on rpi5:** Ollama is not currently deployed on rpi5.
    Options: (a) add a `services.ollama` module to rpi5-full and pull
