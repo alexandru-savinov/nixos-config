@@ -9,11 +9,14 @@ let
   # Raspberry Pi 5 host key
   rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjZXKDY8Ve/wfMHpjsJGR7guDQFndGoNxDZKXegEfjr root@rpi5";
 
+  # sancta-claw VPS host key (Hetzner CX33, nbg1-dc3)
+  sancta-claw = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGPSg59xhgMmUcxRS9Yw76z57DiVib3kXHyw52RAThcs";
+
   # Combine users who can edit
   users = [ root-sancta-choir ];
 
   # Systems that can decrypt
-  systems = [ sancta-kuzea rpi5 ];
+  systems = [ sancta-kuzea rpi5 sancta-claw ];
 
   # All keys (for secrets shared across all hosts)
   allKeys = users ++ systems;

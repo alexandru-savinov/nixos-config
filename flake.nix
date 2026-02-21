@@ -139,6 +139,30 @@
           ];
         };
 
+        # x86_64 VPS server - Dedicated OpenClaw host (Official npm package)
+        sancta-claw = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = {
+            pkgs-unstable = import nixpkgs-unstable {
+              system = "x86_64-linux";
+              config.allowUnfree = true;
+            };
+            inherit self;
+            inherit claude-code;
+          };
+          modules = [
+            ./hosts/sancta-claw/configuration.nix
+            home-manager.nixosModules.home-manager
+            vscode-server.nixosModules.default
+            agenix.nixosModules.default
+            ({ pkgs, ... }: {
+              environment.systemPackages = with pkgs; [
+                agenix
+              ];
+            })
+          ];
+        };
+
         # Raspberry Pi 5 (aarch64) - Minimal config for SD image builds
         # Uses nvmd/nixos-raspberrypi for kernel 6.12.34 (same as pre-built SD image)
         # Cache: nixos-raspberrypi.cachix.org
