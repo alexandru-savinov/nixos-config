@@ -23,9 +23,10 @@ and act.
 
 **Why rpi5 as controller:** rpi5 has permanent Tailscale connectivity to
 sancta-choir, already runs Gatus monitoring of sancta-choir's services,
-already holds the nixos-config git clone via OpenClaw, and already
-runs `claude -p` via the OpenClaw task runner. Nemesis extends this
-existing infrastructure rather than installing a new agent on Hetzner.
+holds the nixos-config git clone, and has Claude Code CLI installed.
+Nemesis builds on this existing infrastructure — adding a dedicated
+`nemesis` user, `claude -p` task runner, and SSH-based metric collection
+— rather than installing a new agent on Hetzner.
 
 **Core safety property:** NixOS generations are immutable, content-addressed
 store paths. `nixos-rebuild test` on sancta-choir activates a generation
@@ -34,11 +35,40 @@ returns to the previous state. Nemesis exploits this as its primary safety
 primitive: nothing on sancta-choir is permanent until rpi5's 10-minute
 external verification window passes without incident.
 
-**Why Claude Code as brain:** `claude -p` already runs via OpenClaw on rpi5.
-Using the Pro subscription (`claude auth login`) instead of an API key means
-no per-token billing, natural rate limiting, and full CC tool execution.
-CC reads the repo, inspects the target's current options, and writes an
-overlay — without a custom tool-calling harness.
+**Why Claude Code as brain:** rpi5 already has the Claude Code CLI installed.
+Nemesis invokes `claude -p` under a dedicated `nemesis` user with Pro
+subscription auth (`claude auth login`) — no per-token billing, natural
+rate limiting, and full CC tool execution. CC reads the repo, inspects the
+target's current options, and writes an overlay — without a custom
+tool-calling harness. The invocation pattern is modeled on the existing
+OpenClaw task runner (`modules/services/openclaw.nix`).
+
+---
+
+## Prerequisites
+
+The following must be completed before Nemesis implementation begins:
+
+1. **Deploy OpenClaw on sancta-choir** (Tier 3, human PR) — Enable
+   `services.openclaw` on sancta-choir via `modules/services/openclaw.nix`.
+   This creates the `openclaw-task-runner.service` systemd unit that Nemesis
+   will manage. Currently, sancta-choir only has the Claude Code CLI binary
+   installed (no long-running service). The nix-openclaw Home Manager
+   integration is disabled due to upstream bugs; use the existing NixOS
+   module instead.
+
+2. **Choose and deploy an embedding backend** (Phase 1 dependency) — Ollama
+   is not currently deployed on rpi5. Open-WebUI uses OpenRouter, not local
+   inference. Options: install Ollama with a small embedding model, use
+   OpenRouter's embedding API, or defer RAG to Phase 5.
+
+3. **Provision Nemesis SSH key** (Tier 3, human PR) — Add
+   `nemesis-ssh-key.age` to `secrets/secrets.nix` and sancta-choir's
+   `authorized_keys`. Required before Phase 2.
+
+4. **Update Gatus sancta-choir endpoints** — Current Gatus config on rpi5
+   monitors sancta-choir for Open-WebUI and n8n, which sancta-choir does
+   not run. Update to monitor the actual services (OpenClaw, SSH, Tailscale).
 
 ---
 
@@ -55,11 +85,12 @@ overlay — without a custom tool-calling harness.
 │  │   every 2m for metrics)      │  │                         │  here                        │
 │  └──────────────────────────────┘  │                         │                              │
 │                                    │  Gatus health probes   │  ┌──────────────────────────┐│
-│  ┌──────────────────────────────┐  │──────────────────────►  │  │  OpenClaw / Claude Code  ││
-│  │  Gatus (external monitor)    │  │                         │  │  (the managed services)  ││
-│  │  already monitors sancta-    │  │                         │  └──────────────────────────┘│
-│  │  choir's HTTP endpoints      │  │                         │                              │
-│  └──────────────────────────────┘  │                         └──────────────────────────────┘
+│  ┌──────────────────────────────┐  │──────────────────────►  │  │  openclaw-task-runner    ││
+│  │  Gatus (external monitor)    │  │                         │  │  (prerequisite: deploy   ││
+│  │  already monitors sancta-    │  │                         │  │   OpenClaw on target)    ││
+│  │  choir's HTTP endpoints      │  │                         │  └──────────────────────────┘│
+│  └──────────────────────────────┘  │                         │                              │
+│                                    │                         └──────────────────────────────┘
 │                                    │
 │  ┌──────────────────────────────┐  │
 │  │  Nemesis brain               │  │
@@ -203,13 +234,13 @@ hosts/sancta-choir/
 
 Example overlay:
 ```nix
-# hosts/sancta-choir/agent-overlays/20260221-143000-claude-mem.nix
-# Nemesis overlay — goal: reduce OpenClaw OOM restarts
-# Hypothesis: claude.service MemoryMax too low for inference workload
+# hosts/sancta-choir/agent-overlays/20260221-143000-openclaw-mem.nix
+# Nemesis overlay — goal: reduce OpenClaw task runner OOM restarts
+# Hypothesis: openclaw-task-runner MemoryMax too low for CC workload
 { ... }:
 {
-  systemd.services.claude.serviceConfig.MemoryMax = "2048M";   # was 1536M
-  systemd.services.claude.serviceConfig.MemoryHigh = "1792M";  # was 1280M
+  systemd.services.openclaw-task-runner.serviceConfig.MemoryMax = "2048M";   # was 1536M
+  systemd.services.openclaw-task-runner.serviceConfig.MemoryHigh = "1792M";  # was 1280M
 }
 ```
 
@@ -275,17 +306,25 @@ Rate limits from Pro naturally cap planning cycles per day.
 
 ## Change Scope (sancta-choir services)
 
-sancta-choir runs: OpenClaw (`claude.service`), Tailscale, Home Manager
-for root, vscode-server, and supporting system services.
+**Current state:** sancta-choir runs Tailscale, SSH, vscode-server, and
+dev tools. Claude Code CLI is installed as a package (no systemd service).
+
+**Prerequisite:** Deploy OpenClaw on sancta-choir (via `modules/services/
+openclaw.nix`) to create the `openclaw-task-runner.service` systemd unit.
+This is a Tier 3 human-reviewed change that must happen before Phase 2.
+
+**Target state (post-prerequisite):** sancta-choir runs
+`openclaw-task-runner.service` (the primary managed workload), Tailscale,
+SSH, vscode-server, and supporting system services.
 
 ### Tier 1 — Autonomous (no human approval)
 
 | Option | Bounds |
 |--------|--------|
-| `systemd.services.claude.serviceConfig.MemoryMax` | ±20%, min 256M, max 3G |
-| `systemd.services.claude.serviceConfig.MemoryHigh` | ±20%, must be ≤ MemoryMax |
-| `systemd.services.claude.serviceConfig.CPUQuota` | ±25%, min 25%, max 400% |
-| `systemd.services.claude.serviceConfig.Nice` | ±3, range −20..19 |
+| `systemd.services.openclaw-task-runner.serviceConfig.MemoryMax` | ±20%, min 256M, max 3G |
+| `systemd.services.openclaw-task-runner.serviceConfig.MemoryHigh` | ±20%, must be ≤ MemoryMax |
+| `systemd.services.openclaw-task-runner.serviceConfig.CPUQuota` | ±25%, min 25%, max 400% |
+| `systemd.services.openclaw-task-runner.serviceConfig.Nice` | ±3, range −20..19 |
 | `nix.settings.max-jobs` / `nix.settings.cores` | ±1 |
 
 **Note:** Options requiring a reboot are structurally incompatible with the
@@ -295,7 +334,7 @@ generation, not the tested one). Such options must be at least Tier 2.
 ### Tier 2 — Supervised (approval token before remote switch)
 
 - `swapDevices[].size` — ±512MB (requires reboot; incompatible with autonomous test window)
-- `customModules.claude.*` service-level options
+- `services.openclaw.*` service-level options
 - `boot.kernel.sysctl` memory/networking parameters
 - Adding a new service module already present in `modules/services/`
 - Package version pins for non-critical tools
@@ -390,7 +429,7 @@ options.services.nemesis = {
 
   tier1.services = mkOption {
     type    = types.listOf types.str;
-    default = [ "claude" ];
+    default = [ "openclaw-task-runner" ];
     description = "systemd service names on target Nemesis may adjust autonomously.";
   };
 
@@ -479,11 +518,11 @@ CREATE TABLE episodes (
 
 ```json
 {
-  "content": "Raised claude.service MemoryMax 1536M→2048M on sancta-choir. OOM restarts dropped from 2/day to 0. PSI full avg60 fell from 1.2 to 0.1 within 20 minutes.",
+  "content": "Raised openclaw-task-runner MemoryMax 1536M→2048M on sancta-choir. OOM restarts dropped from 2/day to 0. PSI full avg60 fell from 1.2 to 0.1 within 20 minutes.",
   "metadata": {
     "target_host": "sancta-choir",
-    "service": "claude",
-    "option": "systemd.services.claude.serviceConfig.MemoryMax",
+    "service": "openclaw-task-runner",
+    "option": "systemd.services.openclaw-task-runner.serviceConfig.MemoryMax",
     "old_value": "1536M",
     "new_value": "2048M",
     "outcome": "success",
@@ -492,8 +531,10 @@ CREATE TABLE episodes (
 }
 ```
 
-Embedding model: `nomic-embed-text` via Open-WebUI's Ollama endpoint
-on rpi5 (`http://127.0.0.1:8080/api/embeddings`). No external calls needed.
+Embedding model: TBD (see Prerequisites). Options: (a) install Ollama on
+rpi5 with `nomic-embed-text` (~274MB RAM), (b) use OpenRouter embedding API
+via existing Open-WebUI connection, (c) use a smaller model like
+`all-minilm-l6-v2` (~80MB). Decision deferred to Phase 1.
 
 ---
 
@@ -511,7 +552,7 @@ SSH="ssh -i /run/nemesis/ssh-key -o StrictHostKeyChecking=accept-new \
          root@${TARGET}.tail4249a9.ts.net"
 
 # Per-service memory and CPU
-for svc in claude tailscaled; do
+for svc in openclaw-task-runner tailscaled; do
   mem=$(  $SSH "systemctl show --value -p MemoryCurrent ${svc}.service" 2>/dev/null)
   cpu=$(  $SSH "systemctl show --value -p CPUUsageNSec  ${svc}.service" 2>/dev/null)
   echo "service=${svc} mem=${mem} cpu=${cpu}"
@@ -546,7 +587,7 @@ current state, identify the highest-impact safe change, and write ONE overlay.
 
 ## Target host
 sancta-choir — x86_64-linux, Hetzner VPS, 4GB RAM + 2GB swap
-Running services: claude (OpenClaw), tailscaled, vscode-server
+Running services: openclaw-task-runner, tailscaled, vscode-server
 
 ## Constraints (enforced by actuator — violations are rejected)
 - Write to `hosts/sancta-choir/agent-overlays/<id>.nix` ONLY.
@@ -554,7 +595,7 @@ Running services: claude (OpenClaw), tailscaled, vscode-server
 - Tier 1 options only:
     MemoryMax/MemoryHigh ±20% · CPUQuota ±25% · Nice ±3
     nix.settings.max-jobs ±1
-- Services in scope: claude
+- Services in scope: openclaw-task-runner
 - If no safe change exists, write `agent-overlays/no-action-<id>.txt`.
 
 ## Required Outputs
@@ -563,13 +604,13 @@ Running services: claude (OpenClaw), tailscaled, vscode-server
    {
      "hypothesis":          "...",
      "overlay_file":        "hosts/sancta-choir/agent-overlays/<id>.nix",
-     "target_service":      "claude",
+     "target_service":      "openclaw-task-runner",
      "target_option":       "...",
      "old_value":           "...",
      "new_value":           "...",
      "rationale":           "...",
      "verification_checks": [
-       {"type": "health_check", "gatus_endpoint": "openclaw", "timeout_seconds": 120},
+       {"type": "health_check", "gatus_endpoint": "sancta-choir-openclaw", "timeout_seconds": 120},
        {"type": "ssh_probe",    "host": "sancta-choir",       "timeout_seconds": 10}
      ],
      "expected_outcome":    "..."
@@ -587,7 +628,7 @@ Running services: claude (OpenClaw), tailscaled, vscode-server
 
 ## Current Configuration
 <current_config>
-[nix eval .#nixosConfigurations.sancta-choir.config.systemd.services.claude]
+[nix eval .#nixosConfigurations.sancta-choir.config.systemd.services.openclaw-task-runner]
 </current_config>
 ```
 
@@ -617,7 +658,7 @@ Step 12  Gate 4: SSH: nixos-rebuild build --flake .#sancta-choir (~5min on sanct
 Step 13  SSH: nixos-rebuild test --flake .#sancta-choir
 Step 14  Verification window: 10 minutes
            every 30s from rpi5:
-             Gatus probe for sancta-choir openclaw endpoint
+             Gatus probe for sancta-choir health endpoint
              SSH probe: ssh root@sancta-choir true
            scoring: +1 pass · −3 fail (start at 0)
            abort if score < 0 (net failures exceed net passes) OR tripwire fires
@@ -641,8 +682,8 @@ def test_ssh_daemon_enabled(com):
 def test_tailscale_enabled(com):
     """services.tailscale.enable must remain true."""
 
-def test_claude_service_enabled(com):
-    """customModules.claude.enable must remain true."""
+def test_openclaw_service_enabled(com):
+    """services.openclaw.enable must remain true."""
 
 def test_memory_limits_within_vps_budget(com):
     """Sum of MemoryMax < 3.5GB (4GB Hetzner VPS minus headroom)."""
@@ -715,11 +756,11 @@ automatically.
 
 | Component (on rpi5) | Role in Nemesis |
 |---------------------|-----------------|
-| **OpenClaw** | Reused `claude -p` invocation pattern + `CLAUDE_CONFIG_DIR` isolation. Nemesis runs as a separate `nemesis` user to avoid contention with user tasks. |
+| **OpenClaw module** | `modules/services/openclaw.nix` provides the design pattern for user isolation, sudo wrapper, and nftables rules. Not currently deployed on rpi5 — Nemesis builds its own invocation layer modeled on this. |
 | **Gatus** | Primary external health signal for sancta-choir. Nemesis polls `http://127.0.0.1:3001/api/v1/endpoints/statuses` for sancta-choir endpoint results. |
 | **Qdrant** | RAG memory bank (`nemesis-outcomes` collection). Existing instance on rpi5 at `http://127.0.0.1:6333`. |
 | **n8n** | Receives circuit-breaker alerts and Tier-2 approval requests from Nemesis. |
-| **Open-WebUI / Ollama** | Embedding endpoint on rpi5. `nomic-embed-text` at `http://127.0.0.1:8080/api/embeddings`. |
+| **Embedding** | TBD — see Prerequisites. Ollama is not currently deployed on rpi5. |
 
 ### New Secrets
 
@@ -743,7 +784,7 @@ services.nemesis = {
   sshKeyFile        = config.age.secrets.nemesis-ssh-key.path;
   qdrantUrl         = "http://127.0.0.1:6333";
   gatusUrl          = "http://127.0.0.1:3001";
-  tier1.services    = [ "claude" ];
+  tier1.services    = [ "openclaw-task-runner" ];
   notifications.n8nWebhookUrl = "http://127.0.0.1:5678/webhook/nemesis";
   limits.maxSwitchesPerDay   = 3;
 };
@@ -921,7 +962,7 @@ ssh root@sancta-choir \
 
 ### Phase 4 — Tier 1 Autonomy (Weeks 9–10)
 
-**Goal:** claude.service resource limits adjusted fully autonomously.
+**Goal:** openclaw-task-runner resource limits adjusted fully autonomously.
 
 1. Remove human approval gate for `autonomous` auditor verdict
 2. Enable `limits.maxSwitchesPerDay = 3`
@@ -953,7 +994,7 @@ ssh root@sancta-choir \
 **Goal:** Expand to service-specific and kernel options on sancta-choir.
 
 1. n8n approval workflow for Tier 2 proposals
-2. Add `customModules.claude.*` and `boot.kernel.sysctl` options
+2. Add `services.openclaw.*` and `boot.kernel.sysctl` options
 3. `expected_outcome` verification (predicted metric delta confirmed in window)
 
 ---
@@ -970,9 +1011,12 @@ ssh root@sancta-choir \
    during provisioning (writes to `/var/lib/nemesis/.claude`). Do not share
    `CLAUDE_CONFIG_DIR` with other users — this would expose OAuth tokens.
 
-3. **`nomic-embed-text` on rpi5:** `ollama pull nomic-embed-text` must be
-   run on the Open-WebUI Ollama backend. Add to Open-WebUI module startup
-   or document as a one-time manual step.
+3. **Embedding model on rpi5:** Ollama is not currently deployed on rpi5.
+   Options: (a) add a `services.ollama` module to rpi5-full and pull
+   `nomic-embed-text` (~274MB RAM on 4GB device), (b) use OpenRouter's
+   embedding API via the existing Open-WebUI connection (small per-token
+   cost), (c) use a smaller model like `all-minilm-l6-v2` (~80MB).
+   Decision needed before Phase 1 (RAG pipeline).
 
 4. **agent-overlays directory import:** `imports = [ ./agent-overlays ]`
    requires a `default.nix` in that directory. The actuator manages
@@ -983,8 +1027,10 @@ ssh root@sancta-choir \
    from Phase 0 data. Run after 7 days of collection before activating CUSUM.
 
 6. **`nixos-rebuild test` on sancta-choir via SSH:** `nixos-rebuild test`
-   restarts `sshd.service` during activation, which kills the parent SSH
-   connection regardless of `nohup`. Use `systemd-run` to detach the
+   may restart `sshd.service` during activation if the sshd configuration
+   changed, which kills the parent SSH connection. For Tier 1 changes
+   (resource limits on non-sshd services), sshd typically survives. Use
+   `systemd-run` as defensive practice to detach the
    rebuild from the SSH session:
    ```bash
    ssh root@sancta-choir \
