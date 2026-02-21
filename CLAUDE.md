@@ -96,7 +96,7 @@ Access URLs (HTTPS via Tailscale Serve):
 - NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
 - Gatus: `https://rpi5.tail4249a9.ts.net:3001`
 - Qdrant: `https://rpi5.tail4249a9.ts.net:6333`
-- OpenClaw: `https://sancta-claw.tail4249a9.ts.net:18789`
+- OpenClaw: `https://sancta-claw.tail4249a9.ts.net:18789` (pending Tailscale Serve setup)
 
 ## Secrets (Agenix)
 

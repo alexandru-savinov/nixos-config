@@ -103,7 +103,7 @@
     useUserPackages = true;
   };
 
-  # ── Swap (2GB — prevents OOM during builds on CX32) ────────────────────
+  # ── Swap (2GB — prevents OOM during builds on CX33) ────────────────────
   swapDevices = [
     {
       device = "/swapfile";
@@ -141,13 +141,9 @@
       User = "openclaw";
       Group = "openclaw";
       WorkingDirectory = "/var/lib/openclaw";
-      # Prerequisite: sudo -u openclaw npm install -g openclaw
-      ExecStartPre = pkgs.writeShellScript "openclaw-check" ''
-        if [ ! -x /var/lib/openclaw/.npm-global/bin/openclaw ]; then
-          echo "ERROR: openclaw binary not found. Run: sudo -u openclaw npm install -g openclaw" >&2
-          exit 1
-        fi
-      '';
+      # Binary installed manually: sudo -u openclaw npm install -g openclaw
+      # ConditionPathExists prevents noisy restart loops if binary is missing
+      ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
       ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
@@ -224,7 +220,7 @@
 
     preStop = ''
       echo "Removing Tailscale Serve configuration for OpenClaw..."
-      ${pkgs.tailscale}/bin/tailscale serve --bg --https 18789 off || true
+      ${pkgs.tailscale}/bin/tailscale serve --https 18789 off || true
     '';
   };
 
