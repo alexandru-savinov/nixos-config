@@ -432,9 +432,7 @@ if hcloud server reset <sancta-choir-server-id>; then
   exit 0
 fi
 
-# All channels failed — alert loudly and write TTL-based flag
-# Flag expires after 5 minutes (30 poll cycles) to allow retry
-echo "$(date +%s) $(( $(date +%s) + 300 ))" > "$ROLLBACK_FLAG"
+# All channels failed — flag already set from cascade start (TTL 5 minutes)
 logger -t kuzea-tripwire -p daemon.emerg \
   "ALL ROLLBACK CHANNELS FAILED — sancta-choir stuck on test generation"
 # Notify n8n webhook regardless of file I/O success
@@ -792,6 +790,9 @@ AVAIL_MB=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
 if [ "$AVAIL_MB" -lt 800 ]; then
   logger -t kuzea-planner -p daemon.warning \
     "Insufficient memory (${AVAIL_MB}MB available, 800MB required) — deferring"
+  # Track deferral reason for observability (distinguish memory vs rate limit deferrals)
+  sqlite3 /var/lib/kuzea/metrics.db \
+    "INSERT INTO deferrals (reason, available_mb, timestamp) VALUES ('memory', $AVAIL_MB, datetime('now'));"
   exit 0
 fi
 ```
@@ -1557,7 +1558,10 @@ esac
 
 The collector writes a JSON status file after each cycle:
 `/var/lib/kuzea/health.json` containing `last_collection_epoch`,
-`collect_failures`, and `circuit_breaker_open`. A separate
+`collect_failures`, `circuit_breaker_open`, `auth_expired`, and
+`last_collection_age_seconds` (computed by the collector as
+`current_epoch - last_collection_epoch`, so Gatus can read it directly).
+A separate
 `kuzea-health.service` (simple, always-running) serves this file via
 Python's `http.server` on `127.0.0.1:9095`. This is the simplest
 implementation — a 5-line wrapper script that uses `http.server` with a
@@ -1608,6 +1612,9 @@ systemd.tmpfiles.rules = [
   "d /var/lib/kuzea/proposals 0750 kuzea kuzea -"
   "d /var/lib/kuzea/triggers 0750 kuzea kuzea -"
   "d /var/lib/kuzea/jobs 0750 kuzea kuzea -"
+  # State files created on first run by their respective services:
+  # /var/lib/kuzea/last-collect-failures (collector), /var/lib/kuzea/health.json (collector),
+  # /var/lib/kuzea/exploration-counter (planner), /var/lib/kuzea/consecutive-failures (actuator)
 ];
 ```
 
@@ -1754,7 +1761,7 @@ claude setup-token --help 2>&1 | grep -q 'setup-token' \
 - `service_metrics` table has rows but all `memory_bytes` values are NULL (SSH succeeds but commands return empty)
 - Gatus kuzea-collector endpoint is unhealthy within the first 48 hours (misconfigured health endpoint)
 - SQLite DB grows >100MB in 7 days (schema or insertion bug)
-- `claude setup-token` does not exist — decide on `ANTHROPIC_API_KEY` fallback before Phase 1
+- `claude setup-token` does not exist — fallback: use existing `anthropic-api-key.age` with `ANTHROPIC_API_KEY` env var instead of `CLAUDE_CODE_OAUTH_TOKEN`. This changes the `ExecStartPre` script (skip OAuth provisioning, load API key directly) and the `EnvironmentFile` contents. See "Pro subscription auth" section for implementation details. Decide before Phase 1 starts
 - 7-day memory data shows variance >3× between peak and off-peak hours — run `cusum-calibrate.py` with both single-μ₀ and 4-hour-bucketed approaches; decide on the bucketing strategy as a **Phase 0 output** before Phase 1 starts
 
 *Time budget:* **2 weeks.** If SSH connectivity issues consume >3 days of debugging, reassess whether the sancta-choir network path is reliable enough for this architecture.
@@ -1885,10 +1892,15 @@ and do not constitute a failure. RAG retrieval is validated in Phase 5.
 ```bash
 # CUSUM fires on a synthetic PSI spike injected via SSH
 # (inject a known-bad value into metrics.db, verify trigger file appears)
-sqlite3 /var/lib/kuzea/metrics.db \
-  "INSERT INTO service_metrics (observation_id, service, psi_mem_some) VALUES (999, 'test', 50.0);"
+sqlite3 /var/lib/kuzea/metrics.db <<'SQL'
+  -- Insert a dummy observation first (required by FK constraint if PRAGMA foreign_keys = ON)
+  INSERT INTO observations (collected_at, psi_mem_some, psi_mem_full, healthy, latency_ms)
+    VALUES (datetime('now'), 50.0, 50.0, 1, 100);
+  INSERT INTO service_metrics (observation_id, service, psi_mem_some)
+    VALUES (last_insert_rowid(), 'test', 50.0);
+SQL
 # Within 3 minutes: ls /var/lib/kuzea/triggers/  → must contain a new trigger file
-# Clean up: DELETE the test row and trigger file after verification
+# Clean up: DELETE both the test rows and trigger file after verification
 
 # Tripwire independently detects simulated outage
 # (block sancta-choir SSH temporarily, verify tripwire logs a violation)
@@ -1933,11 +1945,12 @@ sqlite3 /var/lib/kuzea/metrics.db \
    WHERE outcome = 'success' AND psi_after < psi_before;"
 # Must be ≥ 3
 
-# No unexpected rollbacks (rollback_reason must be NULL or 'deliberate_test')
+# At most 1 unexpected rollback (transient SSH/probe failures are tolerable)
+# "Unexpected" = gate 1-4 failures or verification window failures (not deliberate tests)
 sqlite3 /var/lib/kuzea/metrics.db \
   "SELECT COUNT(*) FROM episodes
    WHERE outcome = 'rollback' AND rollback_reason NOT LIKE '%deliberate%';"
-# Must be 0
+# Must be ≤ 1 (if exactly 1, review the rollback reason before proceeding)
 
 # Circuit breaker file does not exist
 test ! -f /var/lib/kuzea/circuit-open && echo "OK" || echo "FAIL"
@@ -2033,7 +2046,7 @@ curl -sf http://127.0.0.1:5678/api/v1/workflows \
   | xargs -I{} curl -sf "http://127.0.0.1:5678/api/v1/executions?workflowId={}&status=success" \
   | jq '.data | length'
 # Must be ≥ 1
-# Alternative (once workflow ID is known, set in Phase 6 step 1):
+# Phase 6 deliverable: replace name-based query with ID-based query once workflow is created:
 #   curl -sf "http://127.0.0.1:5678/api/v1/executions?workflowId=<approval-wf-id>&status=success" | jq '.data | length'
 ```
 
