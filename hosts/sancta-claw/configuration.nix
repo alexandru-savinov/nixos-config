@@ -179,6 +179,8 @@
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+      # Two sequential 60s wait loops = 120s max; default 90s would kill us
+      TimeoutStartSec = 150;
       # Skip if openclaw binary not installed (ConditionPathExists on openclaw.service
       # causes it to be skipped, but a skipped unit still satisfies Requires=)
       ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
