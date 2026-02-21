@@ -1150,7 +1150,15 @@ SUPERVISED = [
 ## Circuit Breaker
 
 If 3 consecutive proposals result in rollback:
-1. Write `/var/lib/kuzea/circuit-open` (kuzea user creates it)
+1. Write `/var/lib/kuzea/circuit-open` via `kuzea-sudo circuit-open` (runs as
+   root, so the file is owned `root:root` — kuzea cannot delete it).
+   **Implementation:** `kuzea-sudo` allowlist entry: `circuit-open) touch /var/lib/kuzea/circuit-open ;;`
+   A tmpfiles rule ensures the parent directory permissions are correct:
+   ```
+   "f /var/lib/kuzea/circuit-open 0644 root root -"   # tmpfiles: ensure root ownership if file exists
+   ```
+   (The `f` rule only creates the file if missing; the important part is that if kuzea
+   somehow created it, `systemd-tmpfiles --create` on next boot corrects ownership to root.)
 2. Notify via n8n webhook (rpi5 → n8n → human):
    `{"event":"circuit_breaker_tripped","severity":"critical","consecutive_failures":3}`
 3. Stop all trigger file writes; planner checks for this file before proceeding
@@ -1158,7 +1166,7 @@ If 3 consecutive proposals result in rollback:
    a. Human investigates rollback reasons in `episodes` table
    b. Human decides whether CUSUM recalibration is needed (parameters may be stale)
    c. `sudo rm /var/lib/kuzea/circuit-open` (kuzea user cannot delete it — file
-      ownership is `root:root`, only writable by kuzea via `O_CREAT` on the directory)
+      is owned `root:root` because it was created by `kuzea-sudo`, not by kuzea directly)
    d. If recalibration needed, re-run Phase 0 calibration script before re-enabling
 
 ---
@@ -1329,8 +1337,9 @@ users.users.root.openssh.authorizedKeys.keys = [
   # existing keys...
   # restrict = no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty
   # from= limits to the rpi5 Tailscale IP only
-  # Phase 2 provisioning: replace 100.x.y.z with rpi5's actual Tailscale IP
-  # obtained from: tailscale status --json | jq -r '.Self.TailscaleIPs[0]'
+  # HARD BLOCKER: Replace 100.x.y.z with rpi5's actual Tailscale IP before deploy.
+  # Obtain from: tailscale status --json | jq -r '.Self.TailscaleIPs[0]'
+  # Phase 2 go/no-go MUST verify this is not a placeholder.
   ''command="${pkgs.kuzea-ssh-wrapper}/bin/kuzea-ssh-wrapper",restrict,from="100.x.y.z" ssh-ed25519 AAAA... kuzea@rpi5''
 ];
 ```
@@ -1358,6 +1367,7 @@ case "$CMD" in
   # --- Metric collection (read-only) ---
   "systemctl show --value -p MemoryCurrent "*.service)
     svc="${CMD##* }"; svc="${svc%.service}"
+    [[ ${#svc} -gt 64 ]] && { echo "ERROR: service name too long" >&2; exit 1; }
     case "$svc" in
       openclaw-task-runner|tailscaled) ;;
       *) echo "ERROR: service not in allowlist: $svc" >&2; exit 1 ;;
@@ -1365,6 +1375,7 @@ case "$CMD" in
     exec systemctl show --value -p MemoryCurrent "${svc}.service" ;;
   "systemctl show --value -p CPUUsageNSec "*.service)
     svc="${CMD##* }"; svc="${svc%.service}"
+    [[ ${#svc} -gt 64 ]] && { echo "ERROR: service name too long" >&2; exit 1; }
     case "$svc" in
       openclaw-task-runner|tailscaled) ;;
       *) echo "ERROR: service not in allowlist: $svc" >&2; exit 1 ;;
@@ -1612,6 +1623,11 @@ sqlite3 /var/lib/kuzea/metrics.db \
 
 # Gatus endpoint healthy
 curl -sf http://127.0.0.1:3001/api/v1/endpoints/statuses | jq '.[] | select(.group=="kuzea")'
+
+# CC auth prerequisite: verify setup-token exists (needed for Phase 1)
+claude setup-token --help 2>&1 | grep -q 'setup-token' \
+  && echo "OK: setup-token available" \
+  || echo "FAIL: fallback to ANTHROPIC_API_KEY required"
 ```
 
 *Red flags — stop and investigate if:*
@@ -1619,6 +1635,8 @@ curl -sf http://127.0.0.1:3001/api/v1/endpoints/statuses | jq '.[] | select(.gro
 - `service_metrics` table has rows but all `memory_bytes` values are NULL (SSH succeeds but commands return empty)
 - Gatus kuzea-collector endpoint is unhealthy within the first 48 hours (misconfigured health endpoint)
 - SQLite DB grows >100MB in 7 days (schema or insertion bug)
+- `claude setup-token` does not exist — decide on `ANTHROPIC_API_KEY` fallback before Phase 1
+- 7-day memory data shows variance >3× between peak and off-peak hours — plan for 4-hour time buckets in CUSUM calibration before Phase 3
 
 *Time budget:* **2 weeks.** If SSH connectivity issues consume >3 days of debugging, reassess whether the sancta-choir network path is reliable enough for this architecture.
 
@@ -1811,7 +1829,7 @@ systemctl list-timers 'kuzea-retrospective@*' --no-pager
 - Every autonomous switch results in rollback (Tier 1 bounds may be too narrow, or the target service is fundamentally unstable)
 - PSI improvement is within noise (< `minimumEffect` of 5%) on all switches — Kuzea is making changes that don't matter
 - Exploration cycle (every 5th) consistently produces `no-action` — exploration template needs tuning
-- Circuit breaker trips within the first 48 hours of autonomy — Phase 3 CUSUM calibration may be triggering on noise
+- Circuit breaker trips within the first 48 hours of autonomy — Phase 3 CUSUM calibration may be triggering on noise. **Recovery:** see "Circuit Breaker" section step 4 (`sudo rm /var/lib/kuzea/circuit-open` + optional recalibration)
 
 *Time budget:* **2 weeks.** If zero successful autonomous switches after 1 week, drop back to Phase 2 (manual approval) and investigate why proposals fail gates or verification.
 
@@ -1886,7 +1904,7 @@ sqlite3 /var/lib/kuzea/metrics.db \
 # (check n8n execution history for the kuzea approval workflow)
 curl -sf http://127.0.0.1:5678/api/v1/executions?workflowId=<approval-wf-id>&status=success | jq '.data | length'
 # Must be ≥ 1
-# TBD: <approval-wf-id> populated after n8n workflow creation in Phase 6
+# TBD: populate <approval-wf-id> when creating the n8n workflow in Phase 6 step 1
 ```
 
 *Red flags — stop and investigate if:*
