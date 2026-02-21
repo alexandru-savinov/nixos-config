@@ -1,4 +1,4 @@
-# Nemesis: Self-Evolving NixOS Agent
+# Kuzea: Self-Evolving NixOS Agent
 
 **Status:** Design / Pre-implementation
 **Controller host:** `rpi5-full` (aarch64-linux, Raspberry Pi 5)
@@ -9,7 +9,7 @@
 
 ## Overview
 
-Nemesis is a closed-loop agent that runs on the Raspberry Pi 5 and manages
+Kuzea is a closed-loop agent that runs on the Raspberry Pi 5 and manages
 the `sancta-choir` Hetzner VPS. rpi5 is the **controller and watcher**: it
 observes sancta-choir from the outside (via Tailscale SSH and Gatus health
 checks), reasons about what to change, and deploys configuration updates
@@ -24,19 +24,19 @@ and act.
 **Why rpi5 as controller:** rpi5 has permanent Tailscale connectivity to
 sancta-choir, already runs Gatus monitoring of sancta-choir's services,
 holds the nixos-config git clone, and has Claude Code CLI installed.
-Nemesis builds on this existing infrastructure — adding a dedicated
-`nemesis` user, `claude -p` task runner, and SSH-based metric collection
+Kuzea builds on this existing infrastructure — adding a dedicated
+`kuzea` user, `claude -p` task runner, and SSH-based metric collection
 — rather than installing a new agent on Hetzner.
 
 **Core safety property:** NixOS generations are immutable, content-addressed
 store paths. `nixos-rebuild test` on sancta-choir activates a generation
 without making it the default boot entry — a reboot or explicit rollback
-returns to the previous state. Nemesis exploits this as its primary safety
+returns to the previous state. Kuzea exploits this as its primary safety
 primitive: nothing on sancta-choir is permanent until rpi5's 10-minute
 external verification window passes without incident.
 
 **Why Claude Code as brain:** rpi5 already has the Claude Code CLI installed.
-Nemesis invokes `claude -p` under a dedicated `nemesis` user with Pro/Max
+Kuzea invokes `claude -p` under a dedicated `kuzea` user with Pro/Max
 subscription auth via `CLAUDE_CODE_OAUTH_TOKEN` (provisioned through
 agenix) — no per-token billing, natural rate limiting, and full CC tool
 execution. CC reads the repo, inspects the
@@ -48,11 +48,11 @@ OpenClaw task runner (`modules/services/openclaw.nix`).
 
 ## Prerequisites
 
-The following must be completed before Nemesis implementation begins:
+The following must be completed before Kuzea implementation begins:
 
 1. **Deploy OpenClaw on sancta-choir** (Tier 3, human PR) — Enable
    `services.openclaw` on sancta-choir via `modules/services/openclaw.nix`.
-   This creates the `openclaw-task-runner.service` systemd unit that Nemesis
+   This creates the `openclaw-task-runner.service` systemd unit that Kuzea
    will manage. Currently, sancta-choir only has the Claude Code CLI binary
    installed (no long-running service). The nix-openclaw Home Manager
    integration is disabled due to upstream bugs; use the existing NixOS
@@ -63,8 +63,8 @@ The following must be completed before Nemesis implementation begins:
    inference. Options: install Ollama with a small embedding model, use
    OpenRouter's embedding API, or defer RAG to Phase 5.
 
-3. **Provision Nemesis SSH key** (Tier 3, human PR) — Add
-   `nemesis-ssh-key.age` to `secrets/secrets.nix` and sancta-choir's
+3. **Provision Kuzea SSH key** (Tier 3, human PR) — Add
+   `kuzea-ssh-key.age` to `secrets/secrets.nix` and sancta-choir's
    `authorized_keys`. Required before Phase 2.
 
 4. **Update Gatus sancta-choir endpoints** — Current Gatus config on rpi5
@@ -81,7 +81,7 @@ The following must be completed before Nemesis implementation begins:
 │  Controller + Watcher              │                         │  sancta-choir  (x86_64)      │
 │                                    │                         │  Target                      │
 │  ┌──────────────────────────────┐  │  SSH (port 22)         │                              │
-│  │  nemesis-collector           │  │──────────────────────►  │  nixos-rebuild (native x86)  │
+│  │  kuzea-collector           │  │──────────────────────►  │  nixos-rebuild (native x86)  │
 │  │  (SSHes to sancta-choir      │  │                         │  Overlay modules applied     │
 │  │   every 2m for metrics)      │  │                         │  here                        │
 │  └──────────────────────────────┘  │                         │                              │
@@ -94,7 +94,7 @@ The following must be completed before Nemesis implementation begins:
 │                                    │                         └──────────────────────────────┘
 │                                    │
 │  ┌──────────────────────────────┐  │
-│  │  Nemesis brain               │  │
+│  │  Kuzea brain               │  │
 │  │  (CC planning, actuator,     │  │
 │  │   tripwire, RAG memory)      │  │
 │  └──────────────────────────────┘  │
@@ -107,18 +107,18 @@ The following must be completed before Nemesis implementation begins:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                    NEMESIS  (runs entirely on rpi5)                  │
+│                    KUZEA  (runs entirely on rpi5)                  │
 │                                                                      │
 │  OBSERVE LAYER                                                       │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  nemesis-collector (2m timer)                               │    │
+│  │  kuzea-collector (2m timer)                               │    │
 │  │    SSH → sancta-choir:                                      │    │
 │  │      systemctl show --value -p MemoryCurrent <svc>          │    │
 │  │      cat /proc/pressure/memory                              │    │
 │  │      journalctl --since "2m ago" --output json              │    │
 │  │    Local Gatus REST API (http://127.0.0.1:3001) for         │    │
 │  │      sancta-choir service health (external vantage)         │    │
-│  │    → SQLite /var/lib/nemesis/metrics.db                     │    │
+│  │    → SQLite /var/lib/kuzea/metrics.db                     │    │
 │  │                                                             │    │
 │  │  CUSUM watchdog (continuous)                                │    │
 │  │    fires only on confirmed regime shift, not noise spikes   │    │
@@ -131,7 +131,7 @@ The following must be completed before Nemesis implementation begins:
 │  ┌──────────────────────────▼──────────────────────────────────┐    │
 │  │  Task File Generator                                        │    │
 │  │    SystemSnapshot + Qdrant RAG + nix eval + constraints     │    │
-│  │    → /var/lib/nemesis/tasks/<id>.md                         │    │
+│  │    → /var/lib/kuzea/tasks/<id>.md                         │    │
 │  │                                                             │    │
 │  │  Claude Code CLI (Pro subscription)                         │    │
 │  │    claude -p <task> --allowedTools "Read,Glob,Grep,         │    │
@@ -163,9 +163,9 @@ The following must be completed before Nemesis implementation begins:
 │  │    fail → rollback cascade (SSH→public IP→Hetzner reboot)  │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                      │
-│  SAFETY LAYER (separate unit, rpi5 — Nemesis cannot stop it)        │
+│  SAFETY LAYER (separate unit, rpi5 — Kuzea cannot stop it)        │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  nemesis-tripwire  (PartOf nothing, Restart=always)         │    │
+│  │  kuzea-tripwire  (PartOf nothing, Restart=always)         │    │
 │  │    every 10s: SSH probe · tailscale status · Gatus          │    │
 │  │    on violation during test window — rollback cascade:       │    │
 │  │      1. SSH over Tailscale → nixos-rebuild switch --rollback│    │
@@ -184,11 +184,11 @@ The following must be completed before Nemesis implementation begins:
 When a service on sancta-choir crashes badly enough to make the host
 unresponsive, any monitoring process *on* sancta-choir is also broken.
 rpi5's Gatus sees the failure from outside via Tailscale and can trigger
-Nemesis independently. This is the same reason a production monitoring stack
+Kuzea independently. This is the same reason a production monitoring stack
 lives on separate infrastructure from what it monitors.
 
 Concretely: rpi5's Gatus already sends HTTP probes to sancta-choir's
-exposed endpoints. Nemesis extends this by also collecting internal metrics
+exposed endpoints. Kuzea extends this by also collecting internal metrics
 (PSI, cgroup data) via SSH, giving both external and internal perspectives.
 
 ### Remote build strategy — no cross-compilation
@@ -200,24 +200,24 @@ and slow. Instead, the actuator SSHes into sancta-choir and runs
 ```bash
 # Build on sancta-choir (x86_64 native)
 ssh root@sancta-choir \
-  "cd /var/lib/nemesis/nixos-config && \
-   git fetch && git checkout nemesis/<id> && \
+  "cd /var/lib/kuzea/nixos-config && \
+   git fetch && git checkout kuzea/<id> && \
    nixos-rebuild build --flake .#sancta-choir"
 
 # Test-activate (not boot default)
 ssh root@sancta-choir \
-  "nixos-rebuild test --flake /var/lib/nemesis/nixos-config#sancta-choir"
+  "nixos-rebuild test --flake /var/lib/kuzea/nixos-config#sancta-choir"
 
 # Permanent switch (after verification passes)
 ssh root@sancta-choir \
-  "nixos-rebuild switch --flake /var/lib/nemesis/nixos-config#sancta-choir"
+  "nixos-rebuild switch --flake /var/lib/kuzea/nixos-config#sancta-choir"
 
 # Rollback (if verification fails or tripwire fires)
 ssh root@sancta-choir "nixos-rebuild switch --rollback"
 ```
 
 sancta-choir maintains its own clone of the nixos-config repo at
-`/var/lib/nemesis/nixos-config` for this purpose.
+`/var/lib/kuzea/nixos-config` for this purpose.
 
 ### Overlay modules (not text patches)
 
@@ -229,7 +229,7 @@ import line — the known-good state is structurally preserved.
 
 ```
 hosts/sancta-choir/
-  configuration.nix              ← human-authored, never touched by Nemesis
+  configuration.nix              ← human-authored, never touched by Kuzea
   agent-overlays/
     default.nix                  ← actuator manages this (imports list)
     20260221-143000-claude-mem.nix   ← CC writes here only
@@ -238,7 +238,7 @@ hosts/sancta-choir/
 Example overlay:
 ```nix
 # hosts/sancta-choir/agent-overlays/20260221-143000-openclaw-mem.nix
-# Nemesis overlay — goal: reduce OpenClaw task runner OOM restarts
+# Kuzea overlay — goal: reduce OpenClaw task runner OOM restarts
 # Hypothesis: openclaw-task-runner MemoryMax too low for CC workload
 { ... }:
 {
@@ -253,7 +253,7 @@ CC (on rpi5) is given:
 - `Read`, `Glob`, `Grep` — full repo read access
 - `Bash(nix eval *)` — inspect current option values
 - `Write` restricted to `hosts/sancta-choir/agent-overlays/` and
-  `/var/lib/nemesis/proposals/`
+  `/var/lib/kuzea/proposals/`
 
 CC is **not** given: `Edit`, `Bash(nixos-rebuild *)`, `Bash(git *)`,
 `Bash(ssh *)`, `Bash(curl *)`. All remote operations go through the
@@ -276,7 +276,7 @@ Parameters μ₀, k, and h are determined during Phase 0 calibration. k is
 typically set to half the expected shift size (in standard deviations); h
 is chosen to achieve the desired false-alarm rate (larger h = fewer false
 triggers but slower detection). Calibrated values are stored in
-`/var/lib/nemesis/cusum-params.json` before enabling Phase 3.
+`/var/lib/kuzea/cusum-params.json` before enabling Phase 3.
 
 Scheduled fallback: if no regime change fires in 72 hours, run a routine
 health-check cycle anyway.
@@ -288,7 +288,7 @@ Every 5th planning cycle uses an alternative task template
 its recent pattern — e.g., tuning a metric it has never touched, or
 revisiting a previously-rolled-back change with a different approach.
 
-- Counter file: `/var/lib/nemesis/exploration-counter` (incremented by planner)
+- Counter file: `/var/lib/kuzea/exploration-counter` (incremented by planner)
 - Exploration proposals include `"exploration": true` in the proposal JSON
 - Exploration cycles get a 15-minute verification window (vs 10 minutes)
   to allow for less predictable behavior to stabilize
@@ -297,9 +297,9 @@ revisiting a previously-rolled-back change with a different approach.
 
 ### Separate tripwire (rpi5-local, monitors sancta-choir)
 
-`nemesis-tripwire.service` is a separate systemd unit with no `PartOf`,
-`BoundBy`, or `WantedBy` links to the main Nemesis service. It cannot be
-stopped by the Nemesis user. It polls:
+`kuzea-tripwire.service` is a separate systemd unit with no `PartOf`,
+`BoundBy`, or `WantedBy` links to the main Kuzea service. It cannot be
+stopped by the Kuzea user. It polls:
 - `ssh root@sancta-choir true` — TCP connectivity (10s timeout)
 - `tailscale status --json | jq '.Peer["<sancta-choir-node-id>"].Online'`
 - Gatus health endpoint for sancta-choir services (from rpi5)
@@ -311,14 +311,14 @@ On violation during an active test window, the tripwire executes a
 # Channel 1: SSH over Tailscale (normal path)
 if ssh -o ConnectTimeout=10 root@sancta-choir.tail4249a9.ts.net \
      "nixos-rebuild switch --rollback"; then
-  logger -t nemesis-tripwire "Rollback succeeded via Tailscale SSH"
+  logger -t kuzea-tripwire "Rollback succeeded via Tailscale SSH"
   exit 0
 fi
 
 # Channel 2: SSH over public IPv4 (Tailscale may be down)
 if ssh -o ConnectTimeout=10 root@<sancta-choir-public-ip> \
      "nixos-rebuild switch --rollback"; then
-  logger -t nemesis-tripwire "Rollback succeeded via public IP SSH"
+  logger -t kuzea-tripwire "Rollback succeeded via public IP SSH"
   exit 0
 fi
 
@@ -326,13 +326,13 @@ fi
 # nixos-rebuild test does NOT set the boot default; reboot recovers
 # to the last nixos-rebuild switch generation)
 if hcloud server reboot <sancta-choir-server-id>; then
-  logger -t nemesis-tripwire -p daemon.crit \
+  logger -t kuzea-tripwire -p daemon.crit \
     "Forced Hetzner reboot — SSH unreachable, recovering via boot default"
   exit 0
 fi
 
 # All channels failed — alert loudly
-logger -t nemesis-tripwire -p daemon.emerg \
+logger -t kuzea-tripwire -p daemon.emerg \
   "ALL ROLLBACK CHANNELS FAILED — sancta-choir stuck on test generation"
 # Notify n8n webhook regardless of file I/O success
 curl -sf -X POST "${N8N_WEBHOOK}" \
@@ -348,11 +348,11 @@ ultimate recovery — `nixos-rebuild test` deliberately does not set the
 boot default, so a reboot always returns to the last `switch` generation.
 
 **Hetzner API prerequisite:** Requires `hcloud` CLI and an API token
-(stored as `nemesis-hcloud-token.age`). This is a Phase 3 addition.
+(stored as `kuzea-hcloud-token.age`). This is a Phase 3 addition.
 
 ### Pro subscription auth (setup-token + agenix)
 
-Nemesis authenticates `claude` CLI via the `CLAUDE_CODE_OAUTH_TOKEN`
+Kuzea authenticates `claude` CLI via the `CLAUDE_CODE_OAUTH_TOKEN`
 environment variable, **not** interactive `claude auth login` (which
 requires a browser redirect and produces short-lived tokens with unreliable
 auto-refresh).
@@ -361,8 +361,8 @@ auto-refresh).
 
 1. Run `claude setup-token` — this opens a browser OAuth flow and produces
    a long-lived (1-year) token: `sk-ant-oat01-...`
-2. Encrypt the token: `cd secrets && agenix -e nemesis-oauth-token.age`
-3. The `nemesis-planner.service` uses the standard agenix `ExecStartPre "+"`
+2. Encrypt the token: `cd secrets && agenix -e kuzea-oauth-token.age`
+3. The `kuzea-planner.service` uses the standard agenix `ExecStartPre "+"`
    pattern to read the secret and export it as `CLAUDE_CODE_OAUTH_TOKEN`:
 
 ```bash
@@ -397,11 +397,11 @@ The evaluation criteria for each planning cycle are defined as **stratum 0**
 Nix options — the hardest layer to change, requiring a Tier 3 human PR:
 
 ```nix
-options.services.nemesis.evaluation = {
+options.services.kuzea.evaluation = {
   primaryMetric = mkOption {
     type    = types.str;
     default = "psi_mem_some_avg60";
-    description = "The metric Nemesis optimizes for on the target.";
+    description = "The metric Kuzea optimizes for on the target.";
   };
 
   direction = mkOption {
@@ -425,10 +425,10 @@ options.services.nemesis.evaluation = {
 
 These options are injected into the task file as `<evaluation_criteria>` so
 CC knows what "better" means. Changing the primary metric or direction
-requires a human PR — Nemesis cannot redefine its own success function.
+requires a human PR — Kuzea cannot redefine its own success function.
 
 **24h Retrospective Check:** After each successful `nixos-rebuild switch`,
-`nemesis-retrospective@<episode-id>.service` fires 24 hours later (via
+`kuzea-retrospective@<episode-id>.service` fires 24 hours later (via
 `systemd-run --on-active=24h`). It compares the primary metric's 24h
 post-switch average against the pre-switch baseline. If the metric
 degraded beyond `minimumEffect`, a "delayed negative" vector is embedded
@@ -473,9 +473,9 @@ generation, not the tested one). Such options must be at least Tier 2.
 - Adding a new service module already present in `modules/services/`
 - Package version pins for non-critical tools
 
-### Tier 3 — Human PR only (Nemesis creates draft, does not apply)
+### Tier 3 — Human PR only (Kuzea creates draft, does not apply)
 
-- `modules/services/nemesis*.nix` — own config
+- `modules/services/kuzea*.nix` — own config
 - `networking.nftables.*`, `security.sudo.*`
 - `flake.nix`, `flake.lock`
 - `secrets/`, `age.secrets.*`
@@ -488,11 +488,11 @@ generation, not the tested one). Such options must be at least Tier 2.
 
 ```
 modules/services/
-  nemesis.nix                  ← Main NixOS module on rpi5 (options + units)
-  nemesis-collector.nix        ← Observer: SSH-collects metrics from sancta-choir
-  nemesis-actuator.nix         ← Actuator: six-gate pipeline + remote switch
+  kuzea.nix                  ← Main NixOS module on rpi5 (options + units)
+  kuzea-collector.nix        ← Observer: SSH-collects metrics from sancta-choir
+  kuzea-actuator.nix         ← Actuator: six-gate pipeline + remote switch
 
-modules/services/nemesis/
+modules/services/kuzea/
   change-auditor.py            ← Immutable auditor (Nix derivation)
   property-tests.py            ← COM property suite for sancta-choir config
   task-template.md             ← CC task file template
@@ -503,23 +503,23 @@ modules/services/nemesis/
   retrospective.py             ← 24h delayed outcome evaluator
   task-template-explore.md     ← Alternative CC template for exploration cycles
   memory-consolidator.py       ← Weekly episode consolidation + archival
-  meta-review.py               ← Bi-weekly meta-analysis of Nemesis performance
+  meta-review.py               ← Bi-weekly meta-analysis of Kuzea performance
 
 hosts/sancta-choir/
-  configuration.nix            ← + nemesis repo clone setup
+  configuration.nix            ← + kuzea repo clone setup
   agent-overlays/
     default.nix                ← managed by actuator (imports list)
     .gitkeep
 
 docs/
-  nemesis-plan.md              ← This file
+  kuzea-plan.md              ← This file
 ```
 
-### `modules/services/nemesis.nix` — key options
+### `modules/services/kuzea.nix` — key options
 
 ```nix
-options.services.nemesis = {
-  enable = mkEnableOption "Nemesis self-evolving NixOS agent (controller on rpi5)";
+options.services.kuzea = {
+  enable = mkEnableOption "Kuzea self-evolving NixOS agent (controller on rpi5)";
 
   targetHost = mkOption {
     type    = types.str;
@@ -535,13 +535,13 @@ options.services.nemesis = {
 
   targetRepoPath = mkOption {
     type    = types.str;
-    default = "/var/lib/nemesis/nixos-config";
+    default = "/var/lib/kuzea/nixos-config";
     description = "Path to nixos-config clone on the target host.";
   };
 
   sshKeyFile = mkOption {
     type    = types.path;
-    description = "SSH private key (agenix) for nemesis user to reach target.";
+    description = "SSH private key (agenix) for kuzea user to reach target.";
   };
 
   planningIntervalHours = mkOption {
@@ -570,7 +570,7 @@ options.services.nemesis = {
   tier1.services = mkOption {
     type    = types.listOf types.str;
     default = [ "openclaw-task-runner" ];
-    description = "systemd service names on target Nemesis may adjust autonomously.";
+    description = "systemd service names on target Kuzea may adjust autonomously.";
   };
 
   notifications.n8nWebhookUrl = mkOption {
@@ -594,25 +594,25 @@ options.services.nemesis = {
 
 | Unit | Type | Purpose |
 |------|------|---------|
-| `nemesis-schema-init.service` | oneshot/boot | Apply SQLite schema |
-| `nemesis-collector.service` | oneshot | SSH-collect metrics from sancta-choir |
-| `nemesis-collector.timer` | timer/2m | Drive collector |
-| `nemesis-cusum-watchdog.service` | simple | Continuous CUSUM; writes trigger file |
-| `nemesis-anomaly-watcher.service` | simple | Gatus failures + SSH OOM scan; writes trigger |
-| `nemesis-planner.service` | oneshot | Build task file, run `claude -p` |
-| `nemesis-planner.path` | path | Watch `triggers/` for new trigger files |
-| `nemesis-actuator@.service` | oneshot/template | Six-gate pipeline for one proposal |
-| `nemesis-tripwire.service` | simple | External safety monitor; remote rollback |
-| `nemesis-cleanup.timer` | timer/daily | Prune old proposals and episodes |
-| `nemesis-retrospective@.service` | oneshot/template | 24h delayed metric comparison per episode |
-| `nemesis-consolidation.timer` | timer/weekly | Trigger memory-consolidator.py |
-| `nemesis-consolidation.service` | oneshot | Weekly episode consolidation + archival |
-| `nemesis-meta-review.timer` | timer/bi-weekly | 1st and 15th of month meta-analysis |
-| `nemesis-meta-review.service` | oneshot | Compute statistics + generate report |
+| `kuzea-schema-init.service` | oneshot/boot | Apply SQLite schema |
+| `kuzea-collector.service` | oneshot | SSH-collect metrics from sancta-choir |
+| `kuzea-collector.timer` | timer/2m | Drive collector |
+| `kuzea-cusum-watchdog.service` | simple | Continuous CUSUM; writes trigger file |
+| `kuzea-anomaly-watcher.service` | simple | Gatus failures + SSH OOM scan; writes trigger |
+| `kuzea-planner.service` | oneshot | Build task file, run `claude -p` |
+| `kuzea-planner.path` | path | Watch `triggers/` for new trigger files |
+| `kuzea-actuator@.service` | oneshot/template | Six-gate pipeline for one proposal |
+| `kuzea-tripwire.service` | simple | External safety monitor; remote rollback |
+| `kuzea-cleanup.timer` | timer/daily | Prune old proposals and episodes |
+| `kuzea-retrospective@.service` | oneshot/template | 24h delayed metric comparison per episode |
+| `kuzea-consolidation.timer` | timer/weekly | Trigger memory-consolidator.py |
+| `kuzea-consolidation.service` | oneshot | Weekly episode consolidation + archival |
+| `kuzea-meta-review.timer` | timer/bi-weekly | 1st and 15th of month meta-analysis |
+| `kuzea-meta-review.service` | oneshot | Compute statistics + generate report |
 
 ### RAM Budget
 
-All Nemesis scripts are oneshot services; they do not consume memory
+All Kuzea scripts are oneshot services; they do not consume memory
 concurrently with each other (except the always-running tripwire and
 watchdog, which are small).
 
@@ -628,13 +628,13 @@ watchdog, which are small).
 | `property-tests.py` | ~15 MB | ~5s | Per actuator run |
 
 **Worst-case concurrent overhead:** ~40 MB (tripwire + watchdog + one
-oneshot). The rpi5 has 4 GB RAM with zram; Nemesis is well within budget.
+oneshot). The rpi5 has 4 GB RAM with zram; Kuzea is well within budget.
 
 ---
 
 ## Data Stores
 
-### SQLite: `/var/lib/nemesis/metrics.db` (on rpi5)
+### SQLite: `/var/lib/kuzea/metrics.db` (on rpi5)
 
 ```sql
 CREATE TABLE observations (
@@ -684,7 +684,7 @@ CREATE TABLE episodes (
 );
 ```
 
-### Qdrant: collection `nemesis-outcomes` (on rpi5, existing instance)
+### Qdrant: collection `kuzea-outcomes` (on rpi5, existing instance)
 
 ```json
 {
@@ -714,13 +714,13 @@ The collector SSHes into sancta-choir as `root` (dedicated SSH key in
 root's `authorized_keys`). Root access is required because `nixos-rebuild`
 and `systemctl show` need it. The key is restricted via `command=` in
 `authorized_keys` to a wrapper script that whitelists only the commands
-Nemesis needs (see "sancta-choir Host Configuration" section):
+Kuzea needs (see "sancta-choir Host Configuration" section):
 
 ```bash
-# modules/services/nemesis/collect-remote.sh
+# modules/services/kuzea/collect-remote.sh
 set -euo pipefail
 TARGET="${1:-sancta-choir}"
-SSH="ssh -i /run/nemesis/ssh-key -o ConnectTimeout=10 \
+SSH="ssh -i /run/kuzea/ssh-key -o ConnectTimeout=10 \
          -o StrictHostKeyChecking=accept-new \
          root@${TARGET}.tail4249a9.ts.net"
 STDERR_LOG=$(mktemp)
@@ -735,7 +735,7 @@ ssh_collect() {
     echo "$output"
   else
     local rc=$?
-    logger -t nemesis-collector -p daemon.err \
+    logger -t kuzea-collector -p daemon.err \
       "SSH collection failed [${label}]: rc=${rc} stderr=$(cat "$STDERR_LOG")"
     COLLECT_FAILURES=$((COLLECT_FAILURES + 1))
     return 1
@@ -772,11 +772,11 @@ ssh_collect "generation" \
 
 # Report collection health to the /health endpoint
 if [ "$COLLECT_FAILURES" -gt 0 ]; then
-  logger -t nemesis-collector -p daemon.warning \
+  logger -t kuzea-collector -p daemon.warning \
     "Collection cycle completed with ${COLLECT_FAILURES} failures"
 fi
 # Write failure count to state file for health endpoint
-echo "$COLLECT_FAILURES" > /var/lib/nemesis/last-collect-failures
+echo "$COLLECT_FAILURES" > /var/lib/kuzea/last-collect-failures
 ```
 
 Gatus on rpi5 provides the **external** health perspective (HTTP probes
@@ -788,10 +788,10 @@ Both signals are stored in SQLite and combined in the SystemSnapshot.
 ## Task File Structure (what CC reads on rpi5)
 
 ```markdown
-# Nemesis Planning Cycle — <timestamp>
+# Kuzea Planning Cycle — <timestamp>
 
 ## Your Role
-You are the reasoning engine for Nemesis. You manage the NixOS configuration
+You are the reasoning engine for Kuzea. You manage the NixOS configuration
 of `sancta-choir` (x86_64 Hetzner VPS) from `rpi5`. Analyze the target's
 current state, identify the highest-impact safe change, and write ONE overlay.
 
@@ -810,7 +810,7 @@ Running services: openclaw-task-runner, tailscaled, vscode-server
 
 ## Required Outputs
 1. Overlay .nix file (Write tool → hosts/sancta-choir/agent-overlays/<id>.nix)
-2. Proposal JSON (Write tool → /var/lib/nemesis/proposals/<id>.json):
+2. Proposal JSON (Write tool → /var/lib/kuzea/proposals/<id>.json):
    {
      "hypothesis":          "...",
      "overlay_file":        "hosts/sancta-choir/agent-overlays/<id>.nix",
@@ -849,7 +849,7 @@ Running services: openclaw-task-runner, tailscaled, vscode-server
 
 ## Evaluation Criteria
 <evaluation_criteria>
-[From services.nemesis.evaluation Nix options — primary metric, direction,
+[From services.kuzea.evaluation Nix options — primary metric, direction,
  minimum effect size, safety invariants that must hold]
 </evaluation_criteria>
 ```
@@ -874,8 +874,8 @@ Step 8   Pre-flight:
            SSH:  nix-env --list-generations -p /nix/var/nix/profiles/system | wc -l ≥ 3
            Gatus: sancta-choir services currently healthy
 Step 9   Update agent-overlays/default.nix to import new overlay (rpi5, local)
-Step 10  git commit (branch nemesis/<id>) + git push to origin   (rpi5)
-Step 11  SSH: git fetch + checkout nemesis/<id> on sancta-choir
+Step 10  git commit (branch kuzea/<id>) + git push to origin   (rpi5)
+Step 11  SSH: git fetch + checkout kuzea/<id> on sancta-choir
 Step 12  Gate 4: SSH: nixos-rebuild build --flake .#sancta-choir (~5min on sancta-choir)
 Step 13  SSH: nixos-rebuild test --flake .#sancta-choir
 Step 14  Verification window: 10 minutes (20 probe cycles at 30s intervals)
@@ -891,7 +891,7 @@ Step 14  Verification window: 10 minutes (20 probe cycles at 30s intervals)
              (if <15 cycles run, e.g. due to slow timeouts, treat as fail)
            all probe results logged to episode record for post-mortem analysis
 Step 15  score passes → SSH: nixos-rebuild switch
-                      → gh pr create (from rpi5, labeled nemesis)
+                      → gh pr create (from rpi5, labeled kuzea)
                       → embed SUCCESS in Qdrant (rpi5)
 Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetzner reboot)
                       → embed ROLLBACK + lessons-learned in Qdrant (rpi5)
@@ -919,8 +919,8 @@ def test_memory_limits_within_vps_budget(com):
 def test_memhigh_lte_memmax(com):
     """MemoryHigh <= MemoryMax for every service."""
 
-def test_nemesis_config_unchanged(com):
-    """services.nemesis.* on rpi5 unchanged (not in target COM, but check diff)."""
+def test_kuzea_config_unchanged(com):
+    """services.kuzea.* on rpi5 unchanged (not in target COM, but check diff)."""
 
 def test_swap_not_removed(com):
     """swapDevices list is non-empty (prevents OOM during builds)."""
@@ -939,7 +939,7 @@ BLOCKED = [
 ]
 
 SUPERVISED = [
-    r"modules/services/nemesis",
+    r"modules/services/kuzea",
     r"secrets/secrets\.nix",
     r"age\.secrets\.",
     r"security\.sudo",
@@ -955,10 +955,10 @@ SUPERVISED = [
 ## Circuit Breaker
 
 If 3 consecutive proposals result in rollback:
-1. Write `/var/lib/nemesis/circuit-open`
+1. Write `/var/lib/kuzea/circuit-open`
 2. Notify via n8n webhook (rpi5 → n8n → human)
 3. Stop all trigger file writes
-4. Human resets: `rm /var/lib/nemesis/circuit-open`
+4. Human resets: `rm /var/lib/kuzea/circuit-open`
 
 ---
 
@@ -966,7 +966,7 @@ If 3 consecutive proposals result in rollback:
 
 ### Retrieval-Augmented Planning
 
-Past outcomes stored in Qdrant on rpi5 (`nemesis-outcomes` collection),
+Past outcomes stored in Qdrant on rpi5 (`kuzea-outcomes` collection),
 retrieved by semantic similarity at planning time. The embedding query is
 the current `SystemSnapshot` formatted as prose — retrieving outcomes
 matching the symptom pattern across all past sancta-choir episodes.
@@ -980,9 +980,9 @@ automatically.
 
 ### Memory Consolidation
 
-Weekly `nemesis-consolidation.timer` runs `memory-consolidator.py`:
+Weekly `kuzea-consolidation.timer` runs `memory-consolidator.py`:
 
-1. **Group:** Query Qdrant `nemesis-outcomes` collection; group episodes by
+1. **Group:** Query Qdrant `kuzea-outcomes` collection; group episodes by
    `(service, option)` pair.
 2. **Summarize:** If a group has >5 episodes, call `claude -p` (one-shot, no
    tools) to produce a single consolidated pattern — e.g., "Raising MemoryMax
@@ -992,7 +992,7 @@ Weekly `nemesis-consolidation.timer` runs `memory-consolidator.py`:
    consolidated pattern as one new vector with metadata
    `{"consolidated": true, "episode_count": N}`.
 4. **Archive:** Move episodes older than 90 days to a separate
-   `nemesis-archive` Qdrant collection (queryable but not included in
+   `kuzea-archive` Qdrant collection (queryable but not included in
    planning-time retrieval by default).
 5. **Resolve contradictions:** If the same `(service, option, value)` appears
    with both `SUCCESS` and `ROLLBACK` outcomes, keep only the most recent
@@ -1000,7 +1000,7 @@ Weekly `nemesis-consolidation.timer` runs `memory-consolidator.py`:
 
 ### Meta-Review
 
-Bi-weekly `nemesis-meta-review.timer` (fires on the 1st and 15th of each
+Bi-weekly `kuzea-meta-review.timer` (fires on the 1st and 15th of each
 month) runs `meta-review.py`:
 
 1. **Compute statistics:**
@@ -1009,12 +1009,12 @@ month) runs `meta-review.py`:
    - Option frequency (which Tier 1 options are touched most)
    - Bound saturation (how close proposals get to Tier 1 bounds, e.g.,
      MemoryMax approaching the 3G ceiling)
-2. **Output report:** `/var/lib/nemesis/meta-reviews/<date>.md`
+2. **Output report:** `/var/lib/kuzea/meta-reviews/<date>.md`
 3. **Bound expansion proposals:** If any Tier 1 bound is >60% saturated
    (e.g., most proposals push MemoryMax to >2.4G out of 3G max), generate
-   a Tier 3 draft PR via `gh pr create --draft --label nemesis-meta`
+   a Tier 3 draft PR via `gh pr create --draft --label kuzea-meta`
    proposing a bound increase. The change auditor blocks auto-apply for
-   `nemesis*.nix`, so this always requires human review.
+   `kuzea*.nix`, so this always requires human review.
 4. **Context injection:** Meta-review output is included in future planning
    cycles as additional context (appended to the task file after
    `<past_outcomes>`).
@@ -1023,46 +1023,46 @@ month) runs `meta-review.py`:
 
 ## Integration with Existing Infrastructure
 
-| Component (on rpi5) | Role in Nemesis |
+| Component (on rpi5) | Role in Kuzea |
 |---------------------|-----------------|
-| **OpenClaw module** | `modules/services/openclaw.nix` provides the design pattern for user isolation, sudo wrapper, and nftables rules. Not currently deployed on rpi5 — Nemesis builds its own invocation layer modeled on this. |
-| **Gatus** | Primary external health signal for sancta-choir. Nemesis polls `http://127.0.0.1:3001/api/v1/endpoints/statuses` for sancta-choir endpoint results. |
-| **Qdrant** | RAG memory bank (`nemesis-outcomes` collection). Existing instance on rpi5 at `http://127.0.0.1:6333`. |
-| **n8n** | Receives circuit-breaker alerts and Tier-2 approval requests from Nemesis. |
+| **OpenClaw module** | `modules/services/openclaw.nix` provides the design pattern for user isolation, sudo wrapper, and nftables rules. Not currently deployed on rpi5 — Kuzea builds its own invocation layer modeled on this. |
+| **Gatus** | Primary external health signal for sancta-choir. Kuzea polls `http://127.0.0.1:3001/api/v1/endpoints/statuses` for sancta-choir endpoint results. |
+| **Qdrant** | RAG memory bank (`kuzea-outcomes` collection). Existing instance on rpi5 at `http://127.0.0.1:6333`. |
+| **n8n** | Receives circuit-breaker alerts and Tier-2 approval requests from Kuzea. |
 | **Embedding** | TBD — see Prerequisites. Ollama is not currently deployed on rpi5. |
 
 ### New Secrets
 
 ```nix
 # secrets/secrets.nix — add:
-"nemesis-ssh-key.age".publicKeys = allKeys;        # SSH key for rpi5 nemesis→sancta-choir
-"nemesis-github-token.age".publicKeys = allKeys;   # GitHub PAT for PR creation
-"nemesis-oauth-token.age".publicKeys = allKeys;    # CC setup-token (1-year, Pro/Max)
-"nemesis-hcloud-token.age".publicKeys = allKeys;   # Hetzner API token (tripwire rollback)
+"kuzea-ssh-key.age".publicKeys = allKeys;        # SSH key for rpi5 kuzea→sancta-choir
+"kuzea-github-token.age".publicKeys = allKeys;   # GitHub PAT for PR creation
+"kuzea-oauth-token.age".publicKeys = allKeys;    # CC setup-token (1-year, Pro/Max)
+"kuzea-hcloud-token.age".publicKeys = allKeys;   # Hetzner API token (tripwire rollback)
 ```
 
 ```nix
 # hosts/rpi5-full/configuration.nix — age.secrets:
-age.secrets.nemesis-oauth-token.file = "${self}/secrets/nemesis-oauth-token.age";
+age.secrets.kuzea-oauth-token.file = "${self}/secrets/kuzea-oauth-token.age";
 ```
 
 ### rpi5 Host Configuration
 
 ```nix
 # hosts/rpi5-full/configuration.nix — add:
-imports = [ ../../modules/services/nemesis.nix ];
+imports = [ ../../modules/services/kuzea.nix ];
 
-services.nemesis = {
+services.kuzea = {
   enable            = true;
   targetHost        = "sancta-choir";
   targetFlakeAttr   = "sancta-choir";
-  targetRepoPath    = "/var/lib/nemesis/nixos-config";
-  sshKeyFile        = config.age.secrets.nemesis-ssh-key.path;
-  oauthTokenFile    = config.age.secrets.nemesis-oauth-token.path;
+  targetRepoPath    = "/var/lib/kuzea/nixos-config";
+  sshKeyFile        = config.age.secrets.kuzea-ssh-key.path;
+  oauthTokenFile    = config.age.secrets.kuzea-oauth-token.path;
   qdrantUrl         = "http://127.0.0.1:6333";
   gatusUrl          = "http://127.0.0.1:3001";
   tier1.services    = [ "openclaw-task-runner" ];
-  notifications.n8nWebhookUrl = "http://127.0.0.1:5678/webhook/nemesis";
+  notifications.n8nWebhookUrl = "http://127.0.0.1:5678/webhook/kuzea";
   limits.maxSwitchesPerDay   = 3;
 };
 ```
@@ -1076,25 +1076,25 @@ imports = [
   ./agent-overlays   # imports hosts/sancta-choir/agent-overlays/default.nix
 ];
 
-# Nemesis repo clone: kept up to date by the actuator (git pull before each build)
+# Kuzea repo clone: kept up to date by the actuator (git pull before each build)
 systemd.tmpfiles.rules = [
-  "d /var/lib/nemesis 0750 root root -"
-  "d /var/lib/nemesis/nixos-config 0750 root root -"
+  "d /var/lib/kuzea 0750 root root -"
+  "d /var/lib/kuzea/nixos-config 0750 root root -"
 ];
 
-# Add nemesis SSH key to root's authorized_keys — command-restricted
+# Add kuzea SSH key to root's authorized_keys — command-restricted
 users.users.root.openssh.authorizedKeys.keys = [
   # existing keys...
-  ''command="${pkgs.nemesis-ssh-wrapper}/bin/nemesis-ssh-wrapper",restrict ssh-ed25519 AAAA... nemesis@rpi5''
+  ''command="${pkgs.kuzea-ssh-wrapper}/bin/kuzea-ssh-wrapper",restrict ssh-ed25519 AAAA... kuzea@rpi5''
 ];
 ```
 
-The `nemesis-ssh-wrapper` is a Nix derivation (immutable) that whitelists
-only the commands Nemesis needs:
+The `kuzea-ssh-wrapper` is a Nix derivation (immutable) that whitelists
+only the commands Kuzea needs:
 
 ```bash
 #!/usr/bin/env bash
-# nemesis-ssh-wrapper — restrict SSH commands from the Nemesis key
+# kuzea-ssh-wrapper — restrict SSH commands from the Kuzea key
 # Built as a Nix derivation; the agent cannot modify it.
 set -euo pipefail
 
@@ -1109,25 +1109,25 @@ case "$SSH_ORIGINAL_COMMAND" in
   "nixos-rebuild test --flake "*)        exec $SSH_ORIGINAL_COMMAND ;;
   "nixos-rebuild switch --flake "*)      exec $SSH_ORIGINAL_COMMAND ;;
   "nixos-rebuild switch --rollback")     exec $SSH_ORIGINAL_COMMAND ;;
-  "systemd-run --unit=nemesis-rebuild "*)exec $SSH_ORIGINAL_COMMAND ;;
+  "systemd-run --unit=kuzea-rebuild "*)exec $SSH_ORIGINAL_COMMAND ;;
   "true")                                exit 0 ;;  # SSH probe
-  "cd /var/lib/nemesis/nixos-config && git fetch"*) exec $SSH_ORIGINAL_COMMAND ;;
+  "cd /var/lib/kuzea/nixos-config && git fetch"*) exec $SSH_ORIGINAL_COMMAND ;;
   *)
-    logger -t nemesis-ssh-wrapper -p auth.warning \
-      "Blocked command from nemesis key: $SSH_ORIGINAL_COMMAND"
-    echo "ERROR: command not in Nemesis allowlist" >&2
+    logger -t kuzea-ssh-wrapper -p auth.warning \
+      "Blocked command from kuzea key: $SSH_ORIGINAL_COMMAND"
+    echo "ERROR: command not in Kuzea allowlist" >&2
     exit 1
     ;;
 esac
 ```
 
-### Gatus Endpoints (rpi5, Nemesis self-observability)
+### Gatus Endpoints (rpi5, Kuzea self-observability)
 
 ```nix
 services.gatus-tailscale.endpoints = {
-  nemesis-collector = {
-    name  = "Nemesis Collector";
-    group = "nemesis";
+  kuzea-collector = {
+    name  = "Kuzea Collector";
+    group = "kuzea";
     url   = "http://127.0.0.1:9095/health";
     interval = "5m";
     conditions = [
@@ -1143,28 +1143,28 @@ services.gatus-tailscale.endpoints = {
 
 ## Security Posture
 
-### The Nemesis User (on rpi5)
+### The Kuzea User (on rpi5)
 
 ```nix
-users.users.nemesis = {
+users.users.kuzea = {
   isSystemUser = true;
   uid          = 992;    # static, for nftables
-  group        = "nemesis";
-  home         = "/var/lib/nemesis";
+  group        = "kuzea";
+  home         = "/var/lib/kuzea";
 };
 ```
 
-### Sudo Wrapper (nemesis-sudo, analogous to openclaw-sudo)
+### Sudo Wrapper (kuzea-sudo, analogous to openclaw-sudo)
 
 - `build <target>` → `nixos-rebuild build --flake <repo>#<target>` (rpi5 dry-run only)
 - `check` → `nix flake check`
 - `fmt` → `nix fmt`
-- SSH operations: handled directly by the `nemesis` user's SSH key, not via sudo
+- SSH operations: handled directly by the `kuzea` user's SSH key, not via sudo
 - No `switch` or `test` in the local sudo wrapper — those run on sancta-choir via SSH
 
 ### Network Restrictions (nftables, rpi5 UID-based)
 
-The `nemesis` user on rpi5 may reach:
+The `kuzea` user on rpi5 may reach:
 - `api.anthropic.com` (CC Pro subscription)
 - `api.github.com` + `github.com` (PR creation)
 - Tailscale interface (`tailscale0`) — covers sancta-choir SSH, local services
@@ -1180,9 +1180,9 @@ Read · Glob · Grep · Bash(nix eval *) · Write
 
 CC cannot: `Edit`, run `nixos-rebuild`, `git`, `ssh`, `curl`, or `systemctl`.
 
-### What Nemesis Cannot Change About Itself
+### What Kuzea Cannot Change About Itself
 
-`modules/services/nemesis.nix` and `hosts/rpi5-full/configuration.nix`
+`modules/services/kuzea.nix` and `hosts/rpi5-full/configuration.nix`
 (the controller's own config) are matched by the change auditor's
 `SUPERVISED` patterns. Any proposal touching them produces a draft PR only.
 
@@ -1190,7 +1190,7 @@ CC cannot: `Edit`, run `nixos-rebuild`, `git`, `ssh`, `curl`, or `systemctl`.
 
 ## Identity Invariant
 
-Six properties must hold **before and after** every Nemesis modification.
+Six properties must hold **before and after** every Kuzea modification.
 The actuator runs `invariant-checker.py` at pre-flight (Step 8) and
 post-verification (after Step 14). Failure at either point aborts or
 rolls back the episode.
@@ -1201,11 +1201,11 @@ rolls back the episode.
 | 2 | `tailscale_online` | `tailscale status --json` → peer online | Abort / rollback |
 | 3 | `gatus_all_healthy` | Gatus API: all sancta-choir endpoints healthy | Abort / rollback |
 | 4 | `rollback_functional` | `nix-env --list-generations` ≥ 3 on target | Abort (pre-flight only) |
-| 5 | `tripwire_running` | `systemctl is-active nemesis-tripwire` on rpi5 | Abort (pre-flight only) |
+| 5 | `tripwire_running` | `systemctl is-active kuzea-tripwire` on rpi5 | Abort (pre-flight only) |
 | 6 | `auditor_integrity` | SHA256 of `change-auditor.py` matches Nix store | Abort |
 
 `invariant-checker.py` is built as an **immutable Nix derivation** —
-its content is fixed at deploy time and cannot be modified by the Nemesis
+its content is fixed at deploy time and cannot be modified by the Kuzea
 user at runtime. The tripwire also uses a subset of these checks
 (1, 2, 3) for its continuous monitoring loop.
 
@@ -1228,24 +1228,46 @@ user at runtime. The tripwire also uses a subset of these checks
 
 **Goal:** Collect sancta-choir metrics from rpi5. No changes to either host.
 
-1. Create `modules/services/nemesis.nix` (observer-only mode)
+1. Create `modules/services/kuzea.nix` (observer-only mode)
 2. Implement `collect-remote.sh` (SSH metric collection)
 3. Define SQLite schema; apply on rpi5
 4. Implement collector service + 2m timer
 5. Expose health HTTP endpoint on `127.0.0.1:9095`
-6. Add Gatus endpoint for nemesis-collector on rpi5
+6. Add Gatus endpoint for kuzea-collector on rpi5
 7. Deploy and run for 7 days
 
 **Deliverable:** 7 days of sancta-choir metrics on rpi5. Confirmed SSH
 collection and Gatus integration. Baseline for CUSUM calibration.
 
-**Validation:**
+**Phase gate:**
+
+*Go/no-go:*
 ```bash
-sqlite3 /var/lib/nemesis/metrics.db \
+# Must return rows for every monitored service with non-null averages
+sqlite3 /var/lib/kuzea/metrics.db \
   "SELECT service, AVG(memory_bytes/1048576.0) AS avg_mb, AVG(psi_mem_some)
    FROM service_metrics WHERE collected_at > datetime('now','-7 days')
    GROUP BY service;"
+
+# Collection gap check — no gap longer than 5 minutes in the last 7 days
+sqlite3 /var/lib/kuzea/metrics.db \
+  "SELECT MAX(gap_seconds) FROM (
+     SELECT (julianday(collected_at) - julianday(LAG(collected_at) OVER (ORDER BY collected_at))) * 86400 AS gap_seconds
+     FROM observations WHERE collected_at > datetime('now','-7 days')
+   ) WHERE gap_seconds > 300;"
+# Must return empty (no gaps > 5min)
+
+# Gatus endpoint healthy
+curl -sf http://127.0.0.1:3001/api/v1/endpoints/statuses | jq '.[] | select(.group=="kuzea")'
 ```
+
+*Red flags — stop and investigate if:*
+- SSH collection fails >5 consecutive times (check `last-collect-failures` state file)
+- `service_metrics` table has rows but all `memory_bytes` values are NULL (SSH succeeds but commands return empty)
+- Gatus kuzea-collector endpoint is unhealthy within the first 48 hours (misconfigured health endpoint)
+- SQLite DB grows >100MB in 7 days (schema or insertion bug)
+
+*Time budget:* **2 weeks.** If SSH connectivity issues consume >3 days of debugging, reassess whether the sancta-choir network path is reliable enough for this architecture.
 
 ---
 
@@ -1255,16 +1277,38 @@ sqlite3 /var/lib/nemesis/metrics.db \
 
 1. Create `task-template.md` and `system-prompt.txt`
 2. Implement task file generator (inject snapshot + Qdrant RAG + `nix eval`)
-3. Implement `nemesis-planner.service` calling `claude -p`
+3. Implement `kuzea-planner.service` calling `claude -p`
 4. CC `allowedTools`: `Read,Glob,Grep,Bash(nix eval *),Write`
 5. 72h fallback timer (no CUSUM yet)
-6. Proposals written to `/var/lib/nemesis/proposals/`; human reviews manually
+6. Proposals written to `/var/lib/kuzea/proposals/`; human reviews manually
 7. Self-profile generator produces `self-profile.json`, injected into task
    file as `<self_profile>` section (option frequency, success rates,
    unexplored options)
 
-**Deliverable:** 5 proposals reviewed. Overlay files syntactically valid,
-targeting sancta-choir options correctly.
+**Phase gate:**
+
+*Go/no-go:*
+```bash
+# At least 5 proposal files exist and are valid JSON
+ls /var/lib/kuzea/proposals/*.json | wc -l   # must be ≥ 5
+
+# At least 4 of 5 overlay files parse as valid Nix
+for f in hosts/sancta-choir/agent-overlays/2*.nix; do
+  nix-instantiate --parse "$f" > /dev/null 2>&1 && echo "OK: $f" || echo "FAIL: $f"
+done
+# ≥ 4 must show OK
+
+# CC exit code 0 in ≥ 4 of 5 planning runs
+grep -c "exit_code.*0" /var/lib/kuzea/planner-runs.log   # must be ≥ 4
+```
+
+*Red flags — stop and investigate if:*
+- CC consistently produces `no-action-*.txt` files (≥3 in a row) — task template may be too restrictive or snapshot data insufficient
+- Qdrant embedding failures in planner logs (embedding model not working or Qdrant unreachable)
+- Planner service OOM-killed (check `journalctl -u kuzea-planner`) — CC + embedding may exceed rpi5's 4GB
+- Proposals target options outside the Tier 1 allowlist — system prompt or `allowedTools` misconfigured
+
+*Time budget:* **2 weeks.** If CC produces 0 valid proposals after 5 attempts, stop and review the task template and system prompt before continuing.
 
 ---
 
@@ -1273,25 +1317,44 @@ targeting sancta-choir options correctly.
 **Goal:** Full pipeline including remote nixos-rebuild. Human approves each switch.
 
 1. Implement `change-auditor.py` and `property-tests.py` as Nix derivations
-2. Implement `nemesis-actuator` shell script (all 16 steps including SSH)
-3. Set up sancta-choir nixos-config clone at `/var/lib/nemesis/nixos-config`
-4. Provision Nemesis SSH key (add to sancta-choir's `authorized_keys`)
+2. Implement `kuzea-actuator` shell script (all 16 steps including SSH)
+3. Set up sancta-choir nixos-config clone at `/var/lib/kuzea/nixos-config`
+4. Provision Kuzea SSH key (add to sancta-choir's `authorized_keys`)
 5. Approval token mechanism: actuator pauses at Step 13 (before `nixos-rebuild test`)
 6. **Deliberately test rollback:** force a Gate 5 failure, verify sancta-choir
    returns to previous generation
 7. Implement Qdrant outcome embedding
 8. Invariant checker runs at pre-flight (after Step 8) and post-verification
    (after Step 14) — all 6 checks must pass
-9. Evaluation constitution Nix options defined (`services.nemesis.evaluation.*`)
+9. Evaluation constitution Nix options defined (`services.kuzea.evaluation.*`)
 
 **Deliverable:** End-to-end pipeline confirmed. Remote rollback verified.
 
-**Validation:**
+**Phase gate:**
+
+*Go/no-go:*
 ```bash
-# On rpi5, after a forced rollback:
+# Remote rollback verified — generation number decreased after rollback
 ssh root@sancta-choir \
   "nix-env --list-generations -p /nix/var/nix/profiles/system | tail -3"
+# Must show test generation followed by rollback to previous
+
+# End-to-end pipeline: at least 1 episode completed with outcome != 'rejected'
+sqlite3 /var/lib/kuzea/metrics.db \
+  "SELECT COUNT(*) FROM episodes WHERE outcome IS NOT NULL AND outcome != 'rejected';"
+# Must be ≥ 1
+
+# All 6 invariant checks pass on current state
+python3 /nix/store/.../invariant-checker.py --all   # exit code 0
 ```
+
+*Red flags — stop and investigate if:*
+- Remote `nixos-rebuild build` fails consistently on sancta-choir (store path mismatch, disk full, or flake eval error)
+- Rollback cascade never tested end-to-end (Channel 2 and 3 remain unverified — schedule a deliberate test)
+- Qdrant outcome embedding silently fails (episodes complete but `kuzea-outcomes` collection stays empty)
+- SSH key `command=` restriction blocks a command the actuator needs (check `kuzea-ssh-wrapper` logs on sancta-choir)
+
+*Time budget:* **2 weeks.** The remote build + rollback verification is the critical path. If sancta-choir builds take >15 minutes consistently, investigate before Phase 3 adds more automated cycles.
 
 ---
 
@@ -1299,15 +1362,44 @@ ssh root@sancta-choir \
 
 **Goal:** Event-driven triggering; independent safety monitor targeting sancta-choir.
 
-1. Implement `nemesis-cusum-watchdog.service` (watches SSH-collected PSI/memory)
-2. Implement `nemesis-anomaly-watcher.service` (Gatus failures + SSH OOM scan)
-3. Implement `nemesis-planner.path` on `triggers/` directory
-4. Implement `nemesis-tripwire.service`:
+1. Implement `kuzea-cusum-watchdog.service` (watches SSH-collected PSI/memory)
+2. Implement `kuzea-anomaly-watcher.service` (Gatus failures + SSH OOM scan)
+3. Implement `kuzea-planner.path` on `triggers/` directory
+4. Implement `kuzea-tripwire.service`:
    - SSH probe + Tailscale check + Gatus for sancta-choir
    - On violation: rollback cascade (Tailscale SSH → public IP SSH → Hetzner API reboot)
-5. Confirm tripwire fires independently even when Nemesis main service is stopped
+5. Confirm tripwire fires independently even when Kuzea main service is stopped
 6. Tripwire uses `invariant-checker.py` with subset checks (1, 2, 3) for its
    continuous monitoring loop
+
+**Phase gate:**
+
+*Go/no-go:*
+```bash
+# CUSUM fires on a synthetic PSI spike injected via SSH
+# (inject a known-bad value into metrics.db, verify trigger file appears)
+sqlite3 /var/lib/kuzea/metrics.db \
+  "INSERT INTO service_metrics (observation_id, service, psi_mem_some) VALUES (999, 'test', 50.0);"
+# Within 3 minutes: ls /var/lib/kuzea/triggers/  → must contain a new trigger file
+# Clean up: DELETE the test row and trigger file after verification
+
+# Tripwire independently detects simulated outage
+# (block sancta-choir SSH temporarily, verify tripwire logs a violation)
+journalctl -u kuzea-tripwire --since "5m ago" | grep -c "violation"   # must be ≥ 1
+
+# Path unit triggers planner on file write
+touch /var/lib/kuzea/triggers/test-trigger
+systemctl is-active kuzea-planner.service   # must be activating or active within 10s
+rm /var/lib/kuzea/triggers/test-trigger
+```
+
+*Red flags — stop and investigate if:*
+- CUSUM never fires despite normal metric variance — calibration parameters (μ₀, k, h) are wrong; recalibrate from Phase 0 data
+- Tripwire produces false positives (fires when sancta-choir is healthy) — probe timeout too aggressive or Gatus endpoint misconfigured
+- SQLite `BUSY` errors in watchdog or anomaly watcher logs (concurrent write contention from multiple services)
+- `kuzea-planner.path` activates but planner fails immediately (missing env vars, OAuth token expired)
+
+*Time budget:* **2 weeks.** CUSUM calibration is the critical unknown. If the calibration script produces unreasonable parameters (h < 1 or h > 100), revisit the baseline data quality from Phase 0.
 
 ---
 
@@ -1323,11 +1415,41 @@ ssh root@sancta-choir \
 6. Exploration budget enabled (every 5th cycle uses `task-template-explore.md`)
 7. Retrospective timer scheduled per episode (`systemd-run --on-active=24h`)
 
-**Acceptance criteria:**
-- ≥ 3 autonomous remote switches with PSI improvement confirmed
-- No unexpected rollback
-- Tripwire never fired spuriously
-- Circuit breaker not tripped
+**Phase gate:**
+
+*Go/no-go:*
+```bash
+# ≥ 3 autonomous switches with confirmed PSI improvement
+sqlite3 /var/lib/kuzea/metrics.db \
+  "SELECT COUNT(*) FROM episodes
+   WHERE outcome = 'success' AND psi_after < psi_before;"
+# Must be ≥ 3
+
+# No unexpected rollbacks (rollback_reason must be NULL or 'deliberate_test')
+sqlite3 /var/lib/kuzea/metrics.db \
+  "SELECT COUNT(*) FROM episodes
+   WHERE outcome = 'rollback' AND rollback_reason NOT LIKE '%deliberate%';"
+# Must be 0
+
+# Circuit breaker file does not exist
+test ! -f /var/lib/kuzea/circuit-open && echo "OK" || echo "FAIL"
+
+# Tripwire has not fired outside of test windows
+journalctl -u kuzea-tripwire --since "7 days ago" | grep -c "rollback"
+# Must be 0 (unless a deliberate test triggered it)
+
+# Retrospective timer fires correctly
+systemctl list-timers 'kuzea-retrospective@*' --no-pager
+# Must show at least one scheduled or completed retrospective
+```
+
+*Red flags — stop and investigate if:*
+- Every autonomous switch results in rollback (Tier 1 bounds may be too narrow, or the target service is fundamentally unstable)
+- PSI improvement is within noise (< `minimumEffect` of 5%) on all switches — Kuzea is making changes that don't matter
+- Exploration cycle (every 5th) consistently produces `no-action` — exploration template needs tuning
+- Circuit breaker trips within the first 48 hours of autonomy — Phase 3 CUSUM calibration may be triggering on noise
+
+*Time budget:* **2 weeks.** If zero successful autonomous switches after 1 week, drop back to Phase 2 (manual approval) and investigate why proposals fail gates or verification.
 
 ---
 
@@ -1340,8 +1462,39 @@ ssh root@sancta-choir \
 3. Implement semantic rollback analysis (lessons-learned embedding)
 4. Add property test predicates from any Phase 2–4 rollback incidents
 5. `retrospective.py` fully deployed — 24h delayed evaluation per episode
-6. Memory consolidator (`nemesis-consolidation.timer`) — weekly episode grouping
-7. Meta-review (`nemesis-meta-review.timer`) — bi-weekly statistics + reports
+6. Memory consolidator (`kuzea-consolidation.timer`) — weekly episode grouping
+7. Meta-review (`kuzea-meta-review.timer`) — bi-weekly statistics + reports
+
+**Phase gate:**
+
+*Go/no-go:*
+```bash
+# A/B comparison documented with measurable difference
+ls /var/lib/kuzea/meta-reviews/ab-comparison-*.md   # must exist
+# Gate failure rate with RAG < gate failure rate without RAG (documented in file)
+
+# Memory consolidation ran without data loss
+python3 -c "
+import requests
+r = requests.get('http://127.0.0.1:6333/collections/kuzea-outcomes')
+count = r.json()['result']['points_count']
+archive = requests.get('http://127.0.0.1:6333/collections/kuzea-archive')
+archive_count = archive.json()['result']['points_count']
+print(f'Active: {count}, Archived: {archive_count}')
+assert count > 0, 'Active collection is empty after consolidation'
+"
+
+# Meta-review report generated
+ls /var/lib/kuzea/meta-reviews/*.md | head -1   # must exist
+```
+
+*Red flags — stop and investigate if:*
+- A/B sample size too small to draw conclusions (fewer than 5 cycles per arm) — extend the test or defer conclusions
+- Consolidation deleted vectors without archiving (Qdrant `kuzea-archive` collection empty after consolidation ran)
+- Retrospective checks consistently show delayed negatives (>30% of "successful" switches degrade within 24h) — the 10-minute verification window is too short
+- Meta-review statistics show 0% exploration success rate — exploration template is ineffective
+
+*Time budget:* **2 weeks.** The A/B test requires 10 planning cycles minimum (5+5). If Kuzea averages fewer than 1 cycle/day, extend the phase rather than reducing sample size.
 
 ---
 
@@ -1353,30 +1506,79 @@ ssh root@sancta-choir \
 2. Add `services.openclaw.*` and `boot.kernel.sysctl` options
 3. `expected_outcome` verification (predicted metric delta confirmed in window)
 
+**Phase gate:**
+
+*Go/no-go:*
+```bash
+# At least one Tier 2 change applied and verified on sancta-choir
+sqlite3 /var/lib/kuzea/metrics.db \
+  "SELECT COUNT(*) FROM episodes
+   WHERE goal LIKE '%Tier 2%' AND outcome = 'success';"
+# Must be ≥ 1
+
+# n8n approval workflow completed at least one approval cycle
+# (check n8n execution history for the kuzea approval workflow)
+curl -sf http://127.0.0.1:5678/api/v1/executions?workflowId=<approval-wf-id>&status=success | jq '.data | length'
+# Must be ≥ 1
+```
+
+*Red flags — stop and investigate if:*
+- n8n approval workflow is broken or unreachable (approvals silently fail, proposals never proceed)
+- Tier 2 changes require reboots that break the verification window (`nixos-rebuild test` + reboot = lose test generation)
+- `boot.kernel.sysctl` changes cause immediate instability before the verification window starts (kernel panics, network loss)
+- Tier 2 scope creep — proposals touch options not yet in the Tier 2 allowlist
+
+*Time budget:* **2 weeks.** Tier 2 expansion is inherently riskier. If the first Tier 2 change results in rollback, pause and tighten the property test suite before the second attempt.
+
 ---
 
 ### Phase 7 — Meta-Proposals (Week 15+)
 
-**Goal:** Close the reflexive loop — Nemesis proposes changes to its own
+**Goal:** Close the reflexive loop — Kuzea proposes changes to its own
 operational bounds, always through a human gate.
 
 1. Extend `meta-review.py` to generate concrete Nix overlay fragments
    proposing Tier 1 bound changes (e.g., raising `MemoryMax` ceiling from
    3G to 3.5G) when bound saturation exceeds 60%
 2. Proposals are always created as draft PRs:
-   `gh pr create --draft --label nemesis-meta`
-3. The change auditor's `SUPERVISED` patterns match `nemesis*.nix`, blocking
+   `gh pr create --draft --label kuzea-meta`
+3. The change auditor's `SUPERVISED` patterns match `kuzea*.nix`, blocking
    any auto-apply — meta-proposals always require human review
 4. Meta-review statistics are embedded in the draft PR description for
    context (saturation %, affected options, historical trend)
 
-**Acceptance criteria:**
-- Meta-review generates ≥ 1 bound-expansion draft PR
-- Draft PR is well-formed (valid Nix, correct option paths)
-- Change auditor correctly blocks auto-application
-- Human can merge or close with full context from the PR body
+**Phase gate:**
 
-**Note:** The reflexive loop is intentionally shallow — Nemesis can propose
+*Go/no-go:*
+```bash
+# Meta-review generated ≥ 1 bound-expansion draft PR
+gh pr list --label kuzea-meta --state all --json number,title | jq 'length'
+# Must be ≥ 1
+
+# Draft PR is well-formed: valid Nix overlay in the PR diff
+gh pr diff <pr-number> -- '*.nix' | head -20
+# Must contain a syntactically valid option change
+
+# Change auditor correctly blocked auto-application
+sqlite3 /var/lib/kuzea/metrics.db \
+  "SELECT COUNT(*) FROM episodes
+   WHERE gate_results LIKE '%auditor%supervised%';"
+# Must be ≥ 1 (proves the auditor caught the meta-proposal)
+
+# Human reviewed and either merged or closed with rationale
+gh pr view <pr-number> --json state,reviews | jq '.state'
+# Must be "MERGED" or "CLOSED" (not indefinitely open)
+```
+
+*Red flags — stop and investigate if:*
+- Meta-review never triggers a bound-expansion proposal (saturation threshold of 60% is never reached — Kuzea may be under-utilizing its Tier 1 bounds, which is fine but means Phase 7 has nothing to do)
+- Draft PR contains invalid Nix (meta-review.py's overlay generation has a bug)
+- Multiple bound-expansion PRs pile up unreviewed (human bottleneck — consider reducing meta-review frequency or auto-closing stale drafts)
+- Proposed bound changes are unreasonable (e.g., MemoryMax ceiling exceeds VPS RAM) — add bounds validation to meta-review.py
+
+*Time budget:* **Open-ended (ongoing).** Phase 7 is not a one-time deliverable — it's the steady-state operational mode. However, the **first** meta-proposal should appear within 4 weeks of enabling Phase 7. If not, verify that the saturation calculation is correct.
+
+**Note:** The reflexive loop is intentionally shallow — Kuzea can propose
 changes to Tier 1 bounds only, never to the change auditor, invariant
 checker, evaluation constitution, or its own module structure. These
 remain stratum 0 (human-only).
@@ -1385,14 +1587,14 @@ remain stratum 0 (human-only).
 
 ## Open Questions for Implementation
 
-1. **SSH key provisioning:** The `nemesis-ssh-key` secret must be added to
+1. **SSH key provisioning:** The `kuzea-ssh-key` secret must be added to
    `secrets/secrets.nix` and `sancta-choir/configuration.nix`
    (`authorized_keys`). This bootstrapping step is Tier 3 (requires a
    human-reviewed PR). Must be done before Phase 2.
 
 2. **~~Pro subscription OAuth flow headless~~ (Resolved):** Use
    `claude setup-token` on a browser-equipped machine to produce a 1-year
-   `CLAUDE_CODE_OAUTH_TOKEN`. Encrypt as `nemesis-oauth-token.age` and
+   `CLAUDE_CODE_OAUTH_TOKEN`. Encrypt as `kuzea-oauth-token.age` and
    provision via the standard agenix `ExecStartPre "+"` pattern. No
    `CLAUDE_CONFIG_DIR` sharing needed — the token is an env var, not a
    file tree. Renewal: annual re-run of `claude setup-token` + `agenix -e`.
@@ -1421,12 +1623,12 @@ remain stratum 0 (human-only).
    rebuild from the SSH session:
    ```bash
    ssh root@sancta-choir \
-     "systemd-run --unit=nemesis-rebuild --no-block \
-      nixos-rebuild test --flake /var/lib/nemesis/nixos-config#sancta-choir"
+     "systemd-run --unit=kuzea-rebuild --no-block \
+      nixos-rebuild test --flake /var/lib/kuzea/nixos-config#sancta-choir"
    ```
    This creates a transient service that survives SSH disconnection.
    The actuator polls for completion via a separate SSH probe:
-   `ssh root@sancta-choir "systemctl is-active nemesis-rebuild.service"`
+   `ssh root@sancta-choir "systemctl is-active kuzea-rebuild.service"`
 
 ---
 
@@ -1440,6 +1642,28 @@ remain stratum 0 (human-only).
 - [ ] Phase 5: RAG retrieval demonstrably improves gate-pass rate (A/B documented)
 - [ ] Phase 6: One Tier 2 change applied via n8n approval on sancta-choir
 - [ ] Phase 7: Meta-review generates ≥1 bound-expansion draft PR; human reviews
+
+---
+
+## Plan Retrospective Triggers
+
+Stop and reassess the **entire plan** (not just the current phase) if any of
+these conditions occur:
+
+| Trigger | Action |
+|---------|--------|
+| Any phase exceeds **2× its time budget** | Pause. Write a retrospective: why did it take longer? Is the plan's scope realistic for this hardware and team size? Adjust remaining phase budgets before continuing. |
+| **2 consecutive phases** fail their go/no-go gate on first attempt | The plan's assumptions may be wrong. Re-evaluate prerequisites and phase ordering before proceeding. |
+| A prerequisite (embedding model, SSH key, OAuth token) remains **unresolved past its phase deadline** | The blocked phase cannot start. Escalate the prerequisite or restructure the plan to defer the dependent phase. |
+| **Circuit breaker trips** during any phase | Indicates a fundamental design issue (not just a bad proposal). Review the safety architecture before re-enabling. |
+| **Human intervention required >3×** in a phase designed for autonomy | The autonomy boundary is drawn wrong. Tighten the scope or add more gates before expanding again. |
+| **sancta-choir becomes unreachable** for >1 hour during any phase | The target host may have a hardware or network issue unrelated to Kuzea. Investigate independently before attributing to Kuzea changes. |
+
+**Format:** When a retrospective is triggered, create a file
+`/var/lib/kuzea/retrospectives/<date>-phase<N>.md` with:
+1. Which trigger fired and the concrete evidence
+2. Root cause analysis (5 whys or equivalent)
+3. Decision: continue with adjustments, revert to previous phase, or pause the project
 
 ---
 
