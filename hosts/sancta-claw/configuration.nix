@@ -45,7 +45,6 @@
 
   # ── Networking (inline — Hetzner CX33, nbg1-dc3) ───────────────────────
   networking.hostName = "sancta-claw";
-  networking.domain = "";
   networking.useDHCP = false;
   networking.usePredictableInterfaceNames = lib.mkForce false;
   networking.dhcpcd.enable = false;
@@ -116,8 +115,8 @@
     group = "openclaw";
     home = "/var/lib/openclaw";
     createHome = true;
-    # Login shell needed for: sudo -u openclaw npm install/openclaw configure
-    shell = pkgs.bashInteractive;
+    # Shell for: sudo -u openclaw npm install/openclaw configure
+    shell = pkgs.bash;
   };
   users.groups.openclaw = { };
 
