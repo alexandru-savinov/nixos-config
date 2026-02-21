@@ -156,19 +156,21 @@ The following must be completed before Nemesis implementation begins:
 │  │  REMOTE (SSH to sancta-choir):                              │    │
 │  │    Gate 4: nixos-rebuild build --flake .#sancta-choir ~5min │    │
 │  │    nixos-rebuild test  (activate, not boot-default)         │    │
-│  │    10min weighted verification window                       │    │
-│  │      rpi5 polls: Gatus health + SSH probe to sancta-choir   │    │
-│  │      +1 pass · −3 fail per check                            │    │
+│  │    10min verification: 20 cycles × 30s                       │    │
+│  │      Gatus probe (5s timeout) + SSH probe (10s timeout)     │    │
+│  │      pass +1 · fail/timeout −3 · min 15/20 cycles           │    │
 │  │    pass → nixos-rebuild switch + git push + PR              │    │
-│  │    fail → nixos-rebuild switch --rollback (SSH)             │    │
+│  │    fail → rollback cascade (SSH→public IP→Hetzner reboot)  │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                      │
 │  SAFETY LAYER (separate unit, rpi5 — Nemesis cannot stop it)        │
 │  ┌─────────────────────────────────────────────────────────────┐    │
 │  │  nemesis-tripwire  (PartOf nothing, Restart=always)         │    │
 │  │    every 10s: SSH probe · tailscale status · Gatus          │    │
-│  │    on violation during test window:                         │    │
-│  │      ssh sancta-choir "nixos-rebuild switch --rollback"     │    │
+│  │    on violation during test window — rollback cascade:       │    │
+│  │      1. SSH over Tailscale → nixos-rebuild switch --rollback│    │
+│  │      2. SSH over public IP → same                           │    │
+│  │      3. Hetzner API reboot (boot-default = last switch)     │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -298,14 +300,55 @@ revisiting a previously-rolled-back change with a different approach.
 `nemesis-tripwire.service` is a separate systemd unit with no `PartOf`,
 `BoundBy`, or `WantedBy` links to the main Nemesis service. It cannot be
 stopped by the Nemesis user. It polls:
-- `ssh root@sancta-choir true` — TCP connectivity
+- `ssh root@sancta-choir true` — TCP connectivity (10s timeout)
 - `tailscale status --json | jq '.Peer["<sancta-choir-node-id>"].Online'`
 - Gatus health endpoint for sancta-choir services (from rpi5)
 
-On violation during an active test window, it immediately runs:
+On violation during an active test window, the tripwire executes a
+**rollback cascade** — each channel is tried in order until one succeeds:
+
 ```bash
-ssh root@sancta-choir "nixos-rebuild switch --rollback"
+# Channel 1: SSH over Tailscale (normal path)
+if ssh -o ConnectTimeout=10 root@sancta-choir.tail4249a9.ts.net \
+     "nixos-rebuild switch --rollback"; then
+  logger -t nemesis-tripwire "Rollback succeeded via Tailscale SSH"
+  exit 0
+fi
+
+# Channel 2: SSH over public IPv4 (Tailscale may be down)
+if ssh -o ConnectTimeout=10 root@<sancta-choir-public-ip> \
+     "nixos-rebuild switch --rollback"; then
+  logger -t nemesis-tripwire "Rollback succeeded via public IP SSH"
+  exit 0
+fi
+
+# Channel 3: Hetzner API hard reboot (last resort — safe because
+# nixos-rebuild test does NOT set the boot default; reboot recovers
+# to the last nixos-rebuild switch generation)
+if hcloud server reboot <sancta-choir-server-id>; then
+  logger -t nemesis-tripwire -p daemon.crit \
+    "Forced Hetzner reboot — SSH unreachable, recovering via boot default"
+  exit 0
+fi
+
+# All channels failed — alert loudly
+logger -t nemesis-tripwire -p daemon.emerg \
+  "ALL ROLLBACK CHANNELS FAILED — sancta-choir stuck on test generation"
+# Notify n8n webhook regardless of file I/O success
+curl -sf -X POST "${N8N_WEBHOOK}" \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"rollback_failed","severity":"critical"}' || true
 ```
+
+**Why three channels:** The tripwire's SSH probe may detect that
+Tailscale SSH is down — the same path it would use for rollback. A
+public-IP fallback bypasses Tailscale. If sshd itself is broken (e.g.,
+the tested generation changed sshd config), a Hetzner API reboot is the
+ultimate recovery — `nixos-rebuild test` deliberately does not set the
+boot default, so a reboot always returns to the last `switch` generation.
+
+**Hetzner API prerequisite:** Requires `hcloud` CLI and an API token
+(stored as `nemesis-hcloud-token.age`). This is a Phase 3 addition.
 
 ### Pro subscription auth (setup-token + agenix)
 
@@ -669,31 +712,71 @@ via existing Open-WebUI connection, (c) use a smaller model like
 
 The collector SSHes into sancta-choir as `root` (dedicated SSH key in
 root's `authorized_keys`). Root access is required because `nixos-rebuild`
-and `systemctl show` need it; the dedicated key with restricted
-`authorized_keys` options provides the security boundary:
+and `systemctl show` need it. The key is restricted via `command=` in
+`authorized_keys` to a wrapper script that whitelists only the commands
+Nemesis needs (see "sancta-choir Host Configuration" section):
 
 ```bash
 # modules/services/nemesis/collect-remote.sh
+set -euo pipefail
 TARGET="${1:-sancta-choir}"
-SSH="ssh -i /run/nemesis/ssh-key -o StrictHostKeyChecking=accept-new \
+SSH="ssh -i /run/nemesis/ssh-key -o ConnectTimeout=10 \
+         -o StrictHostKeyChecking=accept-new \
          root@${TARGET}.tail4249a9.ts.net"
+STDERR_LOG=$(mktemp)
+COLLECT_FAILURES=0
+trap 'rm -f "$STDERR_LOG"' EXIT
+
+ssh_collect() {
+  # Run SSH command, capture stderr, check exit code.
+  # On failure: log error, record anomaly, increment failure counter.
+  local label="$1"; shift
+  if output=$($SSH "$@" 2>"$STDERR_LOG"); then
+    echo "$output"
+  else
+    local rc=$?
+    logger -t nemesis-collector -p daemon.err \
+      "SSH collection failed [${label}]: rc=${rc} stderr=$(cat "$STDERR_LOG")"
+    COLLECT_FAILURES=$((COLLECT_FAILURES + 1))
+    return 1
+  fi
+}
 
 # Per-service memory and CPU
 for svc in openclaw-task-runner tailscaled; do
-  mem=$(  $SSH "systemctl show --value -p MemoryCurrent ${svc}.service" 2>/dev/null)
-  cpu=$(  $SSH "systemctl show --value -p CPUUsageNSec  ${svc}.service" 2>/dev/null)
-  echo "service=${svc} mem=${mem} cpu=${cpu}"
+  mem=$(ssh_collect "${svc}/mem" \
+    "systemctl show --value -p MemoryCurrent ${svc}.service") || mem=""
+  cpu=$(ssh_collect "${svc}/cpu" \
+    "systemctl show --value -p CPUUsageNSec  ${svc}.service") || cpu=""
+  # Only record metric if collection succeeded (non-empty)
+  if [ -n "$mem" ] && [ -n "$cpu" ]; then
+    echo "service=${svc} mem=${mem} cpu=${cpu}"
+  else
+    echo "service=${svc} COLLECTION_FAILED"
+    # Record anomaly in SQLite (anomaly_type='collection_failure')
+  fi
 done
 
 # PSI (memory pressure from target's perspective)
-$SSH "cat /proc/pressure/memory"
+ssh_collect "psi" "cat /proc/pressure/memory" || true
 
 # Recent journal anomalies
-$SSH "journalctl --since '3m ago' --output json --no-pager -q" \
-  | grep -E '"PRIORITY":"[012]"' | head -50
+ssh_collect "journal" \
+  "journalctl --since '3m ago' --output json --no-pager -q" \
+  | grep -E '"PRIORITY":"[012]"' | head -50 || true
 
 # Current NixOS generation
-$SSH "readlink /nix/var/nix/profiles/system" | grep -oP 'system-\K\d+'
+ssh_collect "generation" \
+  "readlink /nix/var/nix/profiles/system" \
+  | grep -oP 'system-\K\d+' || true
+
+# Report collection health to the /health endpoint
+if [ "$COLLECT_FAILURES" -gt 0 ]; then
+  logger -t nemesis-collector -p daemon.warning \
+    "Collection cycle completed with ${COLLECT_FAILURES} failures"
+fi
+# Write failure count to state file for health endpoint
+echo "$COLLECT_FAILURES" > /var/lib/nemesis/last-collect-failures
 ```
 
 Gatus on rpi5 provides the **external** health perspective (HTTP probes
@@ -795,16 +878,22 @@ Step 10  git commit (branch nemesis/<id>) + git push to origin   (rpi5)
 Step 11  SSH: git fetch + checkout nemesis/<id> on sancta-choir
 Step 12  Gate 4: SSH: nixos-rebuild build --flake .#sancta-choir (~5min on sancta-choir)
 Step 13  SSH: nixos-rebuild test --flake .#sancta-choir
-Step 14  Verification window: 10 minutes
-           every 30s from rpi5:
-             Gatus probe for sancta-choir health endpoint
-             SSH probe: ssh root@sancta-choir true
-           scoring: +1 pass · −3 fail (start at 0)
-           abort if score < 0 (net failures exceed net passes) OR tripwire fires
+Step 14  Verification window: 10 minutes (20 probe cycles at 30s intervals)
+           each cycle runs two probes from rpi5:
+             Gatus HTTP probe: sancta-choir health endpoint (5s timeout)
+             SSH probe: ssh -o ConnectTimeout=10 root@sancta-choir true
+           probe outcomes (three states, not two):
+             pass    → +1 (both probes succeeded)
+             fail    → −3 (either probe returned error)
+             timeout → −3 (either probe exceeded its timeout — treated as fail)
+           scoring: start at 0, abort if score < 0 OR tripwire fires
+           minimum probe requirement: at least 15 of 20 cycles must complete
+             (if <15 cycles run, e.g. due to slow timeouts, treat as fail)
+           all probe results logged to episode record for post-mortem analysis
 Step 15  score passes → SSH: nixos-rebuild switch
                       → gh pr create (from rpi5, labeled nemesis)
                       → embed SUCCESS in Qdrant (rpi5)
-Step 16  score fails  → SSH: nixos-rebuild switch --rollback
+Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetzner reboot)
                       → embed ROLLBACK + lessons-learned in Qdrant (rpi5)
                       → notify n8n (rpi5)
 ```
@@ -949,6 +1038,7 @@ month) runs `meta-review.py`:
 "nemesis-ssh-key.age".publicKeys = allKeys;        # SSH key for rpi5 nemesis→sancta-choir
 "nemesis-github-token.age".publicKeys = allKeys;   # GitHub PAT for PR creation
 "nemesis-oauth-token.age".publicKeys = allKeys;    # CC setup-token (1-year, Pro/Max)
+"nemesis-hcloud-token.age".publicKeys = allKeys;   # Hetzner API token (tripwire rollback)
 ```
 
 ```nix
@@ -992,11 +1082,43 @@ systemd.tmpfiles.rules = [
   "d /var/lib/nemesis/nixos-config 0750 root root -"
 ];
 
-# Add nemesis SSH key to root's authorized_keys for remote nixos-rebuild
+# Add nemesis SSH key to root's authorized_keys — command-restricted
 users.users.root.openssh.authorizedKeys.keys = [
   # existing keys...
-  "ssh-ed25519 AAAA... nemesis@rpi5"   # Nemesis SSH key (from nemesis-ssh-key secret)
+  ''command="${pkgs.nemesis-ssh-wrapper}/bin/nemesis-ssh-wrapper",restrict ssh-ed25519 AAAA... nemesis@rpi5''
 ];
+```
+
+The `nemesis-ssh-wrapper` is a Nix derivation (immutable) that whitelists
+only the commands Nemesis needs:
+
+```bash
+#!/usr/bin/env bash
+# nemesis-ssh-wrapper — restrict SSH commands from the Nemesis key
+# Built as a Nix derivation; the agent cannot modify it.
+set -euo pipefail
+
+case "$SSH_ORIGINAL_COMMAND" in
+  "systemctl show --value -p "*)         exec $SSH_ORIGINAL_COMMAND ;;
+  "cat /proc/pressure/memory")           exec $SSH_ORIGINAL_COMMAND ;;
+  "journalctl --since "*" --output json"*) exec $SSH_ORIGINAL_COMMAND ;;
+  "readlink /nix/var/nix/profiles/system") exec $SSH_ORIGINAL_COMMAND ;;
+  "df "*"/nix"*)                         exec $SSH_ORIGINAL_COMMAND ;;
+  "nix-env --list-generations"*)         exec $SSH_ORIGINAL_COMMAND ;;
+  "nixos-rebuild build --flake "*)       exec $SSH_ORIGINAL_COMMAND ;;
+  "nixos-rebuild test --flake "*)        exec $SSH_ORIGINAL_COMMAND ;;
+  "nixos-rebuild switch --flake "*)      exec $SSH_ORIGINAL_COMMAND ;;
+  "nixos-rebuild switch --rollback")     exec $SSH_ORIGINAL_COMMAND ;;
+  "systemd-run --unit=nemesis-rebuild "*)exec $SSH_ORIGINAL_COMMAND ;;
+  "true")                                exit 0 ;;  # SSH probe
+  "cd /var/lib/nemesis/nixos-config && git fetch"*) exec $SSH_ORIGINAL_COMMAND ;;
+  *)
+    logger -t nemesis-ssh-wrapper -p auth.warning \
+      "Blocked command from nemesis key: $SSH_ORIGINAL_COMMAND"
+    echo "ERROR: command not in Nemesis allowlist" >&2
+    exit 1
+    ;;
+esac
 ```
 
 ### Gatus Endpoints (rpi5, Nemesis self-observability)
@@ -1182,7 +1304,7 @@ ssh root@sancta-choir \
 3. Implement `nemesis-planner.path` on `triggers/` directory
 4. Implement `nemesis-tripwire.service`:
    - SSH probe + Tailscale check + Gatus for sancta-choir
-   - On violation: `ssh root@sancta-choir "nixos-rebuild switch --rollback"`
+   - On violation: rollback cascade (Tailscale SSH → public IP SSH → Hetzner API reboot)
 5. Confirm tripwire fires independently even when Nemesis main service is stopped
 6. Tripwire uses `invariant-checker.py` with subset checks (1, 2, 3) for its
    continuous monitoring loop
@@ -1299,10 +1421,12 @@ remain stratum 0 (human-only).
    rebuild from the SSH session:
    ```bash
    ssh root@sancta-choir \
-     "systemd-run --unit=nemesis-rebuild --scope \
+     "systemd-run --unit=nemesis-rebuild --no-block \
       nixos-rebuild test --flake /var/lib/nemesis/nixos-config#sancta-choir"
    ```
-   Then poll for completion via a separate SSH probe.
+   This creates a transient service that survives SSH disconnection.
+   The actuator polls for completion via a separate SSH probe:
+   `ssh root@sancta-choir "systemctl is-active nemesis-rebuild.service"`
 
 ---
 
