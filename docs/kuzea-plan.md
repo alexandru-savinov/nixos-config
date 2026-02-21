@@ -420,12 +420,17 @@ auto-refresh).
 
 ```bash
 # ExecStartPre "+" (runs as root, reads agenix secret)
-# ENV_FILE lives on tmpfs (/run/kuzea/env) — not recoverable after service stop
+# ENV_FILE lives on tmpfs (/run/kuzea/) — not recoverable after service stop
 ENV_FILE="/run/kuzea/planner.env"
 mkdir -p /run/kuzea
 OAUTH_TOKEN=$(cat "${cfg.oauthTokenFile}")
 install -m 0600 -o kuzea -g kuzea /dev/null "$ENV_FILE"
-echo "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN" > "$ENV_FILE"
+cat > "$ENV_FILE" <<ENVEOF
+CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+ENVEOF
+# DISABLE_NONESSENTIAL_TRAFFIC prevents update checks, telemetry, and
+# other outbound traffic beyond api.anthropic.com in the headless context.
 ```
 
 **Token lifecycle:**
@@ -452,10 +457,15 @@ but is not implemented as of February 2026.
 code and distinguishes auth errors (exit code 1 with "authentication"
 or "token" in stderr) from planning failures. Auth errors do **not**
 increment the consecutive-failure counter (to avoid tripping the circuit
-breaker on an expired token). On auth error, the service logs
-`daemon.crit` and notifies the n8n webhook with
-`{"event":"auth_expired","severity":"high"}`. Renewal requires a human
-to re-run `claude setup-token` + `agenix -e kuzea-oauth-token.age`.
+breaker on an expired token). On auth error, the service:
+1. Logs `daemon.crit`
+2. Writes `/var/lib/kuzea/auth-expired` flag file (exposed by the
+   health endpoint as `"auth_expired": true` — gives Gatus a second
+   notification channel independent of n8n availability)
+3. Notifies the n8n webhook with `{"event":"auth_expired","severity":"high"}`
+
+Renewal requires a human to re-run `claude setup-token` +
+`agenix -e kuzea-oauth-token.age`, then `rm /var/lib/kuzea/auth-expired`.
 
 **Verify `claude setup-token` exists:** Before Phase 1, confirm the
 `claude setup-token` subcommand is available in the installed CC version.
@@ -1002,7 +1012,9 @@ Step 11  SSH: git -C <repo> fetch origin                         (sancta-choir)
            Retry with 3× 5s backoff if branch not yet propagated
 Step 12  Gate 6: SSH: nixos-rebuild build --flake .#sancta-choir (~5min)
            Wall-clock timeout: 20 minutes. If exceeded → abort episode
-Step 13  SSH: systemd-run --unit=kuzea-rebuild --no-block        (sancta-choir)
+Step 13  SSH: systemctl reset-failed kuzea-rebuild.service       (sancta-choir)
+           (clears stale unit from prior episode if rpi5 rebooted mid-run)
+         SSH: systemd-run --unit=kuzea-rebuild --no-block        (sancta-choir)
            nixos-rebuild test --flake .#sancta-choir
          Write active-test-window flag: /var/lib/kuzea/test-window-active
            (includes episode-id and expiry timestamp for crash recovery)
@@ -1041,9 +1053,11 @@ Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetz
 **`maxSwitchesPerDay` overflow:** When the daily budget is exhausted,
 trigger events are **deferred** (trigger file remains in `triggers/` but
 the planner checks the budget before proceeding). The next planning cycle
-after UTC midnight processes the backlog. Triggers are never silently
-dropped — if CUSUM fires during a genuine regime shift while the budget
-is exhausted, the trigger persists and is acted on the next day.
+after UTC midnight processes the backlog. To prevent a trigger thundering
+herd after a sustained incident, only the 3 most recent trigger files
+are kept — older deferred triggers are discarded by the planner before
+processing. If CUSUM fires during a genuine regime shift while the budget
+is exhausted, the most recent trigger persists and is acted on the next day.
 
 ### Property Test Suite (Gate 4, runs on rpi5 against sancta-choir evaluated config)
 
@@ -1197,8 +1211,11 @@ Weekly `kuzea-consolidation.timer` runs `memory-consolidator.py`:
 5. **Age-based cleanup:** Prune vectors older than 90 days from
    `kuzea-archive` (the archive is for recovery, not permanent storage).
 6. **Resolve contradictions:** If the same `(service, option, value)` appears
-   with both `SUCCESS` and `ROLLBACK` outcomes, keep only the most recent
-   result and annotate the consolidated vector with `"contradicted": true`.
+   with both `SUCCESS` and `ROLLBACK` outcomes, keep the most recent result
+   and annotate the consolidated vector with
+   `"contradicted": true, "contradiction_count": N`. Retaining the count
+   preserves the signal that an option's success may be load-dependent —
+   future planning cycles can use this to avoid fragile changes.
 
 ### Meta-Review
 
@@ -1293,6 +1310,8 @@ users.users.root.openssh.authorizedKeys.keys = [
   # existing keys...
   # restrict = no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty
   # from= limits to the rpi5 Tailscale IP only
+  # Phase 2 provisioning: replace 100.x.y.z with rpi5's actual Tailscale IP
+  # obtained from: tailscale status --json | jq -r '.Self.TailscaleIPs[0]'
   ''command="${pkgs.kuzea-ssh-wrapper}/bin/kuzea-ssh-wrapper",restrict,from="100.x.y.z" ssh-ed25519 AAAA... kuzea@rpi5''
 ];
 ```
@@ -1337,13 +1356,9 @@ case "$CMD" in
   "readlink /nix/var/nix/profiles/system")
     exec readlink /nix/var/nix/profiles/system ;;
 
-  # --- Journal (read-only, with quoted --since argument) ---
-  journalctl\ --since\ *\ --output\ json*)
-    since_val="${CMD#journalctl --since }"
-    since_val="${since_val%% --output*}"
-    since_val="${since_val#\'}"; since_val="${since_val%\'}"
-    since_val="${since_val#\"}"; since_val="${since_val%\"}"
-    exec journalctl --since "$since_val" --output json --no-pager -q ;;
+  # --- Journal (read-only, exact match for collection interval) ---
+  "journalctl --since '3m ago' --output json --no-pager -q")
+    exec journalctl --since '3m ago' --output json --no-pager -q ;;
 
   # --- Pre-flight checks (read-only) ---
   "df /nix")
@@ -1383,6 +1398,8 @@ case "$CMD" in
       nixos-rebuild test --flake "$FLAKE" ;;
   "systemctl is-active kuzea-rebuild.service")
     exec systemctl is-active kuzea-rebuild.service ;;
+  "systemctl reset-failed kuzea-rebuild.service")
+    exec systemctl reset-failed kuzea-rebuild.service ;;
 
   # --- SSH probe ---
   "true")
@@ -1665,11 +1682,17 @@ sqlite3 /var/lib/kuzea/metrics.db \
 
 # All 6 invariant checks pass on current state
 python3 /nix/store/.../invariant-checker.py --all   # exit code 0
+# (invocation via absolute store path; the module wraps this in a script)
+
+# Rollback Channel 2 (public IP SSH) verified
+ssh -o ConnectTimeout=10 root@<sancta-choir-public-ip> \
+  "nixos-rebuild switch --rollback"
+# Must succeed (Channel 3 / Hetzner API deferred to Phase 3 when hcloud token is provisioned)
 ```
 
 *Red flags — stop and investigate if:*
 - Remote `nixos-rebuild build` fails consistently on sancta-choir (store path mismatch, disk full, or flake eval error)
-- Rollback cascade never tested end-to-end (Channel 2 and 3 remain unverified — schedule a deliberate test)
+- Rollback Channel 2 (public IP SSH) unreachable — firewall or sshd config issue on sancta-choir's public interface
 - Qdrant outcome embedding silently fails (episodes complete but `kuzea-outcomes` collection stays empty)
 - SSH key `command=` restriction blocks a command the actuator needs (check `kuzea-ssh-wrapper` logs on sancta-choir)
 
