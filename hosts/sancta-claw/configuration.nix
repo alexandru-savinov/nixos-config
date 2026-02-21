@@ -173,8 +173,7 @@
       "openclaw.service"
     ];
     wantedBy = [ "multi-user.target" ];
-    # PartOf ensures this service restarts when OpenClaw restarts
-    # Without this, Requires= only stops this service but doesn't restart it
+    # PartOf propagates stop/restart of openclaw to this unit
     partOf = [ "openclaw.service" ];
 
     serviceConfig = {
@@ -187,10 +186,10 @@
 
     script = ''
       # Wait for tailscaled to be ready (timeout: 60 seconds)
-      timeout=60
+      ts_timeout=60
       while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
-        timeout=$((timeout - 1))
-        if [ $timeout -le 0 ]; then
+        ts_timeout=$((ts_timeout - 1))
+        if [ $ts_timeout -le 0 ]; then
           echo "ERROR: tailscaled not ready after 60 seconds"
           exit 1
         fi
@@ -199,10 +198,10 @@
 
       # Wait for OpenClaw to be listening (timeout: 60 seconds)
       # The 'after' directive only waits for service start, not port availability
-      timeout=60
+      port_timeout=60
       while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 18789 2>/dev/null; do
-        timeout=$((timeout - 1))
-        if [ $timeout -le 0 ]; then
+        port_timeout=$((port_timeout - 1))
+        if [ $port_timeout -le 0 ]; then
           echo "ERROR: OpenClaw not listening on port 18789 after 60 seconds"
           exit 1
         fi
