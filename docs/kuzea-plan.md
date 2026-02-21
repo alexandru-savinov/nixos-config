@@ -125,7 +125,7 @@ The following must be completed before Kuzea implementation begins:
 │  │    SSH → sancta-choir:                                      │    │
 │  │      systemctl show --value -p MemoryCurrent <svc>          │    │
 │  │      cat /proc/pressure/memory                              │    │
-│  │      journalctl --since "2m ago" --output json              │    │
+│  │      journalctl --since @<epoch> --output json              │    │
 │  │    Local Gatus REST API (http://127.0.0.1:3001) for         │    │
 │  │      sancta-choir service health (external vantage)         │    │
 │  │    → SQLite /var/lib/kuzea/metrics.db                     │    │
@@ -386,13 +386,20 @@ files older than `verificationWindowSeconds + 300s` as a safety net:
 
 ```bash
 # Rate limit: skip cascade if already attempted (prevents repeated hard resets)
+# Flag uses expiry-timestamp pattern (same as test-window-active):
+#   content: "<episode-id> <expiry-epoch>"
+#   On all-channels-failed: 5-minute TTL allows retry after cooldown
+#   On success: flag is deleted immediately
 ROLLBACK_FLAG="/var/lib/kuzea/rollback-in-progress"
 if [ -f "$ROLLBACK_FLAG" ]; then
-  logger -t kuzea-tripwire "Rollback already in progress — skipping cascade"
-  exit 0
+  EXPIRY=$(awk '{print $2}' "$ROLLBACK_FLAG")
+  if [ "$(date +%s)" -lt "${EXPIRY:-0}" ]; then
+    logger -t kuzea-tripwire "Rollback already in progress — skipping cascade (expires in $(( EXPIRY - $(date +%s) ))s)"
+    exit 0
+  fi
+  rm -f "$ROLLBACK_FLAG"  # expired, allow retry
 fi
-touch "$ROLLBACK_FLAG"
-# Flag is cleared by: successful rollback (below), actuator episode end, or cleanup timer
+echo "$(date +%s) $(( $(date +%s) + 300 ))" > "$ROLLBACK_FLAG"
 
 # Channel 1: SSH over Tailscale (normal path)
 if ssh -o ConnectTimeout=10 root@sancta-choir.tail4249a9.ts.net \
@@ -425,7 +432,9 @@ if hcloud server reset <sancta-choir-server-id>; then
   exit 0
 fi
 
-# All channels failed — alert loudly
+# All channels failed — alert loudly and write TTL-based flag
+# Flag expires after 5 minutes (30 poll cycles) to allow retry
+echo "$(date +%s) $(( $(date +%s) + 300 ))" > "$ROLLBACK_FLAG"
 logger -t kuzea-tripwire -p daemon.emerg \
   "ALL ROLLBACK CHANNELS FAILED — sancta-choir stuck on test generation"
 # Notify n8n webhook regardless of file I/O success
@@ -763,6 +772,7 @@ watchdog, which are small).
 
 | Script | Peak RAM | Runtime | Frequency |
 |--------|----------|---------|-----------|
+| `claude -p` (CC CLI) | ~400–900 MB | ~2–10m | Per planning cycle |
 | `collect-remote.sh` | ~5 MB | ~3s | Every 2m |
 | `self-profile-generator.py` | ~15 MB | ~2s | Per planning cycle |
 | `invariant-checker.py` | ~10 MB | ~1s | Per actuator run (×2) |
@@ -772,8 +782,19 @@ watchdog, which are small).
 | `change-auditor.py` | ~10 MB | ~1s | Per actuator run |
 | `property-tests.py` | ~15 MB | ~5s | Per actuator run |
 
-**Worst-case concurrent overhead:** ~40 MB (tripwire + watchdog + one
-oneshot). The rpi5 has 4 GB RAM with zram; Kuzea is well within budget.
+**Worst-case concurrent overhead:** ~940 MB during a planning cycle
+(CC CLI is the dominant cost — 400–900 MB depending on turn count and
+file reads). On a 4 GB rpi5 with zram, this competes with Qdrant (~200 MB),
+n8n (~300 MB), Open-WebUI (~200 MB), and other services. The planner
+should include a pre-flight memory check:
+```bash
+AVAIL_MB=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
+if [ "$AVAIL_MB" -lt 800 ]; then
+  logger -t kuzea-planner -p daemon.warning \
+    "Insufficient memory (${AVAIL_MB}MB available, 800MB required) — deferring"
+  exit 0
+fi
+```
 
 ---
 
@@ -824,6 +845,7 @@ CREATE TABLE episodes (
   id               TEXT PRIMARY KEY,
   started_at       DATETIME,
   completed_at     DATETIME,
+  tier             INTEGER NOT NULL DEFAULT 1,  -- 1, 2, or 3 (structured, avoids LIKE queries)
   goal             TEXT,
   overlay_file     TEXT,
   gate_results     JSON,
@@ -862,12 +884,18 @@ via existing Open-WebUI connection, (c) use a smaller model like
 **Phase 1 RAG dependency:** The task file generator injects
 `<past_outcomes>` from Qdrant RAG. Without an embedding backend, the RAG
 section returns empty results. **Explicit deferral decision:** Phases 1–4
-use an empty `<past_outcomes>` placeholder (no embeddings — the first
-episodes generate the initial data). RAG retrieval is enabled and
-validated in Phase 5 only. This means the embedding model choice is a
-**Phase 5 prerequisite**, not a Phase 1 blocker. If Ollama on rpi5 is
-too memory-heavy (competing with kuzea-planner + CC CLI on 4GB RAM),
-use OpenRouter's embedding API instead of local inference.
+**skip** the Qdrant embedding step entirely — outcome data (goal, option,
+old/new value, PSI delta, outcome) is recorded in the SQLite `episodes`
+table only. The actuator's "embed SUCCESS/ROLLBACK in Qdrant" steps are
+no-ops that log `"Qdrant embedding deferred to Phase 5"` and continue.
+In Phase 5, a one-time backfill script embeds all historical episodes
+from SQLite into Qdrant, then enables live embedding going forward.
+This avoids null-vector entries that would break similarity search.
+RAG retrieval is enabled and validated in Phase 5 only. This means the
+embedding model choice is a **Phase 5 prerequisite**, not a Phase 1
+blocker. If Ollama on rpi5 is too memory-heavy (competing with
+kuzea-planner + CC CLI on 4GB RAM), use OpenRouter's embedding API
+instead of local inference.
 
 ---
 
@@ -930,8 +958,9 @@ done
 ssh_collect "psi" "cat /proc/pressure/memory" || true
 
 # Recent journal anomalies
+SINCE_EPOCH=$(date -d '2 minutes ago' +%s)
 ssh_collect "journal" \
-  "journalctl --since '2m ago' --output json --no-pager -q" \
+  "journalctl --since @${SINCE_EPOCH} --output json --no-pager -q" \
   | grep -E '"PRIORITY":"[012]"' | head -50 || true
 
 # Current NixOS generation
@@ -1065,10 +1094,10 @@ Step 12  Gate 6: SSH: nixos-rebuild build --flake .#sancta-choir (~5min)
 Step 13  SSH: systemctl reset-failed kuzea-rebuild.service       (sancta-choir)
            (clears stale unit from prior episode if rpi5 rebooted mid-run)
          SSH: systemd-run --unit=kuzea-rebuild --no-block        (sancta-choir)
-           (note: use --unit=kuzea-rebuild-<episode-id> for per-episode
-            journalctl traceability once the wrapper supports it — this
-            requires updating the SSH wrapper allowlist to accept the
-            dynamic unit name pattern)
+           (Phase 2 deliverable: use --unit=kuzea-rebuild-<episode-id> for
+            per-episode journalctl traceability. Requires updating the SSH
+            wrapper allowlist to accept a dynamic unit name pattern:
+            "systemd-run --unit=kuzea-rebuild-"*" --no-block ...")
            nixos-rebuild test --flake .#sancta-choir
          Write active-test-window flag: /var/lib/kuzea/test-window-active
            (includes episode-id and expiry timestamp for crash recovery)
@@ -1083,7 +1112,7 @@ Step 14  Verification window: 10 minutes (20 probe cycles at 30s intervals)
              pass    → +1 (both probes succeeded)
              fail    → −3 (either probe returned error)
              timeout → −3 (either probe exceeded its timeout — treated as fail)
-           scoring: start at 0, abort if score < 0 OR tripwire fires
+           scoring: start at +3 (absorbs one transient failure), abort if score < 0 OR tripwire fires
            minimum probe requirement: at least 15 of 20 cycles must record
              a result (pass or fail). If <15 cycles record results (e.g. due
              to slow timeouts consuming all slots), treat as fail regardless
@@ -1107,9 +1136,13 @@ Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetz
                       (no PR is created on failure — PRs are only created in Step 15)
 ```
 
-**`maxSwitchesPerDay` overflow:** When the daily budget is exhausted,
-trigger events are **deferred** (trigger file remains in `triggers/` but
-the planner checks the budget before proceeding). The next planning cycle
+**`maxSwitchesPerDay` overflow:** The budget check and episode insertion
+use a single `BEGIN IMMEDIATE` SQLite transaction (read count + insert
+in one atomic operation) to prevent a race where the planner crashes
+between reading the count and inserting, potentially bypassing the limit.
+When the daily budget is exhausted, trigger events are **deferred**
+(trigger file remains in `triggers/` but the planner checks the budget
+before proceeding). The next planning cycle
 after UTC midnight processes the backlog. To prevent a trigger thundering
 herd after a sustained incident, only the 3 most recent trigger files
 are kept — older deferred triggers are discarded by the planner before
@@ -1123,6 +1156,10 @@ is exhausted, the most recent trigger persists and is acted on the next day.
 
 def test_no_port_conflicts(ec):
     """No two services bind the same port on sancta-choir."""
+
+def test_no_placeholder_tailscale_ip(ec):
+    """Reject any authorized_keys containing the placeholder 100.x.y.z.
+    A Nix-level check catches dynamic interpolation that a text grep would miss."""
 
 def test_ssh_daemon_enabled(ec):
     """services.openssh.enable must remain true (remote access)."""
@@ -1243,8 +1280,17 @@ Runs on rpi5:
    build service is inactive). The cleanup timer should check **both**
    `kuzea-rebuild.service` and `test-window-active` before proceeding:
    ```bash
-   ssh root@sancta-choir "systemctl is-active kuzea-rebuild.service" 2>/dev/null \
-     && { logger -t kuzea-cleanup "Skipping GC: rebuild in progress"; exit 0; }
+   # Fail-closed: if SSH fails, skip GC (cannot confirm host is idle)
+   if ! ssh root@sancta-choir "systemctl is-active kuzea-rebuild.service" 2>/dev/null; then
+     if [ $? -eq 255 ]; then
+       logger -t kuzea-cleanup "Skipping GC: SSH unreachable (fail-closed)"
+       exit 0
+     fi
+     # Exit code 3 = inactive (safe to proceed)
+   else
+     logger -t kuzea-cleanup "Skipping GC: rebuild in progress"
+     exit 0
+   fi
    [ -f /var/lib/kuzea/test-window-active ] \
      && { logger -t kuzea-cleanup "Skipping GC: test window active"; exit 0; }
    ```
@@ -1396,7 +1442,7 @@ users.users.root.openssh.authorizedKeys.keys = [
   # NOTE: Tailscale IPs are stable per-node but change on re-registration (factory
   # reset, re-provisioning). If rpi5 is ever re-registered, update this entry and
   # re-deploy sancta-choir — the old IP silently fails auth (safe, but breaks Kuzea).
-  ''command="${pkgs.kuzea-ssh-wrapper}/bin/kuzea-ssh-wrapper",restrict,from="100.x.y.z" ssh-ed25519 AAAA... kuzea@rpi5''
+  ''command="${pkgs.kuzea-ssh-wrapper}/bin/kuzea-ssh-wrapper",restrict,from="100.x.y.z/32" ssh-ed25519 AAAA... kuzea@rpi5''
 ];
 ```
 
@@ -1446,9 +1492,12 @@ case "$CMD" in
   "readlink /nix/var/nix/profiles/system")
     exec readlink /nix/var/nix/profiles/system ;;
 
-  # --- Journal (read-only, exact match for collection interval) ---
-  "journalctl --since '2m ago' --output json --no-pager -q")
-    exec journalctl --since '2m ago' --output json --no-pager -q ;;
+  # --- Journal (read-only, epoch timestamp avoids quoting ambiguity) ---
+  "journalctl --since @"*" --output json --no-pager -q")
+    # Extract epoch from --since @<epoch> (collector computes on rpi5 side)
+    epoch="${CMD#*--since @}"; epoch="${epoch%% *}"
+    [[ "$epoch" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid epoch" >&2; exit 1; }
+    exec journalctl --since "@${epoch}" --output json --no-pager -q ;;
 
   # --- Pre-flight checks (read-only) ---
   "df /nix")
@@ -1515,7 +1564,10 @@ implementation — a 5-line wrapper script that uses `http.server` with a
 custom handler to serve the JSON file as `/health`. Since Python's
 `http.server` is single-threaded and not hardened, the service is
 bound to localhost only and capped with `MemoryMax = "64M"` to limit
-its resource footprint as an always-running process.
+its resource footprint as an always-running process. (Alternative:
+`socat TCP-LISTEN:9095,bind=127.0.0.1,fork,reuseaddr EXEC:"cat /var/lib/kuzea/health.json"`
+avoids the long-running Python process entirely, but lacks HTTP headers
+for Gatus content-type validation.)
 
 ### Gatus Endpoints (rpi5, Kuzea self-observability)
 
@@ -1703,7 +1755,7 @@ claude setup-token --help 2>&1 | grep -q 'setup-token' \
 - Gatus kuzea-collector endpoint is unhealthy within the first 48 hours (misconfigured health endpoint)
 - SQLite DB grows >100MB in 7 days (schema or insertion bug)
 - `claude setup-token` does not exist — decide on `ANTHROPIC_API_KEY` fallback before Phase 1
-- 7-day memory data shows variance >3× between peak and off-peak hours — plan for 4-hour time buckets in CUSUM calibration before Phase 3
+- 7-day memory data shows variance >3× between peak and off-peak hours — run `cusum-calibrate.py` with both single-μ₀ and 4-hour-bucketed approaches; decide on the bucketing strategy as a **Phase 0 output** before Phase 1 starts
 
 *Time budget:* **2 weeks.** If SSH connectivity issues consume >3 days of debugging, reassess whether the sancta-choir network path is reliable enough for this architecture.
 
@@ -1971,15 +2023,18 @@ ls /var/lib/kuzea/meta-reviews/*.md | head -1   # must exist
 # At least one Tier 2 change applied and verified on sancta-choir
 sqlite3 /var/lib/kuzea/metrics.db \
   "SELECT COUNT(*) FROM episodes
-   WHERE goal LIKE '%Tier 2%' AND outcome = 'success';"
+   WHERE tier = 2 AND outcome = 'success';"
 # Must be ≥ 1
 
 # n8n approval workflow completed at least one approval cycle
-# PARTIALLY SPECIFIED: populate <approval-wf-id> when creating the n8n workflow
-# in Phase 6 step 1. Alternative: query by workflow name if ID is not yet known:
-#   curl -sf http://127.0.0.1:5678/api/v1/workflows | jq '[.data[] | select(.name | test("kuzea.*approval"; "i"))] | length'
-curl -sf http://127.0.0.1:5678/api/v1/executions?workflowId=<approval-wf-id>&status=success | jq '.data | length'
+# Primary form (works without knowing workflow ID — queries by name):
+curl -sf http://127.0.0.1:5678/api/v1/workflows \
+  | jq '[.data[] | select(.name | test("kuzea.*approval"; "i"))][0].id' -r \
+  | xargs -I{} curl -sf "http://127.0.0.1:5678/api/v1/executions?workflowId={}&status=success" \
+  | jq '.data | length'
 # Must be ≥ 1
+# Alternative (once workflow ID is known, set in Phase 6 step 1):
+#   curl -sf "http://127.0.0.1:5678/api/v1/executions?workflowId=<approval-wf-id>&status=success" | jq '.data | length'
 ```
 
 *Red flags — stop and investigate if:*
