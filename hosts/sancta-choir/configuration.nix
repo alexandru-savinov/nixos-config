@@ -53,12 +53,12 @@
     # telegram-bot-token.file = "${self}/secrets/telegram-bot-token.age";
   };
 
-  # Home Manager for root user (OpenClaw)
+  # Home Manager settings (root user config provided by modules/users/root.nix)
+  # nix-openclaw Home Manager integration disabled — upstream bird2/bird3
+  # alias bug (same issue as sancta-kuzea). Will use npm install instead.
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
-    users.root = import ../../home/root-openclaw.nix;
-    extraSpecialArgs = { inherit self nix-openclaw; };
   };
 
   # Swap space (prevents OOM during builds on 4GB VPS)
