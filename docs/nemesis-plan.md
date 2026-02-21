@@ -115,10 +115,11 @@ overlay — without a custom tool-calling harness.
 │  │                                                             │    │
 │  │  LOCAL (on rpi5):                                           │    │
 │  │    Gate 1: nix eval type-check option values          10ms  │    │
-│  │    Gate 2: nix --parse <overlay>                      50ms  │    │
+│  │    Gate 2: nix-instantiate --parse <overlay>           50ms  │    │
 │  │    Gate 3: nix flake check                            ~10s  │    │
 │  │    Gate 5: property test suite on COM snapshot         ~5s  │    │
 │  │    Gate 6: change auditor verdict                      ~1s  │    │
+│  │    (Gate 4 runs remotely — see below)                       │    │
 │  │                                                             │    │
 │  │  REMOTE (SSH to sancta-choir):                              │    │
 │  │    Gate 4: nixos-rebuild build --flake .#sancta-choir ~5min │    │
@@ -132,7 +133,7 @@ overlay — without a custom tool-calling harness.
 │                                                                      │
 │  SAFETY LAYER (separate unit, rpi5 — Nemesis cannot stop it)        │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  nemesis-tripwire  (PartOf nothing, always restarts)        │    │
+│  │  nemesis-tripwire  (PartOf nothing, Restart=always)         │    │
 │  │    every 10s: SSH probe · tailscale status · Gatus          │    │
 │  │    on violation during test window:                         │    │
 │  │      ssh sancta-choir "nixos-rebuild switch --rollback"     │    │
@@ -237,6 +238,12 @@ S_t = max(0, S_{t-1} + (x_t − μ₀ − k))
 Fire when S_t > h (threshold)
 ```
 
+Parameters μ₀, k, and h are determined during Phase 0 calibration. k is
+typically set to half the expected shift size (in standard deviations); h
+is chosen to achieve the desired false-alarm rate (larger h = fewer false
+triggers but slower detection). Calibrated values are stored in
+`/var/lib/nemesis/cusum-params.json` before enabling Phase 3.
+
 Scheduled fallback: if no regime change fires in 72 hours, run a routine
 health-check cycle anyway.
 
@@ -258,9 +265,11 @@ ssh root@sancta-choir "nixos-rebuild switch --rollback"
 
 Nemesis invokes `claude` CLI authenticated via `claude auth login` (OAuth
 with the Claude.ai account), not an `ANTHROPIC_API_KEY`. The `nemesis` user
-on rpi5 shares the same `CLAUDE_CONFIG_DIR` as `openclaw`, or gets its own
-pre-authorized session via a one-time `claude auth login` during
-provisioning. Rate limits from Pro naturally cap planning cycles per day.
+on rpi5 gets its own dedicated `CLAUDE_CONFIG_DIR=/var/lib/nemesis/.claude`,
+provisioned with a one-time `sudo -u nemesis claude auth login` during
+setup. (Sharing `CLAUDE_CONFIG_DIR` across users would require world-readable
+OAuth token files, exposing credentials to all local processes.)
+Rate limits from Pro naturally cap planning cycles per day.
 
 ---
 
@@ -278,10 +287,14 @@ for root, vscode-server, and supporting system services.
 | `systemd.services.claude.serviceConfig.CPUQuota` | ±25%, min 25%, max 400% |
 | `systemd.services.claude.serviceConfig.Nice` | ±3, range −20..19 |
 | `nix.settings.max-jobs` / `nix.settings.cores` | ±1 |
-| `swapDevices[].size` | ±512MB (swap file resize, requires reboot) |
+
+**Note:** Options requiring a reboot are structurally incompatible with the
+`nixos-rebuild test` verification window (reboot activates the boot-default
+generation, not the tested one). Such options must be at least Tier 2.
 
 ### Tier 2 — Supervised (approval token before remote switch)
 
+- `swapDevices[].size` — ±512MB (requires reboot; incompatible with autonomous test window)
 - `customModules.claude.*` service-level options
 - `boot.kernel.sysctl` memory/networking parameters
 - Adding a new service module already present in `modules/services/`
@@ -304,7 +317,7 @@ for root, vscode-server, and supporting system services.
 modules/services/
   nemesis.nix                  ← Main NixOS module on rpi5 (options + units)
   nemesis-collector.nix        ← Observer: SSH-collects metrics from sancta-choir
-  nemesis-actuator.nix         ← Actuator: five-gate pipeline + remote switch
+  nemesis-actuator.nix         ← Actuator: six-gate pipeline + remote switch
 
 modules/services/nemesis/
   change-auditor.py            ← Immutable auditor (Nix derivation)
@@ -404,7 +417,7 @@ options.services.nemesis = {
 | `nemesis-anomaly-watcher.service` | simple | Gatus failures + SSH OOM scan; writes trigger |
 | `nemesis-planner.service` | oneshot | Build task file, run `claude -p` |
 | `nemesis-planner.path` | path | Watch `triggers/` for new trigger files |
-| `nemesis-actuator@.service` | oneshot/template | Five-gate pipeline for one proposal |
+| `nemesis-actuator@.service` | oneshot/template | Six-gate pipeline for one proposal |
 | `nemesis-tripwire.service` | simple | External safety monitor; remote rollback |
 | `nemesis-cleanup.timer` | timer/daily | Prune old proposals and episodes |
 
@@ -486,8 +499,10 @@ on rpi5 (`http://127.0.0.1:8080/api/embeddings`). No external calls needed.
 
 ## Remote Metric Collection
 
-The collector SSHes into sancta-choir as the `nemesis` user (dedicated
-SSH key, minimal authorized_keys entry):
+The collector SSHes into sancta-choir as `root` (dedicated SSH key in
+root's `authorized_keys`). Root access is required because `nixos-rebuild`
+and `systemctl show` need it; the dedicated key with restricted
+`authorized_keys` options provides the security boundary:
 
 ```bash
 # modules/services/nemesis/collect-remote.sh
@@ -586,7 +601,7 @@ All steps run on rpi5. Remote steps are explicit SSH calls.
 Step 1   Validate proposal JSON schema (rpi5, local)
 Step 2   Verify overlay file path is in hosts/sancta-choir/agent-overlays/
 Step 3   Gate 1: nix eval type-check proposed values             (rpi5, ~10ms)
-Step 4   Gate 2: nix --parse <overlay>                           (rpi5, ~50ms)
+Step 4   Gate 2: nix-instantiate --parse <overlay>               (rpi5, ~50ms)
 Step 5   Gate 3: nix flake check                                 (rpi5, ~10s)
 Step 6   Gate 5: property test suite against COM snapshot        (rpi5, ~5s)
 Step 7   Gate 6: change-auditor verdict                          (rpi5, ~1s)
@@ -604,8 +619,8 @@ Step 14  Verification window: 10 minutes
            every 30s from rpi5:
              Gatus probe for sancta-choir openclaw endpoint
              SSH probe: ssh root@sancta-choir true
-           scoring: +1 pass · −3 fail
-           abort if score < floor OR tripwire fires
+           scoring: +1 pass · −3 fail (start at 0)
+           abort if score < 0 (net failures exceed net passes) OR tripwire fires
 Step 15  score passes → SSH: nixos-rebuild switch
                       → gh pr create (from rpi5, labeled nemesis)
                       → embed SUCCESS in Qdrant (rpi5)
@@ -951,9 +966,9 @@ ssh root@sancta-choir \
    human-reviewed PR). Must be done before Phase 2.
 
 2. **Pro subscription OAuth flow headless:** `claude auth login` requires an
-   interactive browser step. Either share `CLAUDE_CONFIG_DIR` with the
-   `openclaw` user (if running on the same account) or do a one-time
-   `claude auth login` as the `nemesis` user during provisioning.
+   interactive browser step. Do a one-time `sudo -u nemesis claude auth login`
+   during provisioning (writes to `/var/lib/nemesis/.claude`). Do not share
+   `CLAUDE_CONFIG_DIR` with other users — this would expose OAuth tokens.
 
 3. **`nomic-embed-text` on rpi5:** `ollama pull nomic-embed-text` must be
    run on the Open-WebUI Ollama backend. Add to Open-WebUI module startup
@@ -967,10 +982,16 @@ ssh root@sancta-choir \
 5. **CUSUM μ₀ calibration:** A one-time calibration script computes μ₀ ±2σ
    from Phase 0 data. Run after 7 days of collection before activating CUSUM.
 
-6. **`nixos-rebuild test` on sancta-choir via SSH:** Verify that activating
-   a test generation remotely via SSH leaves the session alive (the systemd
-   unit restart may close the SSH connection). Use `nohup` or a persistent
-   systemd transient unit for the remote rebuild command.
+6. **`nixos-rebuild test` on sancta-choir via SSH:** `nixos-rebuild test`
+   restarts `sshd.service` during activation, which kills the parent SSH
+   connection regardless of `nohup`. Use `systemd-run` to detach the
+   rebuild from the SSH session:
+   ```bash
+   ssh root@sancta-choir \
+     "systemd-run --unit=nemesis-rebuild --scope \
+      nixos-rebuild test --flake /var/lib/nemesis/nixos-config#sancta-choir"
+   ```
+   Then poll for completion via a separate SSH probe.
 
 ---
 
@@ -989,7 +1010,7 @@ ssh root@sancta-choir \
 ## References
 
 - Research proposals: synthesized from 4 independent agent analyses (2026-02-21)
-- Key primitives: `nixos-rebuild test` (NixOS manual §5.3), CUSUM (Page 1954)
+- Key primitives: `nixos-rebuild test` (`nixos-rebuild(8)` man page), CUSUM (Page 1954)
 - Prior art: `modules/services/openclaw.nix`, `modules/services/gatus.nix`,
   `modules/services/qdrant.nix`
 - sancta-choir current config: `hosts/sancta-choir/configuration.nix`
