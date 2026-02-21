@@ -286,11 +286,18 @@ actuator shell script, which is deterministic and auditable.
 
 **Security boundary for Write:** The `--allowedTools Write` flag has no
 path qualifier — CC's `Write` tool can write to any path the `kuzea` OS
-user can access. The actual write restriction is enforced at the OS level:
-the `kuzea` user must not have write access to `hosts/rpi5-full/`,
-`modules/`, or other sensitive repo paths. If CC writes outside
-`agent-overlays/`, the actuator's Step 2 rejects the proposal, and the
-actuator cleans up unexpected files in the working tree after each episode.
+user can access. Defense in depth:
+1. **System prompt:** Explicitly instructs CC to write only to
+   `hosts/sancta-choir/agent-overlays/<id>.nix` and
+   `/var/lib/kuzea/proposals/<id>.json`
+2. **OS-level:** The `kuzea` user's repo clone is owned by `kuzea` with
+   write access restricted to `hosts/sancta-choir/agent-overlays/` only.
+   All other repo paths are read-only for the `kuzea` user (group read
+   via `kuzea:nixos-config` or similar). The home directory
+   `/var/lib/kuzea/` is writable but does not contain sensitive paths.
+3. **Actuator gate:** Step 2 rejects proposals with overlay paths outside
+   `agent-overlays/`. The actuator also cleans up unexpected files in
+   the working tree after each episode.
 
 ### CUSUM trigger (not a fixed schedule)
 
@@ -373,9 +380,12 @@ if ssh -o ConnectTimeout=10 root@<sancta-choir-public-ip> \
   exit 0
 fi
 
-# Channel 3: Hetzner API hard reset (last resort — safe because
-# nixos-rebuild test does NOT set the boot default; reboot recovers
-# to the last nixos-rebuild switch generation)
+# Channel 3: Hetzner API hard reset (last resort)
+# Safe for NixOS: nixos-rebuild test does NOT set the boot default,
+# so hard reset recovers to the last nixos-rebuild switch generation.
+# WARNING: Hard reset mid-write can corrupt application state (SQLite
+# WAL, n8n jobs, OpenClaw inbox). Only triggered when BOTH SSH channels
+# have already failed, confirming the host is fully unreachable.
 # Uses 'reset' (hard power cycle) not 'reboot' (ACPI soft signal),
 # because if the kernel is stuck (OOM, panic), soft reboot won't work.
 if hcloud server reset <sancta-choir-server-id>; then
@@ -593,6 +603,7 @@ modules/services/kuzea/
   task-template-explore.md     ← Alternative CC template for exploration cycles
   memory-consolidator.py       ← Weekly episode consolidation + archival
   meta-review.py               ← Bi-weekly meta-analysis of Kuzea performance
+  cusum-calibrate.py           ← One-time calibration from Phase 0 data (μ₀, k, h)
 
 hosts/sancta-choir/
   configuration.nix            ← + kuzea repo clone setup
@@ -813,11 +824,13 @@ via existing Open-WebUI connection, (c) use a smaller model like
 
 **Phase 1 RAG dependency:** The task file generator injects
 `<past_outcomes>` from Qdrant RAG. Without an embedding backend, the RAG
-section returns empty results. Phase 1 uses an empty `<past_outcomes>`
-placeholder (no embeddings yet — the first episodes generate the initial
-data). Full RAG retrieval is validated in Phase 5. If the embedding
-backend is not resolved by Phase 5, defer RAG validation and proceed
-with empty `<past_outcomes>` throughout.
+section returns empty results. **Explicit deferral decision:** Phases 1–4
+use an empty `<past_outcomes>` placeholder (no embeddings — the first
+episodes generate the initial data). RAG retrieval is enabled and
+validated in Phase 5 only. This means the embedding model choice is a
+**Phase 5 prerequisite**, not a Phase 1 blocker. If Ollama on rpi5 is
+too memory-heavy (competing with kuzea-planner + CC CLI on 4GB RAM),
+use OpenRouter's embedding API instead of local inference.
 
 ---
 
@@ -1015,6 +1028,8 @@ Step 12  Gate 6: SSH: nixos-rebuild build --flake .#sancta-choir (~5min)
 Step 13  SSH: systemctl reset-failed kuzea-rebuild.service       (sancta-choir)
            (clears stale unit from prior episode if rpi5 rebooted mid-run)
          SSH: systemd-run --unit=kuzea-rebuild --no-block        (sancta-choir)
+           (note: use --unit=kuzea-rebuild-<episode-id> for per-episode
+            journalctl traceability once the wrapper supports it)
            nixos-rebuild test --flake .#sancta-choir
          Write active-test-window flag: /var/lib/kuzea/test-window-active
            (includes episode-id and expiry timestamp for crash recovery)
@@ -1048,6 +1063,7 @@ Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetz
                       → git push origin --delete kuzea/<id> (cleanup remote branch)
                       → git rm overlay file + commit (revert the working tree)
                       → notify n8n (rpi5)
+                      (no PR is created on failure — PRs are only created in Step 15)
 ```
 
 **`maxSwitchesPerDay` overflow:** When the daily budget is exhausted,
@@ -1077,8 +1093,9 @@ def test_openclaw_service_enabled(ec):
     """services.openclaw.enable must remain true."""
 
 def test_memory_limits_within_vps_budget(ec):
-    """Sum of MemoryMax < 3.5GB (4GB Hetzner VPS minus 512MB headroom
-       for kernel, sshd, and Tailscale overhead)."""
+    """Sum of MemoryMax < 3.0GB (4GB Hetzner VPS minus 1GB headroom
+       for kernel, sshd, Tailscale, and nixos-rebuild eval spikes
+       which can reach 300-500MB during nix evaluation)."""
 
 def test_memhigh_lte_memmax(ec):
     """MemoryHigh <= MemoryMax for every service."""
@@ -1262,7 +1279,9 @@ month) runs `meta-review.py`:
 
 **Note on `kuzea-hcloud-token`:** This secret is a Phase 3 prerequisite
 (used by the tripwire's Channel 3 rollback via `hcloud server reset`).
-It can be deferred until Phase 3 implementation begins.
+It can be deferred until Phase 3 implementation begins. The token should
+be project-scoped with minimum permissions: `server:read` and
+`server:action` only (not full account access).
 
 ```nix
 # hosts/rpi5-full/configuration.nix — age.secrets:
