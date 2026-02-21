@@ -605,7 +605,6 @@ options.services.nemesis = {
 | `nemesis-tripwire.service` | simple | External safety monitor; remote rollback |
 | `nemesis-cleanup.timer` | timer/daily | Prune old proposals and episodes |
 | `nemesis-retrospective@.service` | oneshot/template | 24h delayed metric comparison per episode |
-| `nemesis-retrospective-check.timer` | timer/hourly | Persistent timer; fires pending retrospectives (Loop #4) |
 | `nemesis-consolidation.timer` | timer/weekly | Trigger memory-consolidator.py |
 | `nemesis-consolidation.service` | oneshot | Weekly episode consolidation + archival |
 | `nemesis-meta-review.timer` | timer/bi-weekly | 1st and 15th of month meta-analysis |
@@ -875,19 +874,11 @@ Step 8   Pre-flight:
            SSH:  nix-env --list-generations -p /nix/var/nix/profiles/system | wc -l ≥ 3
            Gatus: sancta-choir services currently healthy
 Step 9   Update agent-overlays/default.nix to import new overlay (rpi5, local)
-Step 9a  Evaluated-value verification (Feedback Loop #2):
-           nix eval critical options (firewall, sshd, tailscale) against
-           the overlay-applied configuration — catches semantic bypasses
-           that the regex-based change auditor (Gate 6) cannot detect
 Step 10  git commit (branch nemesis/<id>) + git push to origin   (rpi5)
 Step 11  SSH: git fetch + checkout nemesis/<id> on sancta-choir
 Step 12  Gate 4: SSH: nixos-rebuild build --flake .#sancta-choir (~5min on sancta-choir)
 Step 13  SSH: nixos-rebuild test --flake .#sancta-choir
 Step 14  Verification window: 10 minutes (20 probe cycles at 30s intervals)
-           Grace period (Feedback Loop #3): first 30s (1 cycle) is unscored
-             — nixos-rebuild test restarts sshd, causing transient SSH
-             failures that would otherwise trigger immediate rollback.
-             During grace: SSH failures are neutral, SSH successes score +1.
            each cycle runs two probes from rpi5:
              Gatus HTTP probe: sancta-choir health endpoint (5s timeout)
              SSH probe: ssh -o ConnectTimeout=10 root@sancta-choir true
@@ -902,13 +893,9 @@ Step 14  Verification window: 10 minutes (20 probe cycles at 30s intervals)
 Step 15  score passes → SSH: nixos-rebuild switch
                       → gh pr create (from rpi5, labeled nemesis)
                       → embed SUCCESS in Qdrant (rpi5)
-                      → write pending retrospective entry (Feedback Loop #4)
 Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetzner reboot)
                       → embed ROLLBACK + lessons-learned in Qdrant (rpi5)
-                      → git push origin --delete nemesis/<id> (Feedback Loop #7)
                       → notify n8n (rpi5)
-         gate fails   → embed GATE_REJECTED in Qdrant (Feedback Loop #1)
-                      → delete local branch (no remote push occurred)
 ```
 
 ### Property Test Suite (Gate 5, runs on rpi5 against sancta-choir COM)
@@ -1031,247 +1018,6 @@ month) runs `meta-review.py`:
 4. **Context injection:** Meta-review output is included in future planning
    cycles as additional context (appended to the task file after
    `<past_outcomes>`).
-
----
-
-## Feedback Loops
-
-This section catalogs the closed-loop mechanisms that allow Nemesis to learn
-from its own failures and prevent silent state drift. Each loop was identified
-from design review feedback — without them, failures are invisible and the
-agent repeats mistakes.
-
-### Loop #1 — Gate Failure Embedding
-
-**Gap:** When a gate rejects a proposal (Steps 3–7), the failure is logged
-but not embedded in Qdrant. Future planning cycles have no semantic memory
-of *why* similar proposals were rejected, leading to repeated gate failures.
-
-**Mechanism:** On any gate failure, the actuator embeds a `GATE_REJECTED`
-vector in the `nemesis-outcomes` Qdrant collection:
-
-```json
-{
-  "content": "Proposal to raise MemoryMax to 3200M was rejected by Gate 5 (property test): sum of MemoryMax exceeded 3.5GB VPS budget.",
-  "metadata": {
-    "outcome": "gate_rejected",
-    "gate": "property_tests",
-    "target_option": "systemd.services.openclaw-task-runner.serviceConfig.MemoryMax",
-    "proposed_value": "3200M",
-    "rejection_reason": "test_memory_limits_within_vps_budget failed"
-  }
-}
-```
-
-Future planning cycles retrieve these failures by semantic similarity, giving
-CC explicit knowledge of what the gates will reject.
-
-**Phase:** 1 (when Qdrant embedding pipeline is available).
-
-### Loop #2 — Evaluated-Value Verification
-
-**Gap:** The change auditor (Gate 6) uses regex against raw Nix source text.
-This cannot catch `lib.mkForce`, attribute-set nesting, or variable
-indirection. A proposal could bypass the regex-based BLOCKED patterns while
-still evaluating to a dangerous value.
-
-**Mechanism:** After updating `agent-overlays/default.nix` (Step 9) and
-before the remote build (Step 12), the actuator runs `nix eval` checks
-against the *evaluated* configuration with the overlay applied:
-
-```bash
-# Verify critical options remain safe after overlay evaluation
-nix eval .#nixosConfigurations.sancta-choir.config.networking.firewall.enable
-# must == true
-nix eval .#nixosConfigurations.sancta-choir.config.services.openssh.enable
-# must == true
-nix eval .#nixosConfigurations.sancta-choir.config.services.tailscale.enable
-# must == true
-```
-
-This supplements (not replaces) the regex auditor — the regex catches
-obviously bad source patterns early, while `nix eval` catches semantically
-dangerous *evaluated* values regardless of how they're expressed.
-
-**Phase:** 2 (when the actuator pipeline is implemented).
-
-### Loop #3 — Verification Window Grace Period
-
-**Gap:** `nixos-rebuild test` restarts sshd during activation, causing a
-~5–10s window where SSH probes fail. With the `-3` fail weight, the first
-probe after activation drops the score below 0 and triggers an immediate
-rollback of an otherwise healthy change.
-
-**Mechanism:** The verification window (Step 14) starts with a 30-second
-grace period before scoring begins. During this grace period:
-- Gatus HTTP probes are collected but not scored
-- SSH probe failures are treated as neutral (score unchanged)
-- Only SSH *successes* during grace are scored (+1), confirming the target
-  is back online
-
-After the grace period, normal scoring resumes (`+1 pass / -3 fail`).
-
-**Phase:** 2 (actuator pipeline implementation).
-
-### Loop #4 — Persistent Retrospective Timer
-
-**Gap:** The 24h retrospective uses `systemd-run --on-active=24h`, which
-creates a transient unit that does not survive rpi5 reboots. If rpi5
-reboots within 24 hours of a successful switch, the delayed outcome
-evaluation never fires, and slow-onset regressions go undetected.
-
-**Mechanism:** Replace transient `systemd-run` with a persistent timer:
-
-1. At switch time, the actuator writes a pending retrospective entry:
-   ```bash
-   echo "$episode_id $(date -u +%s)" >> /var/lib/nemesis/pending-retrospectives
-   ```
-
-2. `nemesis-retrospective-check.timer` fires hourly with `Persistent=true`
-   (survives reboots). It reads `pending-retrospectives`, fires
-   `nemesis-retrospective@<episode-id>.service` for any entry where
-   `now - switch_timestamp >= 24h`, then removes the processed entry.
-
-3. On rpi5 reboot, the persistent timer catches up on missed retrospectives
-   at its next activation.
-
-**Phase:** 4 (when retrospective is fully deployed).
-
-### Loop #5 — Bound Saturation Alerting
-
-**Gap:** Tier 1 bounds (e.g., MemoryMax max 3G) are fixed. If proposals
-consistently push values toward the ceiling, the agent's ability to improve
-shrinks without any signal. The agent keeps proposing near-ceiling values
-that produce diminishing returns.
-
-**Mechanism:** `meta-review.py` (bi-weekly) computes bound saturation for
-each Tier 1 option:
-
-```
-saturation = (most_recent_value - bound_min) / (bound_max - bound_min)
-```
-
-If saturation exceeds 60%, the meta-review:
-1. Logs a warning to the report
-2. Generates a Tier 3 draft PR (`gh pr create --draft --label nemesis-meta`)
-   proposing a bound increase with supporting data
-3. Injects the saturation data into future planning cycles so CC can factor
-   in how close it is to the ceiling
-
-**Phase:** 4 (meta-review already designed; saturation tracking added here).
-
-### Loop #6 — Collection Staleness Detection
-
-**Gap:** If SSH collection fails repeatedly (sancta-choir unreachable,
-command errors), the CUSUM watchdog and anomaly watcher operate on stale
-data. Without an explicit staleness signal, the planner may propose
-changes based on outdated metrics.
-
-**Mechanism:**
-- `collect-remote.sh` writes a timestamp to
-  `/var/lib/nemesis/last-successful-collection`
-- The planner checks this timestamp before generating a task file.
-  If `now - last_collection > 10m` (5 missed cycles), the planner:
-  1. Injects a `<stale_data_warning>` section into the task file
-  2. CC is instructed to propose only no-action or conservative changes
-  3. The staleness event is recorded as an anomaly in SQLite
-
-**Phase:** 3 (when event-driven triggering is active).
-
-### Loop #7 — Git Branch Hygiene After Rollback
-
-**Gap:** Step 10 pushes a `nemesis/<id>` branch to GitHub before the remote
-build (Step 12). If any subsequent step fails and the system rolls back,
-the branch persists on GitHub. Over time, stale branches accumulate and
-pollute the repository.
-
-**Mechanism:**
-- On rollback (Step 16): the actuator runs
-  `git push origin --delete nemesis/<id>` after the rollback cascade
-- On gate failure (Steps 3–7): the actuator deletes the local branch
-  (no push was made yet)
-- `nemesis-cleanup.timer` (daily): prunes any `nemesis/*` remote branches
-  older than 7 days that have no associated open PR
-
-**Phase:** 2 (when the actuator pipeline is implemented).
-
-### Loop #8 — Planner Serialization Lock
-
-**Gap:** The CUSUM watchdog and anomaly watcher can both write trigger files
-simultaneously. If `nemesis-planner.path` fires twice within the same
-activation window, two planners run concurrently — each generating a
-separate overlay and racing to push to git.
-
-**Mechanism:** The planner service uses `flock` to serialize execution:
-
-```bash
-# nemesis-planner ExecStart
-exec flock --nonblock /var/lib/nemesis/planner.lock \
-  /path/to/nemesis-planner.sh
-```
-
-If the lock is held, the second invocation exits immediately. The path
-unit will re-trigger when the next trigger file appears.
-
-Additionally, the actuator uses its own lock
-(`/var/lib/nemesis/actuator.lock`) to prevent concurrent remote
-`nixos-rebuild` operations.
-
-**Phase:** 3 (when CUSUM + anomaly watcher are deployed).
-
-### Loop #9 — OAuth Token Expiry Probe
-
-**Gap:** The `CLAUDE_CODE_OAUTH_TOKEN` (1-year validity from
-`claude setup-token`) can expire mid-cycle. Without explicit auth error
-detection, an expired token causes CC invocation failures that increment
-the consecutive-failure counter and eventually trip the circuit breaker —
-masking the real problem (expired credential, not bad proposals).
-
-**Mechanism:**
-- `nemesis-planner.service` captures CC exit codes and stderr
-- Auth errors (HTTP 401, "invalid token", "expired") are classified
-  separately from planning failures
-- Auth errors do **not** increment `limits.maxConsecutiveFails`
-- On auth error: write `/var/lib/nemesis/auth-error`, notify n8n
-  webhook with `{"event": "auth_expired", "severity": "high"}`
-- The planner refuses to run while `auth-error` exists (similar to
-  circuit breaker, but distinct — requires re-provisioning the token)
-
-**Phase:** 1 (required when CC invocation begins).
-
-### Loop #10 — Nix Store GC on Target
-
-**Gap:** Nemesis creates new NixOS generations on sancta-choir with each
-successful switch. Without periodic garbage collection, `/nix/store` fills
-up. The pre-flight check (`df /nix ≥ 5GB`) catches imminent disk
-exhaustion but doesn't prevent it.
-
-**Mechanism:**
-- `nemesis-cleanup.timer` (daily, already planned) adds a remote GC step:
-  ```bash
-  ssh root@sancta-choir \
-    "nix-collect-garbage --delete-older-than 14d"
-  ```
-- The cleanup retains the 3 most recent generations regardless of age
-  (ensures rollback is always possible)
-- Disk usage is reported in the meta-review for trend tracking
-
-**Phase:** 2 (when the actuator has remote SSH access).
-
-### Loop Summary
-
-| # | Name | Signal | Response | Phase |
-|---|------|--------|----------|-------|
-| 1 | Gate failure embedding | Gate rejects proposal | Embed in Qdrant for future planning | 1 |
-| 2 | Evaluated-value check | Overlay applied | `nix eval` critical options | 2 |
-| 3 | Grace period | `nixos-rebuild test` | 30s scoring pause | 2 |
-| 4 | Persistent retrospective | Successful switch | Hourly timer checks pending list | 4 |
-| 5 | Bound saturation | Proposals near ceiling | Draft PR + planner context | 4 |
-| 6 | Collection staleness | SSH failures | Stale-data warning in task file | 3 |
-| 7 | Git hygiene | Rollback/gate failure | Delete stale branches | 2 |
-| 8 | Planner serialization | Concurrent triggers | `flock` on planner + actuator | 3 |
-| 9 | OAuth probe | Auth error from CC | Separate error class, notify | 1 |
-| 10 | Nix store GC | Daily timer | Remote `nix-collect-garbage` | 2 |
 
 ---
 
@@ -1516,10 +1262,6 @@ sqlite3 /var/lib/nemesis/metrics.db \
 7. Self-profile generator produces `self-profile.json`, injected into task
    file as `<self_profile>` section (option frequency, success rates,
    unexplored options)
-8. Gate failure embedding (Feedback Loop #1): rejected proposals embedded
-   in Qdrant as `GATE_REJECTED` vectors for future planning context
-9. OAuth token expiry detection (Feedback Loop #9): planner distinguishes
-   auth errors from planning failures, does not increment failure counter
 
 **Deliverable:** 5 proposals reviewed. Overlay files syntactically valid,
 targeting sancta-choir options correctly.
@@ -1541,14 +1283,6 @@ targeting sancta-choir options correctly.
 8. Invariant checker runs at pre-flight (after Step 8) and post-verification
    (after Step 14) — all 6 checks must pass
 9. Evaluation constitution Nix options defined (`services.nemesis.evaluation.*`)
-10. Evaluated-value verification (Feedback Loop #2): `nix eval` checks on
-    critical options after overlay application (Step 9a)
-11. Verification grace period (Feedback Loop #3): 30s unscored window after
-    `nixos-rebuild test` to absorb sshd restart transients
-12. Git branch cleanup on rollback (Feedback Loop #7): delete stale
-    `nemesis/<id>` remote branches on failure
-13. Nix store GC on target (Feedback Loop #10): daily remote
-    `nix-collect-garbage --delete-older-than 14d` added to cleanup timer
 
 **Deliverable:** End-to-end pipeline confirmed. Remote rollback verified.
 
@@ -1574,10 +1308,6 @@ ssh root@sancta-choir \
 5. Confirm tripwire fires independently even when Nemesis main service is stopped
 6. Tripwire uses `invariant-checker.py` with subset checks (1, 2, 3) for its
    continuous monitoring loop
-7. Collection staleness detection (Feedback Loop #6): planner injects
-   `<stale_data_warning>` when metrics are >10m old
-8. Planner serialization lock (Feedback Loop #8): `flock` prevents concurrent
-   planner/actuator instances from CUSUM + anomaly watcher races
 
 ---
 
@@ -1591,12 +1321,7 @@ ssh root@sancta-choir \
 4. Tune CUSUM thresholds from Phase 0 baseline
 5. Deploy and monitor for one week
 6. Exploration budget enabled (every 5th cycle uses `task-template-explore.md`)
-7. Persistent retrospective timer (Feedback Loop #4): replace transient
-   `systemd-run --on-active=24h` with `nemesis-retrospective-check.timer`
-   (hourly, `Persistent=true`) that processes pending retrospective entries
-8. Bound saturation alerting (Feedback Loop #5): `meta-review.py` tracks
-   how close proposals get to Tier 1 ceilings; >60% saturation triggers
-   a draft PR proposing bound expansion
+7. Retrospective timer scheduled per episode (`systemd-run --on-active=24h`)
 
 **Acceptance criteria:**
 - ≥ 3 autonomous remote switches with PSI improvement confirmed
@@ -1699,12 +1424,7 @@ remain stratum 0 (human-only).
      "systemd-run --unit=nemesis-rebuild --no-block \
       nixos-rebuild test --flake /var/lib/nemesis/nixos-config#sancta-choir"
    ```
-   **Important:** Do NOT use `--scope` — scope units inherit the SSH
-   session's cgroup and are killed when SSH disconnects, defeating the
-   purpose. Without `--scope`, `systemd-run` creates a transient service
-   unit that survives the session. Apply this pattern consistently to
-   all remote `nixos-rebuild` commands: `test`, `switch`, and
-   `switch --rollback` (including in the tripwire rollback cascade).
+   This creates a transient service that survives SSH disconnection.
    The actuator polls for completion via a separate SSH probe:
    `ssh root@sancta-choir "systemctl is-active nemesis-rebuild.service"`
 
@@ -1720,17 +1440,6 @@ remain stratum 0 (human-only).
 - [ ] Phase 5: RAG retrieval demonstrably improves gate-pass rate (A/B documented)
 - [ ] Phase 6: One Tier 2 change applied via n8n approval on sancta-choir
 - [ ] Phase 7: Meta-review generates ≥1 bound-expansion draft PR; human reviews
-
-### Feedback Loop Validation
-
-- [ ] Loop #1: Gate failures produce Qdrant vectors retrievable by future planning cycles
-- [ ] Loop #2: `nix eval` verification catches at least one regex-bypassing value in testing
-- [ ] Loop #3: Grace period prevents false rollbacks during sshd restart transient
-- [ ] Loop #4: Retrospective fires correctly after rpi5 reboot (persistent timer)
-- [ ] Loop #7: No stale `nemesis/*` branches older than 7 days on GitHub
-- [ ] Loop #8: Concurrent CUSUM + anomaly triggers produce exactly one planner run
-- [ ] Loop #9: Expired OAuth token triggers alert, not circuit breaker
-- [ ] Loop #10: `/nix/store` on sancta-choir does not grow unboundedly (14d GC verified)
 
 ---
 
