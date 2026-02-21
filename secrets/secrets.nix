@@ -9,6 +9,10 @@ let
   # Raspberry Pi 5 host key
   rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjZXKDY8Ve/wfMHpjsJGR7guDQFndGoNxDZKXegEfjr root@rpi5";
 
+  # sancta-claw VPS host key (Hetzner CX33, nbg1-dc3, 46.225.168.24)
+  # Intentionally NOT in systems list — only needs tailscale-auth-key (least privilege)
+  sancta-claw = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGPSg59xhgMmUcxRS9Yw76z57DiVib3kXHyw52RAThcs";
+
   # Combine users who can edit
   users = [ root-sancta-choir ];
 
@@ -19,8 +23,8 @@ let
   allKeys = users ++ systems;
 in
 {
-  # Tailscale - shared across all hosts
-  "tailscale-auth-key.age".publicKeys = allKeys;
+  # Tailscale - shared across all hosts (including sancta-claw)
+  "tailscale-auth-key.age".publicKeys = allKeys ++ [ sancta-claw ];
 
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;

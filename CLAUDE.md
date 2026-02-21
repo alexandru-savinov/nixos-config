@@ -28,6 +28,7 @@ Flake-based NixOS configuration:
 - **rpi5-full** (aarch64-linux): Raspberry Pi 5 ← **You are here** (only active host)
 - **rpi5** (aarch64-linux): Minimal config for SD image builds only
 - **sancta-choir** (x86_64-linux): Hetzner VPS — OpenClaw AI gateway
+- **sancta-claw** (x86_64-linux): Hetzner VPS — Dedicated OpenClaw host (Official npm package, Pro subscription)
 
 ## Commands
 
@@ -85,6 +86,7 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
 | `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
+| `openclaw` (sancta-claw) | 18789 | Official OpenClaw npm package on dedicated VPS |
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. OpenClaw uses a different model: file-based inbox with per-UID nftables network restriction (no listener).
 
@@ -94,6 +96,7 @@ Access URLs (HTTPS via Tailscale Serve):
 - NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
 - Gatus: `https://rpi5.tail4249a9.ts.net:3001`
 - Qdrant: `https://rpi5.tail4249a9.ts.net:6333`
+- OpenClaw: `https://sancta-claw.tail4249a9.ts.net:18789` (pending Tailscale Serve setup)
 
 ## Secrets (Agenix)
 
@@ -109,7 +112,7 @@ Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-
 
 ## CI/CD
 
-GitHub Actions on push/PR: `nix flake check`, build sancta-choir (x86_64), evaluate rpi5 (aarch64 minimal), format check. **Note:** `rpi5-full` is NOT verified in CI — validate locally with `nixos-rebuild build --flake .#rpi5-full`. Main branch protected - use PRs.
+GitHub Actions on push/PR: `nix flake check`, build sancta-choir + sancta-claw (x86_64), evaluate rpi5 (aarch64 minimal), format check. **Note:** `rpi5-full` is NOT verified in CI — validate locally with `nixos-rebuild build --flake .#rpi5-full`. Main branch protected - use PRs.
 
 ## Git Workflow
 

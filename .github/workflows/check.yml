@@ -83,6 +83,9 @@ jobs:
             - name: Build sancta-choir (x86_64-linux)
               run: nix build .#nixosConfigurations.sancta-choir.config.system.build.toplevel
 
+            - name: Build sancta-claw (x86_64-linux)
+              run: nix build .#nixosConfigurations.sancta-claw.config.system.build.toplevel
+
     build-scripts:
         name: Build Scripts
         runs-on: ubuntu-latest
