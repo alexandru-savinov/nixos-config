@@ -56,6 +56,7 @@
       address = "46.225.168.24";
       prefixLength = 32;
     }];
+    # Link-local only — no global IPv6 assigned by Hetzner for this instance
     ipv6.addresses = [{
       address = "fe80::9000:7ff:fe40:d620";
       prefixLength = 64;
@@ -99,6 +100,7 @@
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
+    sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
   # ── Swap (2GB — prevents OOM during builds on CX33) ────────────────────
@@ -185,6 +187,7 @@
       # Skip if openclaw binary not installed (ConditionPathExists on openclaw.service
       # causes it to be skipped, but a skipped unit still satisfies Requires=)
       ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
+      NoNewPrivileges = true;
     };
 
     script = ''
