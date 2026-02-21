@@ -16,14 +16,14 @@ let
   users = [ root-sancta-choir ];
 
   # Systems that can decrypt
-  systems = [ sancta-kuzea rpi5 sancta-claw ];
+  systems = [ sancta-kuzea rpi5 ];
 
   # All keys (for secrets shared across all hosts)
   allKeys = users ++ systems;
 in
 {
-  # Tailscale - shared across all hosts
-  "tailscale-auth-key.age".publicKeys = allKeys;
+  # Tailscale - shared across all hosts (including sancta-claw)
+  "tailscale-auth-key.age".publicKeys = allKeys ++ [ sancta-claw ];
 
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;

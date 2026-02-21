@@ -1,5 +1,4 @@
-{ config
-, pkgs
+{ pkgs
 , lib
 , self
 , ...
@@ -21,6 +20,7 @@
   customModules.claude.enable = true;
 
   # Build tools for OpenClaw npm native compilation (llama.cpp, etc.)
+  # Kept permanently for npm update -g openclaw recompilation
   environment.systemPackages = with pkgs; [
     cmake
     gnumake
@@ -43,8 +43,7 @@
   # Allow unfree packages
   nixpkgs.config.allowUnfree = true;
 
-  # ── Networking (inline — not importing host.nix/networking.nix) ──────────
-  # Placeholders: replace after hcloud provisioning
+  # ── Networking (inline — Hetzner CX33, nbg1-dc3) ───────────────────────
   networking.hostName = "sancta-claw";
   networking.domain = "";
   networking.useDHCP = false;
@@ -117,7 +116,8 @@
     group = "openclaw";
     home = "/var/lib/openclaw";
     createHome = true;
-    shell = pkgs.bash;
+    # Login shell needed for: sudo -u openclaw npm install/openclaw configure
+    shell = pkgs.bashInteractive;
   };
   users.groups.openclaw = { };
 
