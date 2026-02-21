@@ -97,7 +97,7 @@
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
   };
 
-  # ── Home Manager ────────────────────────────────────────────────────────
+  # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
@@ -118,8 +118,6 @@
     home = "/var/lib/openclaw";
     createHome = true;
     shell = pkgs.bash;
-    # npm global bin needs to be on PATH
-    packages = with pkgs; [ nodejs_22 ];
   };
   users.groups.openclaw = { };
 
@@ -183,6 +181,9 @@
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+      # Skip if openclaw binary not installed (ConditionPathExists on openclaw.service
+      # causes it to be skipped, but a skipped unit still satisfies Requires=)
+      ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
     };
 
     script = ''

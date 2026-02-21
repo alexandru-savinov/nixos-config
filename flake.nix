@@ -153,7 +153,6 @@
           modules = [
             ./hosts/sancta-claw/configuration.nix
             home-manager.nixosModules.home-manager
-            vscode-server.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
               environment.systemPackages = with pkgs; [
