@@ -150,10 +150,11 @@
       MemoryHigh = "5G";
       CPUQuota = "300%";
 
-      # Hardening
+      # Hardening (no MemoryDenyWriteExecute — Node.js needs JIT)
       NoNewPrivileges = true;
       ProtectSystem = "strict";
       ProtectHome = true; # /var/lib/openclaw is not under /home
+      PrivateDevices = true;
       ReadWritePaths = [ "/var/lib/openclaw" ];
       PrivateTmp = true;
     };
