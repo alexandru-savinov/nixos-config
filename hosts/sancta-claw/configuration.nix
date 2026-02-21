@@ -2,7 +2,6 @@
 , pkgs
 , lib
 , self
-, claude-code
 , ...
 }:
 
@@ -130,6 +129,13 @@
       User = "openclaw";
       Group = "openclaw";
       WorkingDirectory = "/var/lib/openclaw";
+      # Prerequisite: sudo -u openclaw npm install -g openclaw
+      ExecStartPre = pkgs.writeShellScript "openclaw-check" ''
+        if [ ! -x /var/lib/openclaw/.npm-global/bin/openclaw ]; then
+          echo "ERROR: openclaw binary not found. Run: sudo -u openclaw npm install -g openclaw" >&2
+          exit 1
+        fi
+      '';
       ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
@@ -142,7 +148,7 @@
       # Hardening
       NoNewPrivileges = true;
       ProtectSystem = "strict";
-      ProtectHome = false; # Needs access to /var/lib/openclaw
+      ProtectHome = true; # /var/lib/openclaw is not under /home
       ReadWritePaths = [ "/var/lib/openclaw" ];
       PrivateTmp = true;
     };
@@ -151,30 +157,63 @@
   # ── Tailscale Serve for OpenClaw UI ─────────────────────────────────────
   systemd.services.openclaw-tailscale-serve = {
     description = "Tailscale Serve for OpenClaw UI";
-    after = [ "openclaw.service" "tailscaled.service" ];
-    requires = [ "openclaw.service" ];
+    after = [
+      "network-online.target"
+      "tailscaled.service"
+      "openclaw.service"
+    ];
+    wants = [ "network-online.target" ];
+    requires = [
+      "tailscaled.service"
+      "openclaw.service"
+    ];
     wantedBy = [ "multi-user.target" ];
+    # PartOf ensures this service restarts when OpenClaw restarts
+    # Without this, Requires= only stops this service but doesn't restart it
+    partOf = [ "openclaw.service" ];
 
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = pkgs.writeShellScript "openclaw-tailscale-serve-start" ''
-        # Wait for OpenClaw to be listening
-        for i in $(seq 1 30); do
-          if ${pkgs.curl}/bin/curl -sf http://127.0.0.1:18789/health >/dev/null 2>&1; then
-            break
-          fi
-          sleep 2
-        done
-        # Set up Tailscale Serve (idempotent)
-        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:18789"; then
-          ${pkgs.tailscale}/bin/tailscale serve --bg --https 18789 http://127.0.0.1:18789
-        fi
-      '';
-      ExecStop = pkgs.writeShellScript "openclaw-tailscale-serve-stop" ''
-        ${pkgs.tailscale}/bin/tailscale serve --https 18789 off || true
-      '';
     };
+
+    script = ''
+      # Wait for tailscaled to be ready (timeout: 60 seconds)
+      timeout=60
+      while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+        timeout=$((timeout - 1))
+        if [ $timeout -le 0 ]; then
+          echo "ERROR: tailscaled not ready after 60 seconds"
+          exit 1
+        fi
+        sleep 1
+      done
+
+      # Wait for OpenClaw to be listening (timeout: 60 seconds)
+      # The 'after' directive only waits for service start, not port availability
+      timeout=60
+      while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 18789 2>/dev/null; do
+        timeout=$((timeout - 1))
+        if [ $timeout -le 0 ]; then
+          echo "ERROR: OpenClaw not listening on port 18789 after 60 seconds"
+          exit 1
+        fi
+        sleep 1
+      done
+
+      # Check if serve is already configured for this port
+      if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:18789"; then
+        echo "Configuring Tailscale Serve for OpenClaw..."
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https 18789 http://127.0.0.1:18789
+      else
+        echo "Tailscale Serve already configured for OpenClaw"
+      fi
+    '';
+
+    preStop = ''
+      echo "Removing Tailscale Serve configuration for OpenClaw..."
+      ${pkgs.tailscale}/bin/tailscale serve --bg --https 18789 off || true
+    '';
   };
 
   # ── SSH authorized keys ─────────────────────────────────────────────────
