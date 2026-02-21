@@ -28,6 +28,18 @@
     python3
   ];
 
+  # Pre-built Claude Code binaries from cachix (avoids building from source)
+  nix.settings = {
+    substituters = [
+      "https://cache.nixos.org"
+      "https://claude-code.cachix.org"
+    ];
+    trusted-public-keys = [
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+      "claude-code.cachix.org-1:p3pMxGi7K+xT7I3dLghdlrUijD8s+wfQlmWp8gQ/TJA="
+    ];
+  };
+
   # Allow unfree packages
   nixpkgs.config.allowUnfree = true;
 
