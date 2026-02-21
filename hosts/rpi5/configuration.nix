@@ -59,7 +59,7 @@
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
-    sharedModules = [ { home.enableNixpkgsReleaseCheck = false; } ];
+    sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
   # Allow unfree packages (Open-WebUI license changed in v0.6+)

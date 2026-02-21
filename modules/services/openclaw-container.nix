@@ -149,7 +149,7 @@ in
     };
 
     # Host networking configuration
-    networking.bridges.cnt-openclaw.interfaces = [];
+    networking.bridges.cnt-openclaw.interfaces = [ ];
     networking.interfaces.cnt-openclaw.ipv4.addresses = [{
       address = "192.168.84.1";
       prefixLength = 24;
