@@ -2,7 +2,7 @@
 
 **Status:** Design / Pre-implementation
 **Controller host:** `rpi5-full` (aarch64-linux, Raspberry Pi 5)
-**Target host:** `sancta-choir` (x86_64-linux, Hetzner VPS)
+**Target host:** `sancta-choir` (x86_64-linux, Hetzner VPS — 4GB RAM, 2 vCPU, 2GB swap)
 **Brain:** Claude Code CLI via Claude Pro subscription (no API key billing)
 
 ---
@@ -159,7 +159,7 @@ The following must be completed before Kuzea implementation begins:
 │  │      Gatus probe (5s timeout) + SSH probe (10s timeout)     │    │
 │  │      pass +1 · fail/timeout −3 · min 15/20 recorded cycles  │    │
 │  │    pass → nixos-rebuild switch + git push + PR              │    │
-│  │    fail → rollback cascade (SSH→public IP→Hetzner reboot)  │    │
+│  │    fail → rollback cascade (SSH→public IP→Hetzner reset)  │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                      │
 │  SAFETY LAYER (separate unit, rpi5 — Kuzea cannot stop it)        │
@@ -169,7 +169,7 @@ The following must be completed before Kuzea implementation begins:
 │  │    on violation during test window — rollback cascade:       │    │
 │  │      1. SSH over Tailscale → nixos-rebuild switch --rollback│    │
 │  │      2. SSH over public IP → same                           │    │
-│  │      3. Hetzner API reboot (boot-default = last switch)     │    │
+│  │      3. Hetzner API hard reset (boot-default = last switch)     │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -349,9 +349,14 @@ stopped by the Kuzea user. It polls:
 - Gatus health endpoint for sancta-choir services (from rpi5)
 
 On violation during an active test window (detected by the presence of
-`/var/lib/kuzea/test-window-active` with a non-expired timestamp),
-the tripwire executes a **rollback cascade** — each channel is tried
-in order until one succeeds:
+`/var/lib/kuzea/test-window-active`), the tripwire executes a
+**rollback cascade** — each channel is tried in order until one succeeds.
+
+**test-window-active format:** The file contains `<episode-id> <expiry-epoch>`.
+The tripwire reads the expiry timestamp and ignores the file if expired
+(prevents stale windows from triggering rollbacks after a crash).
+`kuzea-cleanup.timer` also garbage-collects stale `test-window-active`
+files older than `verificationWindowSeconds + 300s` as a safety net:
 
 ```bash
 # Channel 1: SSH over Tailscale (normal path)
@@ -368,12 +373,14 @@ if ssh -o ConnectTimeout=10 root@<sancta-choir-public-ip> \
   exit 0
 fi
 
-# Channel 3: Hetzner API hard reboot (last resort — safe because
+# Channel 3: Hetzner API hard reset (last resort — safe because
 # nixos-rebuild test does NOT set the boot default; reboot recovers
 # to the last nixos-rebuild switch generation)
-if hcloud server reboot <sancta-choir-server-id>; then
+# Uses 'reset' (hard power cycle) not 'reboot' (ACPI soft signal),
+# because if the kernel is stuck (OOM, panic), soft reboot won't work.
+if hcloud server reset <sancta-choir-server-id>; then
   logger -t kuzea-tripwire -p daemon.crit \
-    "Forced Hetzner reboot — SSH unreachable, recovering via boot default"
+    "Forced Hetzner hard reset — SSH unreachable, recovering via boot default"
   exit 0
 fi
 
@@ -389,7 +396,7 @@ curl -sf -X POST "${N8N_WEBHOOK}" \
 **Why three channels:** The tripwire's SSH probe may detect that
 Tailscale SSH is down — the same path it would use for rollback. A
 public-IP fallback bypasses Tailscale. If sshd itself is broken (e.g.,
-the tested generation changed sshd config), a Hetzner API reboot is the
+the tested generation changed sshd config), a Hetzner API hard reset is the
 ultimate recovery — `nixos-rebuild test` deliberately does not set the
 boot default, so a reboot always returns to the last `switch` generation.
 
@@ -413,10 +420,12 @@ auto-refresh).
 
 ```bash
 # ExecStartPre "+" (runs as root, reads agenix secret)
+# ENV_FILE lives on tmpfs (/run/kuzea/env) — not recoverable after service stop
+ENV_FILE="/run/kuzea/planner.env"
+mkdir -p /run/kuzea
 OAUTH_TOKEN=$(cat "${cfg.oauthTokenFile}")
 install -m 0600 -o kuzea -g kuzea /dev/null "$ENV_FILE"
 echo "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN" > "$ENV_FILE"
-# ENV_FILE is 0600 kuzea:kuzea — not world-readable
 ```
 
 **Token lifecycle:**
@@ -959,8 +968,11 @@ Running services: openclaw-task-runner, tailscaled, vscode-server
 ## Actuator Pipeline
 
 All steps run on rpi5. Remote steps are explicit SSH calls.
-The actuator acquires `flock /var/lib/kuzea/actuator.lock` before Step 1
-to prevent concurrent runs from racing on git state or remote operations.
+The **entire pipeline** (planning + actuator, Steps 1–16) runs under
+`flock /var/lib/kuzea/actuator.lock` — the planner acquires the lock
+before generating the task file and holds it through actuator completion.
+This prevents a second trigger from starting a new planning cycle while
+the first actuator is mid-flight on sancta-choir.
 
 ```
 Step 1   Validate proposal JSON schema (rpi5, local)
@@ -1018,7 +1030,7 @@ Step 15  score passes → SSH: nixos-rebuild switch
                       → embed SUCCESS in Qdrant (rpi5)
                       → write to pending-retrospectives for 24h delayed check
                       → git push origin --delete kuzea/<id> (cleanup remote branch)
-Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetzner reboot)
+Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetzner reset)
                       → remove test-window-active flag
                       → embed ROLLBACK + lessons-learned in Qdrant (rpi5)
                       → git push origin --delete kuzea/<id> (cleanup remote branch)
@@ -1228,11 +1240,11 @@ month) runs `meta-review.py`:
 "kuzea-ssh-key.age".publicKeys = allKeys;        # SSH key for rpi5 kuzea→sancta-choir
 "kuzea-github-token.age".publicKeys = allKeys;   # GitHub PAT (scopes: contents:write, pull-requests:write)
 "kuzea-oauth-token.age".publicKeys = allKeys;    # CC setup-token (1-year, Pro/Max)
-"kuzea-hcloud-token.age".publicKeys = allKeys;   # Hetzner API token (tripwire last-resort reboot)
+"kuzea-hcloud-token.age".publicKeys = allKeys;   # Hetzner API token (tripwire last-resort hard reset)
 ```
 
 **Note on `kuzea-hcloud-token`:** This secret is a Phase 3 prerequisite
-(used by the tripwire's Channel 3 rollback via `hcloud server reboot`).
+(used by the tripwire's Channel 3 rollback via `hcloud server reset`).
 It can be deferred until Phase 3 implementation begins.
 
 ```nix
@@ -1463,7 +1475,7 @@ references these sets. See `modules/services/openclaw.nix` for the
 full pattern including IPv6 and dynamic DNS resolution.
 
 **Tripwire user:** `kuzea-tripwire.service` runs as **root** (not the
-`kuzea` user) because it needs to call `hcloud server reboot` (which
+`kuzea` user) because it needs to call `hcloud server reset` (which
 requires reaching `api.hetzner.cloud`, not in the kuzea user's nftables
 allowlist). Running the tripwire as root also prevents the kuzea user
 from interfering with the tripwire's network access.
@@ -1676,7 +1688,7 @@ python3 /nix/store/.../invariant-checker.py --all   # exit code 0
    concurrent trigger-driven runs (prevents two planners racing on git state)
 4. Implement `kuzea-tripwire.service`:
    - SSH probe + Tailscale check + Gatus for sancta-choir
-   - On violation: rollback cascade (Tailscale SSH → public IP SSH → Hetzner API reboot)
+   - On violation: rollback cascade (Tailscale SSH → public IP SSH → Hetzner API hard reset)
 5. Confirm tripwire fires independently even when Kuzea main service is stopped
 6. Tripwire uses `invariant-checker.py` with subset checks (1, 2, 3) for its
    continuous monitoring loop
@@ -1832,6 +1844,7 @@ sqlite3 /var/lib/kuzea/metrics.db \
 # (check n8n execution history for the kuzea approval workflow)
 curl -sf http://127.0.0.1:5678/api/v1/executions?workflowId=<approval-wf-id>&status=success | jq '.data | length'
 # Must be ≥ 1
+# TBD: <approval-wf-id> populated after n8n workflow creation in Phase 6
 ```
 
 *Red flags — stop and investigate if:*
@@ -1874,7 +1887,7 @@ gh pr diff <pr-number> -- '*.nix' | head -20
 # Change auditor correctly blocked auto-application
 sqlite3 /var/lib/kuzea/metrics.db \
   "SELECT COUNT(*) FROM episodes
-   WHERE gate_results LIKE '%auditor%supervised%';"
+   WHERE json_extract(gate_results, '$.auditor_verdict') = 'supervised';"
 # Must be ≥ 1 (proves the auditor caught the meta-proposal)
 
 # Human reviewed and either merged or closed with rationale
