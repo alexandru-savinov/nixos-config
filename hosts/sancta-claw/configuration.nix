@@ -56,11 +56,7 @@
       address = "46.225.168.24";
       prefixLength = 32;
     }];
-    # Link-local only — no global IPv6 assigned by Hetzner for this instance
-    ipv6.addresses = [{
-      address = "fe80::9000:7ff:fe40:d620";
-      prefixLength = 64;
-    }];
+    # IPv6: link-local auto-configured by kernel from MAC; no global IPv6 from Hetzner
     ipv4.routes = [{ address = "172.31.1.1"; prefixLength = 32; }];
   };
 
@@ -143,6 +139,9 @@
       # Binary installed manually: sudo -u openclaw npm install -g openclaw
       # ConditionPathExists prevents noisy restart loops if binary is missing
       ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
+      # Post-deploy setup (run once):
+      #   sudo -u openclaw npm install -g openclaw
+      #   sudo -u openclaw openclaw configure
       ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
