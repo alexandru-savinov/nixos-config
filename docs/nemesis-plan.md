@@ -278,6 +278,20 @@ triggers but slower detection). Calibrated values are stored in
 Scheduled fallback: if no regime change fires in 72 hours, run a routine
 health-check cycle anyway.
 
+### Exploration Policy
+
+Every 5th planning cycle uses an alternative task template
+(`task-template-explore.md`) that instructs CC to propose something outside
+its recent pattern — e.g., tuning a metric it has never touched, or
+revisiting a previously-rolled-back change with a different approach.
+
+- Counter file: `/var/lib/nemesis/exploration-counter` (incremented by planner)
+- Exploration proposals include `"exploration": true` in the proposal JSON
+- Exploration cycles get a 15-minute verification window (vs 10 minutes)
+  to allow for less predictable behavior to stabilize
+- The alternative template omits the `<past_outcomes>` section to reduce
+  anchoring bias
+
 ### Separate tripwire (rpi5-local, monitors sancta-choir)
 
 `nemesis-tripwire.service` is a separate systemd unit with no `PartOf`,
@@ -301,6 +315,51 @@ provisioned with a one-time `sudo -u nemesis claude auth login` during
 setup. (Sharing `CLAUDE_CONFIG_DIR` across users would require world-readable
 OAuth token files, exposing credentials to all local processes.)
 Rate limits from Pro naturally cap planning cycles per day.
+
+### Evaluation Constitution
+
+The evaluation criteria for each planning cycle are defined as **stratum 0**
+Nix options — the hardest layer to change, requiring a Tier 3 human PR:
+
+```nix
+options.services.nemesis.evaluation = {
+  primaryMetric = mkOption {
+    type    = types.str;
+    default = "psi_mem_some_avg60";
+    description = "The metric Nemesis optimizes for on the target.";
+  };
+
+  direction = mkOption {
+    type    = types.enum [ "minimize" "maximize" ];
+    default = "minimize";
+  };
+
+  minimumEffect = mkOption {
+    type    = types.float;
+    default = 0.05;
+    description = "Minimum relative change to count as improvement (5%).";
+  };
+
+  safetyInvariants = mkOption {
+    type    = types.listOf types.str;
+    default = [ "ssh_reachable" "tailscale_online" "gatus_all_healthy" ];
+    description = "Invariants checked at every verification step.";
+  };
+};
+```
+
+These options are injected into the task file as `<evaluation_criteria>` so
+CC knows what "better" means. Changing the primary metric or direction
+requires a human PR — Nemesis cannot redefine its own success function.
+
+**24h Retrospective Check:** After each successful `nixos-rebuild switch`,
+`nemesis-retrospective@<episode-id>.service` fires 24 hours later (via
+`systemd-run --on-active=24h`). It compares the primary metric's 24h
+post-switch average against the pre-switch baseline. If the metric
+degraded beyond `minimumEffect`, a "delayed negative" vector is embedded
+in Qdrant with `{"delayed_negative": true}`, overriding the original
+`SUCCESS` outcome. This catches slow-onset regressions that pass the
+10-minute verification window.
 
 ---
 
@@ -364,6 +423,12 @@ modules/services/nemesis/
   task-template.md             ← CC task file template
   system-prompt.txt            ← CC system prompt (Nix store, immutable)
   collect-remote.sh            ← SSH metric collection script
+  self-profile-generator.py    ← Generates self-profile.json for task context
+  invariant-checker.py         ← Verifies 6 identity invariants (immutable derivation)
+  retrospective.py             ← 24h delayed outcome evaluator
+  task-template-explore.md     ← Alternative CC template for exploration cycles
+  memory-consolidator.py       ← Weekly episode consolidation + archival
+  meta-review.py               ← Bi-weekly meta-analysis of Nemesis performance
 
 hosts/sancta-choir/
   configuration.nix            ← + nemesis repo clone setup
@@ -459,6 +524,31 @@ options.services.nemesis = {
 | `nemesis-actuator@.service` | oneshot/template | Six-gate pipeline for one proposal |
 | `nemesis-tripwire.service` | simple | External safety monitor; remote rollback |
 | `nemesis-cleanup.timer` | timer/daily | Prune old proposals and episodes |
+| `nemesis-retrospective@.service` | oneshot/template | 24h delayed metric comparison per episode |
+| `nemesis-consolidation.timer` | timer/weekly | Trigger memory-consolidator.py |
+| `nemesis-consolidation.service` | oneshot | Weekly episode consolidation + archival |
+| `nemesis-meta-review.timer` | timer/bi-weekly | 1st and 15th of month meta-analysis |
+| `nemesis-meta-review.service` | oneshot | Compute statistics + generate report |
+
+### RAM Budget
+
+All Nemesis scripts are oneshot services; they do not consume memory
+concurrently with each other (except the always-running tripwire and
+watchdog, which are small).
+
+| Script | Peak RAM | Runtime | Frequency |
+|--------|----------|---------|-----------|
+| `collect-remote.sh` | ~5 MB | ~3s | Every 2m |
+| `self-profile-generator.py` | ~15 MB | ~2s | Per planning cycle |
+| `invariant-checker.py` | ~10 MB | ~1s | Per actuator run (×2) |
+| `retrospective.py` | ~15 MB | ~5s | 24h after each switch |
+| `memory-consolidator.py` | ~25 MB | ~30s | Weekly |
+| `meta-review.py` | ~20 MB | ~10s | Bi-weekly |
+| `change-auditor.py` | ~10 MB | ~1s | Per actuator run |
+| `property-tests.py` | ~15 MB | ~5s | Per actuator run |
+
+**Worst-case concurrent overhead:** ~40 MB (tripwire + watchdog + one
+oneshot). The rpi5 has 4 GB RAM with zram; Nemesis is well within budget.
 
 ---
 
@@ -630,6 +720,18 @@ Running services: openclaw-task-runner, tailscaled, vscode-server
 <current_config>
 [nix eval .#nixosConfigurations.sancta-choir.config.systemd.services.openclaw-task-runner]
 </current_config>
+
+## Self-Profile
+<self_profile>
+[Generated by self-profile-generator.py — recent option frequency, success
+ rates, unexplored options, time since last exploration cycle]
+</self_profile>
+
+## Evaluation Criteria
+<evaluation_criteria>
+[From services.nemesis.evaluation Nix options — primary metric, direction,
+ minimum effect size, safety invariants that must hold]
+</evaluation_criteria>
 ```
 
 ---
@@ -749,6 +851,47 @@ When rollback is detected, rpi5 calls `claude -p <analysis-prompt>` (one-shot,
 no tools) to produce a `lessons-learned` paragraph, embedded alongside the
 failure in Qdrant. Future planning cycles retrieve this diagnosis
 automatically.
+
+### Memory Consolidation
+
+Weekly `nemesis-consolidation.timer` runs `memory-consolidator.py`:
+
+1. **Group:** Query Qdrant `nemesis-outcomes` collection; group episodes by
+   `(service, option)` pair.
+2. **Summarize:** If a group has >5 episodes, call `claude -p` (one-shot, no
+   tools) to produce a single consolidated pattern — e.g., "Raising MemoryMax
+   above 2048M on openclaw-task-runner consistently reduces OOM events but
+   shows diminishing returns above 2560M."
+3. **Replace:** Delete individual episode vectors from Qdrant; insert the
+   consolidated pattern as one new vector with metadata
+   `{"consolidated": true, "episode_count": N}`.
+4. **Archive:** Move episodes older than 90 days to a separate
+   `nemesis-archive` Qdrant collection (queryable but not included in
+   planning-time retrieval by default).
+5. **Resolve contradictions:** If the same `(service, option, value)` appears
+   with both `SUCCESS` and `ROLLBACK` outcomes, keep only the most recent
+   result and annotate the consolidated vector with `"contradicted": true`.
+
+### Meta-Review
+
+Bi-weekly `nemesis-meta-review.timer` (fires on the 1st and 15th of each
+month) runs `meta-review.py`:
+
+1. **Compute statistics:**
+   - Gate pass rate (per gate, over trailing 30 days)
+   - Rollback rate (rollbacks / total activations)
+   - Option frequency (which Tier 1 options are touched most)
+   - Bound saturation (how close proposals get to Tier 1 bounds, e.g.,
+     MemoryMax approaching the 3G ceiling)
+2. **Output report:** `/var/lib/nemesis/meta-reviews/<date>.md`
+3. **Bound expansion proposals:** If any Tier 1 bound is >60% saturated
+   (e.g., most proposals push MemoryMax to >2.4G out of 3G max), generate
+   a Tier 3 draft PR via `gh pr create --draft --label nemesis-meta`
+   proposing a bound increase. The change auditor blocks auto-apply for
+   `nemesis*.nix`, so this always requires human review.
+4. **Context injection:** Meta-review output is included in future planning
+   cycles as additional context (appended to the task file after
+   `<past_outcomes>`).
 
 ---
 
@@ -879,7 +1022,41 @@ CC cannot: `Edit`, run `nixos-rebuild`, `git`, `ssh`, `curl`, or `systemctl`.
 
 ---
 
+## Identity Invariant
+
+Six properties must hold **before and after** every Nemesis modification.
+The actuator runs `invariant-checker.py` at pre-flight (Step 8) and
+post-verification (after Step 14). Failure at either point aborts or
+rolls back the episode.
+
+| # | Check | Method | Failure Action |
+|---|-------|--------|----------------|
+| 1 | `ssh_reachable` | `ssh root@sancta-choir true` (5s timeout) | Abort / rollback |
+| 2 | `tailscale_online` | `tailscale status --json` → peer online | Abort / rollback |
+| 3 | `gatus_all_healthy` | Gatus API: all sancta-choir endpoints healthy | Abort / rollback |
+| 4 | `rollback_functional` | `nix-env --list-generations` ≥ 3 on target | Abort (pre-flight only) |
+| 5 | `tripwire_running` | `systemctl is-active nemesis-tripwire` on rpi5 | Abort (pre-flight only) |
+| 6 | `auditor_integrity` | SHA256 of `change-auditor.py` matches Nix store | Abort |
+
+`invariant-checker.py` is built as an **immutable Nix derivation** —
+its content is fixed at deploy time and cannot be modified by the Nemesis
+user at runtime. The tripwire also uses a subset of these checks
+(1, 2, 3) for its continuous monitoring loop.
+
+---
+
 ## Implementation Phases
+
+| Phase | Weeks | Summary |
+|-------|-------|---------|
+| 0 | 1–2 | Remote observer only (SSH metrics + Gatus) |
+| 1 | 3–4 | CC planning (proposals reviewed by human) |
+| 2 | 5–6 | Actuator + manual approval (remote nixos-rebuild) |
+| 3 | 7–8 | CUSUM + tripwire (event-driven, safety monitor) |
+| 4 | 9–10 | Tier 1 autonomy (exploration budget, retrospective) |
+| 5 | 11–12 | Learning validation (RAG A/B, consolidation, meta-review) |
+| 6 | 13–14 | Tier 2 expansion (service + kernel options) |
+| 7 | 15+ | Meta-proposals (Tier 1 bound changes via draft PR) |
 
 ### Phase 0 — Remote Observer Only (Weeks 1–2)
 
@@ -916,6 +1093,9 @@ sqlite3 /var/lib/nemesis/metrics.db \
 4. CC `allowedTools`: `Read,Glob,Grep,Bash(nix eval *),Write`
 5. 72h fallback timer (no CUSUM yet)
 6. Proposals written to `/var/lib/nemesis/proposals/`; human reviews manually
+7. Self-profile generator produces `self-profile.json`, injected into task
+   file as `<self_profile>` section (option frequency, success rates,
+   unexplored options)
 
 **Deliverable:** 5 proposals reviewed. Overlay files syntactically valid,
 targeting sancta-choir options correctly.
@@ -934,6 +1114,9 @@ targeting sancta-choir options correctly.
 6. **Deliberately test rollback:** force a Gate 5 failure, verify sancta-choir
    returns to previous generation
 7. Implement Qdrant outcome embedding
+8. Invariant checker runs at pre-flight (after Step 8) and post-verification
+   (after Step 14) — all 6 checks must pass
+9. Evaluation constitution Nix options defined (`services.nemesis.evaluation.*`)
 
 **Deliverable:** End-to-end pipeline confirmed. Remote rollback verified.
 
@@ -957,6 +1140,8 @@ ssh root@sancta-choir \
    - SSH probe + Tailscale check + Gatus for sancta-choir
    - On violation: `ssh root@sancta-choir "nixos-rebuild switch --rollback"`
 5. Confirm tripwire fires independently even when Nemesis main service is stopped
+6. Tripwire uses `invariant-checker.py` with subset checks (1, 2, 3) for its
+   continuous monitoring loop
 
 ---
 
@@ -969,6 +1154,8 @@ ssh root@sancta-choir \
 3. Implement circuit breaker (consecutive failure counter)
 4. Tune CUSUM thresholds from Phase 0 baseline
 5. Deploy and monitor for one week
+6. Exploration budget enabled (every 5th cycle uses `task-template-explore.md`)
+7. Retrospective timer scheduled per episode (`systemd-run --on-active=24h`)
 
 **Acceptance criteria:**
 - ≥ 3 autonomous remote switches with PSI improvement confirmed
@@ -986,6 +1173,9 @@ ssh root@sancta-choir \
 2. Compare gate failure rate and verification pass rate
 3. Implement semantic rollback analysis (lessons-learned embedding)
 4. Add property test predicates from any Phase 2–4 rollback incidents
+5. `retrospective.py` fully deployed — 24h delayed evaluation per episode
+6. Memory consolidator (`nemesis-consolidation.timer`) — weekly episode grouping
+7. Meta-review (`nemesis-meta-review.timer`) — bi-weekly statistics + reports
 
 ---
 
@@ -996,6 +1186,34 @@ ssh root@sancta-choir \
 1. n8n approval workflow for Tier 2 proposals
 2. Add `services.openclaw.*` and `boot.kernel.sysctl` options
 3. `expected_outcome` verification (predicted metric delta confirmed in window)
+
+---
+
+### Phase 7 — Meta-Proposals (Week 15+)
+
+**Goal:** Close the reflexive loop — Nemesis proposes changes to its own
+operational bounds, always through a human gate.
+
+1. Extend `meta-review.py` to generate concrete Nix overlay fragments
+   proposing Tier 1 bound changes (e.g., raising `MemoryMax` ceiling from
+   3G to 3.5G) when bound saturation exceeds 60%
+2. Proposals are always created as draft PRs:
+   `gh pr create --draft --label nemesis-meta`
+3. The change auditor's `SUPERVISED` patterns match `nemesis*.nix`, blocking
+   any auto-apply — meta-proposals always require human review
+4. Meta-review statistics are embedded in the draft PR description for
+   context (saturation %, affected options, historical trend)
+
+**Acceptance criteria:**
+- Meta-review generates ≥ 1 bound-expansion draft PR
+- Draft PR is well-formed (valid Nix, correct option paths)
+- Change auditor correctly blocks auto-application
+- Human can merge or close with full context from the PR body
+
+**Note:** The reflexive loop is intentionally shallow — Nemesis can propose
+changes to Tier 1 bounds only, never to the change auditor, invariant
+checker, evaluation constitution, or its own module structure. These
+remain stratum 0 (human-only).
 
 ---
 
@@ -1050,6 +1268,7 @@ ssh root@sancta-choir \
 - [ ] Phase 4: ≥ 3 autonomous remote switches with confirmed metric improvement
 - [ ] Phase 5: RAG retrieval demonstrably improves gate-pass rate (A/B documented)
 - [ ] Phase 6: One Tier 2 change applied via n8n approval on sancta-choir
+- [ ] Phase 7: Meta-review generates ≥1 bound-expansion draft PR; human reviews
 
 ---
 
