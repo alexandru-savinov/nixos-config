@@ -305,6 +305,13 @@ user can access. Defense in depth:
    All other repo paths are read-only for the `kuzea` user (group read
    via `kuzea:nixos-config` or similar). The home directory
    `/var/lib/kuzea/` is writable but does not contain sensitive paths.
+   **Phase 1 setup verification:** Confirm repo path permissions explicitly:
+   ```bash
+   # Must show kuzea can only write to agent-overlays/
+   sudo -u kuzea touch /var/lib/kuzea/nixos-config/flake.nix.test && echo "FAIL: repo writable" || echo "OK"
+   sudo -u kuzea touch /var/lib/kuzea/nixos-config/hosts/sancta-choir/agent-overlays/test.nix && echo "OK" || echo "FAIL"
+   rm -f /var/lib/kuzea/nixos-config/hosts/sancta-choir/agent-overlays/test.nix
+   ```
 3. **Actuator gate:** Step 2 rejects proposals with overlay paths outside
    `agent-overlays/`. The actuator also cleans up unexpected files in
    the working tree after each episode.
@@ -348,7 +355,9 @@ Every 5th planning cycle uses an alternative task template
 its recent pattern — e.g., tuning a metric it has never touched, or
 revisiting a previously-rolled-back change with a different approach.
 
-- Counter file: `/var/lib/kuzea/exploration-counter` (incremented by planner)
+- Counter file: `/var/lib/kuzea/exploration-counter` (incremented by planner;
+  initialized to `0` by tmpfiles rule `f /var/lib/kuzea/exploration-counter 0644 kuzea kuzea - 0`;
+  planner guards against missing/corrupt file: `[ -f "$counter" ] && [[ "$(cat "$counter")" =~ ^[0-9]+$ ]] || echo 0 > "$counter"`)
 - Exploration proposals include `"exploration": true` in the proposal JSON
 - Exploration cycles get a 15-minute verification window (vs 10 minutes)
   to allow for less predictable behavior to stabilize
@@ -376,10 +385,20 @@ The tripwire reads the expiry timestamp and ignores the file if expired
 files older than `verificationWindowSeconds + 300s` as a safety net:
 
 ```bash
+# Rate limit: skip cascade if already attempted (prevents repeated hard resets)
+ROLLBACK_FLAG="/var/lib/kuzea/rollback-in-progress"
+if [ -f "$ROLLBACK_FLAG" ]; then
+  logger -t kuzea-tripwire "Rollback already in progress — skipping cascade"
+  exit 0
+fi
+touch "$ROLLBACK_FLAG"
+# Flag is cleared by: successful rollback (below), actuator episode end, or cleanup timer
+
 # Channel 1: SSH over Tailscale (normal path)
 if ssh -o ConnectTimeout=10 root@sancta-choir.tail4249a9.ts.net \
      "nixos-rebuild switch --rollback"; then
   logger -t kuzea-tripwire "Rollback succeeded via Tailscale SSH"
+  rm -f "$ROLLBACK_FLAG"
   exit 0
 fi
 
@@ -387,6 +406,7 @@ fi
 if ssh -o ConnectTimeout=10 root@<sancta-choir-public-ip> \
      "nixos-rebuild switch --rollback"; then
   logger -t kuzea-tripwire "Rollback succeeded via public IP SSH"
+  rm -f "$ROLLBACK_FLAG"
   exit 0
 fi
 
@@ -401,6 +421,7 @@ fi
 if hcloud server reset <sancta-choir-server-id>; then
   logger -t kuzea-tripwire -p daemon.crit \
     "Forced Hetzner hard reset — SSH unreachable, recovering via boot default"
+  rm -f "$ROLLBACK_FLAG"
   exit 0
 fi
 
@@ -445,9 +466,11 @@ ENV_FILE="/run/kuzea/planner.env"
 mkdir -p /run/kuzea
 OAUTH_TOKEN=$(cat "${cfg.oauthTokenFile}")
 install -m 0600 -o kuzea -g kuzea /dev/null "$ENV_FILE"
+GH_TOKEN=$(cat "${cfg.githubTokenFile}")
 cat > "$ENV_FILE" <<ENVEOF
 CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+GH_TOKEN=$GH_TOKEN
 ENVEOF
 # DISABLE_NONESSENTIAL_TRAFFIC prevents update checks, telemetry, and
 # other outbound traffic beyond api.anthropic.com in the headless context.
@@ -608,7 +631,7 @@ modules/services/kuzea/
   system-prompt.txt            ← CC system prompt (Nix store, immutable)
   collect-remote.sh            ← SSH metric collection script
   self-profile-generator.py    ← Generates self-profile.json for task context
-  invariant-checker.py         ← Verifies 6 identity invariants (immutable derivation)
+  invariant-checker.py         ← Verifies 7 identity invariants (immutable derivation)
   retrospective.py             ← 24h delayed outcome evaluator
   task-template-explore.md     ← Alternative CC template for exploration cycles
   memory-consolidator.py       ← Weekly episode consolidation + archival
@@ -691,6 +714,10 @@ options.services.kuzea = {
   oauthTokenFile = mkOption {
     type    = types.path;
     description = "Path to file containing CLAUDE_CODE_OAUTH_TOKEN (agenix).";
+  };
+  githubTokenFile = mkOption {
+    type    = types.path;
+    description = "Path to file containing GH_TOKEN for gh CLI (agenix: kuzea-github-token.age).";
   };
 
   limits.maxSwitchesPerDay  = mkOption {
@@ -1039,7 +1066,9 @@ Step 13  SSH: systemctl reset-failed kuzea-rebuild.service       (sancta-choir)
            (clears stale unit from prior episode if rpi5 rebooted mid-run)
          SSH: systemd-run --unit=kuzea-rebuild --no-block        (sancta-choir)
            (note: use --unit=kuzea-rebuild-<episode-id> for per-episode
-            journalctl traceability once the wrapper supports it)
+            journalctl traceability once the wrapper supports it — this
+            requires updating the SSH wrapper allowlist to accept the
+            dynamic unit name pattern)
            nixos-rebuild test --flake .#sancta-choir
          Write active-test-window flag: /var/lib/kuzea/test-window-active
            (includes episode-id and expiry timestamp for crash recovery)
@@ -1165,12 +1194,12 @@ If 3 consecutive proposals result in rollback:
 1. Write `/var/lib/kuzea/circuit-open` via `kuzea-sudo circuit-open` (runs as
    root, so the file is owned `root:root` — kuzea cannot delete it).
    **Implementation:** `kuzea-sudo` allowlist entry: `circuit-open) touch /var/lib/kuzea/circuit-open ;;`
-   A tmpfiles rule ensures the parent directory permissions are correct:
+   A tmpfiles rule ensures root ownership even if the file is created by another path:
    ```
-   "f /var/lib/kuzea/circuit-open 0644 root root -"   # tmpfiles: ensure root ownership if file exists
+   "z /var/lib/kuzea/circuit-open 0644 root root -"   # tmpfiles: fix ownership on existing file
    ```
-   (The `f` rule only creates the file if missing; the important part is that if kuzea
-   somehow created it, `systemd-tmpfiles --create` on next boot corrects ownership to root.)
+   (The `z` type corrects mode/owner on existing files, unlike `f` which only creates.
+   This handles the race case where kuzea somehow creates the file before `kuzea-sudo` does.)
 2. Notify via n8n webhook (rpi5 → n8n → human):
    `{"event":"circuit_breaker_tripped","severity":"critical","consecutive_failures":3}`
 3. Stop all trigger file writes; planner checks for this file before proceeding
@@ -1209,12 +1238,15 @@ Runs on rpi5:
    first to retain the last 3.)
    **Sequencing note:** The cleanup timer must not run during an active
    actuator episode on sancta-choir — a concurrent `nixos-rebuild build`
-   could have its store paths GC'd mid-flight. The `actuator.lock` serializes
-   rpi5-side operations; for the sancta-choir side, the cleanup timer should
-   check for a running `kuzea-rebuild.service` before proceeding:
+   could have its store paths GC'd mid-flight (there is a window between
+   build completion and `nixos-rebuild switch` where paths exist but the
+   build service is inactive). The cleanup timer should check **both**
+   `kuzea-rebuild.service` and `test-window-active` before proceeding:
    ```bash
    ssh root@sancta-choir "systemctl is-active kuzea-rebuild.service" 2>/dev/null \
      && { logger -t kuzea-cleanup "Skipping GC: rebuild in progress"; exit 0; }
+   [ -f /var/lib/kuzea/test-window-active ] \
+     && { logger -t kuzea-cleanup "Skipping GC: test window active"; exit 0; }
    ```
 6. **Meta-review reports:** Retain last 10 meta-review reports; archive
    older ones.
@@ -1555,7 +1587,10 @@ full pattern including IPv6 and dynamic DNS resolution.
 **Tripwire user:** `kuzea-tripwire.service` runs as **root** (not the
 `kuzea` user) because it needs to call `hcloud server reset` (which
 requires reaching `api.hetzner.cloud`, not in the kuzea user's nftables
-allowlist). Running the tripwire as root also prevents the kuzea user
+allowlist). The tripwire script is built as an **immutable Nix derivation**
+(like `change-auditor.py` and `invariant-checker.py`) so its content cannot
+be modified at runtime. Its SHA256 is verified as identity invariant #7.
+Running the tripwire as root also prevents the kuzea user
 from interfering with the tripwire's network access.
 
 ### CC `allowedTools` Whitelist
@@ -1576,7 +1611,7 @@ CC cannot: `Edit`, run `nixos-rebuild`, `git`, `ssh`, `curl`, or `systemctl`.
 
 ## Identity Invariant
 
-Six properties must hold **before and after** every Kuzea modification.
+Seven properties must hold **before and after** every Kuzea modification.
 The actuator runs `invariant-checker.py` at pre-flight (Step 8) and
 post-verification (after Step 14). Failure at either point aborts or
 rolls back the episode.
@@ -1589,6 +1624,7 @@ rolls back the episode.
 | 4 | `rollback_functional` | `nix-env --list-generations` ≥ 3 on target | Abort (pre-flight only) |
 | 5 | `tripwire_running` | `systemctl is-active kuzea-tripwire` on rpi5 | Abort (pre-flight only) |
 | 6 | `auditor_integrity` | SHA256 of `change-auditor.py` matches Nix store | Abort |
+| 7 | `tripwire_integrity` | SHA256 of `kuzea-tripwire` script matches Nix store | Abort |
 
 `invariant-checker.py` is built as an **immutable Nix derivation** —
 its content is fixed at deploy time and cannot be modified by the Kuzea
@@ -1733,7 +1769,7 @@ data. RAG retrieval is validated in Phase 5.
    failing property test), verify sancta-choir returns to previous generation
 7. Implement Qdrant outcome embedding
 8. Invariant checker runs at pre-flight (after Step 8) and post-verification
-   (after Step 14) — all 6 checks must pass
+   (after Step 14) — all 7 checks must pass
 9. Evaluation constitution Nix options defined (`services.kuzea.evaluation.*`)
 
 **Deliverable:** End-to-end pipeline confirmed. Remote rollback verified.
@@ -1752,7 +1788,7 @@ sqlite3 /var/lib/kuzea/metrics.db \
   "SELECT COUNT(*) FROM episodes WHERE outcome IS NOT NULL AND outcome != 'rejected';"
 # Must be ≥ 1
 
-# All 6 invariant checks pass on current state
+# All 7 invariant checks pass on current state
 python3 /nix/store/.../invariant-checker.py --all   # exit code 0
 # (invocation via absolute store path; the module wraps this in a script)
 
