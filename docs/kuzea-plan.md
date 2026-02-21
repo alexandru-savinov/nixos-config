@@ -71,6 +71,16 @@ The following must be completed before Kuzea implementation begins:
    monitors sancta-choir for Open-WebUI and n8n, which sancta-choir does
    not run. Update to monitor the actual services (OpenClaw, SSH, Tailscale).
 
+5. **Confirm `claude setup-token` exists** — The entire brain layer depends
+   on OAuth token auth. Verify the installed Claude Code version supports it:
+   ```bash
+   claude setup-token --help 2>&1 | grep -q 'setup-token' && echo 'OK' || echo 'FAIL'
+   ```
+   If `FAIL`: fall back to `ANTHROPIC_API_KEY` via existing
+   `anthropic-api-key.age`. This decision **must** be made before Phase 1
+   starts — it affects the planner's `EnvironmentFile` and the
+   `ExecStartPre` token provisioning script.
+
 ---
 
 ## Topology
@@ -115,7 +125,7 @@ The following must be completed before Kuzea implementation begins:
 │  │    SSH → sancta-choir:                                      │    │
 │  │      systemctl show --value -p MemoryCurrent <svc>          │    │
 │  │      cat /proc/pressure/memory                              │    │
-│  │      journalctl --since "3m ago" --output json              │    │
+│  │      journalctl --since "2m ago" --output json              │    │
 │  │    Local Gatus REST API (http://127.0.0.1:3001) for         │    │
 │  │      sancta-choir service health (external vantage)         │    │
 │  │    → SQLite /var/lib/kuzea/metrics.db                     │    │
@@ -894,7 +904,7 @@ ssh_collect "psi" "cat /proc/pressure/memory" || true
 
 # Recent journal anomalies
 ssh_collect "journal" \
-  "journalctl --since '3m ago' --output json --no-pager -q" \
+  "journalctl --since '2m ago' --output json --no-pager -q" \
   | grep -E '"PRIORITY":"[012]"' | head -50 || true
 
 # Current NixOS generation
@@ -1060,7 +1070,9 @@ Step 15  score passes → SSH: nixos-rebuild switch
 Step 16  score fails  → rollback cascade (Tailscale SSH → public IP → Hetzner reset)
                       → remove test-window-active flag
                       → embed ROLLBACK + lessons-learned in Qdrant (rpi5)
-                      → git push origin --delete kuzea/<id> (cleanup remote branch)
+                      → git push origin --delete kuzea/<id> (best-effort — if GitHub
+                        is unreachable during an incident, kuzea-cleanup.timer handles
+                        eventual branch cleanup)
                       → git rm overlay file + commit (revert the working tree)
                       → notify n8n (rpi5)
                       (no PR is created on failure — PRs are only created in Step 15)
@@ -1195,6 +1207,15 @@ Runs on rpi5:
    the rest. (`nix-collect-garbage --delete-older-than 14d` does **not**
    have a "keep N generations" flag — use `nix-env --delete-generations +3`
    first to retain the last 3.)
+   **Sequencing note:** The cleanup timer must not run during an active
+   actuator episode on sancta-choir — a concurrent `nixos-rebuild build`
+   could have its store paths GC'd mid-flight. The `actuator.lock` serializes
+   rpi5-side operations; for the sancta-choir side, the cleanup timer should
+   check for a running `kuzea-rebuild.service` before proceeding:
+   ```bash
+   ssh root@sancta-choir "systemctl is-active kuzea-rebuild.service" 2>/dev/null \
+     && { logger -t kuzea-cleanup "Skipping GC: rebuild in progress"; exit 0; }
+   ```
 6. **Meta-review reports:** Retain last 10 meta-review reports; archive
    older ones.
 
@@ -1340,6 +1361,9 @@ users.users.root.openssh.authorizedKeys.keys = [
   # HARD BLOCKER: Replace 100.x.y.z with rpi5's actual Tailscale IP before deploy.
   # Obtain from: tailscale status --json | jq -r '.Self.TailscaleIPs[0]'
   # Phase 2 go/no-go MUST verify this is not a placeholder.
+  # NOTE: Tailscale IPs are stable per-node but change on re-registration (factory
+  # reset, re-provisioning). If rpi5 is ever re-registered, update this entry and
+  # re-deploy sancta-choir — the old IP silently fails auth (safe, but breaks Kuzea).
   ''command="${pkgs.kuzea-ssh-wrapper}/bin/kuzea-ssh-wrapper",restrict,from="100.x.y.z" ssh-ed25519 AAAA... kuzea@rpi5''
 ];
 ```
@@ -1365,6 +1389,10 @@ CMD="$SSH_ORIGINAL_COMMAND"
 
 case "$CMD" in
   # --- Metric collection (read-only) ---
+  # NOTE: The case patterns below use mixed quoting. The quoted prefix is literal;
+  # the unquoted *.service is a glob wildcard matching any suffix. This is a fast
+  # filter only — the actual security boundary is the svc allowlist check inside
+  # each branch, which validates the extracted service name.
   "systemctl show --value -p MemoryCurrent "*.service)
     svc="${CMD##* }"; svc="${svc%.service}"
     [[ ${#svc} -gt 64 ]] && { echo "ERROR: service name too long" >&2; exit 1; }
@@ -1387,8 +1415,8 @@ case "$CMD" in
     exec readlink /nix/var/nix/profiles/system ;;
 
   # --- Journal (read-only, exact match for collection interval) ---
-  "journalctl --since '3m ago' --output json --no-pager -q")
-    exec journalctl --since '3m ago' --output json --no-pager -q ;;
+  "journalctl --since '2m ago' --output json --no-pager -q")
+    exec journalctl --since '2m ago' --output json --no-pager -q ;;
 
   # --- Pre-flight checks (read-only) ---
   "df /nix")
@@ -1452,7 +1480,10 @@ The collector writes a JSON status file after each cycle:
 `kuzea-health.service` (simple, always-running) serves this file via
 Python's `http.server` on `127.0.0.1:9095`. This is the simplest
 implementation — a 5-line wrapper script that uses `http.server` with a
-custom handler to serve the JSON file as `/health`.
+custom handler to serve the JSON file as `/health`. Since Python's
+`http.server` is single-threaded and not hardened, the service is
+bound to localhost only and capped with `MemoryMax = "64M"` to limit
+its resource footprint as an always-running process.
 
 ### Gatus Endpoints (rpi5, Kuzea self-observability)
 
@@ -1673,6 +1704,10 @@ done
 grep -c "exit_code.*0" /var/lib/kuzea/planner-runs.log   # must be ≥ 4
 ```
 
+*Note:* Empty Qdrant results in `<past_outcomes>` are expected in this phase
+and do not constitute a failure — the first episodes generate the initial
+data. RAG retrieval is validated in Phase 5.
+
 *Red flags — stop and investigate if:*
 - CC consistently produces `no-action-*.txt` files (≥3 in a row) — task template may be too restrictive or snapshot data insufficient
 - Qdrant embedding failures in planner logs (embedding model not working or Qdrant unreachable)
@@ -1726,6 +1761,9 @@ ssh -o ConnectTimeout=10 root@<sancta-choir-public-ip> \
   "nixos-rebuild switch --rollback"
 # Must succeed (Channel 3 / Hetzner API deferred to Phase 3 when hcloud token is provisioned)
 ```
+
+*Note:* Empty Qdrant results in `<past_outcomes>` are expected in Phases 1–4
+and do not constitute a failure. RAG retrieval is validated in Phase 5.
 
 *Red flags — stop and investigate if:*
 - Remote `nixos-rebuild build` fails consistently on sancta-choir (store path mismatch, disk full, or flake eval error)
@@ -1901,10 +1939,11 @@ sqlite3 /var/lib/kuzea/metrics.db \
 # Must be ≥ 1
 
 # n8n approval workflow completed at least one approval cycle
-# (check n8n execution history for the kuzea approval workflow)
+# PARTIALLY SPECIFIED: populate <approval-wf-id> when creating the n8n workflow
+# in Phase 6 step 1. Alternative: query by workflow name if ID is not yet known:
+#   curl -sf http://127.0.0.1:5678/api/v1/workflows | jq '[.data[] | select(.name | test("kuzea.*approval"; "i"))] | length'
 curl -sf http://127.0.0.1:5678/api/v1/executions?workflowId=<approval-wf-id>&status=success | jq '.data | length'
 # Must be ≥ 1
-# TBD: populate <approval-wf-id> when creating the n8n workflow in Phase 6 step 1
 ```
 
 *Red flags — stop and investigate if:*
