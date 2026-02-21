@@ -115,7 +115,7 @@ The following must be completed before Kuzea implementation begins:
 │  │    SSH → sancta-choir:                                      │    │
 │  │      systemctl show --value -p MemoryCurrent <svc>          │    │
 │  │      cat /proc/pressure/memory                              │    │
-│  │      journalctl --since "2m ago" --output json              │    │
+│  │      journalctl --since "3m ago" --output json              │    │
 │  │    Local Gatus REST API (http://127.0.0.1:3001) for         │    │
 │  │      sancta-choir service health (external vantage)         │    │
 │  │    → SQLite /var/lib/kuzea/metrics.db                     │    │
@@ -564,7 +564,7 @@ modules/services/
 
 modules/services/kuzea/
   change-auditor.py            ← Immutable auditor (Nix derivation)
-  property-tests.py            ← COM property suite for sancta-choir config
+  property-tests.py            ← Evaluated config property suite for sancta-choir
   task-template.md             ← CC task file template
   system-prompt.txt            ← CC system prompt (Nix store, immutable)
   collect-remote.sh            ← SSH metric collection script
@@ -1338,6 +1338,12 @@ case "$CMD" in
     exec df /nix ;;
   "nix-env --list-generations -p /nix/var/nix/profiles/system")
     exec nix-env --list-generations -p /nix/var/nix/profiles/system ;;
+
+  # --- Nix store GC (daily cleanup timer) ---
+  "nix-env --delete-generations +3 -p /nix/var/nix/profiles/system")
+    exec nix-env --delete-generations +3 -p /nix/var/nix/profiles/system ;;
+  "nix-collect-garbage")
+    exec nix-collect-garbage ;;
 
   # --- Git operations (exact repo path, no wildcards) ---
   "git -C ${REPO} fetch origin")
