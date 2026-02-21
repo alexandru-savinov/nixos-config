@@ -130,7 +130,7 @@
       User = "openclaw";
       Group = "openclaw";
       WorkingDirectory = "/var/lib/openclaw";
-      ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw start";
+      ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
 
