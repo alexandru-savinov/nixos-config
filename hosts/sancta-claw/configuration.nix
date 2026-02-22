@@ -14,15 +14,15 @@ let
     runtimeInputs = [ pkgs.whisper-cpp pkgs.ffmpeg ];
     text = ''
       # All args are passed through; the last positional arg is the media file.
-      # Use $@ (not $*) to preserve word boundaries for paths with spaces.
-      INPUT_FILE="''${@: -1}"
+      # ${!#} is the shellcheck-safe idiom for the last positional argument.
+      INPUT_FILE="''${!#}"
       ARGS=("''${@:1:$#-1}")
       TMP_WAV=$(mktemp /tmp/whisper-XXXXXX.wav)
       trap 'rm -f "$TMP_WAV"' EXIT
       # Keep ffmpeg stderr visible so conversion errors appear in the journal.
       ffmpeg -y -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV"
       whisper-cli "''${ARGS[@]}" "$TMP_WAV"
-    '';
+      '';
   };
 in
 {
@@ -90,8 +90,8 @@ in
 
   # MAC address binding for Hetzner Cloud
   services.udev.extraRules = ''
-    ATTR{address}=="92:00:07:40:d6:20", NAME="eth0"
-  '';
+      ATTR { address }=="92:00:07:40:d6:20", NAME="eth0"
+    '';
 
   # SSH
   services.openssh = {
@@ -235,42 +235,42 @@ in
     };
 
     script = ''
-      # Wait for tailscaled to be ready (timeout: 60 seconds)
-      ts_timeout=60
-      while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
-        ts_timeout=$((ts_timeout - 1))
-        if [ $ts_timeout -le 0 ]; then
-          echo "ERROR: tailscaled not ready after 60 seconds"
-          exit 1
-        fi
-        sleep 1
-      done
+    # Wait for tailscaled to be ready (timeout: 60 seconds)
+    ts_timeout=60
+    while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+    ts_timeout=$((ts_timeout - 1))
+    if [ $ts_timeout -le 0 ]; then
+    echo "ERROR: tailscaled not ready after 60 seconds"
+    exit 1
+    fi
+    sleep 1
+    done
 
-      # Wait for OpenClaw to be listening (timeout: 60 seconds)
-      # The 'after' directive only waits for service start, not port availability
-      port_timeout=60
-      while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 18789 2>/dev/null; do
-        port_timeout=$((port_timeout - 1))
-        if [ $port_timeout -le 0 ]; then
-          echo "ERROR: OpenClaw not listening on port 18789 after 60 seconds"
-          exit 1
-        fi
-        sleep 1
-      done
+    # Wait for OpenClaw to be listening (timeout: 60 seconds)
+    # The 'after' directive only waits for service start, not port availability
+    port_timeout=60
+    while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 18789 2>/dev/null; do
+    port_timeout=$((port_timeout - 1))
+    if [ $port_timeout -le 0 ]; then
+    echo "ERROR: OpenClaw not listening on port 18789 after 60 seconds"
+    exit 1
+    fi
+    sleep 1
+    done
 
-      # Check if serve is already configured for this port
-      if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:18789"; then
-        echo "Configuring Tailscale Serve for OpenClaw..."
-        ${pkgs.tailscale}/bin/tailscale serve --bg --https 18789 http://127.0.0.1:18789
-      else
-        echo "Tailscale Serve already configured for OpenClaw"
-      fi
+    # Check if serve is already configured for this port
+    if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:18789"; then
+    echo "Configuring Tailscale Serve for OpenClaw..."
+    ${pkgs.tailscale}/bin/tailscale serve --bg --https 18789 http://127.0.0.1:18789
+    else
+    echo "Tailscale Serve already configured for OpenClaw"
+    fi
     '';
 
     preStop = ''
-      echo "Removing Tailscale Serve configuration for OpenClaw..."
-      ${pkgs.tailscale}/bin/tailscale serve --https 18789 off || true
-    '';
+    echo "Removing Tailscale Serve configuration for OpenClaw..."
+    ${pkgs.tailscale}/bin/tailscale serve --https 18789 off || true
+    '' ;
   };
 
   # ── SSH authorized keys ─────────────────────────────────────────────────
@@ -282,3 +282,4 @@ in
   # Fresh install — NixOS 25.05
   system.stateVersion = lib.mkForce "25.05";
 }
+
