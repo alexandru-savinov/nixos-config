@@ -26,6 +26,7 @@
     gnumake
     gcc
     python3
+    whisper-cpp  # Local speech-to-text for Kuzea voice message transcription
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
@@ -138,9 +139,11 @@
 
     environment = {
       HOME = "/var/lib/openclaw";
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash ])}:/run/current-system/sw/bin";
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash whisper-cpp ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
+      # Whisper.cpp model for voice message transcription
+      WHISPER_CPP_MODEL = "/var/lib/openclaw/models/ggml-small.bin";
     };
 
     serviceConfig = {
