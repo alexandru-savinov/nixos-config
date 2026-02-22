@@ -4,6 +4,27 @@
 , ...
 }:
 
+let
+  kuzeaTranscribe = pkgs.writeShellApplication {
+    name = "kuzea-transcribe";
+    runtimeInputs = [ pkgs.whisper-cpp pkgs.ffmpeg ];
+    text = ''
+      if [[ $# -lt 1 ]]; then
+        echo "Usage: kuzea-transcribe [whisper-cli options...] <input-file>" >&2
+        exit 1
+      fi
+      # Use an array to split off the last argument safely (ShellCheck-clean).
+      args=("$@")
+      INPUT_FILE="''${args[-1]}"
+      ARGS=("''${args[@]:0:$((''${#args[@]} - 1))}")
+      TMP_WAV=$(mktemp /tmp/whisper-XXXXXX.wav)
+      trap 'rm -f "$TMP_WAV"' EXIT
+      # -loglevel error suppresses ffmpeg banner/progress spam in the journal.
+      ffmpeg -y -loglevel error -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV"
+      whisper-cli "''${ARGS[@]}" "$TMP_WAV"
+    '';
+  };
+in
 {
   imports = [
     ./hardware-configuration.nix
@@ -26,6 +47,7 @@
     gnumake
     gcc
     python3
+    # whisper-cpp is omitted: available via kuzeaTranscribe runtimeInputs.
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
@@ -90,7 +112,6 @@
   # ── Agenix Secrets ──────────────────────────────────────────────────────
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-
     # Kuzea-specific secrets — decriptabile doar pe sancta-claw
     kuzea-caldav-credentials = {
       file = "${self}/secrets/kuzea-caldav-credentials.age";
@@ -138,7 +159,10 @@
 
     environment = {
       HOME = "/var/lib/openclaw";
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash ])}:/run/current-system/sw/bin";
+      # kuzeaTranscribe: whisper-cli + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
+      # The whisper model path is passed via openclaw.json args (-m <path>), not
+      # via an env var, so no WHISPER_CPP_MODEL entry is needed here.
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
     };
