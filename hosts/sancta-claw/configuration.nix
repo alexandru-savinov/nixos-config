@@ -14,11 +14,13 @@ let
     runtimeInputs = [ pkgs.whisper-cpp pkgs.ffmpeg ];
     text = ''
       # All args are passed through; the last positional arg is the media file.
-      INPUT_FILE="''${*: -1}"
+      # Use $@ (not $*) to preserve word boundaries for paths with spaces.
+      INPUT_FILE="''${@: -1}"
       ARGS=("''${@:1:$#-1}")
       TMP_WAV=$(mktemp /tmp/whisper-XXXXXX.wav)
       trap 'rm -f "$TMP_WAV"' EXIT
-      ffmpeg -y -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" 2>/dev/null
+      # Keep ffmpeg stderr visible so conversion errors appear in the journal.
+      ffmpeg -y -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV"
       whisper-cli "''${ARGS[@]}" "$TMP_WAV"
     '';
   };
@@ -45,9 +47,8 @@ in
     gnumake
     gcc
     python3
-    # whisper-cpp is intentionally omitted here: it is pinned explicitly in
-    # systemd.services.openclaw via lib.makeBinPath, which makes the dependency
-    # visible and avoids polluting the global PATH.
+    # whisper-cpp is intentionally omitted here: it is available transitively
+    # via kuzeaTranscribe's runtimeInputs, which avoids polluting the global PATH.
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
@@ -162,7 +163,7 @@ in
       HOME = "/var/lib/openclaw";
       # kuzeaTranscribe wraps whisper-cli + ffmpeg conversion (OGG/Opus → WAV).
       # whisper-cpp and ffmpeg are available transitively via runtimeInputs.
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash ] ++ [ kuzeaTranscribe ])}:/run/current-system/sw/bin";
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
       # Whisper.cpp model for voice message transcription.
