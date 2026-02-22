@@ -12,8 +12,8 @@ let
   whisper-cpp-fixed = pkgs.whisper-cpp.overrideAttrs (old: {
     cmakeFlags = builtins.filter
       (f: !builtins.elem f [
-        "-DGGML_BACKEND_DL=ON"
-        "-DGGML_CPU_ALL_VARIANTS=ON"
+        "-DGGML_BACKEND_DL:BOOL=TRUE"
+        "-DGGML_CPU_ALL_VARIANTS:BOOL=TRUE"
       ])
       old.cmakeFlags;
   });
