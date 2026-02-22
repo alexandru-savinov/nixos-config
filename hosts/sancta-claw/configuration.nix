@@ -90,6 +90,23 @@
   # ── Agenix Secrets ──────────────────────────────────────────────────────
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
+
+    # Kuzea-specific secrets — decriptabile doar pe sancta-claw
+    kuzea-caldav-credentials = {
+      file = "${self}/secrets/kuzea-caldav-credentials.age";
+      owner = "openclaw";
+      group = "openclaw";
+    };
+    kuzea-github-token = {
+      file = "${self}/secrets/kuzea-github-token.age";
+      owner = "openclaw";
+      group = "openclaw";
+    };
+    kuzea-anthropic-api-key = {
+      file = "${self}/secrets/kuzea-anthropic-api-key.age";
+      owner = "openclaw";
+      group = "openclaw";
+    };
   };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
