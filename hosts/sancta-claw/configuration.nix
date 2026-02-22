@@ -270,7 +270,7 @@ in
     preStop = ''
     echo "Removing Tailscale Serve configuration for OpenClaw..."
     ${pkgs.tailscale}/bin/tailscale serve --https 18789 off || true
-    '' ;
+    ''  ;
   };
 
   # ── SSH authorized keys ─────────────────────────────────────────────────
@@ -282,4 +282,5 @@ in
   # Fresh install — NixOS 25.05
   system.stateVersion = lib.mkForce "25.05";
 }
+
 
