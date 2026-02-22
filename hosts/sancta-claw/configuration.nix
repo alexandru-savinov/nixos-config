@@ -26,7 +26,9 @@
     gnumake
     gcc
     python3
-    whisper-cpp # Local speech-to-text for Kuzea voice message transcription
+    # whisper-cpp is intentionally omitted here: it is pinned explicitly in
+    # systemd.services.openclaw via lib.makeBinPath, which makes the dependency
+    # visible and avoids polluting the global PATH.
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
@@ -142,7 +144,11 @@
       PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash whisper-cpp ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
-      # Whisper.cpp model for voice message transcription
+      # Whisper.cpp model for voice message transcription.
+      # The model file is NOT managed by Nix — it is downloaded once manually:
+      #   curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin \
+      #        -o /var/lib/openclaw/models/ggml-small.bin
+      # OpenClaw degrades gracefully (no transcription) if the file is absent.
       WHISPER_CPP_MODEL = "/var/lib/openclaw/models/ggml-small.bin";
     };
 
