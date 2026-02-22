@@ -5,9 +5,22 @@
 }:
 
 let
+  # whisper-cpp 1.7.5 in nixpkgs enables GGML_BACKEND_DL on x86_64, compiling
+  # the CPU backend as a dynamic plugin (libggml-cpu*.so). However the plugin
+  # .so files are not installed, causing a segfault at model load ("devices=0,
+  # backends=0"). Override to statically link the CPU backend instead.
+  whisper-cpp-fixed = pkgs.whisper-cpp.overrideAttrs (old: {
+    cmakeFlags = builtins.filter
+      (f: !builtins.elem f [
+        "-DGGML_BACKEND_DL:BOOL=TRUE"
+        "-DGGML_CPU_ALL_VARIANTS:BOOL=TRUE"
+      ])
+      old.cmakeFlags;
+  });
+
   kuzeaTranscribe = pkgs.writeShellApplication {
     name = "kuzea-transcribe";
-    runtimeInputs = [ pkgs.whisper-cpp pkgs.ffmpeg ];
+    runtimeInputs = [ whisper-cpp-fixed pkgs.ffmpeg ];
     text = ''
       if [[ $# -lt 1 ]]; then
         echo "Usage: kuzea-transcribe [whisper-cli options...] <input-file>" >&2
