@@ -26,7 +26,7 @@
     gnumake
     gcc
     python3
-    whisper-cpp  # Local speech-to-text for Kuzea voice message transcription
+    whisper-cpp # Local speech-to-text for Kuzea voice message transcription
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
