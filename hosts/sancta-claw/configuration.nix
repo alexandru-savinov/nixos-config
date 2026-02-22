@@ -4,6 +4,25 @@
 , ...
 }:
 
+let
+  # whisper-cli (from nixpkgs whisper-cpp) only reads WAV natively.
+  # Telegram delivers voice messages as OGG/Opus, so we need a thin wrapper
+  # that converts audio to 16 kHz mono WAV via ffmpeg before transcribing.
+  # openclaw.json references this binary as the CLI command for audio models.
+  kuzeaTranscribe = pkgs.writeShellApplication {
+    name = "kuzea-transcribe";
+    runtimeInputs = [ pkgs.whisper-cpp pkgs.ffmpeg ];
+    text = ''
+      # All args are passed through; the last positional arg is the media file.
+      INPUT_FILE="''${*: -1}"
+      ARGS=("''${@:1:$#-1}")
+      TMP_WAV=$(mktemp /tmp/whisper-XXXXXX.wav)
+      trap 'rm -f "$TMP_WAV"' EXIT
+      ffmpeg -y -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" 2>/dev/null
+      whisper-cli "''${ARGS[@]}" "$TMP_WAV"
+    '';
+  };
+in
 {
   imports = [
     ./hardware-configuration.nix
@@ -141,13 +160,17 @@
 
     environment = {
       HOME = "/var/lib/openclaw";
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash whisper-cpp ])}:/run/current-system/sw/bin";
+      # kuzeaTranscribe wraps whisper-cli + ffmpeg conversion (OGG/Opus → WAV).
+      # whisper-cpp and ffmpeg are available transitively via runtimeInputs.
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash ] ++ [ kuzeaTranscribe ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
       # Whisper.cpp model for voice message transcription.
-      # The model file is NOT managed by Nix — it is downloaded once manually:
+      # The model file is NOT managed by Nix — download once on fresh deploy:
+      #   mkdir -p /var/lib/openclaw/models
       #   curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin \
       #        -o /var/lib/openclaw/models/ggml-small.bin
+      #   sha256sum → 1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b
       # OpenClaw degrades gracefully (no transcription) if the file is absent.
       WHISPER_CPP_MODEL = "/var/lib/openclaw/models/ggml-small.bin";
     };
