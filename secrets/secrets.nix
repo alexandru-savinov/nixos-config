@@ -36,9 +36,6 @@ in
   # Generate: github.com/settings/personal-access-tokens
   "kuzea-github-token.age".publicKeys = clawKeys;
 
-  # Anthropic API key for OpenClaw
-  "kuzea-anthropic-api-key.age".publicKeys = clawKeys;
-
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;
   "openrouter-api-key.age".publicKeys = allKeys;

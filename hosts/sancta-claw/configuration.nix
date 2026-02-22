@@ -102,11 +102,6 @@
       owner = "openclaw";
       group = "openclaw";
     };
-    kuzea-anthropic-api-key = {
-      file = "${self}/secrets/kuzea-anthropic-api-key.age";
-      owner = "openclaw";
-      group = "openclaw";
-    };
   };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
