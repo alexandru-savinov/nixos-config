@@ -37,15 +37,9 @@
       url = "github:sadjow/claude-code-nix";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
-    # OpenClaw - AI assistant gateway with Telegram/WhatsApp support
-    # See: https://github.com/openclaw/nix-openclaw
-    nix-openclaw = {
-      url = "github:openclaw/nix-openclaw";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, nix-openclaw, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -105,31 +99,6 @@
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             tsidp.nixosModules.default
-            agenix.nixosModules.default
-            ({ pkgs, ... }: {
-              environment.systemPackages = with pkgs; [
-                agenix
-              ];
-            })
-          ];
-        };
-
-        # x86_64 VPS server - OpenClaw container host (repurposed from sancta-choir)
-        sancta-kuzea = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          specialArgs = {
-            pkgs-unstable = import nixpkgs-unstable {
-              system = "x86_64-linux";
-              config.allowUnfree = true;
-            };
-            inherit self; # Pass self for accessing flake root
-            inherit claude-code; # Pass claude-code flake
-            inherit nix-openclaw; # Pass nix-openclaw for Home Manager
-          };
-          modules = [
-            ./hosts/sancta-kuzea/configuration.nix
-            home-manager.nixosModules.home-manager
-            vscode-server.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
               environment.systemPackages = with pkgs; [
