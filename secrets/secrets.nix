@@ -19,9 +19,9 @@ let
   # All keys (for secrets shared across all hosts)
   allKeys = users ++ systems;
 
-  # Keys for Kuzea-specific secrets (sancta-claw + owner only)
-  # Least privilege: only what Kuzea needs, only where Kuzea runs
-  clawKeys = users ++ [ sancta-claw ];
+  # Keys for Kuzea-specific secrets (sancta-claw + owner machines)
+  # rpi5 included so Alexandru can edit/re-encrypt from rpi5-full
+  clawKeys = users ++ [ sancta-claw rpi5 ];
 in
 {
   # Tailscale - shared across all hosts (including sancta-claw)
