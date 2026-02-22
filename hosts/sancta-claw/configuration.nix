@@ -270,6 +270,21 @@ in
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
   ];
 
+  # ── Automatic security updates ──────────────────────────────────────────
+  # Pulls latest nixpkgs and rebuilds nightly. allowReboot=false: never
+  # reboots automatically (VPS — manual reboot after kernel updates).
+  system.autoUpgrade = {
+    enable = true;
+    flake = "github:alexandru-savinov/nixos-config#sancta-claw";
+    flags = [
+      "--update-input"
+      "nixpkgs"
+    ];
+    dates = "04:30";
+    randomizedDelaySec = "30min";
+    allowReboot = false;
+  };
+
   # Fresh install — NixOS 25.05
   system.stateVersion = lib.mkForce "25.05";
 }
