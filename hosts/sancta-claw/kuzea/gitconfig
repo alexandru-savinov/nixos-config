@@ -1,0 +1,5 @@
+[user]
+	name = Kuzea
+	email = kuzea@sancta-claw
+[credential]
+	helper = /var/lib/openclaw/bin/git-credential-agenix
