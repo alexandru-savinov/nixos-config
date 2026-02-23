@@ -42,7 +42,7 @@ function findCallGatewayBundle(distDir) {
   if (override) return path.join(distDir, override);
 
   // Scan for call-*.js files; pick the one that exports `n` (callGateway)
-  const candidates = readdirSync(distDir).filter((f) => /^call-[A-Za-z0-9_-]+\.js$/.test(f));
+  const candidates = readdirSync(distDir).filter((f) => /^call-[A-Za-z0-9_-]+\.js$/.test(f)).sort();
   if (candidates.length === 0) {
     throw new Error(
       `No call-*.js bundle found in ${distDir}. ` +

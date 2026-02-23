@@ -12,7 +12,7 @@
   ],
   "optional_env": ["TZ"],
   "install": {
-    "type": "manual",
-    "note": "Copy to ~/.openclaw/skills/todoist/ — no sudo required for user install"
+    "type": "nix-tmpfiles",
+    "note": "Deployed declaratively via systemd.tmpfiles.rules in NixOS config"
   }
 }

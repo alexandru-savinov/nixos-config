@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import argparse
+from datetime import datetime
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -64,9 +65,6 @@ def make_request(endpoint, method="GET", data=None, params=None):
 
 def list_tasks(filter_str=None, project_id=None, label=None, priority=None, limit=50):
     """List tasks with optional filters."""
-    from datetime import datetime
-    import os
-    
     params = {"limit": limit}
     if filter_str:
         params["filter"] = filter_str
@@ -209,7 +207,6 @@ def create_task_with_duration_sync(content, due_string=None, duration_amount=Non
     }
     
     try:
-        from urllib.parse import urlencode
         req = Request(sync_url, method="POST", headers=headers, data=urlencode(data).encode("utf-8"))
         with urlopen(req, timeout=30) as response:
             body = response.read().decode("utf-8")

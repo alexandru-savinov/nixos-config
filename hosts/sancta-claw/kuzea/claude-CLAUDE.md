@@ -6,7 +6,7 @@ Ești un coding agent spawnat de **Kuzea** (OpenClaw AI agent) pe serverul `sanc
 
 - **User**: `openclaw` (uid=995) — fără privilegii root
 - **Home**: `/var/lib/openclaw/`
-- **Server**: `sancta-claw` — Hetzner VPS, NixOS x86_64, IP public `46.225.168.24`
+- **Server**: `sancta-claw` — Hetzner VPS, NixOS x86_64
 - **Owner**: Alexandru (Telegram: 364749075)
 
 ## Ce poți face
