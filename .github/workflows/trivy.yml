@@ -1,0 +1,61 @@
+name: Trivy Security Scan
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+permissions:
+    contents: read
+    security-events: write
+
+jobs:
+    trivy-scan:
+        name: Security Scan
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Run Trivy vulnerability scanner
+              uses: aquasecurity/trivy-action@master
+              with:
+                  scan-type: "fs"
+                  scan-ref: "."
+                  severity: "CRITICAL,HIGH"
+                  format: "table"
+                  exit-code: "1"
+
+            - name: Run Trivy misconfiguration scanner
+              uses: aquasecurity/trivy-action@master
+              with:
+                  scan-type: "config"
+                  scan-ref: "."
+                  severity: "CRITICAL,HIGH"
+                  format: "table"
+                  exit-code: "1"
+
+            - name: Run Trivy secret scanner
+              uses: aquasecurity/trivy-action@master
+              with:
+                  scan-type: "fs"
+                  scan-ref: "."
+                  scanners: "secret"
+                  format: "table"
+                  exit-code: "1"
+
+            - name: Upload Trivy SARIF results
+              if: always()
+              uses: aquasecurity/trivy-action@master
+              with:
+                  scan-type: "fs"
+                  scan-ref: "."
+                  severity: "CRITICAL,HIGH"
+                  format: "sarif"
+                  output: "trivy-results.sarif"
+
+            - name: Upload SARIF to GitHub Security
+              if: always()
+              uses: github/codeql-action/upload-sarif@v3
+              with:
+                  sarif_file: "trivy-results.sarif"

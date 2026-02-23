@@ -1,9 +1,67 @@
 { pkgs
 , lib
+, config
 , self
 , ...
 }:
 
+let
+  # kuzeaTranscribe: openai-whisper (Python) + ffmpeg (OGG/Opus -> WAV).
+  # whisper-cpp 1.7.5 from nixpkgs segfaults on Skylake-IBRS VMs (backends=0);
+  # openai-whisper is the working fallback. Model files cached in ~/.cache/whisper/.
+  # Download: python3 -c "import whisper; whisper.load_model('base')"
+  kuzeaTranscribe = pkgs.writeShellApplication {
+    name = "kuzea-transcribe";
+    runtimeInputs = [
+      pkgs.ffmpeg
+      (pkgs.python3.withPackages (ps: [ ps.openai-whisper ]))
+    ];
+    text = ''
+      usage() {
+        echo "Usage: kuzea-transcribe [--model MODEL] [--language LANG] <input-file>" >&2
+        echo "  MODEL: tiny, base, small, medium, large (default: base)" >&2
+        exit 1
+      }
+
+      MODEL="base"
+      LANGUAGE_ARG=""
+      INPUT_FILE=""
+
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --model) MODEL="$2"; shift 2 ;;
+          --language) LANGUAGE_ARG="$2"; shift 2 ;;
+          --help|-h) usage ;;
+          -*) echo "Unknown option: $1" >&2; usage ;;
+          *) INPUT_FILE="$1"; shift ;;
+        esac
+      done
+
+      [[ -z "$INPUT_FILE" ]] && usage
+
+      TMP_WAV=$(mktemp /tmp/whisper-XXXXXX.wav)
+      trap 'rm -f "$TMP_WAV"' EXIT
+
+      # -y and -loglevel are global ffmpeg options and must precede the first -i.
+      # -loglevel error suppresses progress spam in the journal.
+      ffmpeg -y -loglevel error -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV"
+
+      CACHE_DIR="''${WHISPER_CACHE_DIR:-$HOME/.cache/whisper}"
+
+      python3 - "$TMP_WAV" "$MODEL" "$CACHE_DIR" "$LANGUAGE_ARG" << 'PYEOF'
+      import sys, whisper
+
+      wav_path, model_name, cache_dir, language = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+      model = whisper.load_model(model_name, download_root=cache_dir)
+      opts = {}
+      if language:
+          opts["language"] = language
+      result = model.transcribe(wav_path, **opts)
+      print(result["text"].strip())
+      PYEOF
+    '';
+  };
+in
 {
   imports = [
     ./hardware-configuration.nix
@@ -26,6 +84,7 @@
     gnumake
     gcc
     python3
+    # openai-whisper available via kuzeaTranscribe runtimeInputs (not system-wide).
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
@@ -90,7 +149,6 @@
   # ── Agenix Secrets ──────────────────────────────────────────────────────
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-
     # Kuzea-specific secrets — decriptabile doar pe sancta-claw
     kuzea-caldav-credentials = {
       file = "${self}/secrets/kuzea-caldav-credentials.age";
@@ -99,6 +157,11 @@
     };
     kuzea-github-token = {
       file = "${self}/secrets/kuzea-github-token.age";
+      owner = "openclaw";
+      group = "openclaw";
+    };
+    kuzea-todoist-credentials = {
+      file = "${self}/secrets/kuzea-todoist-credentials.age";
       owner = "openclaw";
       group = "openclaw";
     };
@@ -111,11 +174,11 @@
     sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
-  # ── Swap (2GB — prevents OOM during builds on CX33) ────────────────────
+  # ── Swap (12GB — prevents OOM during builds and heavy workloads on CX33) ────────────────────
   swapDevices = [
     {
       device = "/swapfile";
-      size = 2048;
+      size = 12288;
     }
   ];
 
@@ -138,7 +201,9 @@
 
     environment = {
       HOME = "/var/lib/openclaw";
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash ])}:/run/current-system/sw/bin";
+      # kuzeaTranscribe: openai-whisper + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
+      # Model auto-downloads to ~/.cache/whisper/ (override with WHISPER_CACHE_DIR).
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
     };
@@ -148,6 +213,9 @@
       User = "openclaw";
       Group = "openclaw";
       WorkingDirectory = "/var/lib/openclaw";
+      # Inject TODOIST_API_KEY from agenix secret into the service environment.
+      # File format: TODOIST_API_KEY=<token> (single line, no quotes needed).
+      EnvironmentFile = config.age.secrets.kuzea-todoist-credentials.path;
       # Binary installed manually: sudo -u openclaw npm install -g openclaw
       # ConditionPathExists prevents noisy restart loops if binary is missing
       ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
@@ -245,6 +313,81 @@
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
   ];
+
+  # ── Automatic security updates ──────────────────────────────────────────
+  # Rebuilds from the latest commit on main nightly. nixpkgs advances when a
+  # flake.lock update is committed to the repo. The .github/workflows/flake-update.yml
+  # CI job handles this automatically: nightly (02:00 UTC) for nixpkgs security
+  # patches, weekly (Mon 09:00 UTC) for all inputs — both open PRs automatically.
+  # --update-input is intentionally omitted: with a remote GitHub flake URL
+  # there is no local path to write an updated lock file back to, so the flag
+  # would be a no-op. allowReboot=false: never reboots automatically (VPS —
+  # schedule manual reboots for kernel updates).
+  system.autoUpgrade = {
+    enable = true;
+    flake = "github:alexandru-savinov/nixos-config#sancta-claw";
+    dates = "04:30";
+    randomizedDelaySec = "30min";
+    allowReboot = false;
+  };
+
+  # ── Declarative runtime files (openclaw user) ──────────────────────────
+  # These files were previously created imperatively and would be lost on
+  # rebuild. tmpfiles L+ creates forced symlinks into the nix store.
+  # Todoist skill directory is built as a derivation and symlinked whole.
+  systemd.tmpfiles.rules =
+    let
+      todoistSkill = pkgs.runCommand "todoist-natural-language" { } ''
+        cp -r ${./kuzea/skills/todoist-natural-language} $out
+      '';
+    in
+    [
+      "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
+      # Ensure parent directories exist before creating the skills symlink.
+      # systemd-tmpfiles does not auto-create missing intermediate parents.
+      "d /var/lib/openclaw/.openclaw 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace/skills 0755 openclaw openclaw -"
+      # writeTextFile with executable=true sets 0555 on the nix store file so the
+      # resulting symlink is directly executable (node cron-manage.mjs).
+      "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${
+        pkgs.writeTextFile {
+          name = "cron-manage.mjs";
+          text = builtins.readFile ./kuzea/cron-manage.mjs;
+          executable = true;
+        }
+      }"
+      # Source file is claude-CLAUDE.md to avoid the dot-prefix in the repo;
+      # deployed as .claude/CLAUDE.md (the path Claude Code reads on startup).
+      "L+ /var/lib/openclaw/.claude/CLAUDE.md - - - - ${pkgs.writeText "claude-global.md" (builtins.readFile ./kuzea/claude-CLAUDE.md)}"
+      # skipDangerousModePermissionPrompt is intentional: the openclaw user runs
+      # under NoNewPrivileges=true with no sudo access, so Claude Code cannot
+      # escalate privileges even with prompts disabled.
+      # The symlink is intentionally read-only (nix store). Claude Code reads
+      # settings.json at startup but does not write to it during normal operation;
+      # any attempt to persist config changes via /config will fail at the OS
+      # level, keeping the declarative value intact.
+      "L+ /var/lib/openclaw/.claude/settings.json - - - - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
+      # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
+      # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
+      # GitHub credential helper: reads PAT from /run/agenix/kuzea-github-token at
+      # runtime so the token is never stored in plaintext on disk.
+      # Replaces the former ~/.git-credentials store helper approach.
+      # writeShellScript patches the shebang to the nix store bash automatically.
+      "L+ /var/lib/openclaw/bin/git-credential-agenix - - - - ${
+        pkgs.writeShellScript "git-credential-agenix" (builtins.readFile ./kuzea/git-credential-agenix)
+      }"
+      # .gitconfig is managed declaratively so the credential helper path always
+      # points to the nix-store copy. The file is read-only by intent; use
+      # nixos-config to make config changes rather than git config --global.
+      "L+ /var/lib/openclaw/.gitconfig - - - - ${pkgs.writeText "gitconfig" (builtins.readFile ./kuzea/gitconfig)}"
+      # Remove legacy plaintext credential files left over from the pre-agenix
+      # setup. 'r' removes the file if it exists; safe to leave in perpetually.
+      "r /var/lib/openclaw/.git-credentials - - - -"
+      "r /var/lib/openclaw/.git-credentials.bak - - - -"
+    ];
 
   # Fresh install — NixOS 25.05
   system.stateVersion = lib.mkForce "25.05";
