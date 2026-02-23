@@ -2,7 +2,9 @@ name: Flake Update
 
 on:
   schedule:
-    # Weekly on Monday at 09:00 UTC
+    # Nightly at 02:00 UTC — nixpkgs only (security patches)
+    - cron: "0 2 * * *"
+        # Weekly on Monday at 09:00 UTC
     - cron: "0 9 * * 1"
   workflow_dispatch:
     inputs:
@@ -43,13 +45,15 @@ jobs:
 
       - name: Update flake inputs
         run: |
-          if [ "${{ inputs.update_all }}" = "false" ]; then
-            echo "Updating nixpkgs inputs only..."
+          if [ "${{ github.event.schedule }}" = "0 2 * * *" ]; then
+            echo "Nightly: updating nixpkgs only..."
+            nix flake update nixpkgs nixpkgs-unstable
+          elif [ "${{ inputs.update_all }}" = "false" ]; then
             nix flake update nixpkgs nixpkgs-unstable
           else
-            echo "Updating all flake inputs..."
             nix flake update
           fi
+
 
       - name: Get updated flake.lock hash
         id: after
