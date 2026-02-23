@@ -375,12 +375,9 @@ in
       # GitHub credential helper: reads PAT from /run/agenix/kuzea-github-token at
       # runtime so the token is never stored in plaintext on disk.
       # Replaces the former ~/.git-credentials store helper approach.
+      # writeShellScript patches the shebang to the nix store bash automatically.
       "L+ /var/lib/openclaw/bin/git-credential-agenix - - - - ${
-        pkgs.writeTextFile {
-          name = "git-credential-agenix";
-          text = builtins.readFile ./kuzea/git-credential-agenix;
-          executable = true;
-        }
+        pkgs.writeShellScript "git-credential-agenix" (builtins.readFile ./kuzea/git-credential-agenix)
       }"
       # .gitconfig is managed declaratively so the credential helper path always
       # points to the nix-store copy. The file is read-only by intent; use
