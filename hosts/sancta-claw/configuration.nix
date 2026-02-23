@@ -283,6 +283,51 @@ in
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
   ];
 
+  # ── Declarative runtime files (openclaw user) ──────────────────────────
+  # These files were previously created imperatively and would be lost on
+  # rebuild. tmpfiles L+ creates forced symlinks into the nix store.
+  # Todoist skill directory is built as a derivation and symlinked whole.
+  systemd.tmpfiles.rules =
+    let
+      todoistSkill = pkgs.runCommand "todoist-natural-language" { } ''
+        cp -r ${./kuzea/skills/todoist-natural-language} $out
+      '';
+    in
+    [
+      "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
+      # Ensure parent directories exist before creating the skills symlink.
+      # systemd-tmpfiles does not auto-create missing intermediate parents.
+      "d /var/lib/openclaw/.openclaw 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace/skills 0755 openclaw openclaw -"
+      # writeTextFile with executable=true sets 0555 on the nix store file so the
+      # resulting symlink is directly executable (node cron-manage.mjs).
+      "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${
+        pkgs.writeTextFile {
+          name = "cron-manage.mjs";
+          text = builtins.readFile ./kuzea/cron-manage.mjs;
+          executable = true;
+        }
+      }"
+      # Source file is claude-CLAUDE.md to avoid the dot-prefix in the repo;
+      # deployed as .claude/CLAUDE.md (the path Claude Code reads on startup).
+      "L+ /var/lib/openclaw/.claude/CLAUDE.md - - - - ${pkgs.writeText "claude-global.md" (builtins.readFile ./kuzea/claude-CLAUDE.md)}"
+      # skipDangerousModePermissionPrompt is intentional: the openclaw user runs
+      # under NoNewPrivileges=true with no sudo access, so Claude Code cannot
+      # escalate privileges even with prompts disabled.
+      # The symlink is intentionally read-only (nix store). Claude Code reads
+      # settings.json at startup but does not write to it during normal operation;
+      # any attempt to persist config changes via /config will fail at the OS
+      # level, keeping the declarative value intact.
+      "L+ /var/lib/openclaw/.claude/settings.json - - - - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
+      # TODO: TODOIST_API_KEY is not yet wired as an agenix secret. The skill
+      # is deployed but will fail at runtime until the key is provided. Tracked
+      # separately — set TODOIST_API_KEY in the openclaw service environment
+      # once Alexandru supplies the token (see MEMORY.md De Făcut).
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
+    ];
+
   # Fresh install — NixOS 25.05
   system.stateVersion = lib.mkForce "25.05";
 }
