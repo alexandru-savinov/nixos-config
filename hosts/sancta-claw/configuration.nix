@@ -174,11 +174,11 @@ in
     sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
-  # ── Swap (2GB — prevents OOM during builds on CX33) ────────────────────
+  # ── Swap (12GB — prevents OOM during builds and heavy workloads on CX33) ────────────────────
   swapDevices = [
     {
       device = "/swapfile";
-      size = 2048;
+      size = 12288;
     }
   ];
 
