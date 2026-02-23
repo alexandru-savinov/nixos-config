@@ -272,11 +272,13 @@ in
 
   # ── Automatic security updates ──────────────────────────────────────────
   # Rebuilds from the latest commit on main nightly. nixpkgs advances when a
-  # flake.lock update is committed to the repo (run `nix flake update nixpkgs`
-  # locally and push). --update-input is intentionally omitted: with a remote
-  # GitHub flake URL there is no local path to write an updated lock file back
-  # to, so the flag would be a no-op. allowReboot=false: never reboots
-  # automatically (VPS — schedule manual reboots for kernel updates).
+  # flake.lock update is committed to the repo. The .github/workflows/flake-update.yml
+  # CI job handles this automatically: nightly (02:00 UTC) for nixpkgs security
+  # patches, weekly (Mon 09:00 UTC) for all inputs — both open PRs automatically.
+  # --update-input is intentionally omitted: with a remote GitHub flake URL
+  # there is no local path to write an updated lock file back to, so the flag
+  # would be a no-op. allowReboot=false: never reboots automatically (VPS —
+  # schedule manual reboots for kernel updates).
   system.autoUpgrade = {
     enable = true;
     flake = "github:alexandru-savinov/nixos-config#sancta-claw";
