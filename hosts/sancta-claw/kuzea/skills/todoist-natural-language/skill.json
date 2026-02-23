@@ -1,7 +1,7 @@
 {
   "name": "todoist",
   "description": "Integrate with Todoist task management using natural language",
-  "version": "1.0.4",
+  "version": "1.0.8",
   "credentials": [
     {
       "name": "TODOIST_API_KEY",

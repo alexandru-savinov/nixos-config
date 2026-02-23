@@ -50,7 +50,7 @@ def make_request(endpoint, method="GET", data=None, params=None):
         try:
             error_json = json.loads(error_body)
             print(json.dumps({"error": error_json}), file=sys.stderr)
-        except:
+        except Exception:
             print(json.dumps({"error": f"HTTP {e.code}: {error_body}"}), file=sys.stderr)
         sys.exit(1)
     except URLError as e:
@@ -84,12 +84,13 @@ def list_tasks(filter_str=None, project_id=None, label=None, priority=None, limi
     # Client-side filter: when using "today" filter, API returns recurring tasks too
     # Filter to only tasks actually due today (respecting user's timezone)
     if filter_str and filter_str.lower() == "today":
-        # Use US/Central timezone (from USER.md) or fallback to local
-        tz = os.environ.get("TZ", "America/Chicago")
+        # Use TZ env var (set per-host) or fall back to UTC for safe cross-host portability.
+        # Set TZ=Europe/Chisinau in the openclaw service environment for correct local dates.
+        tz = os.environ.get("TZ", "UTC")
         try:
             from zoneinfo import ZoneInfo
             now = datetime.now(ZoneInfo(tz))
-        except:
+        except Exception:
             now = datetime.now()
         today_str = now.strftime("%Y-%m-%d")
         tasks = [t for t in tasks if t.get("due", {}).get("date") == today_str]

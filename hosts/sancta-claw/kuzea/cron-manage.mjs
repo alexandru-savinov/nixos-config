@@ -22,15 +22,39 @@
  */
 
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 // Resolve the OpenClaw dist directory
 const OPENCLAW_DIST = "/var/lib/openclaw/.npm-global/lib/node_modules/openclaw/dist";
 
-// Dynamic imports from OpenClaw internals
-const { n: callGateway } = await import(path.join(OPENCLAW_DIST, "call-B3Ur5x-r.js"));
+// The gateway client lives in a content-hashed bundle file (e.g. call-B3Ur5x-r.js).
+// The filename changes on every OpenClaw update, so we resolve it dynamically by
+// scanning the dist directory for the expected export signature instead of
+// hardcoding a name that will silently break after an upgrade.
+function findCallGatewayBundle(distDir) {
+  if (!existsSync(distDir)) {
+    throw new Error(`OpenClaw dist directory not found: ${distDir}`);
+  }
+  // Prefer an explicit override via env (useful during upgrades / debugging)
+  const override = process.env.OPENCLAW_CALL_BUNDLE;
+  if (override) return path.join(distDir, override);
+
+  // Scan for call-*.js files; pick the one that exports `n` (callGateway)
+  const candidates = readdirSync(distDir).filter((f) => /^call-[A-Za-z0-9_-]+\.js$/.test(f));
+  if (candidates.length === 0) {
+    throw new Error(
+      `No call-*.js bundle found in ${distDir}. ` +
+        "OpenClaw may have been upgraded — set OPENCLAW_CALL_BUNDLE=<filename> to override."
+    );
+  }
+  // Return the first match (there should only be one)
+  return path.join(distDir, candidates[0]);
+}
+
+const callBundlePath = findCallGatewayBundle(OPENCLAW_DIST);
+const { n: callGateway } = await import(callBundlePath);
 
 // ---------------------------------------------------------------------------
 // helpers

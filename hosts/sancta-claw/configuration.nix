@@ -296,9 +296,24 @@ in
     [
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
+      # Ensure parent directories exist before creating the skills symlink.
+      # systemd-tmpfiles does not auto-create missing intermediate parents.
+      "d /var/lib/openclaw/.openclaw 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.openclaw/workspace/skills 0755 openclaw openclaw -"
-      "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${pkgs.writeText "cron-manage.mjs" (builtins.readFile ./kuzea/cron-manage.mjs)}"
+      # writeTextFile with executable=true sets 0555 on the nix store file so the
+      # resulting symlink is directly executable (node cron-manage.mjs).
+      "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${
+        pkgs.writeTextFile {
+          name = "cron-manage.mjs";
+          text = builtins.readFile ./kuzea/cron-manage.mjs;
+          executable = true;
+        }
+      }"
       "L+ /var/lib/openclaw/.claude/CLAUDE.md - - - - ${pkgs.writeText "claude-global.md" (builtins.readFile ./kuzea/claude-CLAUDE.md)}"
+      # skipDangerousModePermissionPrompt is intentional: the openclaw user runs
+      # under NoNewPrivileges=true with no sudo access, so Claude Code cannot
+      # escalate privileges even with prompts disabled.
       "L+ /var/lib/openclaw/.claude/settings.json - - - - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
     ];
