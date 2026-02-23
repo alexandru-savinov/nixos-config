@@ -314,6 +314,23 @@ in
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
   ];
 
+  # ── Automatic security updates ──────────────────────────────────────────
+  # Rebuilds from the latest commit on main nightly. nixpkgs advances when a
+  # flake.lock update is committed to the repo. The .github/workflows/flake-update.yml
+  # CI job handles this automatically: nightly (02:00 UTC) for nixpkgs security
+  # patches, weekly (Mon 09:00 UTC) for all inputs — both open PRs automatically.
+  # --update-input is intentionally omitted: with a remote GitHub flake URL
+  # there is no local path to write an updated lock file back to, so the flag
+  # would be a no-op. allowReboot=false: never reboots automatically (VPS —
+  # schedule manual reboots for kernel updates).
+  system.autoUpgrade = {
+    enable = true;
+    flake = "github:alexandru-savinov/nixos-config#sancta-claw";
+    dates = "04:30";
+    randomizedDelaySec = "30min";
+    allowReboot = false;
+  };
+
   # ── Declarative runtime files (openclaw user) ──────────────────────────
   # These files were previously created imperatively and would be lost on
   # rebuild. tmpfiles L+ creates forced symlinks into the nix store.
@@ -352,10 +369,8 @@ in
       # any attempt to persist config changes via /config will fail at the OS
       # level, keeping the declarative value intact.
       "L+ /var/lib/openclaw/.claude/settings.json - - - - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
-      # TODO: TODOIST_API_KEY is not yet wired as an agenix secret. The skill
-      # is deployed but will fail at runtime until the key is provided. Tracked
-      # separately — set TODOIST_API_KEY in the openclaw service environment
-      # once Alexandru supplies the token (see MEMORY.md De Făcut).
+      # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
+      # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
     ];
 
