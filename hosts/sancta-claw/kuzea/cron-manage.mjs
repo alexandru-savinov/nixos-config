@@ -177,6 +177,9 @@ try {
         console.error("Usage: cron-manage.mjs update <id> <json-patch>");
         process.exit(1);
       }
+      if (!patchArg) {
+        console.warn("Warning: no <json-patch> provided — update will be a no-op");
+      }
       const patch = patchArg ? parseJsonArg(patchArg) : {};
       const res = await rpc("cron.update", { id, ...patch });
       console.log("Job updated:");
