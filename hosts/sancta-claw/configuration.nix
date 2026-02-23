@@ -1,5 +1,6 @@
 { pkgs
 , lib
+, config
 , self
 , ...
 }:
@@ -159,6 +160,11 @@ in
       owner = "openclaw";
       group = "openclaw";
     };
+    kuzea-todoist-credentials = {
+      file = "${self}/secrets/kuzea-todoist-credentials.age";
+      owner = "openclaw";
+      group = "openclaw";
+    };
   };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
@@ -207,6 +213,9 @@ in
       User = "openclaw";
       Group = "openclaw";
       WorkingDirectory = "/var/lib/openclaw";
+      # Inject TODOIST_API_KEY from agenix secret into the service environment.
+      # File format: TODOIST_API_KEY=<token> (single line, no quotes needed).
+      EnvironmentFile = config.age.secrets.kuzea-todoist-credentials.path;
       # Binary installed manually: sudo -u openclaw npm install -g openclaw
       # ConditionPathExists prevents noisy restart loops if binary is missing
       ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
