@@ -1,0 +1,8 @@
+# System user identity for the openclaw service. The email is intentionally a
+# local address (not a real GitHub account) because this user performs automated
+# operations only; commits are pushed via PAT on behalf of the human owner.
+[user]
+	name = Kuzea
+	email = kuzea@sancta-claw
+[credential "https://github.com"]
+	helper = /var/lib/openclaw/bin/git-credential-agenix

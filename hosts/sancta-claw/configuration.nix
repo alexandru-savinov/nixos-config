@@ -372,6 +372,21 @@ in
       # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
       # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
+      # GitHub credential helper: reads PAT from /run/agenix/kuzea-github-token at
+      # runtime so the token is never stored in plaintext on disk.
+      # Replaces the former ~/.git-credentials store helper approach.
+      # writeShellScript patches the shebang to the nix store bash automatically.
+      "L+ /var/lib/openclaw/bin/git-credential-agenix - - - - ${
+        pkgs.writeShellScript "git-credential-agenix" (builtins.readFile ./kuzea/git-credential-agenix)
+      }"
+      # .gitconfig is managed declaratively so the credential helper path always
+      # points to the nix-store copy. The file is read-only by intent; use
+      # nixos-config to make config changes rather than git config --global.
+      "L+ /var/lib/openclaw/.gitconfig - - - - ${pkgs.writeText "gitconfig" (builtins.readFile ./kuzea/gitconfig)}"
+      # Remove legacy plaintext credential files left over from the pre-agenix
+      # setup. 'r' removes the file if it exists; safe to leave in perpetually.
+      "r /var/lib/openclaw/.git-credentials - - - -"
+      "r /var/lib/openclaw/.git-credentials.bak - - - -"
     ];
 
   # Fresh install — NixOS 25.05
