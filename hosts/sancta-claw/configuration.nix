@@ -5,36 +5,58 @@
 }:
 
 let
-  # whisper-cpp 1.7.5 in nixpkgs enables GGML_BACKEND_DL on x86_64, compiling
-  # the CPU backend as a dynamic plugin (libggml-cpu*.so). However the plugin
-  # .so files are not installed, causing a segfault at model load ("devices=0,
-  # backends=0"). Override to statically link the CPU backend instead.
-  whisper-cpp-fixed = pkgs.whisper-cpp.overrideAttrs (old: {
-    cmakeFlags = builtins.filter
-      (f: !builtins.elem f [
-        "-DGGML_BACKEND_DL:BOOL=TRUE"
-        "-DGGML_CPU_ALL_VARIANTS:BOOL=TRUE"
-      ])
-      old.cmakeFlags;
-  });
-
+  # kuzeaTranscribe: openai-whisper (Python) + ffmpeg (OGG/Opus -> WAV).
+  # whisper-cpp 1.7.5 from nixpkgs segfaults on Skylake-IBRS VMs (backends=0);
+  # openai-whisper is the working fallback. Model files cached in ~/.cache/whisper/.
+  # Download: python3 -c "import whisper; whisper.load_model('base')"
   kuzeaTranscribe = pkgs.writeShellApplication {
     name = "kuzea-transcribe";
-    runtimeInputs = [ whisper-cpp-fixed pkgs.ffmpeg ];
+    runtimeInputs = [
+      pkgs.ffmpeg
+      (pkgs.python3.withPackages (ps: [ ps.openai-whisper ]))
+    ];
     text = ''
-      if [[ $# -lt 1 ]]; then
-        echo "Usage: kuzea-transcribe [whisper-cli options...] <input-file>" >&2
+      usage() {
+        echo "Usage: kuzea-transcribe [--model MODEL] [--language LANG] <input-file>" >&2
+        echo "  MODEL: tiny, base, small, medium, large (default: base)" >&2
         exit 1
-      fi
-      # Use an array to split off the last argument safely (ShellCheck-clean).
-      args=("$@")
-      INPUT_FILE="''${args[-1]}"
-      ARGS=("''${args[@]:0:$((''${#args[@]} - 1))}")
+      }
+
+      MODEL="base"
+      LANGUAGE_ARG=""
+      INPUT_FILE=""
+
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --model) MODEL="$2"; shift 2 ;;
+          --language) LANGUAGE_ARG="$2"; shift 2 ;;
+          --help|-h) usage ;;
+          -*) shift ;;
+          *) INPUT_FILE="$1"; shift ;;
+        esac
+      done
+
+      [[ -z "$INPUT_FILE" ]] && usage
+
       TMP_WAV=$(mktemp /tmp/whisper-XXXXXX.wav)
       trap 'rm -f "$TMP_WAV"' EXIT
-      # -loglevel error suppresses ffmpeg banner/progress spam in the journal.
-      ffmpeg -y -loglevel error -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV"
-      whisper-cli "''${ARGS[@]}" "$TMP_WAV"
+
+      ffmpeg -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" \
+        -loglevel error -y
+
+      CACHE_DIR="''${WHISPER_CACHE_DIR:-$HOME/.cache/whisper}"
+
+      python3 - "$TMP_WAV" "$MODEL" "$CACHE_DIR" "$LANGUAGE_ARG" << 'PYEOF'
+      import sys, whisper
+
+      wav_path, model_name, cache_dir, language = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+      model = whisper.load_model(model_name, download_root=cache_dir)
+      opts = {}
+      if language:
+          opts["language"] = language
+      result = model.transcribe(wav_path, **opts)
+      print(result["text"].strip())
+      PYEOF
     '';
   };
 in
@@ -60,7 +82,7 @@ in
     gnumake
     gcc
     python3
-    # whisper-cpp is omitted: available via kuzeaTranscribe runtimeInputs.
+    # openai-whisper available via kuzeaTranscribe runtimeInputs (not system-wide).
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
@@ -172,9 +194,8 @@ in
 
     environment = {
       HOME = "/var/lib/openclaw";
-      # kuzeaTranscribe: whisper-cli + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
-      # The whisper model path is passed via openclaw.json args (-m <path>), not
-      # via an env var, so no WHISPER_CPP_MODEL entry is needed here.
+      # kuzeaTranscribe: openai-whisper + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
+      # Model auto-downloads to ~/.cache/whisper/ (override with WHISPER_CACHE_DIR).
       PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
