@@ -383,6 +383,10 @@ in
       # points to the nix-store copy. The file is read-only by intent; use
       # nixos-config to make config changes rather than git config --global.
       "L+ /var/lib/openclaw/.gitconfig - - - - ${pkgs.writeText "gitconfig" (builtins.readFile ./kuzea/gitconfig)}"
+      # Remove legacy plaintext credential files left over from the pre-agenix
+      # setup. 'r' removes the file if it exists; safe to leave in perpetually.
+      "r /var/lib/openclaw/.git-credentials - - - -"
+      "r /var/lib/openclaw/.git-credentials.bak - - - -"
     ];
 
   # Fresh install — NixOS 25.05
