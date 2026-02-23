@@ -36,7 +36,7 @@ in
   # Generate: github.com/settings/personal-access-tokens
   "kuzea-github-token.age".publicKeys = clawKeys;
 
-  # Todoist API token for kuzea-natural-language skill
+  # Todoist API token for todoist-natural-language skill (PR #295)
   "kuzea-todoist-credentials.age".publicKeys = clawKeys;
 
   # Open-WebUI secrets - shared across sancta-choir and rpi5
