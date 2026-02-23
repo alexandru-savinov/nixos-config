@@ -31,7 +31,7 @@ let
           --model) MODEL="$2"; shift 2 ;;
           --language) LANGUAGE_ARG="$2"; shift 2 ;;
           --help|-h) usage ;;
-          -*) shift ;;
+          -*) echo "Unknown option: $1" >&2; usage ;;
           *) INPUT_FILE="$1"; shift ;;
         esac
       done
@@ -41,8 +41,9 @@ let
       TMP_WAV=$(mktemp /tmp/whisper-XXXXXX.wav)
       trap 'rm -f "$TMP_WAV"' EXIT
 
-      ffmpeg -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" \
-        -loglevel error -y
+      # -y and -loglevel are global ffmpeg options and must precede the first -i.
+      # -loglevel error suppresses progress spam in the journal.
+      ffmpeg -y -loglevel error -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV"
 
       CACHE_DIR="''${WHISPER_CACHE_DIR:-$HOME/.cache/whisper}"
 
