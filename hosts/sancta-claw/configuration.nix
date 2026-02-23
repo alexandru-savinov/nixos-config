@@ -283,6 +283,26 @@ in
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
   ];
 
+  # ── Declarative runtime files (openclaw user) ──────────────────────────
+  # These files were previously created imperatively and would be lost on
+  # rebuild. tmpfiles L+ creates forced symlinks into the nix store.
+  # Todoist skill directory is built as a derivation and symlinked whole.
+  systemd.tmpfiles.rules =
+    let
+      todoistSkill = pkgs.runCommand "todoist-natural-language" { } ''
+        cp -r ${./kuzea/skills/todoist-natural-language} $out
+      '';
+    in
+    [
+      "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace/skills 0755 openclaw openclaw -"
+      "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${pkgs.writeText "cron-manage.mjs" (builtins.readFile ./kuzea/cron-manage.mjs)}"
+      "L+ /var/lib/openclaw/.claude/CLAUDE.md - - - - ${pkgs.writeText "claude-global.md" (builtins.readFile ./kuzea/claude-CLAUDE.md)}"
+      "L+ /var/lib/openclaw/.claude/settings.json - - - - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
+    ];
+
   # Fresh install — NixOS 25.05
   system.stateVersion = lib.mkForce "25.05";
 }
