@@ -12,7 +12,7 @@
 #   Optional → POST notification to n8n webhook
 #
 # Security:
-#   - Dedicated openclaw user with restricted sudo (build wrapper only)
+#   - Dedicated openclaw user with restricted sudo (build wrapper: nixos-rebuild/nix only)
 #   - Network restricted via nftables (Anthropic API + GitHub + DNS resolvers)
 #   - Secret values loaded at runtime from agenix paths into /run/openclaw/env
 #   - Claude Code tools whitelist limits filesystem/shell access
@@ -559,10 +559,6 @@ in
         commands = [
           {
             command = "${openclawSudo}";
-            options = [ "NOPASSWD" ];
-          }
-          {
-            command = "/run/current-system/sw/bin/systemctl restart openclaw";
             options = [ "NOPASSWD" ];
           }
         ];

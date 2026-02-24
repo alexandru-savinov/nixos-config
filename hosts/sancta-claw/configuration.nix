@@ -232,7 +232,14 @@ in
       CPUQuota = "300%";
 
       # Hardening (no MemoryDenyWriteExecute — Node.js needs JIT)
-      NoNewPrivileges = true;
+      #
+      # NoNewPrivileges = false here: Kuzea needs to call
+      #   sudo systemctl restart openclaw
+      # to self-restart after config changes. The sudo rule is strictly scoped
+      # to the absolute path of systemctl with the exact "restart openclaw"
+      # argument (no wildcards), so privilege escalation is limited to that one
+      # operation. All other hardening flags below remain in effect.
+      NoNewPrivileges = false;
       ProtectSystem = "strict";
       ProtectHome = true; # /var/lib/openclaw is not under /home
       PrivateDevices = true;
@@ -308,6 +315,22 @@ in
     '';
   };
 
+  # ── Sudo rules for openclaw user ────────────────────────────────────────
+  # Allows Kuzea (AI agent) to restart its own service without root intervention.
+  # Strictly scoped: absolute path + exact command, no wildcards.
+  # Requires NoNewPrivileges = false on openclaw.service (see above).
+  security.sudo.extraRules = [
+    {
+      users = [ "openclaw" ];
+      commands = [
+        {
+          command = "/run/current-system/sw/bin/systemctl restart openclaw";
+          options = [ "NOPASSWD" ];
+        }
+      ];
+    }
+  ];
+
   # ── SSH authorized keys ─────────────────────────────────────────────────
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
@@ -361,9 +384,9 @@ in
       # Source file is claude-CLAUDE.md to avoid the dot-prefix in the repo;
       # deployed as .claude/CLAUDE.md (the path Claude Code reads on startup).
       "L+ /var/lib/openclaw/.claude/CLAUDE.md - - - - ${pkgs.writeText "claude-global.md" (builtins.readFile ./kuzea/claude-CLAUDE.md)}"
-      # skipDangerousModePermissionPrompt is intentional: the openclaw user runs
-      # under NoNewPrivileges=true with no sudo access, so Claude Code cannot
-      # escalate privileges even with prompts disabled.
+      # skipDangerousModePermissionPrompt is intentional: the openclaw user's
+      # sudo access is strictly scoped (restart openclaw only); Claude Code
+      # cannot escalate to arbitrary root commands even with prompts disabled.
       # The symlink is intentionally read-only (nix store). Claude Code reads
       # settings.json at startup but does not write to it during normal operation;
       # any attempt to persist config changes via /config will fail at the OS
