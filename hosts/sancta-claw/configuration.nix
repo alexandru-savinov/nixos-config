@@ -308,6 +308,31 @@ in
     '';
   };
 
+  # ── Restart trigger (no sudo, no NoNewPrivileges change) ────────────────
+  # Kuzea self-restart via file-based trigger:
+  #   touch /var/lib/openclaw/restart-trigger
+  # The path unit fires, the watcher service (root) deletes the file and
+  # restarts openclaw. NoNewPrivileges=true on openclaw.service is preserved.
+  systemd.paths.openclaw-restart-watcher = {
+    description = "Watch for Kuzea self-restart trigger";
+    wantedBy = [ "multi-user.target" ];
+    pathConfig = {
+      PathExists = "/var/lib/openclaw/restart-trigger";
+      Unit = "openclaw-restart-watcher.service";
+    };
+  };
+
+  systemd.services.openclaw-restart-watcher = {
+    description = "Restart openclaw service on agent request";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "openclaw-do-restart" ''
+        rm -f /var/lib/openclaw/restart-trigger
+        systemctl restart openclaw
+      '';
+    };
+  };
+
   # ── SSH authorized keys ─────────────────────────────────────────────────
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
