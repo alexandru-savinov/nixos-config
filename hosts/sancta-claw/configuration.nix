@@ -61,6 +61,72 @@ let
       PYEOF
     '';
   };
+
+  # agentBrowser: headless browser automation CLI for AI agents.
+  # Rust CLI dispatches commands to a Node.js/Playwright daemon.
+  # Uses nixpkgs playwright-driver.browsers — no runtime Chromium download.
+  agentBrowser =
+    let
+      src = pkgs.fetchFromGitHub {
+        owner = "vercel-labs";
+        repo = "agent-browser";
+        rev = "v0.14.0";
+        hash = "sha256-oDgnxQ09e1IUd1kfgr75TNiYOf5VpMXG9DjfGG4OGwA=";
+      };
+      # Node.js daemon: TypeScript compiled to JS, uses playwright-core
+      daemonDrv = pkgs.stdenv.mkDerivation {
+        pname = "agent-browser-daemon";
+        version = "0.14.0";
+        inherit src;
+        pnpmDeps = pkgs.pnpm.fetchDeps {
+          pname = "agent-browser-daemon";
+          version = "0.14.0";
+          inherit src;
+          hash = "sha256-W2UD2bCmyHwzAknw2jxfgVFvd1r2y0/XX5ujT6RO3xM=";
+        };
+        nativeBuildInputs = with pkgs; [
+          nodejs_22
+          pnpm.configHook
+        ];
+        buildPhase = "pnpm build";
+        installPhase = ''
+          mkdir -p $out
+          cp -rL dist package.json $out/
+          cp -rL node_modules $out/
+        '';
+      };
+      # Rust CLI: fast command dispatcher, spawns Node.js daemon on demand
+      rustCli = pkgs.rustPlatform.buildRustPackage {
+        pname = "agent-browser-cli";
+        version = "0.14.0";
+        inherit src;
+        cargoRoot = "cli";
+        buildAndTestSubdir = "cli";
+        cargoHash = "sha256-94w9V+NZiWeQ3WbQnsKxVxlvsCaOJR0Wm6XVc85Lo88=";
+      };
+    in
+    pkgs.stdenv.mkDerivation {
+      pname = "agent-browser";
+      version = "0.14.0";
+      dontUnpack = true;
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      meta = with pkgs.lib; {
+        description = "Headless browser automation CLI for AI agents (Rust CLI + Playwright daemon)";
+        homepage = "https://github.com/vercel-labs/agent-browser";
+        license = licenses.asl20;
+        platforms = platforms.linux;
+        mainProgram = "agent-browser";
+      };
+      installPhase = ''
+        mkdir -p $out/bin $out/share/agent-browser
+        cp -rL ${daemonDrv}/. $out/share/agent-browser/
+        makeWrapper ${rustCli}/bin/agent-browser $out/bin/agent-browser \
+          --set AGENT_BROWSER_HOME "$out/share/agent-browser" \
+          --set PLAYWRIGHT_BROWSERS_PATH "${pkgs.playwright-driver.browsers}" \
+          --set PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS "true" \
+          --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.nodejs_22 ]}"
+      '';
+    };
 in
 {
   imports = [
@@ -85,6 +151,8 @@ in
     gcc
     python3
     # openai-whisper available via kuzeaTranscribe runtimeInputs (not system-wide).
+    # playwright-driver.browsers is a transitive closure dep of agentBrowser (via makeWrapper);
+    # no need to list it here separately.
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
@@ -203,7 +271,7 @@ in
       HOME = "/var/lib/openclaw";
       # kuzeaTranscribe: openai-whisper + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
       # Model auto-downloads to ~/.cache/whisper/ (override with WHISPER_CACHE_DIR).
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe ])}:/run/current-system/sw/bin";
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
     };
@@ -236,6 +304,11 @@ in
       ProtectSystem = "strict";
       ProtectHome = true; # /var/lib/openclaw is not under /home
       PrivateDevices = true;
+      # /dev/shm is required by Chromium (renderer <-> browser IPC).
+      # PrivateDevices creates a minimal /dev without /dev/shm, so we bind it
+      # explicitly. The host's /dev/shm tmpfs is mounted read-write in the
+      # private namespace; no other devices are exposed.
+      BindPaths = [ "/dev/shm" ];
       ReadWritePaths = [ "/var/lib/openclaw" ];
       PrivateTmp = true;
     };
