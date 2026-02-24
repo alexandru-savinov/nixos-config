@@ -3,25 +3,13 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -40,18 +28,51 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
+            You are a code reviewer. Review this pull request thoroughly.
 
-            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+            ## Step 1: Read the PR diff
+            Run: gh pr diff ${{ github.event.pull_request.number }}
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            ## Step 2: Analyze for issues
+            Evaluate the changes for:
+            - **CRITICAL**: Security vulnerabilities, secret exposure, data loss risks,
+              configurations that could break production or expose services
+            - **HIGH**: Bugs that will cause runtime failures, broken NixOS builds,
+              misconfigured services
+            - **MEDIUM**: Code quality issues, missing error handling, performance concerns
+            - **LOW**: Style issues, minor improvements, documentation gaps
 
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+            Focus on what's relevant for a NixOS infrastructure repo: service configs,
+            firewall rules, secrets handling, systemd units, package integrity.
 
+            Use the repository's CLAUDE.md for guidance on style and conventions.
+
+            ## Step 3: Post your review
+            Post a detailed review comment via:
+            gh pr comment ${{ github.event.pull_request.number }} --body "YOUR REVIEW"
+
+            Include a summary table of findings with severity levels.
+
+            ## Step 4: Write verdict (REQUIRED — do this LAST)
+            Based on your review, write exactly one of these verdicts:
+            - If you found any CRITICAL or HIGH severity issues:
+              Run: echo "CRITICAL" > /tmp/review-verdict
+            - If no critical/high issues found:
+              Run: echo "PASS" > /tmp/review-verdict
+
+            You MUST run the echo command. The CI pipeline depends on it.
+
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*)"'
+
+      - name: Check review verdict
+        if: always()
+        run: |
+          verdict=$(cat /tmp/review-verdict 2>/dev/null || echo "UNKNOWN")
+          echo "Claude review verdict: $verdict"
+          if [ "$verdict" = "CRITICAL" ]; then
+            echo "::error::Claude Code Review found CRITICAL or HIGH severity issues in this PR."
+            echo "Check the review comment on the PR for details."
+            exit 1
+          elif [ "$verdict" = "UNKNOWN" ]; then
+            echo "::warning::Claude did not produce a review verdict. Review may have failed."
+          fi
