@@ -91,8 +91,12 @@ let
         buildPhase = "pnpm build";
         installPhase = ''
           mkdir -p $out
+          # cp -rL would dereference pnpm virtual-store symlinks, breaking
+          # transitive-dep resolution (Node.js traverses the real path, not the
+          # .pnpm symlink chain). cp -r preserves relative symlinks so Node.js
+          # still resolves packages through .pnpm/<pkg>/node_modules/<dep>/.
           cp -rL dist package.json $out/
-          cp -rL node_modules $out/
+          cp -r node_modules $out/
         '';
       };
       # Rust CLI: fast command dispatcher, spawns Node.js daemon on demand
@@ -104,6 +108,16 @@ let
         buildAndTestSubdir = "cli";
         cargoHash = "sha256-94w9V+NZiWeQ3WbQnsKxVxlvsCaOJR0Wm6XVc85Lo88=";
       };
+    in
+    let
+      # Locate headless_shell inside playwright-driver.browsers at eval time.
+      # AGENT_BROWSER_EXECUTABLE_PATH lets the daemon use this binary regardless
+      # of the playwright-core npm revision (avoids revision-mismatch errors).
+      chromiumDir = pkgs.lib.head (
+        builtins.filter (n: pkgs.lib.hasPrefix "chromium_headless_shell" n)
+          (builtins.attrNames (builtins.readDir (toString pkgs.playwright-driver.browsers)))
+      );
+      chromiumBin = "${pkgs.playwright-driver.browsers}/${chromiumDir}/chrome-linux/headless_shell";
     in
     pkgs.stdenv.mkDerivation {
       pname = "agent-browser";
@@ -119,10 +133,10 @@ let
       };
       installPhase = ''
         mkdir -p $out/bin $out/share/agent-browser
-        cp -rL ${daemonDrv}/. $out/share/agent-browser/
+        cp -r ${daemonDrv}/. $out/share/agent-browser/
         makeWrapper ${rustCli}/bin/agent-browser $out/bin/agent-browser \
           --set AGENT_BROWSER_HOME "$out/share/agent-browser" \
-          --set PLAYWRIGHT_BROWSERS_PATH "${pkgs.playwright-driver.browsers}" \
+          --set AGENT_BROWSER_EXECUTABLE_PATH "${chromiumBin}" \
           --set PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS "true" \
           --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.nodejs_22 ]}"
       '';
