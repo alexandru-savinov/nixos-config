@@ -3,25 +3,13 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -36,22 +24,61 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
+            You are a code reviewer. Review this pull request thoroughly.
 
-            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+            ## Step 1: Read the PR diff
+            Run: gh pr diff ${{ github.event.pull_request.number }}
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            ## Step 2: Analyze for issues
+            Evaluate the changes for:
+            - **CRITICAL**: Security vulnerabilities, secret exposure, data loss risks,
+              configurations that could break production or expose services
+            - **HIGH**: Bugs that will cause runtime failures, broken NixOS builds,
+              misconfigured services
+            - **MEDIUM**: Code quality issues, missing error handling, performance concerns
+            - **LOW**: Style issues, minor improvements, documentation gaps
 
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+            Focus on what's relevant for a NixOS infrastructure repo: service configs,
+            firewall rules, secrets handling, systemd units, package integrity.
 
+            Use the repository's CLAUDE.md for guidance on style and conventions.
+
+            ## Step 3: Post your review
+            Post a detailed review comment via:
+            gh pr comment ${{ github.event.pull_request.number }} --body "YOUR REVIEW"
+
+            Include a summary table of findings with severity levels.
+
+            ## Step 4: Write verdict (REQUIRED — do this LAST, as a SEPARATE tool call)
+            After posting your review comment, you MUST execute one of these commands
+            as a separate Bash tool call:
+
+            If you found any CRITICAL or HIGH severity issues:
+            echo CRITICAL > review-verdict
+
+            If no critical/high issues found:
+            echo PASS > review-verdict
+
+            THIS IS MANDATORY. The CI check will fail if you do not write the verdict.
+            Do NOT skip this step. Do NOT combine it with the comment step.
+
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
+
+      - name: Check review verdict
+        if: always()
+        run: |
+          verdict=$(cat review-verdict 2>/dev/null || echo "UNKNOWN")
+          echo "Claude review verdict: $verdict"
+          if [ "$verdict" = "CRITICAL" ]; then
+            echo "::error::Claude Code Review found CRITICAL or HIGH severity issues."
+            echo "Check the review comment on the PR for details."
+            exit 1
+          elif [ "$verdict" = "UNKNOWN" ]; then
+            echo "::error::Claude did not produce a review verdict. Failing as a precaution."
+            exit 1
+          fi

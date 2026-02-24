@@ -43,19 +43,33 @@ jobs:
         id: before
         run: echo "hash=$(sha256sum flake.lock | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
-      - name: Update flake inputs
+      - name: Determine update scope
+        id: scope
         env:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
           UPDATE_ALL: ${{ inputs.update_all }}
         run: |
           if [ "$EVENT_SCHEDULE" = "0 2 * * *" ]; then
-            echo "Nightly run: updating nixpkgs inputs only..."
-            nix flake update nixpkgs nixpkgs-unstable
-          elif [ "$UPDATE_ALL" = "false" ]; then
-            echo "Manual run: updating nixpkgs inputs only..."
+            echo "nightly=true" >> $GITHUB_OUTPUT
+            echo "mode=nightly" >> $GITHUB_OUTPUT
+          else
+            echo "nightly=false" >> $GITHUB_OUTPUT
+            if [ "$UPDATE_ALL" = "false" ]; then
+              echo "mode=nixpkgs-only" >> $GITHUB_OUTPUT
+            else
+              echo "mode=full" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Update flake inputs
+        env:
+          MODE: ${{ steps.scope.outputs.mode }}
+        run: |
+          if [ "$MODE" = "nightly" ] || [ "$MODE" = "nixpkgs-only" ]; then
+            echo "Updating nixpkgs inputs only..."
             nix flake update nixpkgs nixpkgs-unstable
           else
-            echo "Weekly/full run: updating all flake inputs..."
+            echo "Updating all flake inputs..."
             nix flake update
           fi
 
@@ -72,8 +86,28 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Generate update summary
+      - name: Verify flake still builds
         if: steps.changes.outputs.changed == 'true'
+        run: |
+          echo "Checking flake validity..."
+          nix flake check --all-systems
+
+          echo "Evaluating sancta-choir configuration..."
+          nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel.drvPath
+
+      # Nightly: commit directly to main (security patches, already validated above)
+      - name: Push directly to main
+        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add flake.lock
+          git commit -m "chore(deps): nightly nixpkgs security update"
+          git push origin main
+
+      # Weekly/manual: create a PR for manual review
+      - name: Generate update summary
+        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'false'
         id: summary
         run: |
           {
@@ -93,17 +127,8 @@ jobs:
             echo EOF
           } >> $GITHUB_OUTPUT
 
-      - name: Verify flake still builds
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          echo "Checking flake validity..."
-          nix flake check --all-systems
-
-          echo "Evaluating sancta-choir configuration..."
-          nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel.drvPath
-
       - name: Create Pull Request
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'false'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -114,7 +139,7 @@ jobs:
 
             ---
             *Automatically created by flake-update workflow*
-          branch: ${{ github.event.schedule == '0 2 * * *' && 'flake-updates-nightly' || 'flake-updates-weekly' }}
+          branch: ${{ steps.scope.outputs.mode == 'full' && 'chore/update-flake-lock-weekly' || 'chore/update-flake-lock' }}
           delete-branch: true
           labels: |
             dependencies
