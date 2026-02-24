@@ -276,6 +276,10 @@ in
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
     };
 
+    # ConditionPathExists prevents noisy restart loops if binary is missing
+    # (must be in [Unit], not [Service] — systemd ignores it in [Service])
+    unitConfig.ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
+
     serviceConfig = {
       Type = "simple";
       User = "openclaw";
@@ -284,9 +288,6 @@ in
       # Inject TODOIST_API_KEY from agenix secret into the service environment.
       # File format: TODOIST_API_KEY=<token> (single line, no quotes needed).
       EnvironmentFile = config.age.secrets.kuzea-todoist-credentials.path;
-      # Binary installed manually: sudo -u openclaw npm install -g openclaw
-      # ConditionPathExists prevents noisy restart loops if binary is missing
-      ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
@@ -331,14 +332,15 @@ in
     # PartOf propagates stop/restart of openclaw to this unit
     partOf = [ "openclaw.service" ];
 
+    # Skip if openclaw binary not installed (ConditionPathExists on openclaw.service
+    # causes it to be skipped, but a skipped unit still satisfies Requires=)
+    unitConfig.ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
+
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
       # Two sequential 60s wait loops = 120s max; default 90s would kill us
       TimeoutStartSec = 150;
-      # Skip if openclaw binary not installed (ConditionPathExists on openclaw.service
-      # causes it to be skipped, but a skipped unit still satisfies Requires=)
-      ConditionPathExists = "/var/lib/openclaw/.npm-global/bin/openclaw";
       NoNewPrivileges = true;
     };
 
