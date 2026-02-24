@@ -54,26 +54,31 @@ jobs:
 
             Include a summary table of findings with severity levels.
 
-            ## Step 4: Write verdict (REQUIRED — do this LAST)
-            Based on your review, write exactly one of these verdicts:
-            - If you found any CRITICAL or HIGH severity issues:
-              Run: echo "CRITICAL" > /tmp/review-verdict
-            - If no critical/high issues found:
-              Run: echo "PASS" > /tmp/review-verdict
+            ## Step 4: Write verdict (REQUIRED — do this LAST, as a SEPARATE tool call)
+            After posting your review comment, you MUST execute one of these commands
+            as a separate Bash tool call:
 
-            You MUST run the echo command. The CI pipeline depends on it.
+            If you found any CRITICAL or HIGH severity issues:
+            echo CRITICAL > review-verdict
+
+            If no critical/high issues found:
+            echo PASS > review-verdict
+
+            THIS IS MANDATORY. The CI check will fail if you do not write the verdict.
+            Do NOT skip this step. Do NOT combine it with the comment step.
 
           claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*)"'
 
       - name: Check review verdict
         if: always()
         run: |
-          verdict=$(cat /tmp/review-verdict 2>/dev/null || echo "UNKNOWN")
+          verdict=$(cat review-verdict 2>/dev/null || echo "UNKNOWN")
           echo "Claude review verdict: $verdict"
           if [ "$verdict" = "CRITICAL" ]; then
-            echo "::error::Claude Code Review found CRITICAL or HIGH severity issues in this PR."
+            echo "::error::Claude Code Review found CRITICAL or HIGH severity issues."
             echo "Check the review comment on the PR for details."
             exit 1
           elif [ "$verdict" = "UNKNOWN" ]; then
-            echo "::warning::Claude did not produce a review verdict. Review may have failed."
+            echo "::error::Claude did not produce a review verdict. Failing as a precaution."
+            exit 1
           fi

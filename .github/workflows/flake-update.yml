@@ -139,7 +139,7 @@ jobs:
 
             ---
             *Automatically created by flake-update workflow*
-          branch: chore/update-flake-lock
+          branch: ${{ steps.scope.outputs.mode == 'full' && 'chore/update-flake-lock-weekly' || 'chore/update-flake-lock' }}
           delete-branch: true
           labels: |
             dependencies
