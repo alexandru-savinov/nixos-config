@@ -110,6 +110,13 @@ let
       version = "0.14.0";
       dontUnpack = true;
       nativeBuildInputs = [ pkgs.makeWrapper ];
+      meta = with pkgs.lib; {
+        description = "Headless browser automation CLI for AI agents (Rust CLI + Playwright daemon)";
+        homepage = "https://github.com/vercel-labs/agent-browser";
+        license = licenses.asl20;
+        platforms = platforms.linux;
+        mainProgram = "agent-browser";
+      };
       installPhase = ''
         mkdir -p $out/bin $out/share/agent-browser
         cp -rL ${daemonDrv}/. $out/share/agent-browser/
@@ -144,8 +151,8 @@ in
     gcc
     python3
     # openai-whisper available via kuzeaTranscribe runtimeInputs (not system-wide).
-    # playwright-driver.browsers: pre-built Chromium for agent-browser (no runtime download).
-    playwright-driver.browsers
+    # playwright-driver.browsers is a transitive closure dep of agentBrowser (via makeWrapper);
+    # no need to list it here separately.
   ];
 
   # Pre-built Claude Code binaries from cachix (avoids building from source)
