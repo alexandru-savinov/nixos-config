@@ -561,6 +561,10 @@ in
             command = "${openclawSudo}";
             options = [ "NOPASSWD" ];
           }
+          {
+            command = "/run/current-system/sw/bin/systemctl restart openclaw";
+            options = [ "NOPASSWD" ];
+          }
         ];
       }
     ];
