@@ -39,6 +39,10 @@ in
   # Todoist API token for todoist-natural-language skill (PR #295)
   "kuzea-todoist-credentials.age".publicKeys = clawKeys;
 
+  # Airtable Personal Access Token (read/write, direct api.airtable.com)
+  # Generate: airtable.com/create/tokens (scopes: records:read/write, schema:read)
+  "kuzea-airtable-credentials.age".publicKeys = clawKeys;
+
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;
   "openrouter-api-key.age".publicKeys = allKeys;

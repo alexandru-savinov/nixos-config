@@ -245,6 +245,11 @@ in
       owner = "openclaw";
       group = "openclaw";
     };
+    kuzea-airtable-credentials = {
+      file = "${self}/secrets/kuzea-airtable-credentials.age";
+      owner = "openclaw";
+      group = "openclaw";
+    };
   };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
@@ -297,9 +302,12 @@ in
       User = "openclaw";
       Group = "openclaw";
       WorkingDirectory = "/var/lib/openclaw";
-      # Inject TODOIST_API_KEY from agenix secret into the service environment.
-      # File format: TODOIST_API_KEY=<token> (single line, no quotes needed).
-      EnvironmentFile = config.age.secrets.kuzea-todoist-credentials.path;
+      # Inject secrets from agenix into the service environment.
+      # File format: KEY=value (one per line, no quotes needed).
+      EnvironmentFile = [
+        config.age.secrets.kuzea-todoist-credentials.path
+        config.age.secrets.kuzea-airtable-credentials.path
+      ];
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
