@@ -304,6 +304,11 @@ in
       ProtectSystem = "strict";
       ProtectHome = true; # /var/lib/openclaw is not under /home
       PrivateDevices = true;
+      # /dev/shm is required by Chromium (renderer <-> browser IPC).
+      # PrivateDevices creates a minimal /dev without /dev/shm, so we bind it
+      # explicitly. The host's /dev/shm tmpfs is mounted read-write in the
+      # private namespace; no other devices are exposed.
+      BindPaths = [ "/dev/shm" ];
       ReadWritePaths = [ "/var/lib/openclaw" ];
       PrivateTmp = true;
     };
