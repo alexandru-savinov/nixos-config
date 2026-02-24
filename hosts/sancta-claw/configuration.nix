@@ -113,10 +113,10 @@ let
       # Locate headless_shell inside playwright-driver.browsers at eval time.
       # AGENT_BROWSER_EXECUTABLE_PATH lets the daemon use this binary regardless
       # of the playwright-core npm revision (avoids revision-mismatch errors).
-      chromiumDir = pkgs.lib.head (
-        builtins.filter (n: pkgs.lib.hasPrefix "chromium_headless_shell" n)
-          (builtins.attrNames (builtins.readDir (toString pkgs.playwright-driver.browsers)))
-      );
+      chromiumDir = pkgs.lib.findFirst
+        (n: pkgs.lib.hasPrefix "chromium_headless_shell" n)
+        (throw "agent-browser: no chromium_headless_shell-* directory found in pkgs.playwright-driver.browsers; check nixpkgs playwright-driver packaging")
+        (builtins.attrNames (builtins.readDir (toString pkgs.playwright-driver.browsers)));
       chromiumBin = "${pkgs.playwright-driver.browsers}/${chromiumDir}/chrome-linux/headless_shell";
     in
     pkgs.stdenv.mkDerivation {
