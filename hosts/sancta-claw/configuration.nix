@@ -115,8 +115,8 @@ let
       };
     in
     # AGENT_BROWSER_EXECUTABLE_PATH bypasses playwright-core's revision check,
-    # allowing the nixpkgs-provided Chromium to be used even when the npm package
-    # revision differs. chromiumBin is defined in the outer let block.
+      # allowing the nixpkgs-provided Chromium to be used even when the npm package
+      # revision differs. chromiumBin is defined in the outer let block.
     pkgs.stdenv.mkDerivation {
       pname = "agent-browser";
       version = "0.14.0";
@@ -143,37 +143,37 @@ let
   # Declarative browser config for OpenClaw: inject Chromium path (shared
   # chromiumBin binding above) into openclaw.json at service start.
   openclawBrowserConfigScript = pkgs.writeShellScript "openclaw-browser-config" ''
-    ${pkgs.python3}/bin/python3 - <<'PYEOF'
-import json, os
+        ${pkgs.python3}/bin/python3 - <<'PYEOF'
+    import json, os
 
-config_path = "/var/lib/openclaw/.openclaw/openclaw.json"
+    config_path = "/var/lib/openclaw/.openclaw/openclaw.json"
 
-if os.path.exists(config_path):
-    try:
-        with open(config_path) as f:
-            config = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            config = {}
+    else:
         config = {}
-else:
-    config = {}
 
-config["browser"] = {
-    "enabled": True,
-    "executablePath": "${chromiumBin}",
-    "headless": True,
-    # noSandbox is required: the openclaw user lacks CAP_SYS_ADMIN for
-    # Chromium's user-namespace sandbox, and the setuid helper is not
-    # available in the Nix store.  Defense-in-depth is provided by systemd
-    # hardening (NoNewPrivileges, ProtectSystem=strict, PrivateDevices).
-    "noSandbox": True,
-}
+    config["browser"] = {
+        "enabled": True,
+        "executablePath": "${chromiumBin}",
+        "headless": True,
+        # noSandbox is required: the openclaw user lacks CAP_SYS_ADMIN for
+        # Chromium's user-namespace sandbox, and the setuid helper is not
+        # available in the Nix store.  Defense-in-depth is provided by systemd
+        # hardening (NoNewPrivileges, ProtectSystem=strict, PrivateDevices).
+        "noSandbox": True,
+    }
 
-tmp = config_path + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(config, f, indent=2)
-    f.write("\n")
-os.replace(tmp, config_path)
-PYEOF
+    tmp = config_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, config_path)
+    PYEOF
   '';
 in
 {
