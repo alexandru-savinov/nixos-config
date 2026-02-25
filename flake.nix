@@ -101,8 +101,8 @@
             tsidp.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
-              environment.systemPackages = with pkgs; [
-                agenix
+              environment.systemPackages = [
+                agenix.packages.${pkgs.system}.default
               ];
             })
           ];
@@ -124,8 +124,8 @@
             home-manager.nixosModules.home-manager
             agenix.nixosModules.default
             ({ pkgs, ... }: {
-              environment.systemPackages = with pkgs; [
-                agenix
+              environment.systemPackages = [
+                agenix.packages.${pkgs.system}.default
               ];
             })
           ];
@@ -152,9 +152,9 @@
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
-            ({ pkgs, lib, ... }: {
-              environment.systemPackages = with pkgs; [
-                agenix
+            ({ pkgs, ... }: {
+              environment.systemPackages = [
+                agenix.packages.${pkgs.system}.default
               ];
             })
           ];
@@ -182,9 +182,9 @@
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
-            ({ pkgs, lib, ... }: {
-              environment.systemPackages = with pkgs; [
-                agenix
+            ({ pkgs, ... }: {
+              environment.systemPackages = [
+                agenix.packages.${pkgs.system}.default
               ];
             })
           ];
