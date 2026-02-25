@@ -139,6 +139,42 @@ let
           --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.nodejs_22 ]}"
       '';
     };
+
+  # Declarative browser config for OpenClaw: compute Chromium path from
+  # playwright-driver at build time, inject into openclaw.json at service start.
+  # Same derivation + browsersJSON pattern as agentBrowser above.
+  openclawBrowserExecPath =
+    let
+      rev = pkgs.playwright-driver.browsersJSON."chromium-headless-shell".revision;
+    in
+    "${pkgs.playwright-driver.browsers}/chromium_headless_shell-${rev}/chrome-linux/headless_shell";
+
+  openclawBrowserConfigScript = pkgs.writeShellScript "openclaw-browser-config" ''
+    ${pkgs.python3}/bin/python3 - <<'PYEOF'
+import json, os
+
+config_path = "/var/lib/openclaw/.openclaw/openclaw.json"
+
+if os.path.exists(config_path):
+    with open(config_path) as f:
+        config = json.load(f)
+else:
+    config = {}
+
+config["browser"] = {
+    "enabled": True,
+    "executablePath": "${openclawBrowserExecPath}",
+    "headless": True,
+    "noSandbox": True,
+}
+
+tmp = config_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+os.replace(tmp, config_path)
+PYEOF
+  '';
 in
 {
   imports = [
@@ -311,6 +347,9 @@ in
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
+      # Inject declarative browser config into openclaw.json before start.
+      # Idempotent: merges browser section, preserves other keys.
+      ExecStartPre = openclawBrowserConfigScript;
       ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
