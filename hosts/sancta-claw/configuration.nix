@@ -523,6 +523,10 @@ in
       "d /var/lib/openclaw/.openclaw/workspace 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.openclaw/workspace/skills 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.openclaw/workspace/hooks 0755 openclaw openclaw -"
+      # Managed hooks dir — scanned by OpenClaw at startup (openclaw-managed source).
+      # Must be a real directory, not a symlink: Node.js Dirent.isDirectory() does
+      # not follow symlinks, so openclaw would silently skip symlinked hook dirs.
+      "d /var/lib/openclaw/.openclaw/hooks 0755 openclaw openclaw -"
       # writeTextFile with executable=true sets 0555 on the nix store file so the
       # resulting symlink is directly executable (node cron-manage.mjs).
       "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${
@@ -550,7 +554,14 @@ in
       # Logs errors, corrections, and feature requests to .learnings/ for continuous
       # improvement. Hook injects a reminder at agent:bootstrap to capture learnings.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/self-improving-agent - - - - ${selfImprovingSkill}"
-      "L+ /var/lib/openclaw/.openclaw/workspace/hooks/self-improvement - - - - ${selfImprovingHook}"
+      # Hook goes into the managed dir (.openclaw/hooks/), NOT workspace/hooks/.
+      # Reason: openclaw scans hooks via Node.js readdirSync + Dirent.isDirectory(),
+      # which returns false for symlinks-to-directories. Using C+ creates real files
+      # that pass the isDirectory() check and are picked up as "openclaw-managed".
+      # workspace/hooks/ symlink is intentionally omitted: it was non-functional and
+      # only created confusion. .openclaw/hooks/ is the canonical location used by
+      # `openclaw hooks install` and loadHookEntries(managedHooksDir).
+      "C+ /var/lib/openclaw/.openclaw/hooks/self-improvement - openclaw openclaw - ${selfImprovingHook}"
       # .learnings/ is mutable state (grows over time) — created writable, never
       # symlinked to the Nix store. `f` creates the file only if it doesn't exist,
       # preserving accumulated learnings across rebuilds.
