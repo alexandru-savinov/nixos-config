@@ -62,6 +62,11 @@ let
     '';
   };
 
+  # Chromium headless shell path from playwright-driver — shared by agentBrowser
+  # and the openclawBrowserConfigScript below. Computed once to avoid duplication.
+  chromiumRevision = pkgs.playwright-driver.browsersJSON."chromium-headless-shell".revision;
+  chromiumBin = "${pkgs.playwright-driver.browsers}/chromium_headless_shell-${chromiumRevision}/chrome-linux/headless_shell";
+
   # agentBrowser: headless browser automation CLI for AI agents.
   # Rust CLI dispatches commands to a Node.js/Playwright daemon.
   # Uses nixpkgs playwright-driver.browsers — no runtime Chromium download.
@@ -109,14 +114,9 @@ let
         cargoHash = "sha256-94w9V+NZiWeQ3WbQnsKxVxlvsCaOJR0Wm6XVc85Lo88=";
       };
     in
-    let
-      # AGENT_BROWSER_EXECUTABLE_PATH bypasses playwright-core's revision check,
+    # AGENT_BROWSER_EXECUTABLE_PATH bypasses playwright-core's revision check,
       # allowing the nixpkgs-provided Chromium to be used even when the npm package
-      # revision differs. The revision is read from playwright-driver.browsersJSON
-      # (a pure Nix attrset, no IFD or directory scan at eval time).
-      chromiumRevision = pkgs.playwright-driver.browsersJSON."chromium-headless-shell".revision;
-      chromiumBin = "${pkgs.playwright-driver.browsers}/chromium_headless_shell-${chromiumRevision}/chrome-linux/headless_shell";
-    in
+      # revision differs. chromiumBin is defined in the outer let block.
     pkgs.stdenv.mkDerivation {
       pname = "agent-browser";
       version = "0.14.0";
@@ -139,6 +139,42 @@ let
           --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.nodejs_22 ]}"
       '';
     };
+
+  # Declarative browser config for OpenClaw: inject Chromium path (shared
+  # chromiumBin binding above) into openclaw.json at service start.
+  openclawBrowserConfigScript = pkgs.writeShellScript "openclaw-browser-config" ''
+        ${pkgs.python3}/bin/python3 - <<'PYEOF'
+    import json, os
+
+    config_path = "/var/lib/openclaw/.openclaw/openclaw.json"
+
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            config = {}
+    else:
+        config = {}
+
+    config["browser"] = {
+        "enabled": True,
+        "executablePath": "${chromiumBin}",
+        "headless": True,
+        # noSandbox is required: the openclaw user lacks CAP_SYS_ADMIN for
+        # Chromium's user-namespace sandbox, and the setuid helper is not
+        # available in the Nix store.  Defense-in-depth is provided by systemd
+        # hardening (NoNewPrivileges, ProtectSystem=strict, PrivateDevices).
+        "noSandbox": True,
+    }
+
+    tmp = config_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, config_path)
+    PYEOF
+  '';
 in
 {
   imports = [
@@ -311,6 +347,9 @@ in
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
+      # Inject declarative browser config into openclaw.json before start.
+      # Idempotent: merges browser section, preserves other keys.
+      ExecStartPre = openclawBrowserConfigScript;
       ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
