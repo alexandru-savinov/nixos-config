@@ -77,4 +77,7 @@
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
   ];
+
+  # Fresh install — NixOS 25.05
+  system.stateVersion = lib.mkForce "25.05";
 }

@@ -517,4 +517,7 @@
       Nice = 7; # Between Open-WebUI (5) and qdrant (10)
     };
   };
+
+  # Fresh install — NixOS 25.05
+  system.stateVersion = lib.mkForce "25.05";
 }

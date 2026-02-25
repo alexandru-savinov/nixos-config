@@ -8,11 +8,7 @@
       url = "github:nix-community/home-manager/release-25.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    home-manager-unstable = {
-      url = "github:nix-community/home-manager";
-      inputs.nixpkgs.follows = "nixpkgs-unstable";
-    };
-    vscode-server = {
+vscode-server = {
       url = "github:nix-community/nixos-vscode-server";
       inputs.nixpkgs.follows = "nixpkgs";
     };
@@ -39,7 +35,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
