@@ -546,10 +546,10 @@ in
       # .learnings/ is mutable state (grows over time) — created writable, never
       # symlinked to the Nix store. `f` creates the file only if it doesn't exist,
       # preserving accumulated learnings across rebuilds.
-      "d /var/lib/openclaw/.openclaw/workspace/.learnings 0755 openclaw openclaw -"
-      "f /var/lib/openclaw/.openclaw/workspace/.learnings/LEARNINGS.md 0644 openclaw openclaw -"
-      "f /var/lib/openclaw/.openclaw/workspace/.learnings/ERRORS.md 0644 openclaw openclaw -"
-      "f /var/lib/openclaw/.openclaw/workspace/.learnings/FEATURE_REQUESTS.md 0644 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace/.learnings 0700 openclaw openclaw -"
+      "f /var/lib/openclaw/.openclaw/workspace/.learnings/LEARNINGS.md 0600 openclaw openclaw -"
+      "f /var/lib/openclaw/.openclaw/workspace/.learnings/ERRORS.md 0600 openclaw openclaw -"
+      "f /var/lib/openclaw/.openclaw/workspace/.learnings/FEATURE_REQUESTS.md 0600 openclaw openclaw -"
       # GitHub credential helper: reads PAT from /run/agenix/kuzea-github-token at
       # runtime so the token is never stored in plaintext on disk.
       # Replaces the former ~/.git-credentials store helper approach.
