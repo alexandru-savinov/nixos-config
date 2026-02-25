@@ -499,6 +499,12 @@ in
       todoistSkill = pkgs.runCommand "todoist-natural-language" { } ''
         cp -r ${./kuzea/skills/todoist-natural-language} $out
       '';
+      selfImprovingSkill = pkgs.runCommand "self-improving-agent" { } ''
+        cp -r ${./kuzea/skills/self-improving-agent} $out
+      '';
+      selfImprovingHook = pkgs.runCommand "self-improvement-hook" { } ''
+        cp -r ${./kuzea/hooks/self-improvement} $out
+      '';
     in
     [
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
@@ -508,6 +514,7 @@ in
       "d /var/lib/openclaw/.openclaw 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.openclaw/workspace 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.openclaw/workspace/skills 0755 openclaw openclaw -"
+      "d /var/lib/openclaw/.openclaw/workspace/hooks 0755 openclaw openclaw -"
       # writeTextFile with executable=true sets 0555 on the nix store file so the
       # resulting symlink is directly executable (node cron-manage.mjs).
       "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${
@@ -531,6 +538,18 @@ in
       # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
       # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
+      # Self-Improving Agent skill (pskoett/self-improving-agent v1.0.11).
+      # Logs errors, corrections, and feature requests to .learnings/ for continuous
+      # improvement. Hook injects a reminder at agent:bootstrap to capture learnings.
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/self-improving-agent - - - - ${selfImprovingSkill}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/hooks/self-improvement - - - - ${selfImprovingHook}"
+      # .learnings/ is mutable state (grows over time) — created writable, never
+      # symlinked to the Nix store. `f` creates the file only if it doesn't exist,
+      # preserving accumulated learnings across rebuilds.
+      "d /var/lib/openclaw/.openclaw/workspace/.learnings 0755 openclaw openclaw -"
+      "f /var/lib/openclaw/.openclaw/workspace/.learnings/LEARNINGS.md 0644 openclaw openclaw -"
+      "f /var/lib/openclaw/.openclaw/workspace/.learnings/ERRORS.md 0644 openclaw openclaw -"
+      "f /var/lib/openclaw/.openclaw/workspace/.learnings/FEATURE_REQUESTS.md 0644 openclaw openclaw -"
       # GitHub credential helper: reads PAT from /run/agenix/kuzea-github-token at
       # runtime so the token is never stored in plaintext on disk.
       # Replaces the former ~/.git-credentials store helper approach.
