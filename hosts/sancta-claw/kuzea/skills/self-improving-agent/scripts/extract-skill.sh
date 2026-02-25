@@ -172,6 +172,8 @@ fi
 log_info "Creating skill: $SKILL_NAME"
 
 mkdir -p "$SKILL_PATH"
+# Clean up partial directory on any subsequent failure
+trap 'rm -rf "$SKILL_PATH"' ERR
 
 # Create SKILL.md from template
 cat > "$SKILL_PATH/SKILL.md" << TEMPLATE
