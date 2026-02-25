@@ -168,6 +168,14 @@ let
         "noSandbox": True,
     }
 
+    # Enable self-improvement hook (agent:bootstrap reminder to log learnings).
+    # Declarative equivalent of: openclaw hooks enable self-improvement
+    hooks = config.setdefault("hooks", {})
+    internal = hooks.setdefault("internal", {})
+    internal["enabled"] = True
+    entries = internal.setdefault("entries", {})
+    entries.setdefault("self-improvement", {})["enabled"] = True
+
     tmp = config_path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(config, f, indent=2)
