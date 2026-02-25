@@ -9,7 +9,7 @@
 # CLAUDE_TOOL_OUTPUT contains the result of the tool execution
 OUTPUT="${CLAUDE_TOOL_OUTPUT:-}"
 
-# Patterns indicating errors (case-insensitive matching)
+# Patterns indicating errors (case-sensitive; multiple variants listed explicitly)
 ERROR_PATTERNS=(
     "error:"
     "Error:"
