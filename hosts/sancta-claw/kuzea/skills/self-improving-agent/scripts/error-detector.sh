@@ -2,8 +2,8 @@
 # Self-Improvement Error Detector Hook
 # Triggers on PostToolUse for Bash to detect command failures
 # Reads CLAUDE_TOOL_OUTPUT environment variable
-
-set -e
+#
+# Note: intentionally no set -e — hook must be resilient to unexpected exits.
 
 # Check if tool output indicates an error
 # CLAUDE_TOOL_OUTPUT contains the result of the tool execution

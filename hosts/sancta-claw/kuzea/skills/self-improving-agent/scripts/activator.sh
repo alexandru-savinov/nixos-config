@@ -3,8 +3,6 @@
 # Triggers on UserPromptSubmit to remind Claude about learning capture
 # Keep output minimal (~50-100 tokens) to minimize overhead
 
-set -e
-
 # Output reminder as system context
 cat << 'EOF'
 <self-improvement-reminder>
