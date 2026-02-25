@@ -211,12 +211,10 @@ If you need to reduce overhead further, you can edit `activator.sh` to output le
 
 To temporarily disable without removing configuration:
 
-1. **Comment out in settings**:
+1. **Remove the entry in settings** (JSON does not support comments — remove the key entirely):
 ```json
 {
-  "hooks": {
-    // "UserPromptSubmit": [...]
-  }
+  "hooks": {}
 }
 ```
 
