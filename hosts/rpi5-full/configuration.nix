@@ -519,5 +519,6 @@
   };
 
   # Fresh install — NixOS 25.05
-  system.stateVersion = lib.mkForce "25.05";
+  # mkOverride 49 beats rpi5's mkForce (priority 50) which fights nixos-raspberrypi upstream
+  system.stateVersion = lib.mkOverride 49 "25.05";
 }

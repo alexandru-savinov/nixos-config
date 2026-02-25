@@ -55,9 +55,6 @@ in
   # Generate in n8n: Settings > API > Create API Key
   "n8n-api-key.age".publicKeys = allKeys;
 
-  # OIDC client secret - legacy (was sancta-choir only, tsidp removed from kuzea)
-  "oidc-client-secret.age".publicKeys = allKeys;
-
   # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
 
