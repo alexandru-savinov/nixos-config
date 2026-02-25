@@ -91,7 +91,7 @@ def list_tasks(filter_str=None, project_id=None, label=None, priority=None, limi
         except Exception:
             now = datetime.now()
         today_str = now.strftime("%Y-%m-%d")
-        tasks = [t for t in tasks if t.get("due", {}).get("date") == today_str]
+        tasks = [t for t in tasks if (t.get("due") or {}).get("date") == today_str]
     
     # Client-side priority filter since API doesn't support it directly
     if priority:
