@@ -55,9 +55,6 @@ in
   # Generate in n8n: Settings > API > Create API Key
   "n8n-api-key.age".publicKeys = allKeys;
 
-  # OIDC client secret - legacy (was sancta-choir only, tsidp removed from kuzea)
-  "oidc-client-secret.age".publicKeys = allKeys;
-
   # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
 
@@ -66,10 +63,6 @@ in
 
   # UniFi Network MCP - controller password for AI-assisted network management
   "unifi-password.age".publicKeys = allKeys;
-
-  # OpenClaw AI programming partner
-  "anthropic-api-key.age".publicKeys = allKeys;
-  "openclaw-github-token.age".publicKeys = allKeys;
 
   # CalDAV credentials for NixFrame calendar (Apple ID + app-specific password)
   "caldav-credentials.age".publicKeys = allKeys;

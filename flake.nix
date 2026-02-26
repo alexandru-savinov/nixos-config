@@ -8,17 +8,9 @@
       url = "github:nix-community/home-manager/release-25.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    home-manager-unstable = {
-      url = "github:nix-community/home-manager";
-      inputs.nixpkgs.follows = "nixpkgs-unstable";
-    };
     vscode-server = {
       url = "github:nix-community/nixos-vscode-server";
       inputs.nixpkgs.follows = "nixpkgs";
-    };
-    tsidp = {
-      url = "github:tailscale/tsidp";
-      inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
     agenix = {
       url = "github:ryantm/agenix/0.15.0";
@@ -39,7 +31,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, home-manager-unstable, vscode-server, tsidp, agenix, nixos-raspberrypi, claude-code, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, nixos-raspberrypi, claude-code, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -98,7 +90,6 @@
             ./hosts/sancta-choir/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
-            tsidp.nixosModules.default
             agenix.nixosModules.default
             ({ pkgs, ... }: {
               environment.systemPackages = [

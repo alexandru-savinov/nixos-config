@@ -48,9 +48,6 @@
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-    # These secrets will be created during OpenClaw onboarding
-    # anthropic-api-key.file = "${self}/secrets/anthropic-api-key.age";
-    # telegram-bot-token.file = "${self}/secrets/telegram-bot-token.age";
   };
 
   # Home Manager settings (root user config provided by modules/users/root.nix)
@@ -77,4 +74,7 @@
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
   ];
+
+  # Fresh install — NixOS 25.05
+  system.stateVersion = lib.mkForce "25.05";
 }

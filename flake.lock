@@ -117,7 +117,7 @@
     },
     "flake-utils_2": {
       "inputs": {
-        "systems": "systems_3"
+        "systems": "systems_2"
       },
       "locked": {
         "lastModified": 1681202837,
@@ -146,26 +146,6 @@
         "owner": "nix-community",
         "repo": "home-manager",
         "rev": "32d3e39c491e2f91152c84f8ad8b003420eab0a1",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-community",
-        "repo": "home-manager",
-        "type": "github"
-      }
-    },
-    "home-manager-unstable": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs-unstable"
-        ]
-      },
-      "locked": {
-        "lastModified": 1771851181,
-        "narHash": "sha256-gFgE6mGUftwseV3DUENMb0k0EiHd739lZexPo5O/sdQ=",
-        "owner": "nix-community",
-        "repo": "home-manager",
-        "rev": "9a4b494b1aa1b93d8edf167f46dc8e0c0011280c",
         "type": "github"
       },
       "original": {
@@ -295,11 +275,9 @@
         "agenix": "agenix",
         "claude-code": "claude-code",
         "home-manager": "home-manager_2",
-        "home-manager-unstable": "home-manager-unstable",
         "nixos-raspberrypi": "nixos-raspberrypi",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-unstable": "nixpkgs-unstable",
-        "tsidp": "tsidp",
         "vscode-server": "vscode-server"
       }
     },
@@ -330,42 +308,6 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
-        "type": "github"
-      }
-    },
-    "systems_3": {
-      "locked": {
-        "lastModified": 1681028828,
-        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
-        "owner": "nix-systems",
-        "repo": "default",
-        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-systems",
-        "repo": "default",
-        "type": "github"
-      }
-    },
-    "tsidp": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs-unstable"
-        ],
-        "systems": "systems_2"
-      },
-      "locked": {
-        "lastModified": 1771527542,
-        "narHash": "sha256-22Qe1yMePWX1r32FeG7+ZrL+1FJGTfgYNUCmz6taPvM=",
-        "owner": "tailscale",
-        "repo": "tsidp",
-        "rev": "998364c4dfe42d2e50a48a3bb84eb6f47a25d6d6",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tailscale",
-        "repo": "tsidp",
         "type": "github"
       }
     },

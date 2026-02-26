@@ -346,7 +346,7 @@ in
       User = "openclaw";
       Group = "openclaw";
       WorkingDirectory = "/var/lib/openclaw";
-      # Inject secrets from agenix into the service environment.
+      # Inject Todoist and Airtable credentials from agenix secrets.
       # File format: KEY=value (one per line, no quotes needed).
       EnvironmentFile = [
         config.age.secrets.kuzea-todoist-credentials.path
