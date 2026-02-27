@@ -169,6 +169,14 @@ let
         "noSandbox": True,
     }
 
+    # Ensure both sonnet and opus are in the allowed-models list so Kuzea
+    # can switch to opus via /model or session_status without a manual edit.
+    agents = config.setdefault("agents", {})
+    defaults = agents.setdefault("defaults", {})
+    models = defaults.setdefault("models", {})
+    models.setdefault("anthropic/claude-sonnet-4-6", {})
+    models.setdefault("anthropic/claude-opus-4-6", {})
+
     # Enable self-improvement hook (agent:bootstrap reminder to log learnings).
     # Declarative equivalent of: openclaw hooks enable self-improvement
     hooks = config.setdefault("hooks", {})
