@@ -159,6 +159,7 @@ let
 
     config["browser"] = {
         "enabled": True,
+        "defaultProfile": "openclaw",
         "executablePath": "${chromiumBin}",
         "headless": True,
         # noSandbox is required: the openclaw user lacks CAP_SYS_ADMIN for
