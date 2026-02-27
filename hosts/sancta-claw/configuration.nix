@@ -572,8 +572,8 @@ in
       # Agent Browser CLI reference (vercel-labs/agent-browser) — complete command docs
       # so Kuzea always has the full snapshot/click/fill/record reference available.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/agent-browser - - - - ${agentBrowserSkill}"
-      # Claude Code agent-teams & subagents reference — documents Task tool usage,
-      # custom subagent creation, and experimental agent teams for parallel work.
+      # Claude Code agent-teams & subagents reference — documents custom subagent
+      # creation, agent file locations, and experimental agent teams for parallel work.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/claude-code-agents - - - - ${claudeCodeAgentsSkill}"
       # Hook goes into the managed dir (.openclaw/hooks/), NOT workspace/hooks/.
       # Reason: openclaw scans hooks via Node.js readdirSync + Dirent.isDirectory(),

@@ -1,3 +1,13 @@
+---
+name: Claude Code Agents
+description: Reference for Claude Code subagents (Task tool, custom agents) and experimental agent teams (parallel independent instances). Use when planning multi-agent workflows, creating custom subagents, or coordinating parallel work.
+read_when:
+  - Using the Task tool to delegate work
+  - Creating custom subagents
+  - Coordinating parallel agent work
+  - Understanding agent teams vs subagents
+---
+
 # Claude Code: Agent Teams & Subagents Reference
 
 ## Overview
@@ -18,7 +28,6 @@ Subagents are specialized AI assistants that handle specific tasks within a sess
 | Explore | Haiku | Fast read-only codebase exploration |
 | Plan | Inherit | Research for planning mode |
 | general-purpose | Inherit | Complex multi-step tasks |
-| Bash | Inherit | Terminal commands in separate context |
 
 ### Creating Custom Subagents
 
@@ -74,7 +83,7 @@ You are a code reviewer. Analyze code and provide specific, actionable feedback.
 ## Agent Teams (Experimental)
 
 ⚠️ **Experimental** — disabled by default. Enable with:
-```json
+```jsonc
 // settings.json
 {
   "env": {
@@ -183,11 +192,12 @@ investigate different hypotheses. Have them debate and try to disprove
 each other's theories. Update findings doc with consensus.
 ```
 
-### Use Case: Parallel Code Review
+### Use Case: Parallel Refactor
 
 ```text
-Create an agent team to review PR #142. Spawn three reviewers:
-- Security implications
-- Performance impact
-- Test coverage
+Create a team with 3 teammates to refactor the auth module:
+- One migrates the session store to Redis
+- One updates the middleware chain
+- One rewrites the integration tests
+Each teammate owns separate files to avoid conflicts.
 ```
