@@ -511,6 +511,9 @@ in
       selfImprovingSkill = pkgs.runCommand "self-improving-agent" { } ''
         cp -r ${./kuzea/skills/self-improving-agent} $out
       '';
+      agentBrowserSkill = pkgs.runCommand "agent-browser" { } ''
+        cp -r ${./kuzea/skills/agent-browser} $out
+      '';
       selfImprovingHook = pkgs.runCommand "self-improvement-hook" { } ''
         cp -r ${./kuzea/hooks/self-improvement} $out
       '';
@@ -555,6 +558,9 @@ in
       # Logs errors, corrections, and feature requests to .learnings/ for continuous
       # improvement. Hook injects a reminder at agent:bootstrap to capture learnings.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/self-improving-agent - - - - ${selfImprovingSkill}"
+      # Agent Browser CLI reference (vercel-labs/agent-browser) — complete command docs
+      # so Kuzea always has the full snapshot/click/fill/record reference available.
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/agent-browser - - - - ${agentBrowserSkill}"
       # Hook goes into the managed dir (.openclaw/hooks/), NOT workspace/hooks/.
       # Reason: openclaw scans hooks via Node.js readdirSync + Dirent.isDirectory(),
       # which returns false for symlinks-to-directories. Using C+ creates real files
