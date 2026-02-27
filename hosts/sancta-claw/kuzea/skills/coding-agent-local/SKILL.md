@@ -1,8 +1,12 @@
 ---
 name: coding-agent-local
 description: "Local overrides and fixes for the coding-agent skill. Read AFTER the main coding-agent SKILL.md for sancta-claw-specific patterns."
-metadata:
-  { "openclaw": { "emoji": "🔧" } }
+read_when:
+  - Spawning Claude Code via exec
+  - Troubleshooting missing output from -p mode
+  - Using Agent Teams through OpenClaw
+  - Running PR reviews via OpenClaw
+metadata: {"openclaw": {"emoji": "🔧"}}
 ---
 
 # Coding Agent — Local Fixes (sancta-claw)
@@ -27,7 +31,7 @@ claude --dangerously-skip-permissions -p "Your task"
 
 ### With background mode (recommended pattern):
 
-```bash
+```text
 exec(
   command: "cd /path/to/repo && claude --dangerously-skip-permissions --output-format text -p 'Your task here'",
   pty: true,
@@ -50,7 +54,7 @@ Enabled in `~/.claude/settings.json` via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 When using Agent Teams through exec, the lead process runs for a long time
 and may hit OpenClaw's process timeout. Increase timeout accordingly:
 
-```bash
+```text
 exec(
   command: "cd /path/to/repo && CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --dangerously-skip-permissions --output-format text -p 'Create a team: ...'",
   pty: true,
