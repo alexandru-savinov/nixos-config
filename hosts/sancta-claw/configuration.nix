@@ -169,6 +169,14 @@ let
         "noSandbox": True,
     }
 
+    # Ensure both sonnet and opus are in the allowed-models list so Kuzea
+    # can switch to opus via /model or session_status without a manual edit.
+    agents = config.setdefault("agents", {})
+    defaults = agents.setdefault("defaults", {})
+    models = defaults.setdefault("models", {})
+    models.setdefault("anthropic/claude-sonnet-4-6", {})
+    models.setdefault("anthropic/claude-opus-4-6", {})
+
     # Enable self-improvement hook (agent:bootstrap reminder to log learnings).
     # Declarative equivalent of: openclaw hooks enable self-improvement
     hooks = config.setdefault("hooks", {})
@@ -514,6 +522,9 @@ in
       agentBrowserSkill = pkgs.runCommand "agent-browser" { } ''
         cp -r ${./kuzea/skills/agent-browser} $out
       '';
+      claudeCodeAgentsSkill = pkgs.runCommand "claude-code-agents" { } ''
+        cp -r ${./kuzea/skills/claude-code-agents} $out
+      '';
       selfImprovingHook = pkgs.runCommand "self-improvement-hook" { } ''
         cp -r ${./kuzea/hooks/self-improvement} $out
       '';
@@ -561,6 +572,9 @@ in
       # Agent Browser CLI reference (vercel-labs/agent-browser) — complete command docs
       # so Kuzea always has the full snapshot/click/fill/record reference available.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/agent-browser - - - - ${agentBrowserSkill}"
+      # Claude Code agent-teams & subagents reference — documents custom subagent
+      # creation, agent file locations, and experimental agent teams for parallel work.
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/claude-code-agents - - - - ${claudeCodeAgentsSkill}"
       # Hook goes into the managed dir (.openclaw/hooks/), NOT workspace/hooks/.
       # Reason: openclaw scans hooks via Node.js readdirSync + Dirent.isDirectory(),
       # which returns false for symlinks-to-directories. Using C+ creates real files
