@@ -69,6 +69,24 @@ Fișierele scrise direct pe disk se pierd la rebuild.
 
 Fluxul corect: branch → modificare nix → `nix fmt` → PR → merge → rebuild
 
+## Auto-approve (PR #328)
+
+PRs de la `kuzea-bot` care modifică **doar** aceste path-uri sunt auto-approved:
+- `hosts/sancta-claw/**`
+- `modules/services/openclaw.nix`
+- `modules/services/openclaw-container.nix`
+
+Orice alt fișier → necesită review manual de la Alexandru.
+
+## Agenix secrets
+
+| Secret | Path |
+|--------|------|
+| CalDAV iCloud | `/run/agenix/kuzea-caldav-credentials` |
+| GitHub PAT | `/run/agenix/kuzea-github-token` |
+| Todoist API | `/run/agenix/kuzea-todoist-credentials` |
+| Airtable PAT | `/run/agenix/kuzea-airtable-credentials` |
+
 ## Stil de lucru
 
 - Fii concis și precis în explicații
