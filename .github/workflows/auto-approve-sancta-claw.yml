@@ -79,6 +79,16 @@ permissions:
 #   revisit whether these shared modules should remain in the auto-approve
 #   scope. Currently mitigated: sancta-choir eval is included above, and
 #   sancta-choir deploys manually (not via autoUpgrade). Track in PR #328.
+#
+# Incident runbook — kuzea-bot account compromise:
+#   The security model's single point of failure is kuzea-bot's GitHub
+#   credentials. If compromise is suspected:
+#   1. Immediately rotate kuzea-bot's GitHub PAT and SSH keys.
+#   2. Review all auto-approved PRs from the prior 24h window
+#      (system.autoUpgrade runs at 04:30).
+#   3. Inspect sancta-claw for unexpected service config changes:
+#      systemctl cat openclaw.service, env vars, ExecStartPre/Post.
+#   4. Consider temporarily disabling this workflow until cleared.
 
 jobs:
   auto-approve:
@@ -144,6 +154,11 @@ jobs:
       # a GitHub status check. If the required status check is ever removed,
       # the security model collapses — auto-approved PRs could deploy
       # unbuilt configs via system.autoUpgrade.
+      #
+      # MANUAL VERIFICATION REQUIRED: GITHUB_TOKEN cannot read branch
+      # protection settings (requires admin scope). Repo admin must verify
+      # that "Build x86_64 Configs" is listed as a required status check
+      # in Settings > Branches > main > Branch protection rules.
       - name: Validate Nix config
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
         timeout-minutes: 15
@@ -155,7 +170,15 @@ jobs:
           # by both hosts. This catches changes that break sancta-choir's eval
           # before the full build in check.yml (defense-in-depth).
           nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel > /dev/null
-          echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir)"
+          # Guard: ensure sancta-choir does not have autoUpgrade enabled.
+          # If it does, auto-approving shared openclaw modules becomes a
+          # two-host zero-human-review deployment pipeline.
+          choir_autoupgrade=$(nix eval .#nixosConfigurations.sancta-choir.config.system.autoUpgrade.enable 2>/dev/null || echo "false")
+          if [ "$choir_autoupgrade" != "false" ]; then
+            echo "ERROR: sancta-choir has autoUpgrade enabled — auto-approving shared openclaw modules is unsafe"
+            exit 1
+          fi
+          echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir, autoUpgrade guard OK)"
 
       - name: Format file list
         id: format
@@ -192,9 +215,35 @@ jobs:
             - **Changed files**:
             ${{ steps.format.outputs.files }}
 
+      # TOCTOU mitigation: if the PR scope expanded (new commits added
+      # out-of-scope files), dismiss any prior auto-approval to prevent
+      # merging with stale approval + arbitrary file changes.
+      # Also recommended: enable "Dismiss stale pull request approvals
+      # when new commits are pushed" in branch protection settings.
+      - name: Dismiss stale auto-approval if scope expanded
+        if: steps.changed.outputs.other == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            --jq '.[] | select(.state == "APPROVED" and .user.login == "github-actions[bot]") | .id' \
+          | while IFS= read -r review_id; do
+              gh api --method PUT \
+                "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/${review_id}/dismissals" \
+                -f message="Dismissing: PR now touches files outside sancta-claw scope" || true
+            done
+
       - name: Comment if mixed paths
         if: steps.changed.outputs.other == 'true'
         uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
         with:
           message: |
             ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw*.nix`) — **manual review required** before merge. @alexandru-savinov
+
+      - name: Log no-op
+        if: steps.changed.outputs.allowed == 'false' && steps.changed.outputs.other == 'false'
+        run: |
+          set -euo pipefail
+          echo "ℹ️ No matching files detected — workflow took no action (empty diff or edge case)"
