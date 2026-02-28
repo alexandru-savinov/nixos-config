@@ -72,6 +72,17 @@ permissions:
 #   malicious NixOS config. This is accepted given the limited blast radius
 #   (sancta-claw only) and active @alexandru-savinov notification on each PR.
 #
+# Merge mechanism: this workflow ONLY approves; it does NOT auto-merge.
+#   kuzea-bot merges separately after approval + CI pass (gh pr merge --squash
+#   --auto). If kuzea-bot does not merge, the PR stays open for manual merge
+#   by @alexandru-savinov. This separation means approval alone cannot deploy.
+#
+# REQUIRED PLATFORM SETTING — "Dismiss stale pull request approvals when new
+#   commits are pushed" MUST be enabled in branch protection. This closes the
+#   TOCTOU race between run A approving and run B dismissing. Without it, a
+#   push of out-of-scope files between approval and dismissal could be merged.
+#   Verify: Settings > Branches > main > "Dismiss stale pull request approvals".
+#
 # Scope maintenance:
 # - openclaw.nix/openclaw-container.nix are currently only used by sancta-claw
 #   and sancta-choir. If other hosts import them, revisit this scope.
@@ -181,6 +192,28 @@ jobs:
           fi
           echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir, autoUpgrade guard OK)"
 
+      # Best-effort: verify that "Build x86_64 Configs" is a required status
+      # check on main. GITHUB_TOKEN may lack admin scope to read branch
+      # protection — if so, log a notice and continue (manual verification
+      # remains necessary). If readable and the check is missing, fail hard.
+      - name: Verify branch protection (best-effort)
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! result=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
+              --jq '.contexts | any(. == "Build x86_64 Configs")' 2>/dev/null); then
+            echo "::notice::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main > 'Build x86_64 Configs' must be a required status check."
+            exit 0
+          fi
+          if [ "$result" = "true" ]; then
+            echo "✅ Branch protection: 'Build x86_64 Configs' is a required status check"
+          else
+            echo "::error::CRITICAL: 'Build x86_64 Configs' is NOT a required status check on main! Auto-approved PRs could merge unvalidated."
+            exit 1
+          fi
+
       # list-files: json (set above) populates allowed_files as a JSON array.
       # Defensive guard: if allowed_files is unexpectedly empty despite
       # allowed==true, produce a safe fallback instead of failing on jq input.
@@ -234,6 +267,8 @@ jobs:
       #   when new commits are pushed"
       # This auto-invalidates approvals at the GitHub platform level on
       # every push, eliminating the race entirely.
+      # Dismissal is a security-critical operation: if it fails, the step must
+      # fail loudly so that a stale approval is not silently left in place.
       - name: Dismiss stale auto-approval if scope expanded
         if: steps.changed.outputs.other == 'true'
         env:
@@ -246,12 +281,13 @@ jobs:
           | while IFS= read -r review_id; do
               gh api --method PUT \
                 "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/${review_id}/dismissals" \
-                -f message="Dismissing: PR now touches files outside sancta-claw scope" \
-              || echo "WARNING: failed to dismiss review $review_id — manual action may be needed"
+                -f message="Dismissing: PR now touches files outside sancta-claw scope"
             done
 
+      # always(): run even if the dismiss step above failed, so the admin
+      # is notified regardless of whether dismissal succeeded.
       - name: Comment if mixed paths
-        if: steps.changed.outputs.other == 'true'
+        if: always() && steps.changed.outputs.other == 'true'
         uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
         with:
           header: manual-review-required
