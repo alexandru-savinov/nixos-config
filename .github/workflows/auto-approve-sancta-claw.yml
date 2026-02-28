@@ -195,26 +195,34 @@ jobs:
           fi
           echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir, autoUpgrade guard OK)"
 
-      # Best-effort: verify that "Build x86_64 Configs" is a required status
-      # check on main. GITHUB_TOKEN may lack admin scope to read branch
-      # protection — if so, log a notice and continue (manual verification
-      # remains necessary). If readable and the check is missing, fail hard.
+      # Best-effort: verify branch protection settings that this workflow
+      # depends on. GITHUB_TOKEN may lack admin scope — if so, log a notice
+      # and continue. If readable and a setting is missing, fail or warn.
       - name: Verify branch protection (best-effort)
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # 1. Required status check: "Build x86_64 Configs" must gate merges.
           if ! result=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
               --jq '.contexts | any(. == "Build x86_64 Configs")' 2>/dev/null); then
-            echo "::notice::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main > 'Build x86_64 Configs' must be a required status check."
+            echo "::notice::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main."
             exit 0
           fi
-          if [ "$result" = "true" ]; then
-            echo "✅ Branch protection: 'Build x86_64 Configs' is a required status check"
-          else
+          if [ "$result" != "true" ]; then
             echo "::error::CRITICAL: 'Build x86_64 Configs' is NOT a required status check on main! Auto-approved PRs could merge unvalidated."
             exit 1
+          fi
+          echo "✅ Required status check: 'Build x86_64 Configs' is present"
+          # 2. Dismiss stale reviews: closes TOCTOU race window.
+          if dismiss=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_pull_request_reviews" \
+              --jq '.dismiss_stale_reviews' 2>/dev/null); then
+            if [ "$dismiss" = "true" ]; then
+              echo "✅ Dismiss stale reviews: enabled (TOCTOU race fully closed)"
+            else
+              echo "::warning::TOCTOU: 'Dismiss stale pull request approvals when new commits are pushed' is NOT enabled. Enable in Settings > Branches > main to fully close the TOCTOU window."
+            fi
           fi
 
       # list-files: json (set above) populates allowed_files as a JSON array.
