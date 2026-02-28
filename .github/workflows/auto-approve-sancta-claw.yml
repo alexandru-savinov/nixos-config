@@ -11,6 +11,9 @@ on:
     types: [opened, synchronize]
     branches: [main]
 
+# Note: cancel-in-progress could cancel a mid-flight dismissal before it
+# completes (if run B is dismissing when run C arrives). The platform-level
+# "Dismiss stale approvals" setting closes this race independently.
 concurrency:
   group: auto-approve-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -203,9 +206,13 @@ jobs:
           fi
           echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir, autoUpgrade guard OK)"
 
-      # Best-effort: verify branch protection settings that this workflow
-      # depends on. GITHUB_TOKEN may lack admin scope — if so, log a notice
-      # and continue. If readable and a setting is missing, fail or warn.
+      # Best-effort INFORMATIONAL check: verify branch protection settings
+      # that this workflow depends on. GITHUB_TOKEN typically lacks admin
+      # scope, so this step usually exits 0 with a warning — it does NOT
+      # block auto-approval. The actual enforcement is at the GitHub platform
+      # level (branch protection rules). A sticky PR comment is posted when
+      # verification is skipped, so the admin is notified.
+      # If readable and a setting is missing, fail hard (misconfiguration).
       - name: Verify branch protection (best-effort)
         id: protect
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
