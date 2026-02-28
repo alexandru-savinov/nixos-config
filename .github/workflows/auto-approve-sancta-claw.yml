@@ -1,5 +1,11 @@
 name: Auto-approve sancta-claw PRs from kuzea-bot
 
+# Using pull_request (not pull_request_target) because:
+# - pull_request runs on the PR head SHA, which is what we validate and approve.
+# - pull_request_target runs on the base branch SHA, making checkout of the PR
+#   code an explicit extra step and introducing TOCTOU risks.
+# - Fork PRs are already rejected via head.repo.full_name check (line ~77).
+# - pull_request is the simpler, more auditable choice for same-repo PRs.
 on:
   pull_request:
     types: [opened, synchronize]
@@ -23,8 +29,10 @@ permissions:
 #   2. Fork rejection: head.repo.full_name must match this repository.
 #   3. Path scoping: only hosts/sancta-claw/** and modules/services/openclaw*.nix.
 #   4. Nix validation: nix flake check + nix eval must pass (hard gate).
-#   5. Required CI checks: check.yml "Build sancta-claw" must pass before merge
-#      (branch protection). This catches derivation build failures.
+#   5. Required CI checks: check.yml job "Build x86_64 Configs" (job ID:
+#      build-x86) must pass before merge (branch protection). This catches
+#      derivation build failures. "Build sancta-claw" is a step within
+#      that job, not a separate status check.
 #   6. All external actions pinned to immutable commit SHAs.
 #   7. Concurrency: parallel runs are cancelled, preventing duplicate approvals.
 #
@@ -67,7 +75,10 @@ permissions:
 # Scope maintenance:
 # - openclaw.nix/openclaw-container.nix are currently only used by sancta-claw
 #   and sancta-choir. If other hosts import them, revisit this scope.
-# TODO: When sancta-choir re-enables openclaw-container.nix, add its eval here.
+# TODO(scope-review): When sancta-choir re-enables openclaw-container.nix,
+#   revisit whether these shared modules should remain in the auto-approve
+#   scope. Currently mitigated: sancta-choir eval is included above, and
+#   sancta-choir deploys manually (not via autoUpgrade). Track in PR #328.
 
 jobs:
   auto-approve:
@@ -85,6 +96,11 @@ jobs:
       # "allowed == true" means at least one file matched the allow list.
       # "other == true" means at least one file is OUTSIDE the allow list.
       # Auto-approve only fires when allowed==true AND other==false.
+      #
+      # SECURITY NOTE: dorny/paths-filter is the sole path-scoping gate.
+      # It is SHA-pinned (de90cc6) for supply chain integrity. The filter
+      # patterns have been manually verified to correctly reject files like
+      # flake.nix, hosts/common.nix, .github/workflows/*, and secrets/*.
       #
       # The "other" filter uses an explicit '**' base with negation patterns.
       # dorny/paths-filter (picomatch) evaluates this as: "match all files,
@@ -116,13 +132,18 @@ jobs:
       # Validation strategy (two stages):
       # Stage 1 (here): nix flake check --no-build + nix eval — catches config
       #   structure errors, type mismatches, and missing options. Does NOT fetch
-      #   or build packages, and cannot detect runtime misconfigurations.
+      #   or build packages (--no-build), and cannot detect non-existent
+      #   derivations, typo'd package names, or invalid fetchurl hashes.
       # Stage 2 (check.yml): full nix build — catches derivation build failures,
       #   missing packages, fetch errors. Required status check before merge.
-      # CRITICAL DEPENDENCY: branch protection requires check.yml "Build
-      # sancta-claw" to pass before merge. If that check is ever removed, the
-      # security model collapses — auto-approved PRs could deploy unbuilt
-      # configs via system.autoUpgrade.
+      #   This is the mitigation for --no-build: the full build MUST pass
+      #   before merge via branch protection.
+      # CRITICAL DEPENDENCY: branch protection requires check.yml job
+      # "Build x86_64 Configs" (job ID: build-x86) to pass before merge.
+      # Note: "Build sancta-claw" is a step name inside that job, not
+      # a GitHub status check. If the required status check is ever removed,
+      # the security model collapses — auto-approved PRs could deploy
+      # unbuilt configs via system.autoUpgrade.
       - name: Validate Nix config
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
         timeout-minutes: 15
@@ -130,7 +151,11 @@ jobs:
           set -euo pipefail
           nix flake check --no-build
           nix eval .#nixosConfigurations.sancta-claw.config.system.build.toplevel > /dev/null
-          echo "✅ Nix validation passed (eval OK)"
+          # Eval sancta-choir too — openclaw.nix is a shared module imported
+          # by both hosts. This catches changes that break sancta-choir's eval
+          # before the full build in check.yml (defense-in-depth).
+          nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel > /dev/null
+          echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir)"
 
       - name: Format file list
         id: format
@@ -162,7 +187,7 @@ jobs:
             > **@alexandru-savinov** — this PR was auto-approved without human review. Please check at your convenience.
 
             - **Scope**: sancta-claw config + openclaw modules only
-            - **Validation**: `nix flake check --no-build` + `nix eval sancta-claw` passed
+            - **Validation**: `nix flake check --no-build` + `nix eval` (sancta-claw + sancta-choir) passed
             - **Commit**: `${{ github.event.pull_request.head.sha }}`
             - **Changed files**:
             ${{ steps.format.outputs.files }}
