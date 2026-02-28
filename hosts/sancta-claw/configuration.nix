@@ -174,6 +174,8 @@ let
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     models = defaults.setdefault("models", {})
+    model = defaults.setdefault("model", {})
+    model["primary"] = "anthropic/claude-opus-4-6"
     models.setdefault("anthropic/claude-sonnet-4-6", {})
     models.setdefault("anthropic/claude-opus-4-6", {})
 
