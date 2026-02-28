@@ -305,13 +305,13 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "files<<EOF"
+            echo "files<<GHOUTPUT_FILES_END"
             if [ -z "$FILES_JSON" ] || [ "$FILES_JSON" = "[]" ]; then
               echo "  - _(file list unavailable)_"
             else
               echo "$FILES_JSON" | jq -r '.[]' | while IFS= read -r f; do echo "  - \`$f\`"; done
             fi
-            echo "EOF"
+            echo "GHOUTPUT_FILES_END"
           } >> "$GITHUB_OUTPUT"
 
       - name: Auto-approve if allowed paths only
@@ -349,6 +349,12 @@ jobs:
       # every push, eliminating the race entirely.
       # Dismissal is a security-critical operation: if it fails, the step must
       # fail loudly so that a stale approval is not silently left in place.
+      # NOTE: The dismiss filter uses .user.login == "github-actions[bot]"
+      # because hmarr/auto-approve-action with GITHUB_TOKEN (no custom
+      # review-token) records approvals as github-actions[bot]. If a
+      # review-token is ever added to the action config, update this filter
+      # to match the new reviewer identity — otherwise stale approvals from
+      # the custom token would not be dismissed (silent failure).
       - name: Dismiss stale auto-approval if scope expanded
         if: steps.changed.outputs.other == 'true'
         timeout-minutes: 5
