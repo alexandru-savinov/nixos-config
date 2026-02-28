@@ -1060,10 +1060,30 @@ in
     # ──────────────────────────────────────────────────────────────
     systemd.services."getty@tty${toString cfg.vt}" = {
       overrideStrategy = "asDropin";
+      # Without wantedBy, systemd never starts this getty (NAutoVTs=6 by default,
+      # so tty7+ are never auto-spawned). This caused btop on tty1 to remain
+      # the active display instead of nixframe's Sway session.
+      wantedBy = [ "getty.target" ];
       serviceConfig.ExecStart = [
         "" # Clear the default ExecStart
         "@${pkgs.util-linux}/sbin/agetty agetty --autologin nixframe --noclear %I $TERM"
       ];
+    };
+
+    # Switch to VT 7 so the logind session is active before Sway starts.
+    # libseat's logind backend waits for the session to become active (with a
+    # 10s timeout). Without an explicit VT switch, the VT stays on tty1 and
+    # Sway times out with "Failed to start a DRM session".
+    systemd.services.nixframe-activate-vt = {
+      description = "Switch to NixFrame VT ${toString cfg.vt}";
+      after = [ "getty@tty${toString cfg.vt}.service" ];
+      requires = [ "getty@tty${toString cfg.vt}.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.kbd}/bin/chvt ${toString cfg.vt}";
+        RemainAfterExit = true;
+      };
     };
 
     # Auto-start Sway when nixframe logs into tty7
