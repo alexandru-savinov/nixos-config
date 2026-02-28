@@ -1,0 +1,12 @@
+# CODEOWNERS — require review for sensitive paths
+#
+# Default: Alexandru reviews everything
+*                                   @alexandru-savinov
+
+# Kuzea (AI agent) primarily works on sancta-claw config and openclaw
+# service module. These still require Alexandru's review, but CODEOWNERS
+# makes it explicit and ensures no PR slips through unreviewed.
+#
+# Paths that affect other machines (nixframe, rpi5, sancta-choir) or
+# core infrastructure (flake.nix, secrets, common.nix) are protected
+# by the wildcard rule above.
