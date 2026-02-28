@@ -120,6 +120,7 @@ jobs:
         id: changed
         uses: dorny/paths-filter@de90cc6fb7fb024ad0947290ab7a5b10dce0f515 # v3.0.2
         with:
+          list-files: json
           filters: |
             allowed:
               - 'hosts/sancta-claw/**'
@@ -218,8 +219,14 @@ jobs:
       # TOCTOU mitigation: if the PR scope expanded (new commits added
       # out-of-scope files), dismiss any prior auto-approval to prevent
       # merging with stale approval + arbitrary file changes.
-      # Also recommended: enable "Dismiss stale pull request approvals
-      # when new commits are pushed" in branch protection settings.
+      #
+      # IMPORTANT: This dismiss step closes most of the TOCTOU window, but
+      # a small race remains between run A approving and run B dismissing
+      # (typically seconds). To fully close this window, enable:
+      #   Settings > Branches > main > "Dismiss stale pull request approvals
+      #   when new commits are pushed"
+      # This auto-invalidates approvals at the GitHub platform level on
+      # every push, eliminating the race entirely.
       - name: Dismiss stale auto-approval if scope expanded
         if: steps.changed.outputs.other == 'true'
         env:
