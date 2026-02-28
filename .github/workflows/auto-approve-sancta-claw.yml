@@ -205,8 +205,12 @@ jobs:
         run: |
           set -euo pipefail
           # 1. Required status check: "Build x86_64 Configs" must gate merges.
+          # Query both .contexts (legacy) and .checks (current API) because
+          # GitHub stores checks in either or both depending on how protection
+          # was configured. Querying only .contexts could false-alarm if the
+          # check exists only in .checks.
           if ! result=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
-              --jq '.contexts | any(. == "Build x86_64 Configs")' 2>/dev/null); then
+              --jq '((.contexts // []) + ((.checks // []) | map(.context))) | any(. == "Build x86_64 Configs")' 2>/dev/null); then
             echo "::warning::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main."
             exit 0
           fi
@@ -216,8 +220,11 @@ jobs:
           fi
           echo "✅ Required status check: 'Build x86_64 Configs' is present"
           # 2. Dismiss stale reviews: closes TOCTOU race window entirely.
-          # This is a hard requirement — without it, a race exists between
-          # run A approving and run B dismissing.
+          # This is a hard gate — without it, a race exists between run A
+          # approving and run B dismissing. Three outcomes:
+          #   "true"  → pass (TOCTOU fully closed)
+          #   "false" → fail hard (TOCTOU open, security model compromised)
+          #   empty   → API inaccessible (insufficient permissions), warn only
           dismiss=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_pull_request_reviews" \
               --jq '.dismiss_stale_reviews' 2>/dev/null) || true
           if [ "$dismiss" = "true" ]; then
