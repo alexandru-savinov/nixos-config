@@ -1,13 +1,22 @@
 name: Auto-approve sancta-claw PRs from kuzea-bot
 
-# Using pull_request (not pull_request_target) because:
-# - pull_request runs on the PR head SHA, which is what we validate and approve.
-# - pull_request_target runs on the base branch SHA, making checkout of the PR
-#   code an explicit extra step and introducing TOCTOU risks.
-# - Fork PRs are already rejected via head.repo.full_name check (line ~77).
-# - pull_request is the simpler, more auditable choice for same-repo PRs.
+# Using pull_request_target (not pull_request) because:
+# - pull_request_target runs the workflow file from the BASE branch (main),
+#   making it immune to self-modification via the PR branch. A compromised
+#   kuzea-bot cannot alter path-scoping logic by including workflow changes
+#   in the PR — the workflow on main is the only version that executes.
+# - pull_request runs the workflow from the PR merge commit, meaning a PR
+#   that modifies this file would execute the modified version (self-modification
+#   attack surface).
+# - The standard concern with pull_request_target is that it grants repo secrets
+#   to untrusted fork code. This does NOT apply here because fork PRs are already
+#   rejected via the head.repo.full_name gate (line ~120). Only same-repo PRs
+#   from kuzea-bot reach the checkout step.
+# - Validation still checks PR HEAD code: actions/checkout uses
+#   github.event.pull_request.head.sha explicitly, and dorny/paths-filter
+#   uses the event's changed-files list (not filesystem state).
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize]
     branches: [main]
 
@@ -99,7 +108,8 @@ permissions:
 # TODO(scope-review): When sancta-choir re-enables openclaw-container.nix,
 #   revisit whether these shared modules should remain in the auto-approve
 #   scope. Currently mitigated: sancta-choir eval is included above, and
-#   sancta-choir deploys manually (not via autoUpgrade). Track in PR #328.
+#   sancta-choir deploys manually (not via autoUpgrade). The autoUpgrade
+#   guard in the validation step will fail-closed if this changes.
 #
 # Incident runbook — kuzea-bot account compromise:
 #   The security model's single point of failure is kuzea-bot's GitHub
@@ -149,6 +159,10 @@ jobs:
               - 'modules/services/openclaw-container.nix'
             other:
               - '**'
+              # Defensive guard: dorny/paths-filter (picomatch) sets dot:true,
+              # so '**' already matches .github/**. This line is kept as
+              # defense-in-depth against future picomatch/micromatch behavior
+              # changes where '**' might not match dot-prefixed paths.
               - '.github/**'
               - '!hosts/sancta-claw/**'
               - '!modules/services/openclaw.nix'
@@ -171,17 +185,24 @@ jobs:
       #   missing packages, fetch errors. Required status check before merge.
       #   This is the mitigation for --no-build: the full build MUST pass
       #   before merge via branch protection.
-      # CRITICAL DEPENDENCY: branch protection requires check.yml job
-      # "Build x86_64 Configs" (job ID: build-x86) to pass before merge.
-      # Note: "Build sancta-claw" is a step name inside that job, not
-      # a GitHub status check. If the required status check is ever removed,
-      # the security model collapses — auto-approved PRs could deploy
-      # unbuilt configs via system.autoUpgrade.
       #
-      # MANUAL VERIFICATION REQUIRED: GITHUB_TOKEN cannot read branch
-      # protection settings (requires admin scope). Repo admin must verify
-      # that "Build x86_64 Configs" is listed as a required status check
-      # in Settings > Branches > main > Branch protection rules.
+      # ACCEPTED RISK — --no-build is load-bearing on branch protection:
+      #   The security of --no-build depends entirely on "Build x86_64 Configs"
+      #   (check.yml job ID: build-x86) being a required status check. If that
+      #   required check is ever removed from branch protection, auto-approved
+      #   PRs could merge with broken derivations and deploy via autoUpgrade.
+      #   "Build sancta-claw" is a step name inside that job, not a separate
+      #   GitHub status check — it cannot be independently required.
+      #
+      #   The branch protection verify step below is INFORMATIONAL ONLY (see
+      #   its comment block). In practice, GITHUB_TOKEN lacks admin scope, so
+      #   the verify step always exits 0 with a warning. The actual enforcement
+      #   is the GitHub platform's branch protection rule itself.
+      #
+      #   MANUAL VERIFICATION REQUIRED: A repo admin must confirm that
+      #   "Build x86_64 Configs" is listed as a required status check in
+      #   Settings > Branches > main > Branch protection rules. This is a
+      #   one-time setup verified manually, not automatable with GITHUB_TOKEN.
       - name: Validate Nix config
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
         timeout-minutes: 15
@@ -206,13 +227,21 @@ jobs:
           fi
           echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir, autoUpgrade guard OK)"
 
-      # Best-effort INFORMATIONAL check: verify branch protection settings
-      # that this workflow depends on. GITHUB_TOKEN typically lacks admin
-      # scope, so this step usually exits 0 with a warning — it does NOT
-      # block auto-approval. The actual enforcement is at the GitHub platform
-      # level (branch protection rules). A sticky PR comment is posted when
-      # verification is skipped, so the admin is notified.
-      # If readable and a setting is missing, fail hard (misconfiguration).
+      # INFORMATIONAL ONLY — this step does NOT gate auto-approval.
+      #
+      # Purpose: best-effort verification of branch protection settings that
+      # this workflow's security model depends on. In practice, GITHUB_TOKEN
+      # lacks admin scope (the bot token never has it), so this step ALWAYS
+      # exits 0 with a warning and auto-approval proceeds regardless.
+      #
+      # The actual enforcement of required status checks and stale-review
+      # dismissal is at the GitHub platform level (branch protection rules),
+      # not in this step. A sticky PR comment is posted when verification is
+      # skipped, notifying the admin to check manually.
+      #
+      # If the token DOES have sufficient permissions (unlikely) and a
+      # setting is found to be misconfigured, fail hard — this is a real
+      # misconfiguration that must be fixed before auto-approval continues.
       - name: Verify branch protection (best-effort)
         id: protect
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
