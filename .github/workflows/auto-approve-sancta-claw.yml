@@ -297,7 +297,7 @@ jobs:
 
       # always(): run even if the dismiss step above failed, so the admin
       # is notified regardless of whether dismissal succeeded.
-      - name: Comment if mixed paths
+      - name: Comment if out-of-scope files detected
         if: always() && steps.changed.outputs.other == 'true'
         uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
         with:
