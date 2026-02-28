@@ -187,6 +187,11 @@ let
     entries = internal.setdefault("entries", {})
     entries.setdefault("self-improvement", {})["enabled"] = True
 
+    # Enable Telegram streaming so partial replies appear in real-time
+    channels = config.setdefault("channels", {})
+    tg = channels.setdefault("telegram", {})
+    tg["streaming"] = "partial"
+
     tmp = config_path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(config, f, indent=2)
