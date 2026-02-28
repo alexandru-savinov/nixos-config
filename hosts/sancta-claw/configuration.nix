@@ -525,6 +525,9 @@ in
       claudeCodeAgentsSkill = pkgs.runCommand "claude-code-agents" { } ''
         cp -r ${./kuzea/skills/claude-code-agents} $out
       '';
+      codingAgentLocalSkill = pkgs.runCommand "coding-agent-local" { } ''
+        cp -r ${./kuzea/skills/coding-agent-local} $out
+      '';
       selfImprovingHook = pkgs.runCommand "self-improvement-hook" { } ''
         cp -r ${./kuzea/hooks/self-improvement} $out
       '';
@@ -575,6 +578,9 @@ in
       # Claude Code agent-teams & subagents reference — documents custom subagent
       # creation, agent file locations, and experimental agent teams for parallel work.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/claude-code-agents - - - - ${claudeCodeAgentsSkill}"
+      # Local overrides for coding-agent skill — documents --output-format text fix
+      # so Claude Code -p output is captured by OpenClaw's PTY process manager.
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/coding-agent-local - - - - ${codingAgentLocalSkill}"
       # Hook goes into the managed dir (.openclaw/hooks/), NOT workspace/hooks/.
       # Reason: openclaw scans hooks via Node.js readdirSync + Dirent.isDirectory(),
       # which returns false for symlinks-to-directories. Using C+ creates real files
