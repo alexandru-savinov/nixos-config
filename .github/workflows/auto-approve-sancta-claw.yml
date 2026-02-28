@@ -207,7 +207,7 @@ jobs:
           # 1. Required status check: "Build x86_64 Configs" must gate merges.
           if ! result=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
               --jq '.contexts | any(. == "Build x86_64 Configs")' 2>/dev/null); then
-            echo "::notice::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main."
+            echo "::warning::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main."
             exit 0
           fi
           if [ "$result" != "true" ]; then
@@ -215,14 +215,18 @@ jobs:
             exit 1
           fi
           echo "✅ Required status check: 'Build x86_64 Configs' is present"
-          # 2. Dismiss stale reviews: closes TOCTOU race window.
-          if dismiss=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_pull_request_reviews" \
-              --jq '.dismiss_stale_reviews' 2>/dev/null); then
-            if [ "$dismiss" = "true" ]; then
-              echo "✅ Dismiss stale reviews: enabled (TOCTOU race fully closed)"
-            else
-              echo "::warning::TOCTOU: 'Dismiss stale pull request approvals when new commits are pushed' is NOT enabled. Enable in Settings > Branches > main to fully close the TOCTOU window."
-            fi
+          # 2. Dismiss stale reviews: closes TOCTOU race window entirely.
+          # This is a hard requirement — without it, a race exists between
+          # run A approving and run B dismissing.
+          dismiss=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_pull_request_reviews" \
+              --jq '.dismiss_stale_reviews' 2>/dev/null) || true
+          if [ "$dismiss" = "true" ]; then
+            echo "✅ Dismiss stale reviews: enabled (TOCTOU race fully closed)"
+          elif [ "$dismiss" = "false" ]; then
+            echo "::error::CRITICAL: 'Dismiss stale pull request approvals when new commits are pushed' is NOT enabled! TOCTOU race window is open."
+            exit 1
+          else
+            echo "::warning::Cannot verify dismiss_stale_reviews (insufficient permissions). Verify manually: Settings > Branches > main > 'Dismiss stale pull request approvals'."
           fi
 
       # list-files: json (set above) populates allowed_files as a JSON array.
@@ -249,7 +253,7 @@ jobs:
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363 # v4.0.0
         with:
-          review-message: "Auto-approved: changes limited to sancta-claw config and openclaw modules (Nix eval passed)"
+          review-message: "Auto-approved: changes limited to sancta-claw config and openclaw modules (Nix config evaluation passed)"
 
       - name: Audit trail comment
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
@@ -282,6 +286,7 @@ jobs:
       # fail loudly so that a stale approval is not silently left in place.
       - name: Dismiss stale auto-approval if scope expanded
         if: steps.changed.outputs.other == 'true'
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
