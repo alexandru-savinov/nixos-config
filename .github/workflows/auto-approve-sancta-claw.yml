@@ -142,13 +142,8 @@ jobs:
       # It is SHA-pinned (de90cc6) for supply chain integrity. The filter
       # patterns have been manually verified to correctly reject files like
       # flake.nix, hosts/common.nix, .github/workflows/*, and secrets/*.
-      #
-      # The "other" filter uses an explicit '**' base with negation patterns.
-      # dorny/paths-filter (picomatch) evaluates this as: "match all files,
-      # then exclude the listed paths." Without the '**' base, an all-negation
-      # filter's semantics would be library-dependent.
       - name: Get changed files
-        id: changed
+        id: files
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
           list-files: json
@@ -157,19 +152,35 @@ jobs:
               - 'hosts/sancta-claw/**'
               - 'modules/services/openclaw.nix'
               - 'modules/services/openclaw-container.nix'
-            other:
-              - '**'
-              # Defensive guard: dorny/paths-filter (picomatch) sets dot:true,
-              # so '**' already matches .github/**. This line is kept as
-              # defense-in-depth against future picomatch/micromatch behavior
-              # changes where '**' might not match dot-prefixed paths.
-              - '.github/**'
-              - '!hosts/sancta-claw/**'
-              - '!modules/services/openclaw.nix'
-              - '!modules/services/openclaw-container.nix'
+
+      # Check if ALL changed files are within allowed scope.
+      # dorny/paths-filter negation patterns don't work as expected (each
+      # pattern is evaluated independently, not as AND). Instead, we use
+      # the GitHub API to get total changed files count and compare with
+      # the allowed filter match count.
+      - name: Check scope
+        id: changed
+        env:
+          ALLOWED: ${{ steps.files.outputs.allowed }}
+          ALLOWED_FILES: ${{ steps.files.outputs.allowed_files }}
+        run: |
+          set -euo pipefail
+          TOTAL=$(curl -s -H "Authorization: token ${{ github.token }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
+            | jq 'length')
+          ALLOWED_COUNT=$(echo "$ALLOWED_FILES" | jq 'length')
+          echo "Total changed files: $TOTAL"
+          echo "Allowed matched files: $ALLOWED_COUNT"
+          if [ "$ALLOWED" = "true" ] && [ "$TOTAL" -eq "$ALLOWED_COUNT" ]; then
+            echo "All files within allowed scope"
+            echo "in_scope=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Files outside allowed scope detected"
+            echo "in_scope=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Nix
-        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        if: steps.changed.outputs.in_scope == 'true'
         timeout-minutes: 10
         uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
@@ -204,7 +215,7 @@ jobs:
       #   Settings > Branches > main > Branch protection rules. This is a
       #   one-time setup verified manually, not automatable with GITHUB_TOKEN.
       - name: Validate Nix config
-        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        if: steps.changed.outputs.in_scope == 'true'
         timeout-minutes: 15
         run: |
           set -euo pipefail
@@ -244,7 +255,7 @@ jobs:
       # misconfiguration that must be fixed before auto-approval continues.
       - name: Verify branch protection (best-effort)
         id: protect
-        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        if: steps.changed.outputs.in_scope == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -299,9 +310,9 @@ jobs:
       # allowed==true, produce a safe fallback instead of failing on jq input.
       - name: Format file list
         id: format
-        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        if: steps.changed.outputs.in_scope == 'true'
         env:
-          FILES_JSON: ${{ steps.changed.outputs.allowed_files }}
+          FILES_JSON: ${{ steps.files.outputs.allowed_files }}
         run: |
           set -euo pipefail
           {
@@ -315,13 +326,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Auto-approve if allowed paths only
-        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        if: steps.changed.outputs.in_scope == 'true'
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363 # v4.0.0
         with:
           review-message: "Auto-approved: changes limited to sancta-claw config and openclaw modules (Nix config evaluation passed)"
 
       - name: Audit trail comment
-        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        if: steps.changed.outputs.in_scope == 'true'
         uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
         with:
           header: auto-approve-audit
@@ -356,7 +367,7 @@ jobs:
       # to match the new reviewer identity — otherwise stale approvals from
       # the custom token would not be dismissed (silent failure).
       - name: Dismiss stale auto-approval if scope expanded
-        if: steps.changed.outputs.other == 'true'
+        if: steps.changed.outputs.in_scope == 'false'
         timeout-minutes: 5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -374,7 +385,7 @@ jobs:
       # always(): run even if the dismiss step above failed, so the admin
       # is notified regardless of whether dismissal succeeded.
       - name: Comment if out-of-scope files detected
-        if: always() && steps.changed.outputs.other == 'true'
+        if: always() && steps.changed.outputs.in_scope == 'false'
         uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
         with:
           header: manual-review-required
