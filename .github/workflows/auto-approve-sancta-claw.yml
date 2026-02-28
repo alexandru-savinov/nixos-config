@@ -1,0 +1,383 @@
+name: Auto-approve sancta-claw PRs from kuzea-bot
+
+# Using pull_request_target (not pull_request) because:
+# - pull_request_target runs the workflow file from the BASE branch (main),
+#   making it immune to self-modification via the PR branch. A compromised
+#   kuzea-bot cannot alter path-scoping logic by including workflow changes
+#   in the PR — the workflow on main is the only version that executes.
+# - pull_request runs the workflow from the PR merge commit, meaning a PR
+#   that modifies this file would execute the modified version (self-modification
+#   attack surface).
+# - The standard concern with pull_request_target is that it grants repo secrets
+#   to untrusted fork code. This does NOT apply here because fork PRs are already
+#   rejected via the head.repo.full_name gate (line ~120). Only same-repo PRs
+#   from kuzea-bot reach the checkout step.
+# - Validation still checks PR HEAD code: actions/checkout uses
+#   github.event.pull_request.head.sha explicitly, and dorny/paths-filter
+#   uses the event's changed-files list (not filesystem state).
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+    branches: [main]
+
+# Note: cancel-in-progress could cancel a mid-flight dismissal before it
+# completes (if run B is dismissing when run C arrives). The platform-level
+# "Dismiss stale approvals" setting closes this race independently.
+concurrency:
+  group: auto-approve-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  contents: read
+
+# Security model — autonomous bot operation for sancta-claw scope:
+#
+# This workflow allows kuzea-bot PRs scoped to sancta-claw and openclaw modules
+# to be approved and merged WITHOUT human review. This is by design.
+#
+# What IS enforced (active controls):
+#   1. Actor gating: only kuzea-bot PRs are considered.
+#   2. Fork rejection: head.repo.full_name must match this repository.
+#   3. Path scoping: only hosts/sancta-claw/**, modules/services/openclaw.nix,
+#      and modules/services/openclaw-container.nix (exact filenames, not glob).
+#   4. Nix validation: nix flake check + nix eval must pass (hard gate).
+#   5. Required CI checks: check.yml job "Build x86_64 Configs" (job ID:
+#      build-x86) must pass before merge (branch protection). This catches
+#      derivation build failures. "Build sancta-claw" is a step within
+#      that job, not a separate status check.
+#   6. All external actions pinned to immutable commit SHAs.
+#   7. Concurrency: parallel runs are cancelled, preventing duplicate approvals.
+#
+# What is NOT enforced (accepted risks — confirmed by @alexandru-savinov):
+#   - ACCEPTED RISK: No human review for sancta-claw-scoped changes.
+#     CODEOWNERS assigns @alexandru-savinov for all files (*), but "Require
+#     review from Code Owners" is NOT enabled in branch protection. This is
+#     intentional: the goal is autonomous bot operation within the scoped
+#     blast radius.
+#   - ACCEPTED RISK: No runtime correctness validation. Nix eval validates
+#     config structure but cannot detect malicious-but-valid configs (e.g.
+#     rogue ExecStartPre, insecure environment variables, secret
+#     exfiltration via ExecStartPost). A compromised kuzea-bot could craft
+#     syntactically valid but malicious config that passes all automated
+#     gates. This is an inherent limitation of static eval and is accepted
+#     given the limited blast radius (sancta-claw only).
+#
+# ACCEPTED RISK — Privileged shared module scope (openclaw.nix, openclaw-container.nix):
+#   These modules define a system user (openclaw, uid=995), a systemd service
+#   with ExecStart/ReadWritePaths, and Tailscale Serve configuration. They are
+#   shared NixOS modules (currently imported by sancta-claw and sancta-choir),
+#   not host-specific config. Auto-approving changes to shared modules extends
+#   blast radius beyond a single host. This risk is accepted because:
+#   - sancta-choir does not currently use openclaw-container.nix (commented out).
+#   - Changes still require check.yml full builds to pass before merge.
+#   - Only sancta-claw actively deploys via autoUpgrade; sancta-choir
+#     deploys manually.
+#   - Shared infra (flake.nix, common.nix, secrets/) and other hosts
+#     (nixframe, rpi5, sancta-choir) require manual review (path scoping).
+#   - @alexandru-savinov is notified on every auto-approved PR.
+#
+# ACCEPTED RISK — Zero-human-review deployment pipeline:
+#   kuzea-bot opens PR → this workflow auto-approves → check.yml must pass →
+#   PR merges → system.autoUpgrade deploys to sancta-claw within 24h (04:30).
+#   No human reviews shell commands at any stage. The security model trusts
+#   that kuzea-bot will not be compromised or manipulated into generating
+#   malicious NixOS config. This is accepted given the limited blast radius
+#   (sancta-claw only) and active @alexandru-savinov notification on each PR.
+#
+# Merge mechanism: this workflow ONLY approves; it does NOT auto-merge.
+#   kuzea-bot merges separately after approval + CI pass (gh pr merge --squash
+#   --auto). If kuzea-bot does not merge, the PR stays open for manual merge
+#   by @alexandru-savinov. This separation means approval alone cannot deploy.
+#
+# REQUIRED PLATFORM SETTING — "Dismiss stale pull request approvals when new
+#   commits are pushed" MUST be enabled in branch protection. This closes the
+#   TOCTOU race between run A approving and run B dismissing. Without it, a
+#   push of out-of-scope files between approval and dismissal could be merged.
+#   Verify: Settings > Branches > main > "Dismiss stale pull request approvals".
+#
+#   IMPORTANT: The dismiss step only runs when github.actor == 'kuzea-bot'
+#   (job-level gate). If a collaborator pushes a commit to the PR branch,
+#   the entire job is skipped (including dismissal). The platform-level
+#   "Dismiss stale approvals" setting is the ONLY mitigation for this case —
+#   it auto-invalidates all approvals on every push, regardless of actor.
+#
+# Scope maintenance:
+# - openclaw.nix/openclaw-container.nix are currently only used by sancta-claw
+#   and sancta-choir. If other hosts import them, revisit this scope.
+# TODO(scope-review): When sancta-choir re-enables openclaw-container.nix,
+#   revisit whether these shared modules should remain in the auto-approve
+#   scope. Currently mitigated: sancta-choir eval is included above, and
+#   sancta-choir deploys manually (not via autoUpgrade). The autoUpgrade
+#   guard in the validation step will fail-closed if this changes.
+#
+# Incident runbook — kuzea-bot account compromise:
+#   The security model's single point of failure is kuzea-bot's GitHub
+#   credentials. If compromise is suspected:
+#   1. Immediately rotate kuzea-bot's GitHub PAT and SSH keys.
+#   2. Review all auto-approved PRs from the prior 24h window
+#      (system.autoUpgrade runs at 04:30).
+#   3. Inspect sancta-claw for unexpected service config changes:
+#      systemctl cat openclaw.service, env vars, ExecStartPre/Post.
+#   4. Consider temporarily disabling this workflow until cleared.
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-24.04
+    if: >-
+      github.actor == 'kuzea-bot' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # Determine if ALL changed files are within the allowed paths.
+      # "allowed == true" means at least one file matched the allow list.
+      # "other == true" means at least one file is OUTSIDE the allow list.
+      # Auto-approve only fires when allowed==true AND other==false.
+      #
+      # SECURITY NOTE: dorny/paths-filter is the sole path-scoping gate.
+      # It is SHA-pinned (de90cc6) for supply chain integrity. The filter
+      # patterns have been manually verified to correctly reject files like
+      # flake.nix, hosts/common.nix, .github/workflows/*, and secrets/*.
+      #
+      # The "other" filter uses an explicit '**' base with negation patterns.
+      # dorny/paths-filter (picomatch) evaluates this as: "match all files,
+      # then exclude the listed paths." Without the '**' base, an all-negation
+      # filter's semantics would be library-dependent.
+      - name: Get changed files
+        id: changed
+        uses: dorny/paths-filter@de90cc6fb7fb024ad0947290ab7a5b10dce0f515 # v3.0.2
+        with:
+          list-files: json
+          filters: |
+            allowed:
+              - 'hosts/sancta-claw/**'
+              - 'modules/services/openclaw.nix'
+              - 'modules/services/openclaw-container.nix'
+            other:
+              - '**'
+              # Defensive guard: dorny/paths-filter (picomatch) sets dot:true,
+              # so '**' already matches .github/**. This line is kept as
+              # defense-in-depth against future picomatch/micromatch behavior
+              # changes where '**' might not match dot-prefixed paths.
+              - '.github/**'
+              - '!hosts/sancta-claw/**'
+              - '!modules/services/openclaw.nix'
+              - '!modules/services/openclaw-container.nix'
+
+      - name: Install Nix
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        timeout-minutes: 10
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Validation strategy (two stages):
+      # Stage 1 (here): nix flake check --no-build + nix eval — catches config
+      #   structure errors, type mismatches, and missing options. Does NOT fetch
+      #   or build packages (--no-build), and cannot detect non-existent
+      #   derivations, typo'd package names, or invalid fetchurl hashes.
+      # Stage 2 (check.yml): full nix build — catches derivation build failures,
+      #   missing packages, fetch errors. Required status check before merge.
+      #   This is the mitigation for --no-build: the full build MUST pass
+      #   before merge via branch protection.
+      #
+      # ACCEPTED RISK — --no-build is load-bearing on branch protection:
+      #   The security of --no-build depends entirely on "Build x86_64 Configs"
+      #   (check.yml job ID: build-x86) being a required status check. If that
+      #   required check is ever removed from branch protection, auto-approved
+      #   PRs could merge with broken derivations and deploy via autoUpgrade.
+      #   "Build sancta-claw" is a step name inside that job, not a separate
+      #   GitHub status check — it cannot be independently required.
+      #
+      #   The branch protection verify step below is INFORMATIONAL ONLY (see
+      #   its comment block). In practice, GITHUB_TOKEN lacks admin scope, so
+      #   the verify step always exits 0 with a warning. The actual enforcement
+      #   is the GitHub platform's branch protection rule itself.
+      #
+      #   MANUAL VERIFICATION REQUIRED: A repo admin must confirm that
+      #   "Build x86_64 Configs" is listed as a required status check in
+      #   Settings > Branches > main > Branch protection rules. This is a
+      #   one-time setup verified manually, not automatable with GITHUB_TOKEN.
+      - name: Validate Nix config
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          nix flake check --no-build
+          nix eval .#nixosConfigurations.sancta-claw.config.system.build.toplevel > /dev/null
+          # Eval sancta-choir too — openclaw.nix is a shared module imported
+          # by both hosts. This catches changes that break sancta-choir's eval
+          # before the full build in check.yml (defense-in-depth).
+          nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel > /dev/null
+          # Guard (fail-closed): ensure sancta-choir does not have autoUpgrade
+          # enabled. If it does, auto-approving shared openclaw modules becomes a
+          # two-host zero-human-review deployment pipeline.
+          # system.autoUpgrade.enable is a core NixOS option (always present after
+          # successful toplevel eval above). If eval fails here, set -e halts the
+          # workflow — this is intentional (fail-closed).
+          choir_autoupgrade=$(nix eval .#nixosConfigurations.sancta-choir.config.system.autoUpgrade.enable)
+          if [ "$choir_autoupgrade" != "false" ]; then
+            echo "ERROR: sancta-choir has autoUpgrade enabled — auto-approving shared openclaw modules is unsafe"
+            exit 1
+          fi
+          echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir, autoUpgrade guard OK)"
+
+      # INFORMATIONAL ONLY — this step does NOT gate auto-approval.
+      #
+      # Purpose: best-effort verification of branch protection settings that
+      # this workflow's security model depends on. In practice, GITHUB_TOKEN
+      # lacks admin scope (the bot token never has it), so this step ALWAYS
+      # exits 0 with a warning and auto-approval proceeds regardless.
+      #
+      # The actual enforcement of required status checks and stale-review
+      # dismissal is at the GitHub platform level (branch protection rules),
+      # not in this step. A sticky PR comment is posted when verification is
+      # skipped, notifying the admin to check manually.
+      #
+      # If the token DOES have sufficient permissions (unlikely) and a
+      # setting is found to be misconfigured, fail hard — this is a real
+      # misconfiguration that must be fixed before auto-approval continues.
+      - name: Verify branch protection (best-effort)
+        id: protect
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 1. Required status check: "Build x86_64 Configs" must gate merges.
+          # Query both .contexts (legacy) and .checks (current API) because
+          # GitHub stores checks in either or both depending on how protection
+          # was configured. Querying only .contexts could false-alarm if the
+          # check exists only in .checks.
+          if ! result=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
+              --jq '((.contexts // []) + ((.checks // []) | map(.context))) | any(. == "Build x86_64 Configs")' 2>/dev/null); then
+            echo "::warning::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main."
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$result" != "true" ]; then
+            echo "::error::CRITICAL: 'Build x86_64 Configs' is NOT a required status check on main! Auto-approved PRs could merge unvalidated."
+            exit 1
+          fi
+          echo "✅ Required status check: 'Build x86_64 Configs' is present"
+          # 2. Dismiss stale reviews: closes TOCTOU race window entirely.
+          # This is a hard gate — without it, a race exists between run A
+          # approving and run B dismissing. Three outcomes:
+          #   "true"  → pass (TOCTOU fully closed)
+          #   "false" → fail hard (TOCTOU open, security model compromised)
+          #   empty   → API inaccessible (insufficient permissions), warn only
+          dismiss=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_pull_request_reviews" \
+              --jq '.dismiss_stale_reviews' 2>/dev/null) || true
+          if [ "$dismiss" = "true" ]; then
+            echo "✅ Dismiss stale reviews: enabled (TOCTOU race fully closed)"
+          elif [ "$dismiss" = "false" ]; then
+            echo "::error::CRITICAL: 'Dismiss stale pull request approvals when new commits are pushed' is NOT enabled! TOCTOU race window is open."
+            exit 1
+          else
+            echo "::warning::Cannot verify dismiss_stale_reviews (insufficient permissions). Verify manually: Settings > Branches > main > 'Dismiss stale pull request approvals'."
+          fi
+
+      - name: Warn if branch protection unverified
+        if: steps.protect.outputs.verified == 'false'
+        uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
+        with:
+          header: branch-protection-unverified
+          message: |
+            ⚠️ **Branch protection settings could not be verified** (insufficient GITHUB_TOKEN permissions).
+
+            Please manually confirm in Settings > Branches > main:
+            - **"Build x86_64 Configs"** is a required status check
+            - **"Dismiss stale pull request approvals when new commits are pushed"** is enabled
+
+      # list-files: json (set above) populates allowed_files as a JSON array.
+      # Defensive guard: if allowed_files is unexpectedly empty despite
+      # allowed==true, produce a safe fallback instead of failing on jq input.
+      - name: Format file list
+        id: format
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        env:
+          FILES_JSON: ${{ steps.changed.outputs.allowed_files }}
+        run: |
+          set -euo pipefail
+          {
+            echo "files<<GHOUTPUT_FILES_END"
+            if [ -z "$FILES_JSON" ] || [ "$FILES_JSON" = "[]" ]; then
+              echo "  - _(file list unavailable)_"
+            else
+              echo "$FILES_JSON" | jq -r '.[]' | while IFS= read -r f; do echo "  - \`$f\`"; done
+            fi
+            echo "GHOUTPUT_FILES_END"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Auto-approve if allowed paths only
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363 # v4.0.0
+        with:
+          review-message: "Auto-approved: changes limited to sancta-claw config and openclaw modules (Nix config evaluation passed)"
+
+      - name: Audit trail comment
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
+        with:
+          header: auto-approve-audit
+          message: |
+            ✅ **Auto-approved** by `auto-approve-sancta-claw` workflow
+
+            > **@alexandru-savinov** — this PR was auto-approved without human review. Please check at your convenience.
+
+            - **Scope**: sancta-claw config + openclaw modules only
+            - **Validation**: `nix flake check --no-build` + `nix eval` (sancta-claw + sancta-choir) passed
+            - **Commit**: `${{ github.event.pull_request.head.sha }}`
+            - **Changed files**:
+            ${{ steps.format.outputs.files }}
+
+      # TOCTOU mitigation: if the PR scope expanded (new commits added
+      # out-of-scope files), dismiss any prior auto-approval to prevent
+      # merging with stale approval + arbitrary file changes.
+      #
+      # IMPORTANT: This dismiss step closes most of the TOCTOU window, but
+      # a small race remains between run A approving and run B dismissing
+      # (typically seconds). To fully close this window, enable:
+      #   Settings > Branches > main > "Dismiss stale pull request approvals
+      #   when new commits are pushed"
+      # This auto-invalidates approvals at the GitHub platform level on
+      # every push, eliminating the race entirely.
+      # Dismissal is a security-critical operation: if it fails, the step must
+      # fail loudly so that a stale approval is not silently left in place.
+      # NOTE: The dismiss filter uses .user.login == "github-actions[bot]"
+      # because hmarr/auto-approve-action with GITHUB_TOKEN (no custom
+      # review-token) records approvals as github-actions[bot]. If a
+      # review-token is ever added to the action config, update this filter
+      # to match the new reviewer identity — otherwise stale approvals from
+      # the custom token would not be dismissed (silent failure).
+      - name: Dismiss stale auto-approval if scope expanded
+        if: steps.changed.outputs.other == 'true'
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            --jq '.[] | select(.state == "APPROVED" and .user.login == "github-actions[bot]") | .id' \
+          | while IFS= read -r review_id; do
+              gh api --method PUT \
+                "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/${review_id}/dismissals" \
+                -f message="Dismissing: PR now touches files outside sancta-claw scope"
+            done
+
+      # always(): run even if the dismiss step above failed, so the admin
+      # is notified regardless of whether dismissal succeeded.
+      - name: Comment if out-of-scope files detected
+        if: always() && steps.changed.outputs.other == 'true'
+        uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
+        with:
+          header: manual-review-required
+          message: |
+            ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw.nix`, `modules/services/openclaw-container.nix`) — **manual review required** before merge. @alexandru-savinov
+
