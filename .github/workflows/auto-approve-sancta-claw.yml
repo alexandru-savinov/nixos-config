@@ -181,6 +181,9 @@ jobs:
           fi
           echo "✅ Nix validation passed (eval OK for sancta-claw and sancta-choir, autoUpgrade guard OK)"
 
+      # list-files: json (set above) populates allowed_files as a JSON array.
+      # Defensive guard: if allowed_files is unexpectedly empty despite
+      # allowed==true, produce a safe fallback instead of failing on jq input.
       - name: Format file list
         id: format
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
@@ -190,7 +193,11 @@ jobs:
           set -euo pipefail
           {
             echo "files<<EOF"
-            echo "$FILES_JSON" | jq -r '.[]' | while IFS= read -r f; do echo "  - \`$f\`"; done
+            if [ -z "$FILES_JSON" ] || [ "$FILES_JSON" = "[]" ]; then
+              echo "  - _(file list unavailable)_"
+            else
+              echo "$FILES_JSON" | jq -r '.[]' | while IFS= read -r f; do echo "  - \`$f\`"; done
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -249,11 +256,3 @@ jobs:
           message: |
             ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw*.nix`) — **manual review required** before merge. @alexandru-savinov
 
-      # Defensive: this condition is effectively unreachable because the "other"
-      # filter uses a '**' base that matches every file in any non-empty PR.
-      # Kept as a safety net for truly empty diffs (zero changed files).
-      - name: Log no-op
-        if: steps.changed.outputs.allowed == 'false' && steps.changed.outputs.other == 'false'
-        run: |
-          set -euo pipefail
-          echo "ℹ️ No matching files detected — workflow took no action (empty diff or edge case)"
