@@ -27,7 +27,8 @@ permissions:
 # What IS enforced (active controls):
 #   1. Actor gating: only kuzea-bot PRs are considered.
 #   2. Fork rejection: head.repo.full_name must match this repository.
-#   3. Path scoping: only hosts/sancta-claw/** and modules/services/openclaw*.nix.
+#   3. Path scoping: only hosts/sancta-claw/**, modules/services/openclaw.nix,
+#      and modules/services/openclaw-container.nix (exact filenames, not glob).
 #   4. Nix validation: nix flake check + nix eval must pass (hard gate).
 #   5. Required CI checks: check.yml job "Build x86_64 Configs" (job ID:
 #      build-x86) must pass before merge (branch protection). This catches
@@ -82,6 +83,12 @@ permissions:
 #   TOCTOU race between run A approving and run B dismissing. Without it, a
 #   push of out-of-scope files between approval and dismissal could be merged.
 #   Verify: Settings > Branches > main > "Dismiss stale pull request approvals".
+#
+#   IMPORTANT: The dismiss step only runs when github.actor == 'kuzea-bot'
+#   (job-level gate). If a collaborator pushes a commit to the PR branch,
+#   the entire job is skipped (including dismissal). The platform-level
+#   "Dismiss stale approvals" setting is the ONLY mitigation for this case —
+#   it auto-invalidates all approvals on every push, regardless of actor.
 #
 # Scope maintenance:
 # - openclaw.nix/openclaw-container.nix are currently only used by sancta-claw
@@ -139,6 +146,7 @@ jobs:
               - 'modules/services/openclaw-container.nix'
             other:
               - '**'
+              - '.github/**'
               - '!hosts/sancta-claw/**'
               - '!modules/services/openclaw.nix'
               - '!modules/services/openclaw-container.nix'
@@ -199,6 +207,7 @@ jobs:
       # depends on. GITHUB_TOKEN may lack admin scope — if so, log a notice
       # and continue. If readable and a setting is missing, fail or warn.
       - name: Verify branch protection (best-effort)
+        id: protect
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -212,6 +221,7 @@ jobs:
           if ! result=$(gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
               --jq '((.contexts // []) + ((.checks // []) | map(.context))) | any(. == "Build x86_64 Configs")' 2>/dev/null); then
             echo "::warning::Cannot read branch protection (insufficient permissions). Verify manually: Settings > Branches > main."
+            echo "verified=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$result" != "true" ]; then
@@ -235,6 +245,18 @@ jobs:
           else
             echo "::warning::Cannot verify dismiss_stale_reviews (insufficient permissions). Verify manually: Settings > Branches > main > 'Dismiss stale pull request approvals'."
           fi
+
+      - name: Warn if branch protection unverified
+        if: steps.protect.outputs.verified == 'false'
+        uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
+        with:
+          header: branch-protection-unverified
+          message: |
+            ⚠️ **Branch protection settings could not be verified** (insufficient GITHUB_TOKEN permissions).
+
+            Please manually confirm in Settings > Branches > main:
+            - **"Build x86_64 Configs"** is a required status check
+            - **"Dismiss stale pull request approvals when new commits are pushed"** is enabled
 
       # list-files: json (set above) populates allowed_files as a JSON array.
       # Defensive guard: if allowed_files is unexpectedly empty despite
@@ -315,5 +337,5 @@ jobs:
         with:
           header: manual-review-required
           message: |
-            ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw*.nix`) — **manual review required** before merge. @alexandru-savinov
+            ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw.nix`, `modules/services/openclaw-container.nix`) — **manual review required** before merge. @alexandru-savinov
 
