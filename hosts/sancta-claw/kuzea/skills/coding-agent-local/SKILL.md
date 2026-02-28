@@ -6,10 +6,12 @@ read_when:
   - Troubleshooting missing output from -p mode
   - Using Agent Teams through OpenClaw
   - Running PR reviews via OpenClaw
-metadata: {"openclaw": {"emoji": "🔧"}}
+metadata: {"openclaw": {"emoji": "🔧"}} # metadata used by OpenClaw skill loader for UI display
 ---
 
 # Coding Agent — Local Fixes (sancta-claw)
+
+> The parent `coding-agent` skill is the one installed via npm/clawhub (not in this repo). This file overrides/extends it.
 
 These overrides apply on top of the main `coding-agent` skill.
 
@@ -68,6 +70,8 @@ if the lead gets SIGTERM. Always check `ps aux | grep claude` after a killed ses
 
 ## Custom Subagents (--agents flag)
 
+(experimental — flag format may change, verify with `claude --help`)
+
 For specialized reviews without full Agent Teams overhead:
 
 ```bash
@@ -85,6 +89,7 @@ claude --dangerously-skip-permissions --output-format text --agents '{
 
 ```bash
 REVIEW_DIR=$(mktemp -d)
+trap "rm -rf \"$REVIEW_DIR\"" EXIT
 git clone https://github.com/alexandru-savinov/nixos-config.git $REVIEW_DIR
 cd $REVIEW_DIR && git fetch origin 'refs/pull/NUMBER/head:pr-NUMBER'
 
