@@ -182,10 +182,13 @@ jobs:
           # by both hosts. This catches changes that break sancta-choir's eval
           # before the full build in check.yml (defense-in-depth).
           nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel > /dev/null
-          # Guard: ensure sancta-choir does not have autoUpgrade enabled.
-          # If it does, auto-approving shared openclaw modules becomes a
+          # Guard (fail-closed): ensure sancta-choir does not have autoUpgrade
+          # enabled. If it does, auto-approving shared openclaw modules becomes a
           # two-host zero-human-review deployment pipeline.
-          choir_autoupgrade=$(nix eval .#nixosConfigurations.sancta-choir.config.system.autoUpgrade.enable || echo "false")
+          # system.autoUpgrade.enable is a core NixOS option (always present after
+          # successful toplevel eval above). If eval fails here, set -e halts the
+          # workflow — this is intentional (fail-closed).
+          choir_autoupgrade=$(nix eval .#nixosConfigurations.sancta-choir.config.system.autoUpgrade.enable)
           if [ "$choir_autoupgrade" != "false" ]; then
             echo "ERROR: sancta-choir has autoUpgrade enabled — auto-approving shared openclaw modules is unsafe"
             exit 1
