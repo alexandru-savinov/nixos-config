@@ -1,0 +1,145 @@
+name: Auto-approve sancta-claw PRs from kuzea-bot
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+
+concurrency:
+  group: auto-approve-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  contents: read
+
+# Security model — autonomous bot operation for sancta-claw scope:
+#
+# This workflow allows kuzea-bot PRs scoped to sancta-claw and openclaw modules
+# to be approved and merged WITHOUT human review. This is by design.
+#
+# What IS enforced (active controls):
+#   1. Actor gating: only kuzea-bot PRs are considered.
+#   2. Fork rejection: head.repo.full_name must match this repository.
+#   3. Path scoping: only hosts/sancta-claw/** and modules/services/openclaw*.nix.
+#   4. Nix validation: nix flake check + nix eval must pass (hard gate).
+#   5. Required CI checks: check.yml "Build sancta-claw" must pass before merge
+#      (branch protection). This catches derivation build failures.
+#   6. All external actions pinned to immutable commit SHAs.
+#   7. Concurrency: parallel runs are cancelled, preventing duplicate approvals.
+#
+# What is NOT enforced:
+#   - Human review for sancta-claw-scoped changes. CODEOWNERS assigns
+#     @alexandru-savinov for all files (*), but "Require review from Code
+#     Owners" is NOT enabled in branch protection. This is intentional:
+#     the goal is autonomous bot operation within the scoped blast radius.
+#   - Runtime correctness. Nix eval validates config structure but cannot
+#     detect malicious-but-valid configs (e.g. rogue ExecStartPre, insecure
+#     environment variables). This is an inherent limitation of static eval.
+#
+# Privileged module risk (openclaw.nix, openclaw-container.nix):
+#   These modules define a system user (openclaw, uid=995), a systemd service
+#   with ExecStart/ReadWritePaths, and Tailscale Serve configuration. If
+#   kuzea-bot is compromised, a valid-but-malicious config could reach
+#   production. This risk is accepted because:
+#   - Blast radius is limited to sancta-claw only.
+#   - Shared infra (flake.nix, common.nix, secrets/) and other hosts
+#     (nixframe, rpi5, sancta-choir) require manual review (path scoping).
+#   - @alexandru-savinov is notified on every auto-approved PR.
+#
+# Deployment path:
+#   kuzea-bot opens PR → this workflow auto-approves → check.yml must pass →
+#   PR merges → system.autoUpgrade deploys to sancta-claw within 24h (04:30).
+#
+# Scope maintenance:
+# - openclaw.nix/openclaw-container.nix are currently only used by sancta-claw
+#   and sancta-choir. If other hosts import them, revisit this scope.
+# TODO: When sancta-choir re-enables openclaw-container.nix, add its eval here.
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-24.04
+    if: >-
+      github.actor == 'kuzea-bot' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # Determine if ALL changed files are within the allowed paths.
+      # "allowed == true" means at least one file matched the allow list.
+      # "other == true" means at least one file is OUTSIDE the allow list.
+      # Auto-approve only fires when allowed==true AND other==false.
+      #
+      # The "other" filter uses an explicit '**' base with negation patterns.
+      # dorny/paths-filter (picomatch) evaluates this as: "match all files,
+      # then exclude the listed paths." Without the '**' base, an all-negation
+      # filter's semantics would be library-dependent.
+      - name: Get changed files
+        id: changed
+        uses: dorny/paths-filter@de90cc6fb7fb024ad0947290ab7a5b10dce0f515 # v3.0.2
+        with:
+          filters: |
+            allowed:
+              - 'hosts/sancta-claw/**'
+              - 'modules/services/openclaw.nix'
+              - 'modules/services/openclaw-container.nix'
+            other:
+              - '**'
+              - '!hosts/sancta-claw/**'
+              - '!modules/services/openclaw.nix'
+              - '!modules/services/openclaw-container.nix'
+
+      - name: Install Nix
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        timeout-minutes: 5
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Validation strategy (two stages):
+      # Stage 1 (here): nix flake check --no-build + nix eval — catches config
+      #   structure errors, type mismatches, and missing options. Does NOT fetch
+      #   or build packages, and cannot detect runtime misconfigurations.
+      # Stage 2 (check.yml): full nix build — catches derivation build failures,
+      #   missing packages, fetch errors. Required status check before merge.
+      # CRITICAL DEPENDENCY: branch protection requires check.yml "Build
+      # sancta-claw" to pass before merge. If that check is ever removed, the
+      # security model collapses — auto-approved PRs could deploy unbuilt
+      # configs via system.autoUpgrade.
+      - name: Validate Nix config
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          nix flake check --no-build
+          nix eval .#nixosConfigurations.sancta-claw.config.system.build.toplevel > /dev/null
+          echo "✅ Nix validation passed (eval OK)"
+
+      - name: Auto-approve if allowed paths only
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363 # v4.0.0
+        with:
+          review-message: "Auto-approved: changes limited to sancta-claw config and openclaw modules (Nix eval passed)"
+
+      - name: Audit trail comment
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
+        with:
+          header: auto-approve-audit
+          message: |
+            ✅ **Auto-approved** by `auto-approve-sancta-claw` workflow — @alexandru-savinov FYI
+            - **Scope**: sancta-claw config + openclaw modules only
+            - **Validation**: `nix flake check --no-build` + `nix eval sancta-claw` passed
+            - **Commit**: `${{ github.event.pull_request.head.sha }}`
+            - **Changed files**: ${{ steps.changed.outputs.allowed_files }}
+
+      - name: Comment if mixed paths
+        if: steps.changed.outputs.other == 'true'
+        uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
+        with:
+          message: |
+            ⚠️ This PR touches files outside allowed paths — requires manual review per [CODEOWNERS](../blob/main/.github/CODEOWNERS).
