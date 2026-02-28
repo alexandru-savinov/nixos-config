@@ -957,9 +957,9 @@ in
     };
 
     vt = mkOption {
-      type = types.int;
+      type = types.ints.between 7 12;
       default = 7;
-      description = "Virtual terminal for nixframe auto-login (avoids conflict with TTY1 btop).";
+      description = "Virtual terminal for nixframe auto-login (must be 7-12 to avoid conflict with system gettys on VT 1-6).";
     };
 
     weather = {
@@ -1094,6 +1094,11 @@ in
     programs.bash.interactiveShellInit = ''
       if [[ "$(tty)" == "/dev/tty${toString cfg.vt}" ]] && [[ "$(whoami)" == "nixframe" ]] && [[ -z "$NIXFRAME_RUNNING" ]]; then
         export NIXFRAME_RUNNING=1
+        # Wait for nixframe-activate-vt (chvt) to complete before starting Sway.
+        # Without this, Sway may launch before the VT is active, causing libseat's
+        # logind backend to timeout waiting for an active session.
+        ${pkgs.systemd}/bin/systemctl is-active --quiet nixframe-activate-vt.service || \
+          timeout 15 ${pkgs.bash}/bin/bash -c 'until ${pkgs.systemd}/bin/systemctl is-active --quiet nixframe-activate-vt.service; do sleep 0.5; done'
         exec ${pkgs.sway}/bin/sway --config ${swayConfig}
       fi
     '';
