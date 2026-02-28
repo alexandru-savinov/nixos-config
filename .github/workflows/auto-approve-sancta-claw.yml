@@ -134,7 +134,7 @@ jobs:
 
       - name: Install Nix
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
-        timeout-minutes: 5
+        timeout-minutes: 10
         uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
@@ -174,7 +174,7 @@ jobs:
           # Guard: ensure sancta-choir does not have autoUpgrade enabled.
           # If it does, auto-approving shared openclaw modules becomes a
           # two-host zero-human-review deployment pipeline.
-          choir_autoupgrade=$(nix eval .#nixosConfigurations.sancta-choir.config.system.autoUpgrade.enable 2>/dev/null || echo "false")
+          choir_autoupgrade=$(nix eval .#nixosConfigurations.sancta-choir.config.system.autoUpgrade.enable || echo "false")
           if [ "$choir_autoupgrade" != "false" ]; then
             echo "ERROR: sancta-choir has autoUpgrade enabled — auto-approving shared openclaw modules is unsafe"
             exit 1
@@ -246,13 +246,15 @@ jobs:
           | while IFS= read -r review_id; do
               gh api --method PUT \
                 "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/${review_id}/dismissals" \
-                -f message="Dismissing: PR now touches files outside sancta-claw scope" || true
+                -f message="Dismissing: PR now touches files outside sancta-claw scope" \
+              || echo "WARNING: failed to dismiss review $review_id — manual action may be needed"
             done
 
       - name: Comment if mixed paths
         if: steps.changed.outputs.other == 'true'
         uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
         with:
+          header: manual-review-required
           message: |
             ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw*.nix`) — **manual review required** before merge. @alexandru-savinov
 
