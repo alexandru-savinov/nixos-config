@@ -28,28 +28,41 @@ permissions:
 #   6. All external actions pinned to immutable commit SHAs.
 #   7. Concurrency: parallel runs are cancelled, preventing duplicate approvals.
 #
-# What is NOT enforced:
-#   - Human review for sancta-claw-scoped changes. CODEOWNERS assigns
-#     @alexandru-savinov for all files (*), but "Require review from Code
-#     Owners" is NOT enabled in branch protection. This is intentional:
-#     the goal is autonomous bot operation within the scoped blast radius.
-#   - Runtime correctness. Nix eval validates config structure but cannot
-#     detect malicious-but-valid configs (e.g. rogue ExecStartPre, insecure
-#     environment variables). This is an inherent limitation of static eval.
+# What is NOT enforced (accepted risks — confirmed by @alexandru-savinov):
+#   - ACCEPTED RISK: No human review for sancta-claw-scoped changes.
+#     CODEOWNERS assigns @alexandru-savinov for all files (*), but "Require
+#     review from Code Owners" is NOT enabled in branch protection. This is
+#     intentional: the goal is autonomous bot operation within the scoped
+#     blast radius.
+#   - ACCEPTED RISK: No runtime correctness validation. Nix eval validates
+#     config structure but cannot detect malicious-but-valid configs (e.g.
+#     rogue ExecStartPre, insecure environment variables, secret
+#     exfiltration via ExecStartPost). A compromised kuzea-bot could craft
+#     syntactically valid but malicious config that passes all automated
+#     gates. This is an inherent limitation of static eval and is accepted
+#     given the limited blast radius (sancta-claw only).
 #
-# Privileged module risk (openclaw.nix, openclaw-container.nix):
+# ACCEPTED RISK — Privileged shared module scope (openclaw.nix, openclaw-container.nix):
 #   These modules define a system user (openclaw, uid=995), a systemd service
-#   with ExecStart/ReadWritePaths, and Tailscale Serve configuration. If
-#   kuzea-bot is compromised, a valid-but-malicious config could reach
-#   production. This risk is accepted because:
-#   - Blast radius is limited to sancta-claw only.
+#   with ExecStart/ReadWritePaths, and Tailscale Serve configuration. They are
+#   shared NixOS modules (currently imported by sancta-claw and sancta-choir),
+#   not host-specific config. Auto-approving changes to shared modules extends
+#   blast radius beyond a single host. This risk is accepted because:
+#   - sancta-choir does not currently use openclaw-container.nix (commented out).
+#   - Changes still require check.yml full builds to pass before merge.
+#   - Only sancta-claw actively deploys via autoUpgrade; sancta-choir
+#     deploys manually.
 #   - Shared infra (flake.nix, common.nix, secrets/) and other hosts
 #     (nixframe, rpi5, sancta-choir) require manual review (path scoping).
 #   - @alexandru-savinov is notified on every auto-approved PR.
 #
-# Deployment path:
+# ACCEPTED RISK — Zero-human-review deployment pipeline:
 #   kuzea-bot opens PR → this workflow auto-approves → check.yml must pass →
 #   PR merges → system.autoUpgrade deploys to sancta-claw within 24h (04:30).
+#   No human reviews shell commands at any stage. The security model trusts
+#   that kuzea-bot will not be compromised or manipulated into generating
+#   malicious NixOS config. This is accepted given the limited blast radius
+#   (sancta-claw only) and active @alexandru-savinov notification on each PR.
 #
 # Scope maintenance:
 # - openclaw.nix/openclaw-container.nix are currently only used by sancta-claw
@@ -119,6 +132,19 @@ jobs:
           nix eval .#nixosConfigurations.sancta-claw.config.system.build.toplevel > /dev/null
           echo "✅ Nix validation passed (eval OK)"
 
+      - name: Format file list
+        id: format
+        if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
+        env:
+          FILES_JSON: ${{ steps.changed.outputs.allowed_files }}
+        run: |
+          set -euo pipefail
+          {
+            echo "files<<EOF"
+            echo "$FILES_JSON" | jq -r '.[]' | while IFS= read -r f; do echo "  - \`$f\`"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Auto-approve if allowed paths only
         if: steps.changed.outputs.allowed == 'true' && steps.changed.outputs.other == 'false'
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363 # v4.0.0
@@ -131,15 +157,19 @@ jobs:
         with:
           header: auto-approve-audit
           message: |
-            ✅ **Auto-approved** by `auto-approve-sancta-claw` workflow — @alexandru-savinov FYI
+            ✅ **Auto-approved** by `auto-approve-sancta-claw` workflow
+
+            > **@alexandru-savinov** — this PR was auto-approved without human review. Please check at your convenience.
+
             - **Scope**: sancta-claw config + openclaw modules only
             - **Validation**: `nix flake check --no-build` + `nix eval sancta-claw` passed
             - **Commit**: `${{ github.event.pull_request.head.sha }}`
-            - **Changed files**: ${{ steps.changed.outputs.allowed_files }}
+            - **Changed files**:
+            ${{ steps.format.outputs.files }}
 
       - name: Comment if mixed paths
         if: steps.changed.outputs.other == 'true'
         uses: marocchino/sticky-pull-request-comment@331f8f5b4215f0445d3c07b4967662a32a2d3e31 # v2.9.1
         with:
           message: |
-            ⚠️ This PR touches files outside allowed paths — requires manual review per [CODEOWNERS](../blob/main/.github/CODEOWNERS).
+            ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw*.nix`) — **manual review required** before merge. @alexandru-savinov
