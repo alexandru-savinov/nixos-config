@@ -519,8 +519,8 @@ in
         ${pkgs.git}/bin/git checkout main
         ${pkgs.git}/bin/git reset --hard origin/main
 
-        # Rebuild
-        nixos-rebuild switch --flake /var/lib/openclaw/nixos-config#sancta-claw 2>&1 | tee /var/lib/openclaw/rebuild.log
+        # Rebuild (full path required — systemd services have minimal PATH)
+        /run/current-system/sw/bin/nixos-rebuild switch --flake /var/lib/openclaw/nixos-config#sancta-claw 2>&1 | tee /var/lib/openclaw/rebuild.log
 
         # Notify Kuzea
         echo "$(date -Iseconds) rebuild completed" >> /var/lib/openclaw/rebuild.log
