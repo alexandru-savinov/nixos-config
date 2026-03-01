@@ -6,9 +6,11 @@ let
   # Raspberry Pi 5 host key
   rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjZXKDY8Ve/wfMHpjsJGR7guDQFndGoNxDZKXegEfjr root@rpi5";
 
-  # sancta-claw VPS host key (Hetzner CX33, nbg1-dc3, 46.225.168.24)
-  # Kuzea — spirit digital al casei
-  sancta-claw = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGPSg59xhgMmUcxRS9Yw76z57DiVib3kXHyw52RAThcs";
+  # sancta-claw stable age identity for DR — NOT tied to SSH host key.
+  # Decoupled from host identity so nixos-anywhere + --extra-files enables
+  # secret decryption on first boot without re-keying.
+  # Private key stored on: rpi5:/root/dr/recovery-sancta-claw.key + Bitwarden
+  sancta-claw = "age1zex0chkw9swv62khuw73lftpcagu6t7d8vqa2h9mmnm23249hpuqx8f2kt";
 
   # Combine users who can edit
   users = [ root-sancta-choir ];

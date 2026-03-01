@@ -2,122 +2,78 @@
 
 ## Prerequisites
 
-- SSH private key `nixos-sancta-choir` (stored in Bitwarden)
 - Access to Hetzner Cloud console (hetzner.com)
-- A working machine with `nix` installed (laptop, rpi5, etc.)
+- A machine with `nix` installed — **rpi5 recommended** (has recovery key + extra-files ready)
+- Recovery key private file at `/root/dr/recovery-sancta-claw.key` (on rpi5)
+- Backup of recovery key in Bitwarden (fallback if rpi5 is unavailable)
 
 ## Quick Recovery (2 commands)
 
 ### Step 1: Create new VPS in Hetzner Cloud
 
 - Login to Hetzner Cloud console
-- Create server: **CX33** (recommended), Nuremberg (nbg1), Ubuntu 24.04 (CX22 for testing only — 4GB RAM may OOM during builds)
+- Create server: **CCX13** or larger (dedicated CPU, UEFI firmware), Nuremberg (nbg1), Ubuntu 24.04
 - Note the new IP address
 
-### Step 2: Update config for new VPS
+> **Important:** Use CCX server types (dedicated CPU). These use UEFI firmware. CX/CPX shared CPU types may work but are untested. The config installs GRUB for both BIOS and UEFI (PR #345).
 
-**Before installing**, update the config for the new VPS's IP and MAC:
+### Step 2: Install NixOS (command 1)
 
-```bash
-# Clone the repo locally
-git clone https://github.com/alexandru-savinov/nixos-config.git && cd nixos-config
-
-# Get the new VPS's MAC address (from Hetzner Cloud console → Networking tab)
-# Update hosts/sancta-claw/configuration.nix:
-#   1. Change the static IP address (networking.interfaces.eth0.ipv4.addresses)
-#   2. Change the MAC address in the udev rule (ATTR{address}=="...")
-#   3. Gateway is 172.31.1.1 for nbg1 — update if provisioned in a different datacenter
-
-# Format, stage only changed file, commit and push
-nix fmt
-git add hosts/sancta-claw/configuration.nix
-git commit -m "chore: update IP/MAC for new VPS"
-git push
-```
-
-### Step 3: Install NixOS + config
+From rpi5 (or any machine with nix + the recovery key):
 
 ```bash
 nix run github:nix-community/nixos-anywhere -- \
+  --extra-files /root/dr/extra-files \
   --flake github:alexandru-savinov/nixos-config#sancta-claw \
   root@NEW_IP
 ```
 
 This will:
 
-- Partition disk (via disko — GPT: 1M BIOS boot, 256M ESP (not mounted — BIOS/GRUB boot), rest ext4 root on `/dev/sda`)
+- Partition disk via disko (GPT: 1M BIOS boot, 256M ESP at `/boot`, rest ext4 root on `/dev/sda`)
+- Place the age recovery key at `/root/.age/recovery.key` (from `--extra-files`)
 - Install NixOS with full sancta-claw config
-- Configure Tailscale, OpenClaw, all services
+- On first boot: agenix decrypts secrets using the recovery key, Tailscale connects automatically
 
-> **Note:** nixos-anywhere with disko **will reformat the disk** — all existing data on the VPS is erased. This is expected for recovery to a new VPS.
+> **Note:** nixos-anywhere with disko **will reformat the disk** — all existing data is erased.
 
-### Step 3b: Install OpenClaw binary
+> **No IP/MAC config needed** — sancta-claw uses DHCP (PR #344).
 
-After nixos-anywhere completes, SSH in and install the npm package:
+> **No re-keying needed** — secrets are encrypted for a stable age key, not the SSH host key. The recovery key placed by `--extra-files` enables decryption on first boot.
+
+### Step 3: Restore workspace + OpenClaw (command 2)
 
 ```bash
-ssh root@NEW_IP
-sudo -u openclaw NPM_CONFIG_PREFIX=/var/lib/openclaw/.npm-global npm install -g openclaw
-sudo -u openclaw openclaw configure   # interactive — sets up Telegram token etc.
+ssh root@NEW_IP /etc/sancta-claw/restore.sh rpi5
 ```
 
-> ⚠️ `NPM_CONFIG_PREFIX` must match the service config. Without it, the binary lands in the wrong path and the openclaw service won't start (`ConditionPathExists` skips silently).
-
-> ⚠️ **Tailscale is DOWN until this step completes** — secrets can't decrypt on first boot. Use the direct IP from Hetzner for all SSH commands below.
-
-### Step 4: Update host key in agenix
-
-The new VPS has a new SSH host key. Secrets won't decrypt until you re-encrypt:
+Or manually if restore.sh is not yet available:
 
 ```bash
-# Get new host key
-# Verify fingerprint via Hetzner Cloud console (Server → Console tab) before trusting
-ssh-keyscan -t ed25519 NEW_IP
+# Install OpenClaw binary
+ssh root@NEW_IP "sudo -u openclaw NPM_CONFIG_PREFIX=/var/lib/openclaw/.npm-global npm install -g openclaw"
+ssh root@NEW_IP "sudo -u openclaw openclaw configure"   # interactive — Telegram token etc.
 
-# Update secrets/secrets.nix: replace sancta-claw pub key
-# Re-encrypt all secrets
-cd secrets && agenix -r -i /path/to/nixos-sancta-choir
-
-# Push and rebuild
-git push
-ssh root@NEW_IP "nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#sancta-claw"
-```
-
-### Step 5: Restore workspace
-
-> **Requires:** Working restic backup on rpi5 (implemented in PR #338, `modules/services/backup-pull.nix`).
-> **Before relying on this step**, verify backups exist:
-> `ssh root@rpi5 "restic -r /backups/restic/sancta-claw snapshots"`
-> If no backups exist (backup not yet deployed), workspace must be recreated manually.
-
-OpenClaw workspace lives in `/var/lib/openclaw/` and contains mutable state
-(MEMORY.md, SOUL.md, `.openclaw/`, git repos). Restore from rpi5 backup:
-
-```bash
+# Restore workspace from rpi5 backup (requires backup-pull deployed on rpi5)
 ssh root@rpi5 "restic -r /backups/restic/sancta-claw restore latest --target /tmp/restore"
 rsync -az root@rpi5:/tmp/restore/backups/staging/ root@NEW_IP:/var/lib/openclaw/
 ssh root@NEW_IP "chown -R openclaw:openclaw /var/lib/openclaw && systemctl restart openclaw"
 ```
 
-### Step 6: Verify
+> `NPM_CONFIG_PREFIX` must match the service config. Without it, the binary lands in the wrong path and the openclaw service won't start (`ConditionPathExists` skips silently).
+
+### Step 4: Verify
 
 ```bash
-# SSH works
-ssh root@NEW_IP "hostname"
-
-# Secrets decrypted
-ssh root@NEW_IP "ls /run/agenix/"
-
-# Tailscale connected
-ssh root@NEW_IP "tailscale status"
-
-# OpenClaw running
-ssh root@NEW_IP "systemctl status openclaw"
+ssh root@NEW_IP "hostname"                    # SSH works
+ssh root@NEW_IP "ls /run/agenix/"             # Secrets decrypted
+ssh root@NEW_IP "tailscale status"            # Tailscale connected
+ssh root@NEW_IP "systemctl status openclaw"   # OpenClaw running
 ```
 
 ## Post-Recovery Checklist
 
-- [ ] NixOS boots, SSH works
+- [ ] NixOS boots via UEFI, SSH works
 - [ ] Agenix secrets decrypted (`ls /run/agenix/`)
 - [ ] Tailscale connected (`tailscale status`)
 - [ ] OpenClaw running, Kuzea responds in Telegram
@@ -125,26 +81,65 @@ ssh root@NEW_IP "systemctl status openclaw"
 - [ ] Cron jobs active
 - [ ] CalDAV, Todoist, GitHub functional
 
+## Recovery Key Management
+
+### What is the recovery key?
+
+A dedicated age identity key that replaces the SSH host key for secret decryption. Unlike SSH host keys (which change on every reinstall), this key is stable — enabling secrets to decrypt on first boot without re-keying.
+
+### Access scope (no elevation)
+
+The recovery key has **exactly the same scope** as the old SSH host key:
+- 4 Kuzea secrets (caldav, github, todoist, airtable)
+- Tailscale auth key
+- Restic backup password
+
+It **cannot** decrypt shared secrets (n8n, open-webui, openai, etc.) — those are `allKeys` only.
+
+### Storage locations
+
+| Location | Path | Purpose |
+|----------|------|---------|
+| rpi5 | `/root/dr/recovery-sancta-claw.key` | Primary — used for `--extra-files` during DR |
+| rpi5 | `/root/dr/extra-files/root/.age/recovery.key` | Ready-to-use extra-files directory |
+| sancta-claw | `/root/.age/recovery.key` | Runtime — agenix reads this for decryption |
+| Bitwarden | "sancta-claw recovery key" | Offline backup |
+
+### Rotating the recovery key
+
+If the key is compromised, generate a new one:
+
+```bash
+# On rpi5
+age-keygen -o /root/dr/recovery-sancta-claw-new.key
+# Update secrets/secrets.nix with new public key
+# Re-encrypt: use rage directly (agenix -r has a bug with the -o flag accumulator)
+cd secrets && for f in *.age; do
+  KEYS=$(nix-instantiate --json --eval --strict -E "(let r = import ./secrets.nix; in r.\"$f\".publicKeys)" | jq -r '.[]')
+  RECIPIENTS=""; while IFS= read -r k; do RECIPIENTS="$RECIPIENTS -r \"$k\""; done <<< "$KEYS"
+  sudo rage -d -i /etc/ssh/ssh_host_ed25519_key "$f" | eval rage $RECIPIENTS -o "/tmp/rekey-$f" && mv "/tmp/rekey-$f" "$f"
+done
+# Update extra-files, deploy to sancta-claw, store in Bitwarden
+```
+
 ## DNS & IP Changes
 
 - Tailscale MagicDNS: automatic, no changes needed
-- If using direct IP anywhere: update to new VPS IP (check `MEMORY.md` for current IP)
-- Public IP recorded in MEMORY.md — update after recovery
-- Update `hosts/sancta-claw/configuration.nix` networking section with new IP
+- If using direct IP anywhere: update to new VPS IP
+- No networking config changes needed — DHCP handles everything (PR #344)
 
 ## Troubleshooting
 
 ### Secrets don't decrypt
 
-- Verify `nixos-sancta-choir` private key is correct
-- Check `secrets/secrets.nix` has the new host key
-- Run `agenix -r -i /path/to/nixos-sancta-choir` and rebuild
+- Verify `/root/.age/recovery.key` exists on sancta-claw
+- Check `age.identityPaths` includes the key path
+- If recovery key is lost: retrieve from Bitwarden, place at `/root/.age/recovery.key`
 
 ### Tailscale won't connect
 
 - Check auth key is not expired in Tailscale admin
-- Generate new reusable key if needed
-- Re-encrypt with agenix
+- Generate new reusable key if needed, re-encrypt with agenix
 
 ### OpenClaw won't start
 
@@ -153,33 +148,43 @@ ssh root@NEW_IP "systemctl status openclaw"
 - Check node version: `node --version`
 - Memory limit is 6GB — verify with `systemctl show openclaw | grep MemoryMax`
 
+### VPS won't cold boot
+
+- Hetzner CCX uses UEFI — GRUB must be installed for both BIOS and EFI (PR #345)
+- Check: `boot.loader.grub.efiSupport = true` and `boot.loader.grub.efiInstallAsRemovable = true`
+- ESP must be mounted at `/boot` (set in `disk-config.nix`)
+- Use Hetzner rescue mode to inspect boot files: `ls /mnt/boot/EFI/BOOT/`
+
 ### Build fails on VPS (OOM)
 
-- CX22 has 4GB RAM — use `--max-jobs 1 --cores 1` for builds
-- CX33 has 8GB — usually fine, 12GB swap is configured
-- Use Hetzner rescue mode to access the disk and fix boot config
+- CCX13 has 8GB — usually fine, 12GB swap is configured
+- Use `--max-jobs 1 --cores 1` for constrained environments
 
 ## Architecture
 
 ```
-Hetzner CX33 (sancta-claw)
+Hetzner CCX (sancta-claw)
 ├── NixOS (declarative config from github:alexandru-savinov/nixos-config)
-├── Disko partitioning (GPT: boot + ESP + ext4 root on /dev/sda)
-├── Agenix secrets (encrypted in repo, decrypted at boot)
-├── Tailscale VPN (auto-connect via auth key)
+├── Disko partitioning (GPT: 1M BIOS boot, 256M ESP at /boot, ext4 root)
+├── GRUB dual-boot (BIOS i386-pc + UEFI x86_64-efi as removable)
+├── Agenix secrets (age recovery key at /root/.age/recovery.key)
+├── Tailscale VPN (auto-connect via auth key — works on first boot)
+├── DHCP networking (no static IP/MAC config needed)
 ├── OpenClaw + Kuzea (workspace in /var/lib/openclaw)
 ├── Auto-upgrade (daily at 04:30 UTC)
 └── backup-pull user (rsync read-only for rpi5)
 
-RPi5 (rpi5-full) — requires PR #338 deployed
+RPi5 (rpi5-full)
 ├── Daily restic backup (pull from sancta-claw)
 ├── Encrypted repo at /backups/restic/sancta-claw
-└── Staging on tmpfs (no unencrypted data on disk)
+├── Staging on tmpfs (no unencrypted data on disk)
+└── DR assets at /root/dr/ (recovery key + extra-files)
 
-Recovery key: nixos-sancta-choir (SSH ed25519)
-├── Stored in: Bitwarden
-├── Can decrypt: all agenix secrets
-└── Can re-encrypt: for new host keys
+Recovery key: age identity (NOT SSH host key)
+├── Public key in secrets/secrets.nix (sancta-claw variable)
+├── Private key on: rpi5, sancta-claw, Bitwarden
+├── Scope: clawKeys + tailscale only (6 secrets, no elevation)
+└── Stable across reinstalls — no re-keying needed
 ```
 
 ## Agenix Secrets (sancta-claw scope)
@@ -191,18 +196,18 @@ Recovery key: nixos-sancta-choir (SSH ed25519)
 | Todoist API | `/run/agenix/kuzea-todoist-credentials` |
 | Airtable PAT | `/run/agenix/kuzea-airtable-credentials` |
 | Tailscale auth | `/run/agenix/tailscale-auth-key` |
+| Restic password | `/run/agenix/restic-password` |
 
 ## Estimated Recovery Time
 
 | Step | Time |
 |------|------|
 | VPS creation | ~2 min |
-| nixos-anywhere install | ~10 min |
-| Agenix re-encryption + rebuild | ~5 min |
-| Workspace restore | ~2 min |
-| **Total** | **~20 min** (excluding Hetzner account login) |
+| nixos-anywhere install (with --extra-files) | ~10 min |
+| Workspace restore + OpenClaw install | ~3 min |
+| **Total** | **~15 min** (excluding Hetzner account login) |
 
 ## Cost
 
-- Test VPS (CX22, 10 min): ~€0.01
-- Production VPS (CX33): ~€15/month
+- Test VPS (CCX13, 10 min): ~€0.02
+- Production VPS (CCX13): ~€18/month

@@ -270,6 +270,9 @@ in
   i18n.defaultLocale = "en_US.UTF-8";
 
   # ── Agenix Secrets ──────────────────────────────────────────────────────
+  # Use stable age recovery key (not SSH host key) for secret decryption.
+  # Placed by nixos-anywhere --extra-files during DR; or manually for existing deploys.
+  age.identityPaths = [ "/root/.age/recovery.key" ];
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
     # Kuzea-specific secrets — decriptabile doar pe sancta-claw
