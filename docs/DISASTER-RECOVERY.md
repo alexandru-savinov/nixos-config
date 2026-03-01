@@ -11,7 +11,7 @@
 ### Step 1: Create new VPS in Hetzner Cloud
 
 - Login to Hetzner Cloud console
-- Create server: CX22 (or CX33), Nuremberg (nbg1), Ubuntu 24.04
+- Create server: **CX33** (recommended), Nuremberg (nbg1), Ubuntu 24.04 (CX22 for testing only — 4GB RAM may OOM during builds)
 - Note the new IP address
 
 ### Step 2: Install NixOS + config
@@ -34,7 +34,7 @@ The new VPS has a new SSH host key. Secrets won't decrypt until you re-encrypt:
 
 ```bash
 # Get new host key
-ssh-keyscan NEW_IP | grep ed25519
+ssh-keyscan -t ed25519 NEW_IP
 
 # Update secrets/secrets.nix: replace sancta-claw pub key
 # Re-encrypt all secrets
@@ -46,6 +46,10 @@ ssh root@NEW_IP "nixos-rebuild switch --flake github:alexandru-savinov/nixos-con
 ```
 
 ### Step 4: Restore workspace
+
+> **Requires:** Working restic backup on rpi5 (see `modules/services/backup-pull.nix`).
+> Verify backups exist first: `ssh root@rpi5 "restic -r /backups/restic/sancta-claw snapshots"`
+> If no backups exist, workspace must be recreated manually (SOUL.md, MEMORY.md from git history).
 
 OpenClaw workspace lives in `/var/lib/openclaw/` and contains mutable state
 (MEMORY.md, SOUL.md, `.openclaw/`, git repos). Restore from rpi5 backup:
@@ -108,7 +112,7 @@ ssh root@NEW_IP "systemctl status openclaw"
 - Check `journalctl -u openclaw -f`
 - Verify `openclaw.json` exists in `/var/lib/openclaw/.openclaw/`
 - Check node version: `node --version`
-- Memory limit is 6GB — check with `systemctl status openclaw`
+- Memory limit is 6GB — verify with `systemctl show openclaw | grep MemoryMax`
 
 ### Build fails on VPS (OOM)
 
