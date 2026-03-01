@@ -17,6 +17,7 @@
 {
   config,
   pkgs,
+  pkgs-unstable ? pkgs,
   lib,
   ...
 }:
@@ -25,6 +26,10 @@ with lib;
 
 let
   cfg = config.services.nullclaw;
+
+  # NullClaw requires Zig 0.15+ (--fetch=all flag).
+  # nixpkgs-25.05 ships 0.14.1; use pkgs-unstable for 0.15.2.
+  zig = pkgs-unstable.zig;
 
   # ── NullClaw Package ─────────────────────────────────────────────────
   nullclawSrc = pkgs.fetchFromGitHub {
@@ -39,7 +44,7 @@ let
   nullclawDeps = pkgs.stdenvNoCC.mkDerivation {
     name = "nullclaw-deps";
     src = nullclawSrc;
-    nativeBuildInputs = [ pkgs.zig ];
+    nativeBuildInputs = [ zig ];
     dontConfigure = true;
     dontInstall = true;
     dontFixup = true;
@@ -56,7 +61,7 @@ let
     pname = "nullclaw";
     version = "2026.2.26";
     src = nullclawSrc;
-    nativeBuildInputs = [ pkgs.zig ];
+    nativeBuildInputs = [ zig ];
     dontConfigure = true;
     dontFixup = true;
     buildPhase = ''
