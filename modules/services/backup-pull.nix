@@ -24,7 +24,7 @@ let
   inherit (lib) mkEnableOption mkOption mkIf types concatMapStringsSep;
   cfg = config.services.backup-pull;
   # Derive service name from remote host (sanitized for systemd)
-  backupName = builtins.replaceStrings ["."] ["-"] cfg.remoteHost;
+  backupName = builtins.replaceStrings [ "." ] [ "-" ] cfg.remoteHost;
 in
 {
   options.services.backup-pull = {
@@ -147,23 +147,26 @@ in
       ];
 
       # rsync pull before backup
-      backupPrepareCommand = let
-        excludeArgs = concatMapStringsSep " " (p: "--exclude=${lib.escapeShellArg p}") cfg.excludePatterns;
-        rsyncPaths = concatMapStringsSep " " (p: lib.escapeShellArg "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
-        sshHostKeyOpts = if cfg.knownHostsEntry != "" then
-          "-o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/backup-pull/known_hosts"
-        else
-          "-o StrictHostKeyChecking=accept-new";
-      in ''
-        set -euo pipefail
-        echo "=== Pulling backup from ${cfg.remoteHost} ==="
-        ${pkgs.rsync}/bin/rsync -az --delete \
-          -e "${pkgs.openssh}/bin/ssh -i ${cfg.sshKeyFile} ${sshHostKeyOpts} -o BatchMode=yes" \
-          ${excludeArgs} \
-          ${rsyncPaths} \
-          ${cfg.stagingDir}/
-        echo "=== rsync complete, starting restic backup ==="
-      '';
+      backupPrepareCommand =
+        let
+          excludeArgs = concatMapStringsSep " " (p: "--exclude=${lib.escapeShellArg p}") cfg.excludePatterns;
+          rsyncPaths = concatMapStringsSep " " (p: lib.escapeShellArg "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
+          sshHostKeyOpts =
+            if cfg.knownHostsEntry != "" then
+              "-o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/backup-pull/known_hosts"
+            else
+              "-o StrictHostKeyChecking=accept-new";
+        in
+        ''
+          set -euo pipefail
+          echo "=== Pulling backup from ${cfg.remoteHost} ==="
+          ${pkgs.rsync}/bin/rsync -az --delete \
+            -e "${pkgs.openssh}/bin/ssh -i ${cfg.sshKeyFile} ${sshHostKeyOpts} -o BatchMode=yes" \
+            ${excludeArgs} \
+            ${rsyncPaths} \
+            ${cfg.stagingDir}/
+          echo "=== rsync complete, starting restic backup ==="
+        '';
 
       # Clean staging after backup (success or failure)
       backupCleanupCommand = ''
