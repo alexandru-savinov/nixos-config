@@ -66,4 +66,16 @@ in
 
   # CalDAV credentials for NixFrame calendar (Apple ID + app-specific password)
   "caldav-credentials.age".publicKeys = allKeys;
+
+  # ── Backup infrastructure (disaster recovery) ───────────────────────────
+  # Restic repository password — shared between sancta-claw (backup source)
+  # and rpi5 (backup destination where restic repo lives)
+  # Create: agenix -e secrets/restic-password.age
+  "restic-password.age".publicKeys = clawKeys;
+
+  # SSH private key for rpi5 → sancta-claw backup pull
+  # Generate: ssh-keygen -t ed25519 -C "rpi5-backup" -f /tmp/rpi5-backup
+  # The public key goes in hosts/sancta-claw/backup-user.nix (replace PUBKEY_PLACEHOLDER)
+  # Only rpi5 needs to decrypt this (it holds the private key)
+  "rpi5-backup-ssh-key.age".publicKeys = users ++ [ rpi5 ];
 }

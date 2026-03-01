@@ -31,6 +31,7 @@
     ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
     ../../modules/services/gatus.nix # Declarative status monitoring
     ../../modules/services/nixframe.nix # Digital photo frame on HDMI-A-2
+    ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
   ];
 
   # Package overrides for memory-constrained ARM builds
@@ -503,6 +504,34 @@
   services.nixframe.calendar = {
     enable = true;
     credentialsFile = config.age.secrets.caldav-credentials.path;
+  };
+
+  # ── Backup: pull from sancta-claw ──────────────────────────────────────
+  # Daily rsync → tmpfs staging → restic encrypted repo
+  # See modules/services/backup-pull.nix for architecture details
+  age.secrets.rpi5-backup-ssh-key = {
+    file = "${self}/secrets/rpi5-backup-ssh-key.age";
+    mode = "0400";
+  };
+  age.secrets.restic-password = {
+    file = "${self}/secrets/restic-password.age";
+    mode = "0400";
+  };
+
+  services.backup-pull = {
+    enable = true;
+    remoteHost = "sancta-claw";
+    remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
+    sshKeyFile = config.age.secrets.rpi5-backup-ssh-key.path;
+    resticPasswordFile = config.age.secrets.restic-password.path;
+    excludePatterns = [
+      "sessions/"
+      "*.log"
+      ".cache/"
+      "node_modules/"
+      ".npm/"
+      ".npm-global/lib/"
+    ];
   };
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient

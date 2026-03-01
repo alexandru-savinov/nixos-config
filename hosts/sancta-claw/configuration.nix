@@ -204,6 +204,9 @@ in
   imports = [
     ./hardware-configuration.nix
     ./disk-config.nix
+    ./backup-user.nix
+    ./restore.nix
+    ./smoke-test.nix
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/nix-ld.nix
