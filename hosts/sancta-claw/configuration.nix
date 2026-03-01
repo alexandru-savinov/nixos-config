@@ -203,6 +203,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
+    ./disk-config.nix
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/nix-ld.nix

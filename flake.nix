@@ -23,6 +23,11 @@
     nixos-raspberrypi = {
       url = "github:nvmd/nixos-raspberrypi";
     };
+    # Declarative disk partitioning
+    disko = {
+      url = "github:nix-community/disko/latest";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # Claude Code - auto-updated hourly from npm
     # See: https://github.com/sadjow/claude-code-nix
     claude-code = {
@@ -31,7 +36,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, nixos-raspberrypi, claude-code, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -112,6 +117,7 @@
           };
           modules = [
             ./hosts/sancta-claw/configuration.nix
+            disko.nixosModules.disko
             home-manager.nixosModules.home-manager
             agenix.nixosModules.default
             ({ pkgs, ... }: {
