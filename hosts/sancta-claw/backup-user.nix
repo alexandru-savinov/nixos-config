@@ -11,9 +11,15 @@
 #   agenix -e secrets/rpi5-backup-ssh-key.age  # paste private key
 #   # Then replace PUBKEY_PLACEHOLDER below with the .pub content
 
-{ pkgs, ... }:
+{ pkgs, lib, config, ... }:
 
 {
+  assertions = [{
+    assertion = !lib.strings.hasInfix "PUBKEY_PLACEHOLDER"
+      (builtins.concatStringsSep " " config.users.users.backup-pull.openssh.authorizedKeys.keys);
+    message = "backup-user: replace PUBKEY_PLACEHOLDER in hosts/sancta-claw/backup-user.nix with actual ed25519 public key";
+  }];
+
   users.users.backup-pull = {
     isSystemUser = true;
     group = "openclaw";

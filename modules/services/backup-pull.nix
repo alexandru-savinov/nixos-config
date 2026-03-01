@@ -20,27 +20,28 @@
 
 { config, lib, pkgs, ... }:
 
-with lib;
-
 let
+  inherit (lib) mkEnableOption mkOption mkIf types concatMapStringsSep;
   cfg = config.services.backup-pull;
+  # Derive service name from remote host (sanitized for systemd)
+  backupName = builtins.replaceStrings ["."] ["-"] cfg.remoteHost;
 in
 {
   options.services.backup-pull = {
-    enable = mkEnableOption "Pull-based backup from remote host";
+    enable = lib.mkEnableOption "Pull-based backup from remote host";
 
-    remoteHost = mkOption {
+    remoteHost = lib.mkOption {
       type = types.str;
       description = "SSH host to pull from (Tailscale hostname or IP).";
     };
 
-    remoteUser = mkOption {
+    remoteUser = lib.mkOption {
       type = types.str;
       default = "backup-pull";
       description = "SSH user on remote host (should have rrsync read-only access).";
     };
 
-    remotePaths = mkOption {
+    remotePaths = lib.mkOption {
       type = types.listOf types.str;
       description = ''
         Paths to rsync from remote host. These are relative to the rrsync
@@ -48,35 +49,35 @@ in
       '';
     };
 
-    sshKeyFile = mkOption {
+    sshKeyFile = lib.mkOption {
       type = types.path;
       description = "Path to SSH private key for remote access (from agenix).";
     };
 
-    resticPasswordFile = mkOption {
+    resticPasswordFile = lib.mkOption {
       type = types.path;
       description = "Path to restic repository password file (from agenix).";
     };
 
-    repository = mkOption {
+    repository = lib.mkOption {
       type = types.str;
       default = "/backups/restic/sancta-claw";
       description = "Local path for the restic repository.";
     };
 
-    stagingDir = mkOption {
+    stagingDir = lib.mkOption {
       type = types.str;
       default = "/backups/staging";
       description = "Tmpfs staging directory for unencrypted data.";
     };
 
-    stagingSize = mkOption {
+    stagingSize = lib.mkOption {
       type = types.str;
       default = "512M";
       description = "Size limit for the tmpfs staging mount.";
     };
 
-    excludePatterns = mkOption {
+    excludePatterns = lib.mkOption {
       type = types.listOf types.str;
       default = [
         "sessions/"
@@ -87,14 +88,14 @@ in
       description = "Patterns to exclude from rsync.";
     };
 
-    timerOnCalendar = mkOption {
+    timerOnCalendar = lib.mkOption {
       type = types.str;
       default = "*-*-* 03:00:00";
       description = "systemd OnCalendar expression for backup schedule.";
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
     # Tmpfs staging — data never persists on rpi5 disk unencrypted
     fileSystems.${cfg.stagingDir} = {
       device = "tmpfs";
@@ -102,13 +103,14 @@ in
       options = [ "size=${cfg.stagingSize}" "mode=0700" ];
     };
 
-    # Ensure restic repo parent directory exists
+    # Ensure directories exist
     systemd.tmpfiles.rules = [
       "d ${dirOf cfg.repository} 0700 root root -"
+      "d ${cfg.stagingDir} 0700 root root -"
     ];
 
     # Restic backup using NixOS built-in module
-    services.restic.backups.sancta-claw = {
+    services.restic.backups.${backupName} = {
       initialize = true;
       repository = cfg.repository;
       passwordFile = cfg.resticPasswordFile;
@@ -151,7 +153,7 @@ in
     };
 
     # Weekly integrity check (Sunday 05:00)
-    systemd.services.restic-check-sancta-claw = {
+    systemd.services.restic-check-${backupName} = {
       description = "Restic repository integrity check (sancta-claw)";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
@@ -164,7 +166,7 @@ in
       };
     };
 
-    systemd.timers.restic-check-sancta-claw = {
+    systemd.timers.restic-check-${backupName} = {
       description = "Weekly restic integrity check";
       wantedBy = [ "timers.target" ];
       timerConfig = {
@@ -175,7 +177,7 @@ in
     };
 
     # OnFailure alert — logs prominently for monitoring
-    systemd.services.restic-backups-sancta-claw = {
+    systemd.services.restic-backups-${backupName} = {
       unitConfig.OnFailure = [ "backup-failure-alert@%n.service" ];
     };
 
@@ -183,9 +185,7 @@ in
       description = "Backup failure alert for %i";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = pkgs.writeShellScript "backup-alert" ''
-          echo "BACKUP FAILURE: $1 failed at $(date -Iseconds)" | systemd-cat -t backup-alert -p err
-        '';
+        ExecStart = "${pkgs.bash}/bin/bash -c 'echo \"BACKUP FAILURE: %i failed at $(date -Iseconds)\" | ${pkgs.systemd}/bin/systemd-cat -t backup-alert -p err'";
       };
     };
   };

@@ -35,6 +35,7 @@ let
 
       # Create temp restore dir on rpi5
       REMOTE_RESTORE_DIR=$(ssh "root@$RPI5" mktemp -d /tmp/restore-XXXXXX)
+      [[ -n "$REMOTE_RESTORE_DIR" ]] || { echo "ERROR: failed to create remote temp dir"; exit 1; }
       echo "Remote restore dir: $REMOTE_RESTORE_DIR"
 
       # Restore latest snapshot on rpi5
@@ -50,7 +51,7 @@ let
         /var/lib/openclaw/
 
       # Clean up remote temp dir
-      ssh "root@$RPI5" "rm -rf $REMOTE_RESTORE_DIR"
+      ssh "root@$RPI5" "rm -rf '${REMOTE_RESTORE_DIR}'"
 
       # Fix ownership
       chown -R openclaw:openclaw /var/lib/openclaw/
