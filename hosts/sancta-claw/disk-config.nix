@@ -34,7 +34,7 @@
               content = {
                 type = "filesystem";
                 format = "vfat";
-                # Not mounted — GRUB uses MBR/BIOS boot, not EFI
+                mountpoint = "/boot";
               };
             };
             root = {
