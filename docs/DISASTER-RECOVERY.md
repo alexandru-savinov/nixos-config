@@ -57,11 +57,13 @@ After nixos-anywhere completes, SSH in and install the npm package:
 
 ```bash
 ssh root@NEW_IP
-sudo -u openclaw npm install -g openclaw
+sudo -u openclaw NPM_CONFIG_PREFIX=/var/lib/openclaw/.npm-global npm install -g openclaw
 sudo -u openclaw openclaw configure   # interactive — sets up Telegram token etc.
 ```
 
-Without this, the openclaw service won't start (`ConditionPathExists` skips silently).
+> ⚠️ `NPM_CONFIG_PREFIX` must match the service config. Without it, the binary lands in the wrong path and the openclaw service won't start (`ConditionPathExists` skips silently).
+
+> ⚠️ **Tailscale is DOWN until this step completes** — secrets can't decrypt on first boot. Use the direct IP from Hetzner for all SSH commands below.
 
 ### Step 4: Update host key in agenix
 
