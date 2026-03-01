@@ -36,6 +36,7 @@ let
       # Create temp restore dir on rpi5
       REMOTE_RESTORE_DIR=$(ssh "root@$RPI5" mktemp -d /tmp/restore-XXXXXX)
       [[ -n "$REMOTE_RESTORE_DIR" ]] || { echo "ERROR: failed to create remote temp dir"; exit 1; }
+      [[ "$REMOTE_RESTORE_DIR" =~ ^/tmp/restore-[A-Za-z0-9]+$ ]] || { echo "ERROR: unexpected path format: $REMOTE_RESTORE_DIR"; exit 1; }
       echo "Remote restore dir: $REMOTE_RESTORE_DIR"
 
       # Restore latest snapshot on rpi5
@@ -44,8 +45,14 @@ let
         --password-file /run/agenix/restic-password \
         restore latest --target \"$REMOTE_RESTORE_DIR\""
 
+      # Verify restore produced data before syncing
+      if ! ssh "root@$RPI5" test -d "$REMOTE_RESTORE_DIR/backups/staging/"; then
+        echo "ERROR: restore source directory not found on rpi5"
+        ssh "root@$RPI5" "rm -rf $REMOTE_RESTORE_DIR"
+        exit 1
+      fi
+
       # Rsync restored files back to sancta-claw
-      # restic restores original absolute paths under --target prefix
       echo "Syncing restored files to /var/lib/openclaw/..."
       rsync -az --delete \
         "root@$RPI5:$REMOTE_RESTORE_DIR/backups/staging/" \

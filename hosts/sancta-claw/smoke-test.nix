@@ -39,7 +39,7 @@ let
       check "systemd: sshd running" systemctl is-active --quiet sshd
 
       # Tailscale connectivity
-      check "tailscale: node online" tailscale status
+      check "tailscale: node online" "tailscale status --json | grep -q '\"BackendState\":\"Running\"'"
 
       # Agenix secrets decrypted
       check "agenix: secrets present (>=5)" test "$(find /run/agenix/ -type f 2>/dev/null | wc -l)" -ge 5

@@ -135,6 +135,7 @@ in
         excludeArgs = concatMapStringsSep " " (p: "--exclude='${p}'") cfg.excludePatterns;
         rsyncPaths = concatMapStringsSep " " (p: "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
       in ''
+        set -euo pipefail
         echo "=== Pulling backup from ${cfg.remoteHost} ==="
         ${pkgs.rsync}/bin/rsync -az --delete \
           -e "${pkgs.openssh}/bin/ssh -i ${cfg.sshKeyFile} -o StrictHostKeyChecking=accept-new -o BatchMode=yes" \
@@ -179,7 +180,10 @@ in
 
     # OnFailure alert — logs prominently for monitoring
     systemd.services.restic-backups-${backupName} = {
-      unitConfig.OnFailure = [ "backup-failure-alert@%n.service" ];
+      unitConfig = {
+        OnFailure = [ "backup-failure-alert@%n.service" ];
+        RequiresMountsFor = [ cfg.stagingDir ];
+      };
     };
 
     systemd.services."backup-failure-alert@" = {
