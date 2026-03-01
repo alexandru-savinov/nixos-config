@@ -42,16 +42,17 @@ let
       echo "Running restic restore on $RPI5..."
       ssh "root@$RPI5" "restic -r /backups/restic/sancta-claw \
         --password-file /run/agenix/restic-password \
-        restore latest --target $REMOTE_RESTORE_DIR"
+        restore latest --target \"$REMOTE_RESTORE_DIR\""
 
       # Rsync restored files back to sancta-claw
+      # restic restores original absolute paths under --target prefix
       echo "Syncing restored files to /var/lib/openclaw/..."
       rsync -az --delete \
         "root@$RPI5:$REMOTE_RESTORE_DIR/backups/staging/" \
         /var/lib/openclaw/
 
       # Clean up remote temp dir
-      ssh "root@$RPI5" "rm -rf '${REMOTE_RESTORE_DIR}'"
+      ssh "root@$RPI5" "rm -rf $REMOTE_RESTORE_DIR"
 
       # Fix ownership
       chown -R openclaw:openclaw /var/lib/openclaw/

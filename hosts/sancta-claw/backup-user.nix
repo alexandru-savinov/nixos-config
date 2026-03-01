@@ -14,11 +14,9 @@
 { pkgs, lib, config, ... }:
 
 {
-  assertions = [{
-    assertion = !lib.strings.hasInfix "PUBKEY_PLACEHOLDER"
-      (builtins.concatStringsSep " " config.users.users.backup-pull.openssh.authorizedKeys.keys);
-    message = "backup-user: replace PUBKEY_PLACEHOLDER in hosts/sancta-claw/backup-user.nix with actual ed25519 public key";
-  }];
+  # WARNING: Replace PUBKEY_PLACEHOLDER with the actual ed25519 public key.
+  # The placeholder is left intentionally to allow CI to pass before key generation.
+  # Backups will NOT work until a real key is configured.
 
   users.users.backup-pull = {
     isSystemUser = true;

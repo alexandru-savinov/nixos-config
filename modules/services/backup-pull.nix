@@ -103,8 +103,9 @@ in
       options = [ "size=${cfg.stagingSize}" "mode=0700" ];
     };
 
-    # Ensure directories exist
+    # Ensure directories exist (including parent)
     systemd.tmpfiles.rules = [
+      "d /backups 0700 root root -"
       "d ${dirOf cfg.repository} 0700 root root -"
       "d ${cfg.stagingDir} 0700 root root -"
     ];
