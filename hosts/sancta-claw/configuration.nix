@@ -246,32 +246,11 @@ in
   # Allow unfree packages
   nixpkgs.config.allowUnfree = true;
 
-  # ── Networking (inline — Hetzner CX33, nbg1-dc3) ───────────────────────
+  # ── Networking (Hetzner Cloud — DHCP for DR portability) ────────────────
   networking.hostName = "sancta-claw";
-  networking.useDHCP = false;
+  networking.useDHCP = true;
   networking.usePredictableInterfaceNames = lib.mkForce false;
-  networking.dhcpcd.enable = false;
   networking.nameservers = [ "8.8.8.8" "185.12.64.1" "185.12.64.2" ];
-
-  networking.interfaces.eth0 = {
-    useDHCP = false;
-    ipv4.addresses = [{
-      address = "46.225.168.24";
-      prefixLength = 32;
-    }];
-    # IPv6: link-local auto-configured by kernel from MAC; no global IPv6 from Hetzner
-    ipv4.routes = [{ address = "172.31.1.1"; prefixLength = 32; }];
-  };
-
-  networking.defaultGateway = {
-    address = "172.31.1.1";
-    interface = "eth0";
-  };
-
-  # MAC address binding for Hetzner Cloud
-  services.udev.extraRules = ''
-    ATTR{address}=="92:00:07:40:d6:20", NAME="eth0"
-  '';
 
   # SSH
   services.openssh = {
