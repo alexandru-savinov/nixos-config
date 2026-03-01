@@ -531,6 +531,7 @@
       "node_modules/"
       ".npm/"
       ".npm-global/lib/"
+      "models/" # whisper models (~607M), re-downloadable
     ];
   };
 
