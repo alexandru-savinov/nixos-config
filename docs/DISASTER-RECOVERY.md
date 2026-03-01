@@ -14,7 +14,25 @@
 - Create server: **CX33** (recommended), Nuremberg (nbg1), Ubuntu 24.04 (CX22 for testing only — 4GB RAM may OOM during builds)
 - Note the new IP address
 
-### Step 2: Install NixOS + config
+### Step 2: Update config for new VPS
+
+**Before installing**, update the config for the new VPS's IP and MAC:
+
+```bash
+# Clone the repo locally
+git clone https://github.com/alexandru-savinov/nixos-config.git && cd nixos-config
+
+# Get the new VPS's MAC address (from Hetzner Cloud console → Networking tab)
+# Update hosts/sancta-claw/configuration.nix:
+#   1. Change the static IP address (networking.interfaces.eth0.ipv4.addresses)
+#   2. Change the MAC address in the udev rule (ATTR{address}=="...")
+#   3. Update the gateway if different
+
+# Commit and push
+git add -A && git commit -m "chore: update IP/MAC for new VPS" && git push
+```
+
+### Step 3: Install NixOS + config
 
 ```bash
 nix run github:nix-community/nixos-anywhere -- \
@@ -28,7 +46,7 @@ This will:
 - Install NixOS with full sancta-claw config
 - Configure Tailscale, OpenClaw, all services
 
-### Step 3: Update host key in agenix
+### Step 4: Update host key in agenix
 
 The new VPS has a new SSH host key. Secrets won't decrypt until you re-encrypt:
 
@@ -45,7 +63,7 @@ git push
 ssh root@NEW_IP "nixos-rebuild switch --flake github:alexandru-savinov/nixos-config#sancta-claw"
 ```
 
-### Step 4: Restore workspace
+### Step 5: Restore workspace
 
 > **Requires:** Working restic backup on rpi5 (see `modules/services/backup-pull.nix`).
 > Verify backups exist first: `ssh root@rpi5 "restic -r /backups/restic/sancta-claw snapshots"`
@@ -60,7 +78,7 @@ rsync -az root@rpi5:/tmp/restore/backups/staging/ root@NEW_IP:/var/lib/openclaw/
 ssh root@NEW_IP "chown -R openclaw:openclaw /var/lib/openclaw && systemctl restart openclaw"
 ```
 
-### Step 5: Verify
+### Step 6: Verify
 
 ```bash
 # SSH works
@@ -118,7 +136,7 @@ ssh root@NEW_IP "systemctl status openclaw"
 
 - CX22 has 4GB RAM — use `--max-jobs 1 --cores 1` for builds
 - CX33 has 8GB — usually fine, 12GB swap is configured
-- See `MIGRATION-RESUME.md` for detailed boot failure recovery
+- Use Hetzner rescue mode to access the disk and fix boot config
 
 ## Architecture
 
