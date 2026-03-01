@@ -28,8 +28,11 @@ git clone https://github.com/alexandru-savinov/nixos-config.git && cd nixos-conf
 #   2. Change the MAC address in the udev rule (ATTR{address}=="...")
 #   3. Update the gateway if different
 
-# Commit and push
-git add -A && git commit -m "chore: update IP/MAC for new VPS" && git push
+# Format, stage only changed file, commit and push
+nix fmt
+git add hosts/sancta-claw/configuration.nix
+git commit -m "chore: update IP/MAC for new VPS"
+git push
 ```
 
 ### Step 3: Install NixOS + config
@@ -42,7 +45,7 @@ nix run github:nix-community/nixos-anywhere -- \
 
 This will:
 
-- Partition disk (via disko — GPT: 1M BIOS boot, 256M ESP, rest ext4 root on `/dev/sda`)
+- Partition disk (via disko — GPT: 1M BIOS boot, 256M ESP (not mounted — BIOS/GRUB boot), rest ext4 root on `/dev/sda`)
 - Install NixOS with full sancta-claw config
 - Configure Tailscale, OpenClaw, all services
 
@@ -52,6 +55,7 @@ The new VPS has a new SSH host key. Secrets won't decrypt until you re-encrypt:
 
 ```bash
 # Get new host key
+# Verify fingerprint via Hetzner Cloud console (Server → Console tab) before trusting
 ssh-keyscan -t ed25519 NEW_IP
 
 # Update secrets/secrets.nix: replace sancta-claw pub key
@@ -65,9 +69,10 @@ ssh root@NEW_IP "nixos-rebuild switch --flake github:alexandru-savinov/nixos-con
 
 ### Step 5: Restore workspace
 
-> **Requires:** Working restic backup on rpi5 (see `modules/services/backup-pull.nix`).
-> Verify backups exist first: `ssh root@rpi5 "restic -r /backups/restic/sancta-claw snapshots"`
-> If no backups exist, workspace must be recreated manually (SOUL.md, MEMORY.md from git history).
+> **Requires:** Working restic backup on rpi5 (implemented in PR #338, `modules/services/backup-pull.nix`).
+> **Before relying on this step**, verify backups exist:
+> `ssh root@rpi5 "restic -r /backups/restic/sancta-claw snapshots"`
+> If no backups exist (backup not yet deployed), workspace must be recreated manually.
 
 OpenClaw workspace lives in `/var/lib/openclaw/` and contains mutable state
 (MEMORY.md, SOUL.md, `.openclaw/`, git repos). Restore from rpi5 backup:
@@ -150,7 +155,7 @@ Hetzner CX33 (sancta-claw)
 ├── Auto-upgrade (daily at 04:30 UTC)
 └── backup-pull user (rsync read-only for rpi5)
 
-RPi5 (rpi5-full)
+RPi5 (rpi5-full) — requires PR #338 deployed
 ├── Daily restic backup (pull from sancta-claw)
 ├── Encrypted repo at /backups/restic/sancta-claw
 └── Staging on tmpfs (no unencrypted data on disk)
