@@ -4,7 +4,7 @@
 # Access is locked down via:
 #   - rrsync: read-only rsync restricted to /var/lib/openclaw
 #   - SSH restrict: no port forwarding, no agent, no PTY
-#   - nologin shell: no interactive access
+#   - bash shell required: SSH forced command runs via login shell
 #
 # To enable backups:
 #   1. ssh-keygen -t ed25519 -C "rpi5-backup" -f /tmp/rpi5-backup
@@ -24,7 +24,7 @@ in
     isSystemUser = true;
     group = "openclaw";
     home = "/var/empty";
-    shell = "${pkgs.shadow}/bin/nologin";
+    shell = "${pkgs.bash}/bin/bash";
     openssh.authorizedKeys.keys = lib.optionals (backupPubKey != "") [
       # restrict: disables port forwarding, agent forwarding, PTY, X11
       # command: forces rrsync read-only, limited to /var/lib/openclaw
