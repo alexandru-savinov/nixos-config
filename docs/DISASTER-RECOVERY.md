@@ -85,7 +85,7 @@ ssh root@NEW_IP "systemctl status openclaw"
 ## DNS & IP Changes
 
 - Tailscale MagicDNS: automatic, no changes needed
-- If using direct IP anywhere: update to new VPS IP (current: `46.225.168.24`)
+- If using direct IP anywhere: update to new VPS IP (check `MEMORY.md` for current IP)
 - Public IP recorded in MEMORY.md — update after recovery
 - Update `hosts/sancta-claw/configuration.nix` networking section with new IP
 
@@ -95,7 +95,7 @@ ssh root@NEW_IP "systemctl status openclaw"
 
 - Verify `nixos-sancta-choir` private key is correct
 - Check `secrets/secrets.nix` has the new host key
-- Run `agenix -r` and rebuild
+- Run `agenix -r -i /path/to/nixos-sancta-choir` and rebuild
 
 ### Tailscale won't connect
 
