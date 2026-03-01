@@ -17,6 +17,7 @@ let
   restoreScript = pkgs.writeShellApplication {
     name = "sancta-claw-restore";
     runtimeInputs = with pkgs; [ openssh rsync coreutils ];
+    excludeShellChecks = [ "SC2029" ]; # Variables intentionally expand locally for SSH
     text = ''
       set -euo pipefail
 

@@ -17,7 +17,7 @@
 let
   # Replace with the actual ed25519 public key after generation.
   # Leave empty until then — no invalid entries in authorized_keys.
-  backupPubKey = "";
+  backupPubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPg87VV3hyBtcssX1N55VCS3u3SoC6oCtl86XnsHD1pe rpi5-backup";
 in
 {
   users.users.backup-pull = {
