@@ -509,38 +509,30 @@
   # ── Backup: pull from sancta-claw ──────────────────────────────────────
   # Daily rsync → tmpfs staging → restic encrypted repo
   # See modules/services/backup-pull.nix for architecture details
-  #
-  # DISABLED until .age secret files are provisioned:
-  #   1. ssh-keygen -t ed25519 -C "rpi5-backup" -f /tmp/rpi5-backup
-  #   2. agenix -e secrets/restic-password.age
-  #   3. agenix -e secrets/rpi5-backup-ssh-key.age
-  #   4. Replace PUBKEY_PLACEHOLDER in hosts/sancta-claw/backup-user.nix
-  #   5. Set enable = true below and rebuild
-  #
-  # age.secrets.rpi5-backup-ssh-key = {
-  #   file = "${self}/secrets/rpi5-backup-ssh-key.age";
-  #   mode = "0400";
-  # };
-  # age.secrets.restic-password = {
-  #   file = "${self}/secrets/restic-password.age";
-  #   mode = "0400";
-  # };
+  age.secrets.rpi5-backup-ssh-key = {
+    file = "${self}/secrets/rpi5-backup-ssh-key.age";
+    mode = "0400";
+  };
+  age.secrets.restic-password = {
+    file = "${self}/secrets/restic-password.age";
+    mode = "0400";
+  };
 
-  # services.backup-pull = {
-  #   enable = true;
-  #   remoteHost = "sancta-claw";
-  #   remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
-  #   sshKeyFile = config.age.secrets.rpi5-backup-ssh-key.path;
-  #   resticPasswordFile = config.age.secrets.restic-password.path;
-  #   excludePatterns = [
-  #     "sessions/"
-  #     "*.log"
-  #     ".cache/"
-  #     "node_modules/"
-  #     ".npm/"
-  #     ".npm-global/lib/"
-  #   ];
-  # };
+  services.backup-pull = {
+    enable = true;
+    remoteHost = "sancta-claw";
+    remotePaths = ["/"]; # relative to rrsync root (/var/lib/openclaw)
+    sshKeyFile = config.age.secrets.rpi5-backup-ssh-key.path;
+    resticPasswordFile = config.age.secrets.restic-password.path;
+    excludePatterns = [
+      "sessions/"
+      "*.log"
+      ".cache/"
+      "node_modules/"
+      ".npm/"
+      ".npm-global/lib/"
+    ];
+  };
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)
