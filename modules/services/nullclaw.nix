@@ -65,7 +65,12 @@ let
     dontConfigure = true;
     dontFixup = true;
     buildPhase = ''
-      export ZIG_GLOBAL_CACHE_DIR="${nullclawDeps}"
+      # Copy pre-fetched deps to writable dir — Zig 0.15 writes
+      # compilation artifacts alongside cached packages.
+      export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+      cp -r "${nullclawDeps}/." "$ZIG_GLOBAL_CACHE_DIR"
+      chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR"
+
       mkdir -p $out/bin
       zig build -Doptimize=ReleaseSmall \
         -Dcpu=baseline \
