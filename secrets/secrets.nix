@@ -68,6 +68,9 @@ in
   "caldav-credentials.age".publicKeys = allKeys;
 
   # ── Backup infrastructure (disaster recovery) ───────────────────────────
+  # WARNING: .age files must be created BEFORE deploying rpi5-full with backup enabled.
+  # Without them, agenix activation fails on rpi5. Do NOT rebuild rpi5 until provisioned.
+  #
   # Restic repository password — shared between sancta-claw (backup source)
   # and rpi5 (backup destination where restic repo lives)
   # Create: agenix -e secrets/restic-password.age
