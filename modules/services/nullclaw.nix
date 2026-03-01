@@ -254,6 +254,7 @@ in
         Environment = [
           "HOME=/run/nullclaw"
           "NULLCLAW_WORKSPACE=/var/lib/nullclaw/workspace"
+          "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
         ];
 
         ExecStartPre = [
