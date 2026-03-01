@@ -133,7 +133,7 @@ in
       # rsync pull before backup
       backupPrepareCommand = let
         excludeArgs = concatMapStringsSep " " (p: "--exclude=${lib.escapeShellArg p}") cfg.excludePatterns;
-        rsyncPaths = concatMapStringsSep " " (p: "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
+        rsyncPaths = concatMapStringsSep " " (p: lib.escapeShellArg "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
       in ''
         set -euo pipefail
         echo "=== Pulling backup from ${cfg.remoteHost} ==="

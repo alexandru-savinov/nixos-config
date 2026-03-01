@@ -48,12 +48,16 @@ let
         --password-file /run/agenix/restic-password \
         restore latest --target \"$REMOTE_RESTORE_DIR\""
 
-      # Verify restore produced data before syncing
-      if ! ssh "root@$RPI5" test -d "$REMOTE_RESTORE_DIR/backups/staging/"; then
-        echo "ERROR: restore source directory not found on rpi5"
+      # Verify restore produced non-empty data before syncing
+      RESTORE_SRC="$REMOTE_RESTORE_DIR/backups/staging"
+      FILE_COUNT=$(ssh "root@$RPI5" "find '$RESTORE_SRC' -type f 2>/dev/null | wc -l")
+      if [ "$FILE_COUNT" -lt 1 ]; then
+        echo "ERROR: restore source is empty or missing ($FILE_COUNT files in $RESTORE_SRC)"
+        echo "Aborting to prevent data loss from rsync --delete on empty source."
         ssh "root@$RPI5" "rm -rf $REMOTE_RESTORE_DIR"
         exit 1
       fi
+      echo "Found $FILE_COUNT files in restore source."
 
       # Rsync restored files back to sancta-claw
       echo "Syncing restored files to /var/lib/openclaw/..."
