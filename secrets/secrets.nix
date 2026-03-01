@@ -47,7 +47,7 @@ in
 
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;
-  "openrouter-api-key.age".publicKeys = allKeys;
+  "openrouter-api-key.age".publicKeys = allKeys ++ [ sancta-claw ];
   "tavily-api-key.age".publicKeys = allKeys;
 
   # n8n workflow automation - shared across all hosts
@@ -83,4 +83,9 @@ in
   # The public key goes in hosts/sancta-claw/backup-user.nix (replace PUBKEY_PLACEHOLDER)
   # Only rpi5 needs to decrypt this (it holds the private key)
   "rpi5-backup-ssh-key.age".publicKeys = users ++ [ rpi5 ];
+
+  # ── Zero_kuzea secrets (NullClaw bot on dedicated VPS) ─────────────────
+  # Uses sancta-claw recovery key (same trust level, both are throwaway VPS)
+  # Telegram bot token for Zero_kuzea bot
+  "zero-kuzea-telegram-bot-token.age".publicKeys = clawKeys;
 }

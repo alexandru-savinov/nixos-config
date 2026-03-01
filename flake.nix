@@ -128,6 +128,24 @@
           ];
         };
 
+        # x86_64 VPS server - Dedicated NullClaw bot (Zero_kuzea)
+        zero-kuzea = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = {
+            inherit self;
+          };
+          modules = [
+            ./hosts/zero-kuzea/configuration.nix
+            disko.nixosModules.disko
+            agenix.nixosModules.default
+            ({ pkgs, ... }: {
+              environment.systemPackages = [
+                agenix.packages.${pkgs.system}.default
+              ];
+            })
+          ];
+        };
+
         # Raspberry Pi 5 (aarch64) - Minimal config for SD image builds
         # Uses nvmd/nixos-raspberrypi for kernel 6.12.34 (same as pre-built SD image)
         # Cache: nixos-raspberrypi.cachix.org
