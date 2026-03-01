@@ -246,6 +246,10 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
+      # NullClaw's libcurl dynamically loads NSS modules for DNS resolution.
+      # System binaries must be in PATH for glibc NSS to function correctly.
+      path = [ "/run/current-system/sw" ];
+
       serviceConfig = {
         Type = "simple";
         User = "nullclaw";
