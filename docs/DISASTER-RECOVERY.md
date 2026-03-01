@@ -26,7 +26,7 @@ git clone https://github.com/alexandru-savinov/nixos-config.git && cd nixos-conf
 # Update hosts/sancta-claw/configuration.nix:
 #   1. Change the static IP address (networking.interfaces.eth0.ipv4.addresses)
 #   2. Change the MAC address in the udev rule (ATTR{address}=="...")
-#   3. Update the gateway if different
+#   3. Gateway is 172.31.1.1 for nbg1 — update if provisioned in a different datacenter
 
 # Format, stage only changed file, commit and push
 nix fmt
@@ -48,6 +48,20 @@ This will:
 - Partition disk (via disko — GPT: 1M BIOS boot, 256M ESP (not mounted — BIOS/GRUB boot), rest ext4 root on `/dev/sda`)
 - Install NixOS with full sancta-claw config
 - Configure Tailscale, OpenClaw, all services
+
+> **Note:** nixos-anywhere with disko **will reformat the disk** — all existing data on the VPS is erased. This is expected for recovery to a new VPS.
+
+### Step 3b: Install OpenClaw binary
+
+After nixos-anywhere completes, SSH in and install the npm package:
+
+```bash
+ssh root@NEW_IP
+sudo -u openclaw npm install -g openclaw
+sudo -u openclaw openclaw configure   # interactive — sets up Telegram token etc.
+```
+
+Without this, the openclaw service won't start (`ConditionPathExists` skips silently).
 
 ### Step 4: Update host key in agenix
 
