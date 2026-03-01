@@ -201,7 +201,7 @@ in
     # OnFailure alert — logs prominently for monitoring
     systemd.services.restic-backups-${backupName} = {
       unitConfig = {
-        OnFailure = [ "backup-failure-alert@%n.service" ];
+        OnFailure = [ "backup-failure-alert@%N.service" ];
         RequiresMountsFor = [ cfg.stagingDir ];
       };
     };

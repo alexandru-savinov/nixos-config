@@ -28,7 +28,7 @@ let
 
       # Verify SSH connectivity
       # Requires root SSH from sancta-claw to rpi5.
-      # This uses the nixos-sancta-choir key already in root's authorized_keys on rpi5.
+      # This uses the root-sancta-choir SSH key (Alexandru's key, in root's authorized_keys on rpi5).
       # Alternatively, run the restore script directly from rpi5.
       if ! ssh -o ConnectTimeout=10 "root@$RPI5" true 2>/dev/null; then
         echo "ERROR: Cannot SSH to root@$RPI5"
