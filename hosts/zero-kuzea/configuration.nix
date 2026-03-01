@@ -22,6 +22,12 @@
   networking.hostName = "zero-kuzea";
   system.stateVersion = lib.mkForce "25.05";
 
+  # ── SSH authorized keys ─────────────────────────────────────────────
+  users.users.root.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
+  ];
+
   # ── Agenix — stable age recovery key (same as sancta-claw) ──────────
   # Private key placed by nixos-anywhere --extra-files during deployment.
   # Stored on rpi5:/root/dr/recovery-sancta-claw.key + Bitwarden.

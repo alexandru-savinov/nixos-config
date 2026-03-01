@@ -251,7 +251,10 @@ in
         User = "nullclaw";
         Group = "nullclaw";
         WorkingDirectory = "/var/lib/nullclaw";
-        EnvironmentFile = "/run/nullclaw/env";
+        Environment = [
+          "HOME=/run/nullclaw"
+          "NULLCLAW_WORKSPACE=/var/lib/nullclaw/workspace"
+        ];
 
         ExecStartPre = [
           (
@@ -296,13 +299,6 @@ in
               ${pkgs.coreutils}/bin/mv /tmp/nullclaw-config-wip.json /run/nullclaw/.nullclaw/config.json
               ${pkgs.coreutils}/bin/chmod 600 /run/nullclaw/.nullclaw/config.json
 
-              # Create environment file
-              cat > /run/nullclaw/env <<ENVEOF
-              HOME=/run/nullclaw
-              NULLCLAW_WORKSPACE=/var/lib/nullclaw/workspace
-              ENVEOF
-
-              ${pkgs.coreutils}/bin/chmod 600 /run/nullclaw/env
               ${pkgs.coreutils}/bin/chown -R nullclaw:nullclaw /run/nullclaw
             ''
           )
