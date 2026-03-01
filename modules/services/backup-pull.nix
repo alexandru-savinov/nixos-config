@@ -175,7 +175,7 @@ in
     };
 
     # Weekly integrity check (Sunday 05:00)
-    systemd.services.restic-check-${backupName} = {
+    systemd.services."restic-check-${backupName}" = {
       description = "Restic repository integrity check (sancta-claw)";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
@@ -188,7 +188,7 @@ in
       };
     };
 
-    systemd.timers.restic-check-${backupName} = {
+    systemd.timers."restic-check-${backupName}" = {
       description = "Weekly restic integrity check";
       wantedBy = [ "timers.target" ];
       timerConfig = {
@@ -199,7 +199,7 @@ in
     };
 
     # OnFailure alert — logs prominently for monitoring
-    systemd.services.restic-backups-${backupName} = {
+    systemd.services."restic-backups-${backupName}" = {
       unitConfig = {
         OnFailure = [ "backup-failure-alert@%N.service" ];
         RequiresMountsFor = [ cfg.stagingDir ];
