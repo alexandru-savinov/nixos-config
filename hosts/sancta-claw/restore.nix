@@ -27,13 +27,18 @@ let
       echo "Restoring from latest backup on $RPI5..."
       echo ""
 
-      # Verify SSH connectivity
-      # Requires root SSH from sancta-claw to rpi5.
-      # This uses the root-sancta-choir SSH key (Alexandru's key, in root's authorized_keys on rpi5).
-      # Alternatively, run the restore script directly from rpi5.
-      if ! ssh -o ConnectTimeout=10 "root@$RPI5" true 2>/dev/null; then
+      # Verify SSH connectivity to rpi5.
+      # On a fresh VPS (DR scenario), the new SSH host key is unknown to rpi5.
+      # Use SSH agent forwarding to authenticate: ssh -A root@NEW_IP /etc/sancta-claw/restore.sh rpi5
+      # Or run the restore from rpi5 in push mode (see DISASTER-RECOVERY.md).
+      if ! ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "root@$RPI5" true 2>/dev/null; then
         echo "ERROR: Cannot SSH to root@$RPI5"
-        echo "Ensure Tailscale is connected and SSH keys are configured."
+        echo ""
+        echo "On a fresh VPS, the SSH key is not authorized on rpi5."
+        echo "Options:"
+        echo "  1. Use SSH agent forwarding: ssh -A root@THIS_VPS /etc/sancta-claw/restore.sh $RPI5"
+        echo "  2. Run restore from rpi5 in push mode (see docs/DISASTER-RECOVERY.md)"
+        echo "  3. Ensure Tailscale is connected and SSH keys are configured"
         exit 1
       fi
 
