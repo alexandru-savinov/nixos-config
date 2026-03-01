@@ -520,7 +520,7 @@
 
   services.backup-pull = {
     enable = true;
-    remoteHost = "sancta-claw";
+    remoteHost = "46.225.168.24"; # sancta-claw public IP (bypasses Tailscale SSH policy)
     remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
     sshKeyFile = config.age.secrets.rpi5-backup-ssh-key.path;
     resticPasswordFile = config.age.secrets.restic-password.path;
