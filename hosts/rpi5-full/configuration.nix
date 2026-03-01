@@ -526,21 +526,21 @@
   #   mode = "0400";
   # };
 
-  services.backup-pull = {
-    enable = false; # Set to true after provisioning secrets (see above)
-    remoteHost = "sancta-claw";
-    remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
-    sshKeyFile = config.age.secrets.rpi5-backup-ssh-key.path;
-    resticPasswordFile = config.age.secrets.restic-password.path;
-    excludePatterns = [
-      "sessions/"
-      "*.log"
-      ".cache/"
-      "node_modules/"
-      ".npm/"
-      ".npm-global/lib/"
-    ];
-  };
+  # services.backup-pull = {
+  #   enable = true;
+  #   remoteHost = "sancta-claw";
+  #   remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
+  #   sshKeyFile = config.age.secrets.rpi5-backup-ssh-key.path;
+  #   resticPasswordFile = config.age.secrets.restic-password.path;
+  #   excludePatterns = [
+  #     "sessions/"
+  #     "*.log"
+  #     ".cache/"
+  #     "node_modules/"
+  #     ".npm/"
+  #     ".npm-global/lib/"
+  #   ];
+  # };
 
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)

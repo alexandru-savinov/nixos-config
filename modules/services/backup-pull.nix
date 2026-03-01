@@ -77,6 +77,16 @@ in
       description = "Size limit for the tmpfs staging mount.";
     };
 
+    knownHostsEntry = lib.mkOption {
+      type = types.str;
+      default = "";
+      description = ''
+        SSH known_hosts line for the remote host (e.g. "sancta-claw ssh-ed25519 AAAA...").
+        When set, StrictHostKeyChecking=yes is used instead of accept-new.
+        Get it with: ssh-keyscan -t ed25519 <host>
+      '';
+    };
+
     excludePatterns = lib.mkOption {
       type = types.listOf types.str;
       default = [
@@ -101,6 +111,12 @@ in
       device = "tmpfs";
       fsType = "tmpfs";
       options = [ "size=${cfg.stagingSize}" "mode=0700" ];
+    };
+
+    # Pre-seed known_hosts for strict host key checking
+    environment.etc."backup-pull/known_hosts" = lib.mkIf (cfg.knownHostsEntry != "") {
+      text = cfg.knownHostsEntry + "\n";
+      mode = "0644";
     };
 
     # Ensure directories exist (including parent)
@@ -134,11 +150,15 @@ in
       backupPrepareCommand = let
         excludeArgs = concatMapStringsSep " " (p: "--exclude=${lib.escapeShellArg p}") cfg.excludePatterns;
         rsyncPaths = concatMapStringsSep " " (p: lib.escapeShellArg "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
+        sshHostKeyOpts = if cfg.knownHostsEntry != "" then
+          "-o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/backup-pull/known_hosts"
+        else
+          "-o StrictHostKeyChecking=accept-new";
       in ''
         set -euo pipefail
         echo "=== Pulling backup from ${cfg.remoteHost} ==="
         ${pkgs.rsync}/bin/rsync -az --delete \
-          -e "${pkgs.openssh}/bin/ssh -i ${cfg.sshKeyFile} -o StrictHostKeyChecking=accept-new -o BatchMode=yes" \
+          -e "${pkgs.openssh}/bin/ssh -i ${cfg.sshKeyFile} ${sshHostKeyOpts} -o BatchMode=yes" \
           ${excludeArgs} \
           ${rsyncPaths} \
           ${cfg.stagingDir}/
