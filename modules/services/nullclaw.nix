@@ -14,12 +14,11 @@
 #
 # Access via Tailscale HTTPS: https://<hostname>.tail<hex>.ts.net:18790
 
-{
-  config,
-  pkgs,
-  pkgs-unstable ? pkgs,
-  lib,
-  ...
+{ config
+, pkgs
+, pkgs-unstable ? pkgs
+, lib
+, ...
 }:
 
 with lib;

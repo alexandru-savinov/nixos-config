@@ -3,11 +3,10 @@
 # Minimal NixOS host: Tailscale + NullClaw gateway + Telegram.
 # Uses sancta-claw's stable age recovery key for secret decryption.
 # Deploy via nixos-anywhere: see docs/DISASTER-RECOVERY.md
-{
-  config,
-  lib,
-  self,
-  ...
+{ config
+, lib
+, self
+, ...
 }:
 {
   imports = [
