@@ -103,8 +103,8 @@ let
         };
       };
     memory = {
-      profile = "markdown_only";
-      backend = "markdown";
+      profile = "local_keyword";
+      backend = "sqlite";
       auto_save = true;
     };
     gateway = {
