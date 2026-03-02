@@ -7,7 +7,7 @@
 # Usage in host configuration:
 #   services.nullclaw = {
 #     enable = true;
-#     openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
+#     apiKeyFile = config.age.secrets.anthropic-api-key.path;
 #     telegram.botTokenFile = config.age.secrets.zero-kuzea-telegram-bot-token.path;
 #     telegram.allowedUsers = [ "364749075" ];
 #   };
@@ -269,39 +269,31 @@ in
 
               # Create runtime directories
               ${pkgs.coreutils}/bin/mkdir -p /run/nullclaw/.nullclaw
-              ${pkgs.coreutils}/bin/mkdir -p /run/nullclaw
 
-              # Read provider API key
+              # Read secrets
               PROVIDER_KEY=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.apiKeyFile}")
               if [ -z "$PROVIDER_KEY" ]; then
                 echo "ERROR: Provider API key is empty" >&2
                 exit 1
               fi
 
-              # Start building config from template
-              ${pkgs.coreutils}/bin/cp ${configTemplate} /tmp/nullclaw-config-wip.json
-
-              # Inject provider API key
-              ${pkgs.jq}/bin/jq --arg key "$PROVIDER_KEY" \
-                '.models.providers.${cfg.provider}.api_key = $key' \
-                /tmp/nullclaw-config-wip.json > /tmp/nullclaw-config-wip2.json
-              ${pkgs.coreutils}/bin/mv /tmp/nullclaw-config-wip2.json /tmp/nullclaw-config-wip.json
-
               ${optionalString cfg.telegram.enable ''
-                # Inject Telegram bot token
                 BOT_TOKEN=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.telegram.botTokenFile}")
                 if [ -z "$BOT_TOKEN" ]; then
                   echo "ERROR: Telegram bot token is empty" >&2
                   exit 1
                 fi
-                ${pkgs.jq}/bin/jq --arg token "$BOT_TOKEN" \
-                  '.channels.telegram.accounts.main.bot_token = $token' \
-                  /tmp/nullclaw-config-wip.json > /tmp/nullclaw-config-wip2.json
-                ${pkgs.coreutils}/bin/mv /tmp/nullclaw-config-wip2.json /tmp/nullclaw-config-wip.json
               ''}
 
-              # Install final config
-              ${pkgs.coreutils}/bin/mv /tmp/nullclaw-config-wip.json /run/nullclaw/.nullclaw/config.json
+              # Build config: inject secrets in a single jq pass.
+              # Uses /run/nullclaw/ (not /tmp) — ExecStartPre runs with +root
+              # which bypasses PrivateTmp, so /tmp would be the host's /tmp.
+              ${pkgs.jq}/bin/jq \
+                --arg key "$PROVIDER_KEY" \
+                ${optionalString cfg.telegram.enable ''--arg token "$BOT_TOKEN"''} \
+                '.models.providers.${cfg.provider}.api_key = $key${optionalString cfg.telegram.enable " | .channels.telegram.accounts.main.bot_token = $token"}' \
+                ${configTemplate} > /run/nullclaw/.nullclaw/config.json
+
               ${pkgs.coreutils}/bin/chmod 600 /run/nullclaw/.nullclaw/config.json
 
               ${pkgs.coreutils}/bin/chown -R nullclaw:nullclaw /run/nullclaw
