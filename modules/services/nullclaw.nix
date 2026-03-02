@@ -90,7 +90,7 @@ let
   # Static JSON with placeholders. Secrets injected at runtime by ExecStartPre.
   configJson = builtins.toJSON {
     default_temperature = cfg.temperature;
-    models.providers.openrouter.api_key = "__OPENROUTER_API_KEY__";
+    models.providers.${cfg.provider}.api_key = "__PROVIDER_API_KEY__";
     agents.defaults.model.primary = "${cfg.provider}/${cfg.model}";
     channels =
       {
@@ -156,9 +156,9 @@ in
       description = "Temperature for AI model responses.";
     };
 
-    openrouterApiKeyFile = mkOption {
+    apiKeyFile = mkOption {
       type = types.path;
-      description = "Path to file containing OpenRouter API key (agenix).";
+      description = "Path to file containing provider API key (agenix).";
     };
 
     telegram = {
@@ -209,9 +209,9 @@ in
     # ── Assertions ───────────────────────────────────────────────────
     assertions = [
       {
-        assertion = !(hasPrefix "/nix/store" (toString cfg.openrouterApiKeyFile));
+        assertion = !(hasPrefix "/nix/store" (toString cfg.apiKeyFile));
         message = ''
-          services.nullclaw.openrouterApiKeyFile points to the Nix store.
+          services.nullclaw.apiKeyFile points to the Nix store.
           Use agenix — files in /nix/store are world-readable.
         '';
       }
@@ -271,19 +271,19 @@ in
               ${pkgs.coreutils}/bin/mkdir -p /run/nullclaw/.nullclaw
               ${pkgs.coreutils}/bin/mkdir -p /run/nullclaw
 
-              # Read OpenRouter API key
-              OPENROUTER_KEY=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.openrouterApiKeyFile}")
-              if [ -z "$OPENROUTER_KEY" ]; then
-                echo "ERROR: OpenRouter API key is empty" >&2
+              # Read provider API key
+              PROVIDER_KEY=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.apiKeyFile}")
+              if [ -z "$PROVIDER_KEY" ]; then
+                echo "ERROR: Provider API key is empty" >&2
                 exit 1
               fi
 
               # Start building config from template
               ${pkgs.coreutils}/bin/cp ${configTemplate} /tmp/nullclaw-config-wip.json
 
-              # Inject OpenRouter API key
-              ${pkgs.jq}/bin/jq --arg key "$OPENROUTER_KEY" \
-                '.models.providers.openrouter.api_key = $key' \
+              # Inject provider API key
+              ${pkgs.jq}/bin/jq --arg key "$PROVIDER_KEY" \
+                '.models.providers.${cfg.provider}.api_key = $key' \
                 /tmp/nullclaw-config-wip.json > /tmp/nullclaw-config-wip2.json
               ${pkgs.coreutils}/bin/mv /tmp/nullclaw-config-wip2.json /tmp/nullclaw-config-wip.json
 

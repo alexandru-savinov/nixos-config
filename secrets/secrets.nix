@@ -88,4 +88,7 @@ in
   # Uses sancta-claw recovery key (same trust level, both are throwaway VPS)
   # Telegram bot token for Zero_kuzea bot
   "zero-kuzea-telegram-bot-token.age".publicKeys = clawKeys;
+
+  # Anthropic API key (setup key from OpenClaw Pro subscription)
+  "anthropic-api-key.age".publicKeys = clawKeys;
 }

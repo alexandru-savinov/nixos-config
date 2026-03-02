@@ -36,8 +36,8 @@
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
 
-    openrouter-api-key = {
-      file = "${self}/secrets/openrouter-api-key.age";
+    anthropic-api-key = {
+      file = "${self}/secrets/anthropic-api-key.age";
       owner = "nullclaw";
       group = "nullclaw";
     };
@@ -53,8 +53,9 @@
   services.nullclaw = {
     enable = true;
     port = 18790;
-    model = "anthropic/claude-sonnet-4-6";
-    openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
+    provider = "anthropic";
+    model = "claude-sonnet-4-6";
+    apiKeyFile = config.age.secrets.anthropic-api-key.path;
     telegram = {
       botTokenFile = config.age.secrets.zero-kuzea-telegram-bot-token.path;
       allowedUsers = [ "364749075" ];
