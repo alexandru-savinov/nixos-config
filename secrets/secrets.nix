@@ -60,6 +60,9 @@ in
   # OpenAI API key (for TTS/STT - separate from OpenRouter)
   "openai-api-key.age".publicKeys = allKeys;
 
+  # Telegram bot token for n8n workflow notifications (tender monitor, etc.)
+  "telegram-bot-token.age".publicKeys = allKeys;
+
   # E2E test credentials - shared across all hosts for testing
   "e2e-test-api-key.age".publicKeys = allKeys;
 

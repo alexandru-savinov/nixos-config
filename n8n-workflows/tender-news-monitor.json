@@ -1,0 +1,530 @@
+{
+  "id": "tender-news-monitor",
+  "name": "Tender & News Monitor",
+  "active": true,
+  "nodes": [
+    {
+      "id": "trigger_1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {}
+    },
+    {
+      "id": "schedule_1",
+      "name": "Daily 08:00 EET",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 100],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "companies_1",
+      "name": "Company List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Moldovan bank tender/news URLs\n// Edit this list to add/remove/update URLs\nconst companies = [\n  { name: 'MAIB', url: 'https://maib.md/ro/achizitii', page_type: 'tenders', language: 'ro', active: true },\n  { name: 'MAIB', url: 'https://maib.md/ro/noutati', page_type: 'news', language: 'ro', active: true },\n  { name: 'MICB', url: 'https://micb.md/tendere/', page_type: 'tenders', language: 'ro', active: true },\n  { name: 'MICB', url: 'https://micb.md/noutati/', page_type: 'news', language: 'ro', active: true },\n  { name: 'Victoriabank', url: 'https://www.victoriabank.md/licitatii', page_type: 'tenders', language: 'ro', active: true },\n  { name: 'Victoriabank', url: 'https://www.victoriabank.md/newsroom', page_type: 'news', language: 'ro', active: true },\n  { name: 'ProCredit', url: 'https://procreditbank.md/ro/licitatii_curente', page_type: 'tenders', language: 'ro', active: true },\n  { name: 'ProCredit', url: 'https://procreditbank.md/ro/news', page_type: 'news', language: 'ro', active: true },\n  { name: 'Eximbank', url: 'https://eximbank.md/news', page_type: 'news', language: 'ro', active: true },\n  { name: 'ComertBank', url: 'https://comertbank.md/news/', page_type: 'news', language: 'ro', active: true }\n];\n\nreturn companies\n  .filter(c => c.active)\n  .map(c => ({ json: c }));"
+      }
+    },
+    {
+      "id": "split_1",
+      "name": "Loop Over Companies",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [500, 300],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "http_direct_1",
+      "name": "Fetch Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ro,en;q=0.9,ru;q=0.8"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "validate_1",
+      "name": "Validate & Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const company = $('Loop Over Companies').item.json;\nconst response = $json;\n\n// Get content from HTTP response\nlet raw = '';\nif (typeof response.data === 'string') raw = response.data;\nelse if (typeof response === 'string') raw = response;\nelse if (response.body) raw = String(response.body);\nelse raw = JSON.stringify(response);\n\n// Strip HTML to plain text for LLM consumption\nfunction htmlToText(html) {\n  let text = html;\n  // Remove script/style/noscript blocks entirely\n  text = text.replace(/<(script|style|noscript|svg|path|iframe)[^>]*>[\\s\\S]*?<\\/\\1>/gi, '');\n  // Remove HTML comments\n  text = text.replace(/<!--[\\s\\S]*?-->/g, '');\n  // Convert common block elements to newlines\n  text = text.replace(/<\\/?(?:div|p|br|hr|h[1-6]|li|tr|td|th|section|article|header|footer|nav|ul|ol|table|blockquote)[^>]*>/gi, '\\n');\n  // Remove all remaining HTML tags\n  text = text.replace(/<[^>]+>/g, ' ');\n  // Decode common HTML entities\n  text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ');\n  // Collapse whitespace: multiple spaces to one, multiple newlines to max two\n  text = text.replace(/[ \\t]+/g, ' ');\n  text = text.replace(/\\n[ \\t]*/g, '\\n');\n  text = text.replace(/\\n{3,}/g, '\\n\\n');\n  return text.trim();\n}\n\nconst content = htmlToText(raw);\n\n// Check for problems\nconst isError = response.error || (response.statusCode && response.statusCode >= 400);\nconst isTooShort = content.length < 200;\nconst isLoginWall = /login|sign.?in|authenticat/i.test(content) && content.length < 1000;\nconst isBlocked = /blocked|captcha|cloudflare|access.denied|forbidden/i.test(content) && content.length < 2000;\n\nconst contentValid = !isError && !isTooShort && !isLoginWall && !isBlocked;\n\nlet notes = 'OK';\nif (!contentValid) {\n  notes = [isError && 'HTTP error', isTooShort && 'Too short', isLoginWall && 'Login wall', isBlocked && 'Blocked'].filter(Boolean).join('; ');\n}\n\nreturn {\n  json: {\n    name: company.name,\n    url: company.url,\n    page_type: company.page_type,\n    language: company.language || 'ro',\n    content: content,\n    content_valid: contentValid,\n    content_length: content.length,\n    raw_length: raw.length,\n    fetch_method: 'direct',\n    validation_notes: notes\n  }\n};"
+      }
+    },
+    {
+      "id": "if_valid_1",
+      "name": "Content Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond_valid_1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "leftValue": "={{ $json.content_valid }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "jina_1",
+      "name": "Jina Fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 550],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://r.jina.ai/{{ $json.url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "text/plain"
+            },
+            {
+              "name": "X-Return-Format",
+              "value": "text"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "validate_jina_1",
+      "name": "Validate Jina",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 550],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const company = $('Loop Over Companies').item.json;\nconst response = $json;\n\nlet content = '';\nif (typeof response.data === 'string') content = response.data;\nelse if (typeof response === 'string') content = response;\nelse content = JSON.stringify(response);\n\n// Strip any residual HTML tags (Jina usually returns markdown but just in case)\ncontent = content.replace(/<[^>]+>/g, ' ').replace(/[ \\t]+/g, ' ').replace(/\\n{3,}/g, '\\n\\n').trim();\n\nconst contentValid = !response.error && content.length >= 200;\n\nreturn {\n  json: {\n    name: company.name,\n    url: company.url,\n    page_type: company.page_type,\n    language: company.language || 'ro',\n    content: content,\n    content_valid: contentValid,\n    content_length: content.length,\n    fetch_method: 'jina',\n    validation_notes: contentValid ? 'OK (via Jina)' : 'Jina failed'\n  }\n};"
+      }
+    },
+    {
+      "id": "if_jina_1",
+      "name": "Jina OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 550],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond_jina_1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "leftValue": "={{ $json.content_valid }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "mark_failed_1",
+      "name": "Mark Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 750],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "return {\n  json: {\n    name: $json.name,\n    url: $json.url,\n    page_type: $json.page_type,\n    items: [],\n    items_count: 0,\n    tenders_count: 0,\n    fetch_status: 'failed',\n    fetch_method: $json.fetch_method || 'none',\n    validation_notes: $json.validation_notes\n  }\n};"
+      }
+    },
+    {
+      "id": "prepare_1",
+      "name": "Prepare for LLM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const MAX_CHARS = 30000;\nlet content = $json.content || '';\nif (content.length > MAX_CHARS) {\n  content = content.substring(0, MAX_CHARS) + '\\n[TRUNCATED]';\n}\n\nconst today = new Date().toISOString().split('T')[0];\n\nconst systemPrompt = `You are an expert at extracting structured information from Moldovan bank websites.\n\nRules:\n- Extract EVERY distinct news item, announcement, or tender/procurement notice from the page content\n- For tenders: look for keywords like licitatie, licitație, achizitie, achiziție, tender, procurement, concurs, RFP, RFQ, тендер, закупка, конкурс\n- Preserve the original title EXACTLY as written in the \"title\" field (do not translate)\n- Always provide English translation in \"title_en\" and \"summary_en\"\n- Convert relative dates (yesterday, 2 days ago, ieri) to absolute ISO dates using today's date\n- If NO items are found, return {\"items\": [], \"page_metadata\": {\"total_items_found\": 0, \"extraction_notes\": \"No items found\"}}\n- Do NOT hallucinate or invent items\n- Resolve relative URLs using the base URL\n- Set is_tender=true for any procurement/tender/acquisition/RFP item\n- Set confidence 0.9+ for clear distinct items, lower for ambiguous ones\n- Normalize all dates to YYYY-MM-DD format\n\nReturn valid JSON matching this schema:\n{\n  \"items\": [{\n    \"title\": \"original title\",\n    \"title_en\": \"english translation\",\n    \"type\": \"tender|news|announcement|job|event|other\",\n    \"is_tender\": true/false,\n    \"date\": \"YYYY-MM-DD\",\n    \"deadline\": \"YYYY-MM-DD or null\",\n    \"url\": \"full URL to item\",\n    \"summary_en\": \"brief English summary\",\n    \"original_language\": \"ro|ru|en\",\n    \"confidence\": 0.0-1.0\n  }],\n  \"page_metadata\": {\n    \"total_items_found\": number,\n    \"page_language\": \"ro|ru|en\",\n    \"has_pagination\": true/false,\n    \"extraction_notes\": \"brief notes\"\n  }\n}`;\n\nconst userMessage = `Company: ${$json.name}\nURL: ${$json.url}\nPage type: ${$json.page_type}\nLanguage: ${$json.language || 'ro'}\nToday's date: ${today}\n\n--- PAGE CONTENT ---\n${content}`;\n\nconst requestBody = {\n  model: 'openai/gpt-4o-mini',\n  max_tokens: 4096,\n  temperature: 0.1,\n  response_format: { type: 'json_object' },\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userMessage }\n  ]\n};\n\nreturn {\n  json: {\n    name: $json.name,\n    url: $json.url,\n    page_type: $json.page_type,\n    language: $json.language,\n    fetch_method: $json.fetch_method,\n    content_length: $json.content_length,\n    request_body: JSON.stringify(requestBody)\n  }\n};"
+      }
+    },
+    {
+      "id": "llm_1",
+      "name": "Extract via OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://rpi5.tail4249a9.ts.net"
+            },
+            {
+              "name": "X-Title",
+              "value": "Tender-News-Monitor"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.request_body }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "postprocess_1",
+      "name": "Post-Process",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const company = $('Prepare for LLM').item.json;\nconst response = $json;\n\n// Extract LLM response content\nlet output;\ntry {\n  const content = response.choices?.[0]?.message?.content;\n  if (!content) throw new Error('No content in LLM response');\n  output = JSON.parse(content);\n} catch (e) {\n  return {\n    json: {\n      name: company.name,\n      url: company.url,\n      page_type: company.page_type,\n      items: [],\n      items_count: 0,\n      tenders_count: 0,\n      fetch_status: 'extraction_error',\n      fetch_method: company.fetch_method,\n      validation_notes: 'LLM parse error: ' + e.message\n    }\n  };\n}\n\nlet items = output.items || [];\nconst metadata = output.page_metadata || {};\nconst warnings = [];\n\n// Sanity checks\nif (items.length > 30) {\n  warnings.push('Capped at 30 items (was ' + items.length + ')');\n  items = items.slice(0, 30);\n}\n\nconst before = items.length;\nitems = items.filter(i => (i.confidence || 0) >= 0.5);\nif (items.length < before) {\n  warnings.push('Removed ' + (before - items.length) + ' low-confidence items');\n}\n\nif (items.length === 0 && company.page_type === 'tenders') {\n  warnings.push('Tender page returned 0 items');\n}\n\nconst today = new Date().toISOString().split('T')[0];\nitems = items.map(i => ({\n  ...i,\n  company: company.name,\n  source_url: company.url,\n  found_date: today\n}));\n\nreturn {\n  json: {\n    name: company.name,\n    url: company.url,\n    page_type: company.page_type,\n    items: items,\n    items_count: items.length,\n    tenders_count: items.filter(i => i.is_tender).length,\n    fetch_status: 'success',\n    fetch_method: company.fetch_method,\n    content_length: company.content_length,\n    model: response.model || 'unknown',\n    usage: response.usage || {},\n    page_metadata: {\n      ...metadata,\n      sanity_warnings: warnings.length > 0 ? warnings : undefined\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "wait_1",
+      "name": "Rate Limit",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2250, 300],
+      "parameters": {
+        "amount": 3,
+        "unit": "seconds"
+      },
+      "webhookId": "rate-limit-wait"
+    },
+    {
+      "id": "wait_failed_1",
+      "name": "Failed Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2500, 750],
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "webhookId": "failed-wait"
+    },
+    {
+      "id": "aggregate_1",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 100],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst allResults = items.map(i => i.json);\nconst successful = allResults.filter(r => r.fetch_status === 'success');\nconst failed = allResults.filter(r => r.fetch_status !== 'success');\nconst allItems = successful.flatMap(r => r.items || []);\nconst tenders = allItems.filter(i => i.is_tender);\n\nconst totalUsage = successful.reduce((acc, r) => {\n  const u = r.usage || {};\n  return {\n    prompt_tokens: (acc.prompt_tokens || 0) + (u.prompt_tokens || 0),\n    completion_tokens: (acc.completion_tokens || 0) + (u.completion_tokens || 0),\n    total_tokens: (acc.total_tokens || 0) + (u.total_tokens || 0)\n  };\n}, {});\n\nconst summary = {\n  run_date: new Date().toISOString(),\n  urls_checked: allResults.length,\n  urls_succeeded: successful.length,\n  urls_failed: failed.length,\n  total_items: allItems.length,\n  tenders_found: tenders.length,\n  news_found: allItems.length - tenders.length,\n  token_usage: totalUsage,\n  failed_urls: failed.map(r => ({ name: r.name, url: r.url, reason: r.validation_notes })),\n  warnings: successful.flatMap(r => {\n    const w = r.page_metadata?.sanity_warnings || [];\n    return w.map(warning => ({ company: r.name, warning }));\n  })\n};\n\nreturn [\n  { json: { type: 'run_summary', ...summary } },\n  ...allItems.map(i => ({ json: { type: 'extracted_item', ...i } }))\n];"
+      }
+    },
+    {
+      "id": "dedup_1",
+      "name": "Dedup Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 100],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const crypto = require('crypto');\nconst fs = require('fs');\nconst SEEN_FILE = '/var/lib/n8n/tender-monitor/seen-hashes.json';\n\n// Load existing hashes\nlet seen = {};\ntry { seen = JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8')); } catch {}\n\nconst items = $input.all();\nconst summary = items[0].json;\nconst extractedItems = items.slice(1).map(i => i.json);\n\n// Dedup\nconst newItems = [];\nfor (const item of extractedItems) {\n  const normalized = (item.company + '|' + item.title).toLowerCase()\n    .replace(/[^\\w\\s|]/g, '').replace(/\\s+/g, ' ').trim();\n  const hash = crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);\n  if (!seen[hash]) {\n    seen[hash] = { date: new Date().toISOString().split('T')[0], title: item.title };\n    newItems.push({ ...item, dedup_hash: hash });\n  }\n}\n\n// Save updated hashes\nfs.mkdirSync('/var/lib/n8n/tender-monitor', { recursive: true });\nfs.writeFileSync(SEEN_FILE, JSON.stringify(seen, null, 2));\n\n// Output: updated summary + new items only\nreturn [\n  { json: { ...summary, new_items: newItems.length, total_before_dedup: extractedItems.length } },\n  ...newItems.map(i => ({ json: i }))\n];"
+      }
+    },
+    {
+      "id": "format_telegram_1",
+      "name": "Format Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 100],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst summary = items[0].json;\nconst newItems = items.slice(1).map(i => i.json);\nconst newTenders = newItems.filter(i => i.is_tender);\nconst newNews = newItems.filter(i => !i.is_tender);\n\n// Always send a daily digest\nlet lines = [];\n\nif (newTenders.length > 0) {\n  lines.push('\\ud83d\\udce2 *New Tenders Found*\\n');\n  for (const t of newTenders) {\n    let line = `*${t.company}* \\u2014 ${t.title_en || t.title}`;\n    const meta = [];\n    if (t.date) meta.push(`\\ud83d\\udcc5 ${t.date}`);\n    if (t.deadline) meta.push(`\\u23f0 Deadline: ${t.deadline}`);\n    if (t.url) meta.push(`[View](${t.url})`);\n    if (meta.length) line += '\\n' + meta.join(' | ');\n    lines.push(line);\n  }\n  lines.push('');\n}\n\n// Daily digest summary\nlines.push(`\\ud83d\\udcca *Daily Scan Complete*`);\nlines.push(`URLs: ${summary.urls_succeeded}/${summary.urls_checked} | Items: ${summary.total_before_dedup} | New: ${newTenders.length} tenders, ${newNews.length} news`);\n\nif (summary.urls_failed > 0) {\n  const failedNames = (summary.failed_urls || []).map(f => f.name).join(', ');\n  lines.push(`\\u26a0\\ufe0f Failed: ${failedNames}`);\n}\n\nconst text = lines.join('\\n');\n\nreturn [{ json: { text, chat_id: '364749075', has_new_tenders: newTenders.length > 0 } }];"
+      }
+    },
+    {
+      "id": "telegram_1",
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "authentication": "none",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": \"{{ $json.chat_id }}\", \"text\": {{ JSON.stringify($json.text) }}, \"parse_mode\": \"Markdown\", \"disable_web_page_preview\": true }",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Company List", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Daily 08:00 EET": {
+      "main": [
+        [
+          { "node": "Company List", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Company List": {
+      "main": [
+        [
+          { "node": "Loop Over Companies", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Loop Over Companies": {
+      "main": [
+        [
+          { "node": "Aggregate Results", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Fetch Page", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Page": {
+      "main": [
+        [
+          { "node": "Validate & Prepare", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate & Prepare": {
+      "main": [
+        [
+          { "node": "Content Valid?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Content Valid?": {
+      "main": [
+        [
+          { "node": "Prepare for LLM", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Jina Fallback", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Jina Fallback": {
+      "main": [
+        [
+          { "node": "Validate Jina", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate Jina": {
+      "main": [
+        [
+          { "node": "Jina OK?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Jina OK?": {
+      "main": [
+        [
+          { "node": "Prepare for LLM", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Mark Failed", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Mark Failed": {
+      "main": [
+        [
+          { "node": "Failed Wait", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Prepare for LLM": {
+      "main": [
+        [
+          { "node": "Extract via OpenRouter", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract via OpenRouter": {
+      "main": [
+        [
+          { "node": "Post-Process", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Post-Process": {
+      "main": [
+        [
+          { "node": "Rate Limit", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Rate Limit": {
+      "main": [
+        [
+          { "node": "Loop Over Companies", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Failed Wait": {
+      "main": [
+        [
+          { "node": "Loop Over Companies", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          { "node": "Dedup Items", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Dedup Items": {
+      "main": [
+        [
+          { "node": "Format Telegram Message", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Format Telegram Message": {
+      "main": [
+        [
+          { "node": "Send Telegram Alert", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Chisinau"
+  }
+}
