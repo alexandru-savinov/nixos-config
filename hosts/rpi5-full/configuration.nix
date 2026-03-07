@@ -76,6 +76,9 @@
     # OpenAI API key (for TTS/STT)
     openai-api-key.file = "${self}/secrets/openai-api-key.age";
 
+    # Telegram bot token for workflow notifications
+    telegram-bot-token.file = "${self}/secrets/telegram-bot-token.age";
+
     # E2E test credentials
     e2e-test-api-key.file = "${self}/secrets/e2e-test-api-key.age";
 
@@ -212,6 +215,9 @@
     # OpenAI API key - for TTS pronunciation audio in image-to-anki workflow
     # Workflows can reference it using: Bearer {{ $env.OPENAI_API_KEY }}
     openaiApiKeyFile = config.age.secrets.openai-api-key.path;
+
+    # Telegram bot token - for tender monitor and other workflow notifications
+    telegramBotTokenFile = config.age.secrets.telegram-bot-token.path;
 
     # Allow $env expressions in workflows (required for declarative API keys)
     # Safe here because workflows are controlled via workflowsDir, not user-created

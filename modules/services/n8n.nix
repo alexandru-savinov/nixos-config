@@ -93,6 +93,22 @@ in
       '';
     };
 
+    telegramBotTokenFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression "config.age.secrets.telegram-bot-token.path";
+      description = ''
+        Path to file containing Telegram bot token.
+        This is injected as TELEGRAM_BOT_TOKEN environment variable.
+
+        Workflows can reference it using the expression:
+          {{ $env.TELEGRAM_BOT_TOKEN }}
+
+        Use agenix for secret management:
+          telegramBotTokenFile = config.age.secrets.telegram-bot-token.path;
+      '';
+    };
+
     adminPasswordFile = mkOption {
       type = types.nullOr types.path;
       default = null;
@@ -339,6 +355,18 @@ in
             services.n8n-tailscale.adminPasswordFile = config.age.secrets.n8n-admin-password.path;
         '';
       }
+      {
+        assertion = cfg.telegramBotTokenFile == null ||
+          !(hasPrefix "/nix/store" (toString cfg.telegramBotTokenFile));
+        message = ''
+          services.n8n-tailscale.telegramBotTokenFile points to the Nix store!
+          Files in /nix/store are WORLD-READABLE. Your bot token would be exposed.
+
+          Use agenix instead:
+            age.secrets.telegram-bot-token.file = ./secrets/telegram-bot-token.age;
+            services.n8n-tailscale.telegramBotTokenFile = config.age.secrets.telegram-bot-token.path;
+        '';
+      }
     ];
 
     # Warn if no encryption key file is provided
@@ -434,6 +462,21 @@ in
                           fi
                           echo "OPENAI_API_KEY=$OPENAI_KEY" >> "$ENV_FILE"
                           echo "OpenAI API key configured for workflow expressions"
+                        ''}
+
+                        # Telegram bot token (if provided) - for workflow notifications
+                        ${optionalString (cfg.telegramBotTokenFile != null) ''
+                          if [[ ! -f "${cfg.telegramBotTokenFile}" ]]; then
+                            echo "ERROR: Telegram bot token file not found: ${cfg.telegramBotTokenFile}" >&2
+                            exit 1
+                          fi
+                          TELEGRAM_TOKEN=$(cat "${cfg.telegramBotTokenFile}")
+                          if [[ -z "$TELEGRAM_TOKEN" ]]; then
+                            echo "ERROR: Telegram bot token file is empty: ${cfg.telegramBotTokenFile}" >&2
+                            exit 1
+                          fi
+                          echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN" >> "$ENV_FILE"
+                          echo "Telegram bot token configured for workflow expressions"
                         ''}
 
                         # Admin password (if provided) - for REST API authentication
