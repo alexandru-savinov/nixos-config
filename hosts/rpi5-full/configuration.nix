@@ -30,7 +30,7 @@
     ../../modules/services/n8n.nix
     ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
     ../../modules/services/gatus.nix # Declarative status monitoring
-    ../../modules/services/nixframe.nix # Digital photo frame on HDMI-A-2
+    ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
   ];
 
@@ -501,7 +501,7 @@
   };
 
   # ──────────────────────────────────────────────────────────────
-  # NixFrame — Digital photo frame on HDMI-A-2
+  # NixFrame — Digital photo frame (auto-detects HDMI output)
   # ──────────────────────────────────────────────────────────────
   # Displays rotating slideshow with clock sidebar on the TV.
   # Upload photos: https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui
