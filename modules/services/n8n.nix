@@ -925,21 +925,31 @@ in
           fi
           sleep 1
         done
-        sleep 5  # Extra delay for full initialization
 
-        # Login to get session cookie
+        # Login with retries — REST API routes register after healthz
         echo "Authenticating with n8n..."
-        LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-          -X POST \
-          -H "Content-Type: application/json" \
-          -d "{\"emailOrLdapLoginId\":\"admin@localhost.com\",\"password\":\"$ADMIN_PASSWORD\"}" \
-          "$N8N_URL/rest/login" 2>&1)
+        login_attempts=0
+        max_login_attempts=30
+        while true; do
+          LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"emailOrLdapLoginId\":\"admin@localhost.com\",\"password\":\"$ADMIN_PASSWORD\"}" \
+            "$N8N_URL/rest/login" 2>&1)
 
-        if ! echo "$LOGIN_RESPONSE" | jq -e '.data.id' >/dev/null 2>&1; then
-          echo "ERROR: Failed to authenticate with n8n"
-          echo "Response: $LOGIN_RESPONSE"
-          exit 1
-        fi
+          if echo "$LOGIN_RESPONSE" | jq -e '.data.id' >/dev/null 2>&1; then
+            break
+          fi
+
+          login_attempts=$((login_attempts + 1))
+          if [ $login_attempts -ge $max_login_attempts ]; then
+            echo "ERROR: Failed to authenticate with n8n after $max_login_attempts attempts"
+            echo "Response: $LOGIN_RESPONSE"
+            exit 1
+          fi
+          echo "REST API not ready yet, retrying in 2s... (attempt $login_attempts/$max_login_attempts)"
+          sleep 2
+        done
         echo "Authentication successful"
 
         # Get currently installed packages
