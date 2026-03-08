@@ -19,6 +19,7 @@ let
     runtimeInputs = with pkgs; [ openssh rsync coreutils ];
     excludeShellChecks = [ "SC2029" ]; # Variables intentionally expand locally for SSH
     text = ''
+      set -euo pipefail
       RPI5="''${1:-rpi5}"
 
       echo "=== sancta-claw disaster recovery ==="

@@ -13,6 +13,7 @@ let
     name = "sancta-claw-smoke-test";
     runtimeInputs = with pkgs; [ coreutils systemd tailscale ];
     text = ''
+      set -euo pipefail
       PASS=0
       FAIL=0
 
