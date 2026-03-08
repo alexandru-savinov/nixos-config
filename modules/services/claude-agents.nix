@@ -34,7 +34,7 @@ in
     home-manager.users = genAttrs cfg.users (_: {
       home.stateVersion = mkDefault "24.05";
       home.file = {
-        ".claude/agents/nix-security-reviewer".source = "${agentsDir}/nix-security-reviewer";
+        ".claude/agents/nix-security-reviewer.md".source = "${agentsDir}/nix-security-reviewer.md";
       };
     });
   };
