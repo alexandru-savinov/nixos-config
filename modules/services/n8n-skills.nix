@@ -82,28 +82,30 @@ in
         hash = cfg.hash;
       };
 
-      # Skill file mappings
-      skillFiles = {
-        ".claude/skills/n8n-code-javascript".source = "${n8nSkillsSrc}/skills/n8n-code-javascript";
-        ".claude/skills/n8n-code-python".source = "${n8nSkillsSrc}/skills/n8n-code-python";
-        ".claude/skills/n8n-expression-syntax".source = "${n8nSkillsSrc}/skills/n8n-expression-syntax";
-        ".claude/skills/n8n-mcp-tools-expert".source = "${n8nSkillsSrc}/skills/n8n-mcp-tools-expert";
-        ".claude/skills/n8n-node-configuration".source = "${n8nSkillsSrc}/skills/n8n-node-configuration";
-        ".claude/skills/n8n-validation-expert".source = "${n8nSkillsSrc}/skills/n8n-validation-expert";
-        ".claude/skills/n8n-workflow-patterns".source = "${n8nSkillsSrc}/skills/n8n-workflow-patterns";
-      };
+      # Skill names — each maps to skills/<name> in the repo
+      skillNames = [
+        "n8n-code-javascript"
+        "n8n-code-python"
+        "n8n-expression-syntax"
+        "n8n-mcp-tools-expert"
+        "n8n-node-configuration"
+        "n8n-validation-expert"
+        "n8n-workflow-patterns"
+      ];
+
+      skillFiles = listToAttrs (map
+        (name: {
+          name = ".claude/skills/${name}";
+          value.source = "${n8nSkillsSrc}/skills/${name}";
+        })
+        skillNames);
     in
     {
       # Configure home-manager for each user
-      home-manager.users = listToAttrs (map
-        (user: {
-          name = user;
-          value = {
-            home.stateVersion = lib.mkDefault "24.05";
-            home.file = skillFiles;
-          };
-        })
-        cfg.users);
+      home-manager.users = genAttrs cfg.users (_: {
+        home.stateVersion = mkDefault "24.05";
+        home.file = skillFiles;
+      });
     }
   );
 }

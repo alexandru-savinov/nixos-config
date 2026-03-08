@@ -122,11 +122,11 @@ let
       version = "0.14.0";
       dontUnpack = true;
       nativeBuildInputs = [ pkgs.makeWrapper ];
-      meta = with pkgs.lib; {
+      meta = {
         description = "Headless browser automation CLI for AI agents (Rust CLI + Playwright daemon)";
         homepage = "https://github.com/vercel-labs/agent-browser";
-        license = licenses.asl20;
-        platforms = platforms.linux;
+        license = lib.licenses.asl20;
+        platforms = lib.platforms.linux;
         mainProgram = "agent-browser";
       };
       installPhase = ''
@@ -136,7 +136,7 @@ let
           --set AGENT_BROWSER_HOME "$out/share/agent-browser" \
           --set AGENT_BROWSER_EXECUTABLE_PATH "${chromiumBin}" \
           --set PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS "true" \
-          --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.nodejs_22 ]}"
+          --prefix PATH : "${lib.makeBinPath [ pkgs.nodejs_22 ]}"
       '';
     };
 
@@ -247,10 +247,17 @@ in
   nixpkgs.config.allowUnfree = true;
 
   # ── Networking (Hetzner Cloud — DHCP for DR portability) ────────────────
-  networking.hostName = "sancta-claw";
-  networking.useDHCP = true;
-  networking.usePredictableInterfaceNames = lib.mkForce false;
-  networking.nameservers = [ "8.8.8.8" "185.12.64.1" "185.12.64.2" ];
+  networking = {
+    hostName = "sancta-claw";
+    useDHCP = true;
+    usePredictableInterfaceNames = lib.mkForce false;
+    nameservers = [ "8.8.8.8" "185.12.64.1" "185.12.64.2" ];
+    # Firewall: SSH only on public interface, Tailscale trusted
+    firewall = {
+      enable = true;
+      allowedTCPPorts = [ 22 ];
+    };
+  };
 
   # SSH
   services.openssh = {
@@ -261,10 +268,6 @@ in
     };
   };
 
-  # Firewall: SSH only on public interface, Tailscale trusted
-  networking.firewall.enable = true;
-  networking.firewall.allowedTCPPorts = [ 22 ];
-
   # Time zone
   time.timeZone = "Europe/Chisinau";
   i18n.defaultLocale = "en_US.UTF-8";
@@ -273,30 +276,22 @@ in
   # Use stable age recovery key (not SSH host key) for secret decryption.
   # Placed by nixos-anywhere --extra-files during DR; or manually for existing deploys.
   age.identityPaths = [ "/root/.age/recovery.key" ];
-  age.secrets = {
-    tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-    # Kuzea-specific secrets — decriptabile doar pe sancta-claw
-    kuzea-caldav-credentials = {
-      file = "${self}/secrets/kuzea-caldav-credentials.age";
-      owner = "openclaw";
-      group = "openclaw";
+  age.secrets =
+    let
+      kuzeaSecret = name: {
+        file = "${self}/secrets/${name}.age";
+        owner = "openclaw";
+        group = "openclaw";
+      };
+    in
+    {
+      tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
+      # Kuzea-specific secrets — decriptabile doar pe sancta-claw
+      kuzea-caldav-credentials = kuzeaSecret "kuzea-caldav-credentials";
+      kuzea-github-token = kuzeaSecret "kuzea-github-token";
+      kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
+      kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
     };
-    kuzea-github-token = {
-      file = "${self}/secrets/kuzea-github-token.age";
-      owner = "openclaw";
-      group = "openclaw";
-    };
-    kuzea-todoist-credentials = {
-      file = "${self}/secrets/kuzea-todoist-credentials.age";
-      owner = "openclaw";
-      group = "openclaw";
-    };
-    kuzea-airtable-credentials = {
-      file = "${self}/secrets/kuzea-airtable-credentials.age";
-      owner = "openclaw";
-      group = "openclaw";
-    };
-  };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
   home-manager = {
@@ -544,24 +539,17 @@ in
   # Todoist skill directory is built as a derivation and symlinked whole.
   systemd.tmpfiles.rules =
     let
-      todoistSkill = pkgs.runCommand "todoist-natural-language" { } ''
-        cp -r ${./kuzea/skills/todoist-natural-language} $out
-      '';
-      selfImprovingSkill = pkgs.runCommand "self-improving-agent" { } ''
-        cp -r ${./kuzea/skills/self-improving-agent} $out
-      '';
-      agentBrowserSkill = pkgs.runCommand "agent-browser" { } ''
-        cp -r ${./kuzea/skills/agent-browser} $out
-      '';
-      claudeCodeAgentsSkill = pkgs.runCommand "claude-code-agents" { } ''
-        cp -r ${./kuzea/skills/claude-code-agents} $out
-      '';
-      codingAgentLocalSkill = pkgs.runCommand "coding-agent-local" { } ''
-        cp -r ${./kuzea/skills/coding-agent-local} $out
-      '';
-      selfImprovingHook = pkgs.runCommand "self-improvement-hook" { } ''
-        cp -r ${./kuzea/hooks/self-improvement} $out
-      '';
+      copyDir = name: src:
+        pkgs.runCommand name { } ''cp -r ${src} $out'';
+
+      skills = builtins.mapAttrs (name: _: copyDir name ./kuzea/skills/${name}) {
+        todoist-natural-language = null;
+        self-improving-agent = null;
+        agent-browser = null;
+        claude-code-agents = null;
+        coding-agent-local = null;
+      };
+      selfImprovingHook = copyDir "self-improvement-hook" ./kuzea/hooks/self-improvement;
     in
     [
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
@@ -598,20 +586,20 @@ in
       "L+ /var/lib/openclaw/.claude/settings.json - - - - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
       # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
       # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${todoistSkill}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${skills.todoist-natural-language}"
       # Self-Improving Agent skill (pskoett/self-improving-agent v1.0.11).
       # Logs errors, corrections, and feature requests to .learnings/ for continuous
       # improvement. Hook injects a reminder at agent:bootstrap to capture learnings.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/self-improving-agent - - - - ${selfImprovingSkill}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/self-improving-agent - - - - ${skills.self-improving-agent}"
       # Agent Browser CLI reference (vercel-labs/agent-browser) — complete command docs
       # so Kuzea always has the full snapshot/click/fill/record reference available.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/agent-browser - - - - ${agentBrowserSkill}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/agent-browser - - - - ${skills.agent-browser}"
       # Claude Code agent-teams & subagents reference — documents custom subagent
       # creation, agent file locations, and experimental agent teams for parallel work.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/claude-code-agents - - - - ${claudeCodeAgentsSkill}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/claude-code-agents - - - - ${skills.claude-code-agents}"
       # Local overrides for coding-agent skill — documents --output-format text fix
       # so Claude Code -p output is captured by OpenClaw's PTY process manager.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/coding-agent-local - - - - ${codingAgentLocalSkill}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/coding-agent-local - - - - ${skills.coding-agent-local}"
       # Hook goes into the managed dir (.openclaw/hooks/), NOT workspace/hooks/.
       # Reason: openclaw scans hooks via Node.js readdirSync + Dirent.isDirectory(),
       # which returns false for symlinks-to-directories. Using C+ creates real files
@@ -624,9 +612,13 @@ in
       # symlinked to the Nix store. `f` creates the file only if it doesn't exist,
       # preserving accumulated learnings across rebuilds.
       "d /var/lib/openclaw/.openclaw/workspace/.learnings 0700 openclaw openclaw -"
-      "f /var/lib/openclaw/.openclaw/workspace/.learnings/LEARNINGS.md 0600 openclaw openclaw -"
-      "f /var/lib/openclaw/.openclaw/workspace/.learnings/ERRORS.md 0600 openclaw openclaw -"
-      "f /var/lib/openclaw/.openclaw/workspace/.learnings/FEATURE_REQUESTS.md 0600 openclaw openclaw -"
+    ]
+    ++ map (f: "f /var/lib/openclaw/.openclaw/workspace/.learnings/${f} 0600 openclaw openclaw -") [
+      "LEARNINGS.md"
+      "ERRORS.md"
+      "FEATURE_REQUESTS.md"
+    ]
+    ++ [
       # GitHub credential helper: reads PAT from /run/agenix/kuzea-github-token at
       # runtime so the token is never stored in plaintext on disk.
       # Replaces the former ~/.git-credentials store helper approach.

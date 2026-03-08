@@ -14,7 +14,6 @@ let
     runtimeInputs = with pkgs; [ coreutils systemd tailscale ];
     text = ''
       set -euo pipefail
-
       PASS=0
       FAIL=0
 
@@ -31,7 +30,7 @@ let
       }
 
       echo "=== sancta-claw smoke test ==="
-      echo ""
+      echo
 
       # Core services
       check "systemd: openclaw running" systemctl is-active --quiet openclaw
@@ -55,7 +54,7 @@ let
       # Git config
       check "git: .gitconfig exists" test -f /var/lib/openclaw/.gitconfig
 
-      echo ""
+      echo
       echo "Results: $PASS passed, $FAIL failed"
 
       if [ "$FAIL" -gt 0 ]; then

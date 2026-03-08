@@ -121,24 +121,27 @@ def resolve_project(project_ref):
     # Not found, return original (will fail later with clearer error)
     return project_ref
 
-def create_task(content, project_id=None, due_string=None, priority=None, labels=None, description=None, duration_amount=None, duration_unit=None):
-    """Create a new task."""
-    data = {"content": content}
-    if project_id:
-        data["project_id"] = project_id
+def _build_task_fields(data, due_string=None, priority=None, labels=None, description=None, duration_amount=None, duration_unit=None):
+    """Add optional task fields to a data dict (shared by create and update)."""
     if due_string:
         data["due_string"] = due_string
     if priority:
         data["priority"] = int(priority)
     if labels:
         data["labels"] = labels if isinstance(labels, list) else [labels]
-    if description:
+    if description is not None:
         data["description"] = description
     if duration_amount is not None and duration_unit:
-        # REST API v2 uses duration_amount and duration_unit as separate fields
         data["duration_amount"] = int(duration_amount)
         data["duration_unit"] = duration_unit
-    
+    return data
+
+def create_task(content, project_id=None, due_string=None, priority=None, labels=None, description=None, duration_amount=None, duration_unit=None):
+    """Create a new task."""
+    data = {"content": content}
+    if project_id:
+        data["project_id"] = project_id
+    _build_task_fields(data, due_string, priority, labels, description, duration_amount, duration_unit)
     return make_request("/tasks", method="POST", data=data)
 
 def complete_task(task_id):
@@ -154,19 +157,7 @@ def update_task(task_id, content=None, due_string=None, priority=None, labels=No
     data = {}
     if content:
         data["content"] = content
-    if due_string:
-        data["due_string"] = due_string
-    if priority:
-        data["priority"] = int(priority)
-    if labels:
-        data["labels"] = labels if isinstance(labels, list) else [labels]
-    if description is not None:
-        data["description"] = description
-    if duration_amount is not None and duration_unit:
-        # REST API v2 uses duration_amount and duration_unit as separate fields
-        data["duration_amount"] = int(duration_amount)
-        data["duration_unit"] = duration_unit
-    
+    _build_task_fields(data, due_string, priority, labels, description, duration_amount, duration_unit)
     return make_request(f"/tasks/{task_id}", method="POST", data=data)
 
 def delete_task(task_id):

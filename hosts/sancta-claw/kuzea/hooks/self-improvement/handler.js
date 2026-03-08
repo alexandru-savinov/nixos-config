@@ -26,24 +26,13 @@ Keep entries simple: date, title, what happened, what to do differently.
 `.trim();
 
 const handler = async (event) => {
-  // Safety checks for event structure
-  if (!event || typeof event !== 'object') {
-    return;
-  }
-
-  // Only handle agent:bootstrap events
-  if (event.type !== 'agent' || event.action !== 'bootstrap') {
-    return;
-  }
-
-  // Safety check for context
-  if (!event.context || typeof event.context !== 'object') {
+  // Only handle agent:bootstrap events with valid context
+  if (!event || event.type !== 'agent' || event.action !== 'bootstrap') {
     return;
   }
 
   // Inject the reminder as a virtual bootstrap file
-  // Check that bootstrapFiles is an array before pushing
-  if (Array.isArray(event.context.bootstrapFiles)) {
+  if (Array.isArray(event?.context?.bootstrapFiles)) {
     event.context.bootstrapFiles.push({
       path: 'SELF_IMPROVEMENT_REMINDER.md',
       content: REMINDER_CONTENT,

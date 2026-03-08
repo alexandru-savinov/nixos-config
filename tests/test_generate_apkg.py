@@ -9,6 +9,7 @@ using the genanki library.
 import base64
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -120,7 +121,6 @@ def validate_apkg_file(apkg_path: str) -> dict:
                 for row in cursor.fetchall():
                     fields = row[0]
                     # Look for <img src="..."> tags
-                    import re
                     for match in re.finditer(r'<img src="([^"]+)">', fields):
                         media_refs.add(match.group(1))
 
@@ -175,31 +175,32 @@ def validate_apkg_file(apkg_path: str) -> dict:
 # Pytest Tests
 # =============================================================================
 
+# Minimal 1x1 red PNG for test card images
+_SAMPLE_PNG = bytes([
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+    0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+    0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
+    0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82
+])
+
+
 class TestGenerateAPKG:
     """Tests for generate-apkg.py script output."""
 
     def test_simple_image_card(self):
         """Test generating a single card with an image."""
-        # Create minimal PNG (1x1 red pixel)
-        png_data = bytes([
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-            0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-            0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-            0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-            0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-            0x44, 0xAE, 0x42, 0x60, 0x82
-        ])
-
         input_data = {
             "deckName": "Test Deck",
             "cards": [
                 {
                     "word": "apple",
                     "description": "A red fruit",
-                    "imageBase64": base64.b64encode(png_data).decode(),
+                    "imageBase64": base64.b64encode(_SAMPLE_PNG).decode(),
                     "mimeType": "image/png"
                 }
             ]
@@ -247,17 +248,7 @@ class TestGenerateAPKG:
 
     def test_multiple_cards(self):
         """Test generating a deck with multiple cards."""
-        png_data = bytes([
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-            0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-            0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-            0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-            0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-            0x44, 0xAE, 0x42, 0x60, 0x82
-        ])
+        png_b64 = base64.b64encode(_SAMPLE_PNG).decode()
 
         input_data = {
             "deckName": "Multi-Card Test",
@@ -265,7 +256,7 @@ class TestGenerateAPKG:
                 {
                     "word": "bed",
                     "description": "Furniture for sleeping",
-                    "imageBase64": base64.b64encode(png_data).decode()
+                    "imageBase64": png_b64,
                 },
                 {
                     "word": "table",
@@ -274,7 +265,7 @@ class TestGenerateAPKG:
                 {
                     "word": "chair",
                     "description": "Furniture for sitting",
-                    "imageBase64": base64.b64encode(png_data).decode()
+                    "imageBase64": png_b64,
                 }
             ]
         }
@@ -396,7 +387,6 @@ class TestGenerateAPKG:
 def _make_png(width, height):
     """Create a PNG image of the given dimensions and return its bytes."""
     from PIL import Image
-    from io import BytesIO
     img = Image.new('RGB', (width, height), color=(255, 0, 0))
     buf = BytesIO()
     img.save(buf, format='PNG')
@@ -406,7 +396,6 @@ def _make_png(width, height):
 def _extract_image_dimensions(apkg_path):
     """Extract the first image from an APKG and return its (width, height)."""
     from PIL import Image
-    from io import BytesIO
     with zipfile.ZipFile(apkg_path, 'r') as zf:
         media_json = json.loads(zf.read('media'))
         for idx, filename in media_json.items():

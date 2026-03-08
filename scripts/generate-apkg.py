@@ -37,6 +37,7 @@ import os
 import html
 import random
 import time
+import uuid
 
 import genanki
 
@@ -90,13 +91,8 @@ def compress_image(image_data, index):
         return image_data, 'skipped'
 
 
-def generate_model_id():
-    """Generate a stable model ID based on timestamp."""
-    return random.randrange(1 << 30, 1 << 31)
-
-
-def generate_deck_id():
-    """Generate a stable deck ID based on timestamp."""
+def generate_anki_id():
+    """Generate a random ID in the range Anki expects for models and decks."""
     return random.randrange(1 << 30, 1 << 31)
 
 
@@ -226,9 +222,9 @@ def main():
         sys.exit(1)
 
     # Create models and deck
-    image_model_id = generate_model_id()
-    text_model_id = generate_model_id()
-    deck_id = generate_deck_id()
+    image_model_id = generate_anki_id()
+    text_model_id = generate_anki_id()
+    deck_id = generate_anki_id()
 
     image_model = create_image_model(image_model_id)
     text_model = create_text_model(text_model_id)
@@ -348,9 +344,7 @@ def main():
         package.media_files = media_files
 
         # Write APKG to persistent directory for download
-        # Use UUID for unique filename to avoid collisions
         # APKG_OUTPUT_DIR env var allows tests to override the output location
-        import uuid
         apkg_dir = os.environ.get('APKG_OUTPUT_DIR', '/var/lib/n8n/anki-decks')
         os.makedirs(apkg_dir, exist_ok=True)
 

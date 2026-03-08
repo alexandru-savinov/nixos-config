@@ -12,7 +12,7 @@ Run tests:
 """
 
 import os
-from typing import Generator, List
+from typing import Generator
 
 import pytest
 
@@ -104,7 +104,7 @@ def client(base_url: str, api_key: str) -> Generator[OpenWebUIClient, None, None
 
 
 @pytest.fixture(scope="session")
-def available_models(client: OpenWebUIClient) -> List[ModelInfo]:
+def available_models(client: OpenWebUIClient) -> list[ModelInfo]:
     """
     All available models from Open-WebUI.
 
@@ -119,7 +119,7 @@ def available_models(client: OpenWebUIClient) -> List[ModelInfo]:
 
 
 @pytest.fixture(scope="session")
-def zdr_models(client: OpenWebUIClient) -> List[ModelInfo]:
+def zdr_models(client: OpenWebUIClient) -> list[ModelInfo]:
     """
     ZDR-compliant models only (those with ZDR/ prefix).
 

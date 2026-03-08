@@ -21,9 +21,8 @@
 , ...
 }:
 
-with lib;
-
 let
+  inherit (lib) mkIf mkEnableOption mkOption types optionalAttrs optionalString hasPrefix;
   cfg = config.services.nullclaw;
 
   # NullClaw requires Zig 0.15+ (--fetch=all flag).
@@ -75,12 +74,12 @@ let
         -Dcpu=baseline \
         --prefix "$out"
     '';
-    installPhase = "true"; # zig build --prefix handles installation
-    meta = with lib; {
+    dontInstall = true; # zig build --prefix handles it
+    meta = {
       description = "Zig-based AI assistant with Telegram integration";
       homepage = "https://github.com/nullclaw/nullclaw";
-      license = licenses.mit;
-      platforms = platforms.linux;
+      license = lib.licenses.mit;
+      platforms = lib.platforms.linux;
       mainProgram = "nullclaw";
     };
   };
@@ -344,27 +343,21 @@ in
       };
 
       script = ''
-        # Wait for tailscaled
-        timeout=60
-        while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
-          timeout=$((timeout - 1))
-          if [ $timeout -le 0 ]; then
-            echo "ERROR: tailscaled not ready after 60s" >&2
-            exit 1
-          fi
-          sleep 1
-        done
+        wait_for() {
+          local label="$1"; shift
+          local remaining=60
+          while ! "$@" >/dev/null 2>&1; do
+            remaining=$((remaining - 1))
+            if [ $remaining -le 0 ]; then
+              echo "ERROR: $label not ready after 60s" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+        }
 
-        # Wait for NullClaw health endpoint
-        timeout=60
-        while ! ${pkgs.curl}/bin/curl -sf http://127.0.0.1:${toString cfg.port}/health >/dev/null 2>&1; do
-          timeout=$((timeout - 1))
-          if [ $timeout -le 0 ]; then
-            echo "ERROR: NullClaw not responding after 60s" >&2
-            exit 1
-          fi
-          sleep 1
-        done
+        wait_for "tailscaled" ${pkgs.tailscale}/bin/tailscale status
+        wait_for "NullClaw"   ${pkgs.curl}/bin/curl -sf http://127.0.0.1:${toString cfg.port}/health
 
         if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
           ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://127.0.0.1:${toString cfg.port}

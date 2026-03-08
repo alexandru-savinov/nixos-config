@@ -9,11 +9,10 @@ License: MIT (this adaptation)
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Callable, Awaitable, Any, Dict, Tuple
+from typing import Optional, Callable, Awaitable, Any, Tuple
 import aiohttp
 import sqlite3
 import ast
-import json
 import time
 import logging
 import os

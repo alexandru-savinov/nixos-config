@@ -19,6 +19,18 @@ let
       pkgs-unstable.python3Packages.qdrant-client
     ];
   });
+
+  # Whether any secret files are configured (determines if secrets.env setup is needed)
+  hasAnySecrets =
+    cfg.secretKeyFile != null
+    || cfg.openai.apiKeyFile != null
+    || cfg.oidc.clientSecretFile != null
+    || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
+    || (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null)
+    || (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null)
+    || (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null)
+    || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
+    || (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null);
 in
 {
   options.services.open-webui-tailscale = {
@@ -550,16 +562,14 @@ in
           OPENID_REDIRECT_URI = "${cfg.webuiUrl}/oauth/oidc/callback";
         })
         # Voice Support - STT Configuration
-        (mkIf cfg.voice.enable (
-          if cfg.voice.stt.engine == "whisper" then {
-            # Empty/unset = use local Whisper model (default, works with Call mode)
-          } else if cfg.voice.stt.engine == "openai" then {
-            AUDIO_STT_ENGINE = "openai";
-            AUDIO_STT_MODEL = "whisper-1";
-          } else if cfg.voice.stt.engine == "deepgram" then {
-            AUDIO_STT_ENGINE = "deepgram";
-          } else { }
-        ))
+        # whisper is the default (no env vars needed), only set for other engines
+        (mkIf (cfg.voice.enable && cfg.voice.stt.engine == "openai") {
+          AUDIO_STT_ENGINE = "openai";
+          AUDIO_STT_MODEL = "whisper-1";
+        })
+        (mkIf (cfg.voice.enable && cfg.voice.stt.engine == "deepgram") {
+          AUDIO_STT_ENGINE = "deepgram";
+        })
         # Voice Support - TTS Configuration
         (mkIf (cfg.voice.enable && cfg.voice.tts.engine == "azure") {
           AUDIO_TTS_ENGINE = "azure";
@@ -630,80 +640,68 @@ in
           PrivateTmp = true;
           NoNewPrivileges = true;
         }
-        (mkIf
-          (
-            cfg.secretKeyFile != null
-            || cfg.openai.apiKeyFile != null
-            || cfg.oidc.clientSecretFile != null
-            || (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null)
-            || (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null)
-            || (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null)
-          )
-          {
-            RuntimeDirectory = "open-webui";
-            EnvironmentFile = "-/run/open-webui/secrets.env";
-            # Run secrets setup script as root (+ prefix) to read agenix secrets,
-            # then chown the env file so the open-webui user can read it
-            ExecStartPre = lib.mkBefore [
-              ("+" + pkgs.writeShellScript "open-webui-secrets" ''
-                set -euo pipefail
+        (mkIf hasAnySecrets {
+          RuntimeDirectory = "open-webui";
+          EnvironmentFile = "-/run/open-webui/secrets.env";
+          # Run secrets setup script as root (+ prefix) to read agenix secrets,
+          # then chown the env file so the open-webui user can read it
+          ExecStartPre = lib.mkBefore [
+            ("+" + pkgs.writeShellScript "open-webui-secrets" ''
+              set -euo pipefail
 
-                SECRETS_FILE="/run/open-webui/secrets.env"
-                : > "$SECRETS_FILE"
+              SECRETS_FILE="/run/open-webui/secrets.env"
+              : > "$SECRETS_FILE"
 
-                # Helper function to safely read a secret file
-                read_secret() {
-                  local file="$1"
-                  local var_name="$2"
-                  if [[ ! -f "$file" ]]; then
-                    echo "ERROR: Secret file not found: $file" >&2
-                    exit 1
-                  fi
-                  local value
-                  value=$(cat "$file")
-                  if [[ -z "$value" ]]; then
-                    echo "ERROR: Secret file is empty: $file" >&2
-                    exit 1
-                  fi
-                  echo "$var_name=$value" >> "$SECRETS_FILE"
-                }
+              # Helper function to safely read a secret file
+              read_secret() {
+                local file="$1"
+                local var_name="$2"
+                if [[ ! -f "$file" ]]; then
+                  echo "ERROR: Secret file not found: $file" >&2
+                  exit 1
+                fi
+                local value
+                value=$(cat "$file")
+                if [[ -z "$value" ]]; then
+                  echo "ERROR: Secret file is empty: $file" >&2
+                  exit 1
+                fi
+                echo "$var_name=$value" >> "$SECRETS_FILE"
+              }
 
-                ${optionalString (cfg.secretKeyFile != null) ''
-                  read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
-                ''}
-                ${optionalString (cfg.openai.apiKeyFile != null) ''
-                  read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
-                ''}
-                ${optionalString (cfg.oidc.clientSecretFile != null) ''
-                  read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
-                ''}
-                ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
-                  read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
-                ''}
-                ${optionalString (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null) ''
-                  read_secret "${cfg.vectorDb.qdrant.apiKeyFile}" "QDRANT_API_KEY"
-                ''}
+              ${optionalString (cfg.secretKeyFile != null) ''
+                read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
+              ''}
+              ${optionalString (cfg.openai.apiKeyFile != null) ''
+                read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
+              ''}
+              ${optionalString (cfg.oidc.clientSecretFile != null) ''
+                read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
+              ''}
+              ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
+                read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
+                read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
+                read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
+                read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
+                read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
+              ''}
+              ${optionalString (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null) ''
+                read_secret "${cfg.vectorDb.qdrant.apiKeyFile}" "QDRANT_API_KEY"
+              ''}
 
-                chmod 600 "$SECRETS_FILE"
-                chown open-webui:open-webui "$SECRETS_FILE"
-              '')
-            ];
-          }
+              chmod 600 "$SECRETS_FILE"
+              chown open-webui:open-webui "$SECRETS_FILE"
+            '')
+          ];
+        }
         )
       ];
     };
@@ -784,80 +782,16 @@ in
                   exit 1
                 fi
 
-                # Check if function already exists
-                EXISTS=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM function WHERE id='$FUNCTION_ID';")
+                # Write valves JSON to temp file for Python to read
+                VALVES_FILE=$(mktemp)
+                trap 'rm -f "$VALVES_FILE"' EXIT
+                echo "$VALVES_JSON" > "$VALVES_FILE"
 
-                if [ "$EXISTS" = "0" ]; then
-                  # Get admin user ID
-                  ADMIN_ID=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT id FROM user WHERE role='admin' LIMIT 1;")
+                # Export variables for Python (avoids shell injection via quoted HEREDOC)
+                export DB_FILE FUNCTION_FILE VALVES_FILE FUNCTION_ID
 
-                  if [ -z "$ADMIN_ID" ]; then
-                    echo "No admin user found, using empty user_id"
-                    ADMIN_ID=""
-                  fi
-
-                  NOW=$(date +%s)
-
-                  # Write valves JSON to temp file for Python to read
-                  VALVES_FILE=$(mktemp)
-                  trap 'rm -f "$VALVES_FILE"' EXIT
-                  echo "$VALVES_JSON" > "$VALVES_FILE"
-
-                  # Export variables for Python (avoids shell injection via quoted HEREDOC)
-                  export DB_FILE FUNCTION_FILE VALVES_FILE FUNCTION_ID ADMIN_ID NOW
-
-                  # Insert the function with content and valves
-                  ${pkgs.python3}/bin/python3 << 'PYTHON'
-        import sqlite3
-        import json
-        import os
-
-        db_file = os.environ["DB_FILE"]
-        function_file = os.environ["FUNCTION_FILE"]
-        valves_file = os.environ["VALVES_FILE"]
-        function_id = os.environ["FUNCTION_ID"]
-        admin_id = os.environ.get("ADMIN_ID") or None
-        now = int(os.environ["NOW"])
-
-        conn = sqlite3.connect(db_file)
-        cursor = conn.cursor()
-
-        content = open(function_file).read()
-        valves = json.load(open(valves_file))
-        meta = {"description": "Only shows OpenRouter models with Zero Data Retention policy"}
-
-        cursor.execute("""
-            INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            function_id,
-            admin_id,
-            "OpenRouter ZDR-Only Models",
-            "pipe",
-            content,
-            json.dumps(meta),
-            now,
-            now,
-            json.dumps(valves),
-            1,
-            1
-        ))
-
-        conn.commit()
-        conn.close()
-        print("Function inserted into database")
-        PYTHON
-                else
-                  # Write valves JSON to temp file for Python to read
-                  VALVES_FILE=$(mktemp)
-                  trap 'rm -f "$VALVES_FILE"' EXIT
-                  echo "$VALVES_JSON" > "$VALVES_FILE"
-
-                  # Export variables for Python (avoids shell injection via quoted HEREDOC)
-                  export DB_FILE FUNCTION_FILE VALVES_FILE FUNCTION_ID
-
-                  # Update valves to ensure API key is current
-                  ${pkgs.python3}/bin/python3 << 'PYTHON'
+                # Insert or update the function in the database
+                ${pkgs.python3}/bin/python3 << 'PYTHON'
         import sqlite3
         import json
         import time
@@ -871,22 +805,50 @@ in
         conn = sqlite3.connect(db_file)
         cursor = conn.cursor()
 
-        valves = json.load(open(valves_file))
         content = open(function_file).read()
+        valves = json.load(open(valves_file))
+        meta = {"description": "Only shows OpenRouter models with Zero Data Retention policy"}
+        now = int(time.time())
 
-        cursor.execute("""
-            UPDATE function
-            SET valves = ?, content = ?, updated_at = ?
-            WHERE id = ?
-        """, (json.dumps(valves), content, int(time.time()), function_id))
+        # Check if function exists
+        cursor.execute("SELECT id FROM function WHERE id = ?", (function_id,))
+        exists = cursor.fetchone()
+
+        if exists:
+            cursor.execute("""
+                UPDATE function
+                SET valves = ?, content = ?, updated_at = ?
+                WHERE id = ?
+            """, (json.dumps(valves), content, now, function_id))
+            print("Function valves and content updated")
+        else:
+            # Get admin user ID for ownership
+            cursor.execute("SELECT id FROM user WHERE role='admin' LIMIT 1")
+            row = cursor.fetchone()
+            admin_id = row[0] if row else None
+
+            cursor.execute("""
+                INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                function_id,
+                admin_id,
+                "OpenRouter ZDR-Only Models",
+                "pipe",
+                content,
+                json.dumps(meta),
+                now,
+                now,
+                json.dumps(valves),
+                1,
+                1,
+            ))
+            print("Function inserted into database")
 
         conn.commit()
         conn.close()
-        print("Function valves and content updated")
+        print("ZDR function provisioning complete")
         PYTHON
-                fi
-
-                echo "ZDR function provisioning complete"
       '';
     };
 
@@ -1152,7 +1114,7 @@ in
 
       path = [
         pkgs.sqlite
-        (pkgs.python3.withPackages (ps: [ ]))
+        pkgs.python3
       ];
 
       serviceConfig = {
@@ -1308,7 +1270,7 @@ in
 
       path = [
         pkgs.sqlite
-        (pkgs.python3.withPackages (ps: [ ]))
+        pkgs.python3
       ];
 
       serviceConfig = {

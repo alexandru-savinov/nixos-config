@@ -1,22 +1,10 @@
+import importlib.util
 import json
-import os
 import pathlib
-
-# Import the pipe implementation
-import sys
 import time
 from unittest import mock
 
 import pytest
-
-# Resolve the directory containing the pipe implementation (do not mutate sys.path)
-module_dir = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "modules"
-    / "services"
-    / "open-webui-functions"
-)
-import importlib.util
 
 
 def _load_pipe():

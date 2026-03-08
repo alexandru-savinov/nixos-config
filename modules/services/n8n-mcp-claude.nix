@@ -81,13 +81,6 @@ let
     };
   };
 
-  # Full MCP config for documentation-only mode (no secrets)
-  mkMcpConfigStatic = {
-    mcpServers = {
-      n8n-mcp = mkMcpConfigBase;
-    };
-  };
-
   # Script to generate MCP config with API key injected at runtime
   # Claude Code reads MCP servers from ~/.claude.json (user scope)
   # See: https://code.claude.com/docs/en/mcp

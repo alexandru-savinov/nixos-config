@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -euo pipefail
 
 # NixOS Bootstrap/Infect Script
@@ -235,10 +236,9 @@ install_nixos_infect() {
         log_error "Failed to create temporary file for nixos-infect"
         exit 1
     }
-    trap 'rm -f "$NIXOS_INFECT_TEMP"' EXIT INT TERM
-
     CURL_ERROR=$(mktemp) || {
         log_error "Failed to create temporary file for error capture"
+        rm -f "$NIXOS_INFECT_TEMP"
         exit 1
     }
     trap 'rm -f "$NIXOS_INFECT_TEMP" "$CURL_ERROR"' EXIT INT TERM

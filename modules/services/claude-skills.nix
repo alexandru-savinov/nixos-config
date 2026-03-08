@@ -31,16 +31,11 @@ in
   };
 
   config = mkIf cfg.enable {
-    home-manager.users = listToAttrs (map
-      (user: {
-        name = user;
-        value = {
-          home.stateVersion = lib.mkDefault "24.05";
-          home.file = {
-            ".claude/skills/verify-first".source = "${skillsDir}/verify-first";
-          };
-        };
-      })
-      cfg.users);
+    home-manager.users = genAttrs cfg.users (_: {
+      home.stateVersion = mkDefault "24.05";
+      home.file = {
+        ".claude/skills/verify-first".source = "${skillsDir}/verify-first";
+      };
+    });
   };
 }

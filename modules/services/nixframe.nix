@@ -328,7 +328,8 @@ let
       exit 0
     fi
 
-    if [ ! -f "$CACHE" ]; then
+    # Fallback values when data is unavailable
+    fallback_field() {
       case "$FIELD" in
         label) echo "''${LABELS[$SLOT_IDX]}" ;;
         temp)  echo "--" ;;
@@ -336,6 +337,10 @@ let
         feels) echo "" ;;
         icon)  echo "" ;;
       esac
+    }
+
+    if [ ! -f "$CACHE" ]; then
+      fallback_field
       exit 0
     fi
 
@@ -344,13 +349,7 @@ let
 
     # Guard against null/missing entries (e.g. tomorrow's data not yet available)
     if [ -z "$ENTRY" ] || [ "$ENTRY" = "null" ]; then
-      case "$FIELD" in
-        label) echo "''${LABELS[$SLOT_IDX]}" ;;
-        temp)  echo "--" ;;
-        desc)  echo "No data" ;;
-        feels) echo "" ;;
-        icon)  echo "" ;;
-      esac
+      fallback_field
       exit 0
     fi
 
@@ -429,26 +428,10 @@ let
 
     ${optionalString weatherCfg.enable ''
     (defpoll forecast-day   :interval "300s"  "${forecastScript} 0 day")
-    (defpoll forecast-0-label :interval "300s" "${forecastScript} 0 label")
-    (defpoll forecast-0-temp  :interval "300s" "${forecastScript} 0 temp")
-    (defpoll forecast-0-icon  :interval "300s" "${forecastScript} 0 icon")
-    (defpoll forecast-0-feels :interval "300s" "${forecastScript} 0 feels")
-    (defpoll forecast-1-label :interval "300s" "${forecastScript} 1 label")
-    (defpoll forecast-1-temp  :interval "300s" "${forecastScript} 1 temp")
-    (defpoll forecast-1-icon  :interval "300s" "${forecastScript} 1 icon")
-    (defpoll forecast-1-feels :interval "300s" "${forecastScript} 1 feels")
-    (defpoll forecast-2-label :interval "300s" "${forecastScript} 2 label")
-    (defpoll forecast-2-temp  :interval "300s" "${forecastScript} 2 temp")
-    (defpoll forecast-2-icon  :interval "300s" "${forecastScript} 2 icon")
-    (defpoll forecast-2-feels :interval "300s" "${forecastScript} 2 feels")
-    (defpoll forecast-3-label :interval "300s" "${forecastScript} 3 label")
-    (defpoll forecast-3-temp  :interval "300s" "${forecastScript} 3 temp")
-    (defpoll forecast-3-icon  :interval "300s" "${forecastScript} 3 icon")
-    (defpoll forecast-3-feels :interval "300s" "${forecastScript} 3 feels")
-    (defpoll forecast-4-label :interval "300s" "${forecastScript} 4 label")
-    (defpoll forecast-4-temp  :interval "300s" "${forecastScript} 4 temp")
-    (defpoll forecast-4-icon  :interval "300s" "${forecastScript} 4 icon")
-    (defpoll forecast-4-feels :interval "300s" "${forecastScript} 4 feels")
+    ${concatStringsSep "\n    " (concatLists (genList (i:
+      map (field: ''(defpoll forecast-${toString i}-${field} :interval "300s" "${forecastScript} ${toString i} ${field}")'')
+        [ "label" "temp" "icon" "feels" ]
+    ) 5))}
 
     (defwindow forecast
       :monitor 0
@@ -460,31 +443,12 @@ let
         (box :class "forecast-day-box" :orientation "v" :valign "center"
           (label :class "forecast-day" :text forecast-day))
         (box :orientation "h" :halign "fill" :space-evenly true :hexpand true
-        (box :class "forecast-slot" :orientation "v" :spacing 2
-          (label :class "forecast-label" :text forecast-0-label)
-          (label :class "forecast-temp"  :text forecast-0-temp)
-          (label :class "forecast-icon"  :markup forecast-0-icon)
-          (label :class "forecast-feels" :text forecast-0-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 2
-          (label :class "forecast-label" :text forecast-1-label)
-          (label :class "forecast-temp"  :text forecast-1-temp)
-          (label :class "forecast-icon"  :markup forecast-1-icon)
-          (label :class "forecast-feels" :text forecast-1-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 2
-          (label :class "forecast-label" :text forecast-2-label)
-          (label :class "forecast-temp"  :text forecast-2-temp)
-          (label :class "forecast-icon"  :markup forecast-2-icon)
-          (label :class "forecast-feels" :text forecast-2-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 2
-          (label :class "forecast-label" :text forecast-3-label)
-          (label :class "forecast-temp"  :text forecast-3-temp)
-          (label :class "forecast-icon"  :markup forecast-3-icon)
-          (label :class "forecast-feels" :text forecast-3-feels))
-        (box :class "forecast-slot" :orientation "v" :spacing 2
-          (label :class "forecast-label" :text forecast-4-label)
-          (label :class "forecast-temp"  :text forecast-4-temp)
-          (label :class "forecast-icon"  :markup forecast-4-icon)
-          (label :class "forecast-feels" :text forecast-4-feels)))))
+        ${concatStringsSep "\n        " (genList (i: ''
+    (box :class "forecast-slot" :orientation "v" :spacing 2
+          (label :class "forecast-label" :text forecast-${toString i}-label)
+          (label :class "forecast-temp"  :text forecast-${toString i}-temp)
+          (label :class "forecast-icon"  :markup forecast-${toString i}-icon)
+          (label :class "forecast-feels" :text forecast-${toString i}-feels))'') 5)})))
     ''}
   '';
 
@@ -711,6 +675,18 @@ let
     }
     trap cleanup SIGTERM SIGHUP SIGINT
 
+    # Close all eww windows, logging errors except "window not found"
+    close_eww_windows() {
+      local CONTEXT="''${1:-}"
+      local CLOSE_ERR
+      for WIN in sidebar${optionalString weatherCfg.enable " forecast"}; do
+        CLOSE_ERR=$(${pkgs.eww}/bin/eww close "$WIN" 2>&1) || true
+        if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
+          echo "WARNING: $CONTEXT eww close $WIN failed: $CLOSE_ERR" >&2
+        fi
+      done
+    }
+
     # Rapid-restart guard: if the loop completes 3 times in <30s, stop to avoid CPU burn
     FAIL_COUNT=0
     MAX_FAILS=3
@@ -730,20 +706,7 @@ let
       # If a prior service stop failed to fully terminate the daemon, windows may still
       # be open. Explicitly closing them before 'eww kill' ensures a clean restart.
       # Note: If daemon is not running, these close commands harmlessly fail.
-
-      # Close sidebar - log errors except "window not found"
-      CLOSE_ERR=$(${pkgs.eww}/bin/eww close sidebar 2>&1) || true
-      if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
-        echo "WARNING: Startup cleanup - eww close sidebar failed: $CLOSE_ERR" >&2
-      fi
-
-      ${optionalString weatherCfg.enable ''
-      # Close forecast - log errors except "window not found"
-      CLOSE_ERR=$(${pkgs.eww}/bin/eww close forecast 2>&1) || true
-      if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
-        echo "WARNING: Startup cleanup - eww close forecast failed: $CLOSE_ERR" >&2
-      fi
-      ''}
+      close_eww_windows "Startup cleanup -"
 
       # Verify cleanup succeeded
       REMAINING_WINDOWS=$(${pkgs.eww}/bin/eww list-windows 2>/dev/null | ${pkgs.gnugrep}/bin/grep -cE "sidebar|forecast" || echo 0)
@@ -801,19 +764,7 @@ let
           fi
         fi
 
-        # Close sidebar - log errors except "window not found"
-        CLOSE_ERR=$(${pkgs.eww}/bin/eww close sidebar 2>&1) || true
-        if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
-          echo "WARNING: eww close sidebar failed: $CLOSE_ERR" >&2
-        fi
-
-        ${optionalString weatherCfg.enable ''
-        # Close forecast - log errors except "window not found"
-        CLOSE_ERR=$(${pkgs.eww}/bin/eww close forecast 2>&1) || true
-        if [ -n "$CLOSE_ERR" ] && ! echo "$CLOSE_ERR" | ${pkgs.gnugrep}/bin/grep -q "No window with name"; then
-          echo "WARNING: eww close forecast failed: $CLOSE_ERR" >&2
-        fi
-        ''}
+        close_eww_windows ""
 
         # Wait for windows to actually close (synchronous verification)
         # Prevents race condition where open happens before close completes
@@ -834,23 +785,13 @@ let
         OPEN_FAILED=false
         FAILED_WINDOWS=""
 
-        if ! ${pkgs.eww}/bin/eww open sidebar 2>&1; then
-          OPEN_FAILED=true
-          FAILED_WINDOWS="sidebar"
-          echo "WARNING: Failed to open sidebar window (attempt $OPEN_ATTEMPT/3)" >&2
-        fi
-
-        ${optionalString weatherCfg.enable ''
-        if ! ${pkgs.eww}/bin/eww open forecast 2>&1; then
-          OPEN_FAILED=true
-          if [ -n "$FAILED_WINDOWS" ]; then
-            FAILED_WINDOWS="sidebar+forecast"
-          else
-            FAILED_WINDOWS="forecast"
+        for WIN in sidebar${optionalString weatherCfg.enable " forecast"}; do
+          if ! ${pkgs.eww}/bin/eww open "$WIN" 2>&1; then
+            OPEN_FAILED=true
+            FAILED_WINDOWS="''${FAILED_WINDOWS:+$FAILED_WINDOWS+}$WIN"
+            echo "WARNING: Failed to open $WIN window (attempt $OPEN_ATTEMPT/3)" >&2
           fi
-          echo "WARNING: Failed to open forecast window (attempt $OPEN_ATTEMPT/3)" >&2
-        fi
-        ''}
+        done
 
         if [ "$OPEN_FAILED" = false ]; then
           OPEN_OK=true

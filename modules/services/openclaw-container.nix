@@ -16,11 +16,43 @@ let
 
     boot.isContainer = true;
 
-    # Networking inside container
+    # Container networking + nftables whitelist
     networking = {
       useHostResolvConf = false;
       nameservers = [ "1.1.1.1" "8.8.8.8" ];
       defaultGateway = "192.168.84.1";
+      nftables = {
+        enable = true;
+        tables.openclaw-container-filter = {
+          family = "inet";
+          content = ''
+            chain output {
+              type filter hook output priority 0; policy drop;
+
+              # Allow loopback
+              oifname "lo" accept
+
+              # Allow established/related connections
+              ct state established,related accept
+
+              # Allow DNS to public resolvers
+              ip daddr { 1.1.1.1, 8.8.8.8 } tcp dport 53 accept
+              ip daddr { 1.1.1.1, 8.8.8.8 } udp dport 53 accept
+
+              # Allow HTTPS to Anthropic API (AWS regions)
+              ip daddr { 54.185.0.0/16, 35.165.0.0/16 } tcp dport 443 accept
+              ip daddr { 160.79.104.0/23 } tcp dport 443 accept
+              ip6 daddr { 2607:6bc0::/48 } tcp dport 443 accept
+
+              # Allow HTTPS + SSH to GitHub
+              ip daddr { 140.82.112.0/20 } tcp dport { 22, 443 } accept
+
+              # Log and drop everything else
+              log prefix "openclaw-blocked: " drop
+            }
+          '';
+        };
+      };
     };
 
     # OpenClaw service (reuse existing module)
@@ -35,40 +67,6 @@ let
       maxBudgetUsd = cfg.maxBudgetUsd;
       # Disable per-UID network restriction (handled at container level)
       networkRestriction.enable = false;
-    };
-
-    # Container-level network restrictions (nftables whitelist)
-    networking.nftables = {
-      enable = true;
-      tables.openclaw-container-filter = {
-        family = "inet";
-        content = ''
-          chain output {
-            type filter hook output priority 0; policy drop;
-
-            # Allow loopback
-            oifname "lo" accept
-
-            # Allow established/related connections
-            ct state established,related accept
-
-            # Allow DNS to public resolvers
-            ip daddr { 1.1.1.1, 8.8.8.8 } tcp dport 53 accept
-            ip daddr { 1.1.1.1, 8.8.8.8 } udp dport 53 accept
-
-            # Allow HTTPS to Anthropic API (AWS regions)
-            ip daddr { 54.185.0.0/16, 35.165.0.0/16 } tcp dport 443 accept
-            ip daddr { 160.79.104.0/23 } tcp dport 443 accept
-            ip6 daddr { 2607:6bc0::/48 } tcp dport 443 accept
-
-            # Allow HTTPS + SSH to GitHub
-            ip daddr { 140.82.112.0/20 } tcp dport { 22, 443 } accept
-
-            # Log and drop everything else
-            log prefix "openclaw-blocked: " drop
-          }
-        '';
-      };
     };
 
     system.stateVersion = "24.11";
@@ -128,17 +126,14 @@ in
       localAddress = "192.168.84.2/24";
 
       bindMounts = {
-        # Repository (read-only)
         "/var/lib/openclaw" = {
           hostPath = "/var/lib/openclaw";
           isReadOnly = true;
         };
-        # Results directory (read-write)
         "/var/lib/openclaw/results" = {
           hostPath = "/var/lib/openclaw/results";
           isReadOnly = false;
         };
-        # Secrets (read-only)
         "/run/secrets" = {
           hostPath = "/run/secrets-openclaw";
           isReadOnly = true;
@@ -148,18 +143,18 @@ in
       config = containerConfig;
     };
 
-    # Host networking configuration
-    networking.bridges.cnt-openclaw.interfaces = [ ];
-    networking.interfaces.cnt-openclaw.ipv4.addresses = [{
-      address = "192.168.84.1";
-      prefixLength = 24;
-    }];
-
-    # NAT for container internet access
-    networking.nat = {
-      enable = true;
-      internalInterfaces = [ "cnt-openclaw" ];
-      externalInterface = "eth0";
+    # Host networking: bridge + NAT for container internet access
+    networking = {
+      bridges.cnt-openclaw.interfaces = [ ];
+      interfaces.cnt-openclaw.ipv4.addresses = [{
+        address = "192.168.84.1";
+        prefixLength = 24;
+      }];
+      nat = {
+        enable = true;
+        internalInterfaces = [ "cnt-openclaw" ];
+        externalInterface = "eth0";
+      };
     };
 
     # Secret staging service (runs before container starts)
@@ -191,7 +186,6 @@ in
       "d /var/lib/openclaw 0755 root root -"
       "d /var/lib/openclaw/inbox 0755 root root -"
       "d /var/lib/openclaw/results 0755 root root -"
-      "d /run/secrets-openclaw 0700 root root -"
     ];
   };
 }

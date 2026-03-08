@@ -4,6 +4,25 @@ set -euo pipefail
 # NixOS configuration deployment script
 # Usage: deploy.sh [--yes|-y] <hostname> [flake-path]
 
+print_usage() {
+    local exit_code="${1:-0}"
+    echo "Usage: $0 [--yes|-y] <hostname> [flake-path]"
+    echo ""
+    echo "Arguments:"
+    echo "  hostname:    Name of the host configuration (required)"
+    echo "  flake-path:  Path or URL to flake (optional, default: .)"
+    echo ""
+    echo "Options:"
+    echo "  --yes, -y    Skip confirmation prompt (non-interactive mode)"
+    echo "  --help, -h   Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 sancta-choir                                    # Deploy locally"
+    echo "  $0 --yes sancta-choir                              # Deploy without prompt"
+    echo "  $0 sancta-choir github:alexandru-savinov/nixos-config  # Deploy from GitHub"
+    exit "$exit_code"
+}
+
 # Parse flags
 YES_FLAG=false
 while [[ $# -gt 0 ]]; do
@@ -13,21 +32,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            echo "Usage: $0 [--yes|-y] <hostname> [flake-path]"
-            echo ""
-            echo "Arguments:"
-            echo "  hostname:    Name of the host configuration (required)"
-            echo "  flake-path:  Path or URL to flake (optional, default: .)"
-            echo ""
-            echo "Options:"
-            echo "  --yes, -y    Skip confirmation prompt (non-interactive mode)"
-            echo "  --help, -h   Show this help message"
-            echo ""
-            echo "Examples:"
-            echo "  $0 sancta-choir                                    # Deploy locally"
-            echo "  $0 --yes sancta-choir                              # Deploy without prompt"
-            echo "  $0 sancta-choir github:alexandru-savinov/nixos-config  # Deploy from GitHub"
-            exit 0
+            print_usage 0
             ;;
         -*)
             echo "Unknown option: $1"
@@ -44,21 +49,7 @@ HOSTNAME="${1:-}"
 FLAKE_PATH="${2:-.}"  # Default to current directory
 
 if [ -z "$HOSTNAME" ]; then
-    echo "Usage: $0 [--yes|-y] <hostname> [flake-path]"
-    echo ""
-    echo "Arguments:"
-    echo "  hostname:    Name of the host configuration (required)"
-    echo "  flake-path:  Path or URL to flake (optional, default: .)"
-    echo ""
-    echo "Options:"
-    echo "  --yes, -y    Skip confirmation prompt (non-interactive mode)"
-    echo "  --help, -h   Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  $0 sancta-choir                                    # Deploy locally"
-    echo "  $0 --yes sancta-choir                              # Deploy without prompt"
-    echo "  $0 sancta-choir github:alexandru-savinov/nixos-config  # Deploy from GitHub"
-    exit 1
+    print_usage 1
 fi
 
 echo "╔════════════════════════════════════════════════════════════╗"
@@ -85,11 +76,10 @@ else
 fi
 
 # Check if flake path is local or remote
+FLAKE_REF="$FLAKE_PATH#$HOSTNAME"
 if [[ "$FLAKE_PATH" =~ ^(github:|gitlab:|git\+) ]]; then
-    FLAKE_REF="$FLAKE_PATH#$HOSTNAME"
     echo "Remote deployment mode"
 else
-    FLAKE_REF="$FLAKE_PATH#$HOSTNAME"
     echo "Local deployment mode"
     echo "Note: Run this from your repository directory for best results"
     echo ""

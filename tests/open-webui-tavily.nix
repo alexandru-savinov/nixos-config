@@ -1,6 +1,4 @@
-{ pkgs ? import <nixpkgs> { }
-,
-}:
+{ pkgs ? import <nixpkgs> { } }:
 
 pkgs.testers.nixosTest {
   name = "open-webui-tavily-test";

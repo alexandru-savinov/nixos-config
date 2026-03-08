@@ -51,7 +51,6 @@
   # ── NullClaw (Zero_kuzea bot) ───────────────────────────────────────
   services.nullclaw = {
     enable = true;
-    port = 18790;
     provider = "anthropic";
     model = "claude-sonnet-4-6";
     apiKeyFile = config.age.secrets.anthropic-api-key.path;
@@ -59,9 +58,6 @@
       botTokenFile = config.age.secrets.zero-kuzea-telegram-bot-token.path;
       allowedUsers = [ "364749075" ];
     };
-    tailscaleServe = {
-      enable = true;
-      httpsPort = 18790;
-    };
+    tailscaleServe.enable = true;
   };
 }

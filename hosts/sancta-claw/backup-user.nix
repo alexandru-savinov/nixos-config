@@ -12,11 +12,9 @@
 #   3. Set backupPubKey below to the .pub content
 #   4. Rebuild sancta-claw
 
-{ pkgs, lib, config, ... }:
+{ pkgs, ... }:
 
 let
-  # Replace with the actual ed25519 public key after generation.
-  # Leave empty until then — no invalid entries in authorized_keys.
   backupPubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPg87VV3hyBtcssX1N55VCS3u3SoC6oCtl86XnsHD1pe rpi5-backup";
 in
 {
@@ -25,7 +23,7 @@ in
     group = "openclaw";
     home = "/var/empty";
     shell = "${pkgs.bash}/bin/bash";
-    openssh.authorizedKeys.keys = lib.optionals (backupPubKey != "") [
+    openssh.authorizedKeys.keys = [
       # restrict: disables port forwarding, agent forwarding, PTY, X11
       # command: forces rrsync read-only, limited to /var/lib/openclaw
       ''restrict,command="${pkgs.rrsync}/bin/rrsync -ro /var/lib/openclaw" ${backupPubKey}''

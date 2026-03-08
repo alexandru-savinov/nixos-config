@@ -1,29 +1,15 @@
 { config, pkgs, ... }:
 
 {
-  # Tailscale - Zero-config VPN for secure private networking
+  # Tailscale - Zero-config VPN
   services.tailscale = {
     enable = true;
-
-    # Port for tunnel traffic
-    port = 41641;
-
-    # Interface name for the Tailscale network
-    interfaceName = "tailscale0";
-
-    # Enable client routing features (for using exit nodes, accepting routes)
     useRoutingFeatures = "client";
-
-    # Open firewall for Tailscale UDP traffic
     openFirewall = true;
-
-    # Declarative authentication with auth key from agenix
     authKeyFile = config.age.secrets.tailscale-auth-key.path;
-
-    # Extra flags for 'tailscale up' command
     extraUpFlags = [
-      "--ssh" # Enable Tailscale SSH
-      "--accept-routes" # Accept subnet routes from other nodes
+      "--ssh"
+      "--accept-routes"
     ];
   };
 
@@ -31,11 +17,6 @@
   networking.firewall.trustedInterfaces = [ "tailscale0" ];
 
   systemd = {
-    # Ensure tailscale directory exists with correct permissions
-    tmpfiles.rules = [
-      "d /var/lib/tailscale 0700 root root -"
-    ];
-
     # Watchdog: restart tailscaled if its DNS proxy stops forwarding.
     # After an Ethernet link flap, Tailscale can lose its upstream resolver
     # config (Routes:{.:[]}) and never recover, returning SERVFAIL for all

@@ -21,10 +21,9 @@ from urllib3.util.retry import Retry
 logger = logging.getLogger(__name__)
 
 from .models import (
-    ChatResponse,
     ChatChoice,
+    ChatResponse,
     FileInfo,
-    FileReference,
     FileStatus,
     Message,
     MessageRole,
@@ -153,12 +152,7 @@ class OpenWebUIClient:
         """
         response = self._request("GET", "/api/models")
         data = response.json()
-
-        models = []
-        for model_data in data.get("data", []):
-            models.append(ModelInfo(**model_data))
-
-        return models
+        return [ModelInfo(**m) for m in data.get("data", [])]
 
     def get_zdr_models(self) -> List[ModelInfo]:
         """
@@ -173,6 +167,31 @@ class OpenWebUIClient:
     # ========================================================================
     # Chat Completions
     # ========================================================================
+
+    def _parse_chat_response(self, data: dict, model: str) -> ChatResponse:
+        """Parse raw API response dict into ChatResponse model."""
+        choices = []
+        for choice_data in data.get("choices", []):
+            message_data = choice_data.get("message", {})
+            message = Message(
+                role=MessageRole(message_data.get("role", "assistant")),
+                content=message_data.get("content", ""),
+            )
+            choices.append(
+                ChatChoice(
+                    index=choice_data.get("index", 0),
+                    message=message,
+                    finish_reason=choice_data.get("finish_reason"),
+                )
+            )
+
+        return ChatResponse(
+            id=data.get("id", ""),
+            object=data.get("object", "chat.completion"),
+            created=data.get("created", 0),
+            model=data.get("model", model),
+            choices=choices,
+        )
 
     def create_chat(
         self,
@@ -213,31 +232,7 @@ class OpenWebUIClient:
             timeout=self.chat_timeout,
         )
 
-        data = response.json()
-
-        # Parse response into ChatResponse model
-        choices = []
-        for choice_data in data.get("choices", []):
-            message_data = choice_data.get("message", {})
-            message = Message(
-                role=MessageRole(message_data.get("role", "assistant")),
-                content=message_data.get("content", ""),
-            )
-            choices.append(
-                ChatChoice(
-                    index=choice_data.get("index", 0),
-                    message=message,
-                    finish_reason=choice_data.get("finish_reason"),
-                )
-            )
-
-        return ChatResponse(
-            id=data.get("id", ""),
-            object=data.get("object", "chat.completion"),
-            created=data.get("created", 0),
-            model=data.get("model", model),
-            choices=choices,
-        )
+        return self._parse_chat_response(response.json(), model)
 
     def create_chat_stream(
         self,
@@ -380,19 +375,16 @@ class OpenWebUIClient:
         data = response.json()
 
         # API returns 'items' with 'link'/'snippet', map to our model's 'url'/'content'
-        results = []
-        items = data.get("items", [])[:max_results]
-        for item in items:
-            results.append(SearchResult(
+        results = [
+            SearchResult(
                 title=item.get("title", ""),
                 url=item.get("link", ""),
                 content=item.get("snippet", ""),
-            ))
+            )
+            for item in data.get("items", [])[:max_results]
+        ]
 
-        return SearchResponse(
-            query=query,
-            results=results,
-        )
+        return SearchResponse(query=query, results=results)
 
     # ========================================================================
     # Document RAG (File Upload & Embedding)
@@ -597,31 +589,7 @@ class OpenWebUIClient:
             timeout=self.chat_timeout,
         )
 
-        data = response.json()
-
-        # Parse response (same as create_chat)
-        choices = []
-        for choice_data in data.get("choices", []):
-            message_data = choice_data.get("message", {})
-            message = Message(
-                role=MessageRole(message_data.get("role", "assistant")),
-                content=message_data.get("content", ""),
-            )
-            choices.append(
-                ChatChoice(
-                    index=choice_data.get("index", 0),
-                    message=message,
-                    finish_reason=choice_data.get("finish_reason"),
-                )
-            )
-
-        return ChatResponse(
-            id=data.get("id", ""),
-            object=data.get("object", "chat.completion"),
-            created=data.get("created", 0),
-            model=data.get("model", model),
-            choices=choices,
-        )
+        return self._parse_chat_response(response.json(), model)
 
     def get_rag_config(self) -> dict:
         """
@@ -654,9 +622,7 @@ class OpenWebUIClient:
         try:
             response = self._request("GET", "/api/models", timeout=10)
             return response.status_code == 200
-        except requests.exceptions.ConnectionError:
-            return False
-        except requests.exceptions.Timeout:
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             return False
         except requests.exceptions.HTTPError as e:
             # 401/403 = auth problem, 5xx = server problem - not healthy
