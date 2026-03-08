@@ -641,67 +641,67 @@ in
           NoNewPrivileges = true;
         }
         (mkIf hasAnySecrets {
-            RuntimeDirectory = "open-webui";
-            EnvironmentFile = "-/run/open-webui/secrets.env";
-            # Run secrets setup script as root (+ prefix) to read agenix secrets,
-            # then chown the env file so the open-webui user can read it
-            ExecStartPre = lib.mkBefore [
-              ("+" + pkgs.writeShellScript "open-webui-secrets" ''
-                set -euo pipefail
+          RuntimeDirectory = "open-webui";
+          EnvironmentFile = "-/run/open-webui/secrets.env";
+          # Run secrets setup script as root (+ prefix) to read agenix secrets,
+          # then chown the env file so the open-webui user can read it
+          ExecStartPre = lib.mkBefore [
+            ("+" + pkgs.writeShellScript "open-webui-secrets" ''
+              set -euo pipefail
 
-                SECRETS_FILE="/run/open-webui/secrets.env"
-                : > "$SECRETS_FILE"
+              SECRETS_FILE="/run/open-webui/secrets.env"
+              : > "$SECRETS_FILE"
 
-                # Helper function to safely read a secret file
-                read_secret() {
-                  local file="$1"
-                  local var_name="$2"
-                  if [[ ! -f "$file" ]]; then
-                    echo "ERROR: Secret file not found: $file" >&2
-                    exit 1
-                  fi
-                  local value
-                  value=$(cat "$file")
-                  if [[ -z "$value" ]]; then
-                    echo "ERROR: Secret file is empty: $file" >&2
-                    exit 1
-                  fi
-                  echo "$var_name=$value" >> "$SECRETS_FILE"
-                }
+              # Helper function to safely read a secret file
+              read_secret() {
+                local file="$1"
+                local var_name="$2"
+                if [[ ! -f "$file" ]]; then
+                  echo "ERROR: Secret file not found: $file" >&2
+                  exit 1
+                fi
+                local value
+                value=$(cat "$file")
+                if [[ -z "$value" ]]; then
+                  echo "ERROR: Secret file is empty: $file" >&2
+                  exit 1
+                fi
+                echo "$var_name=$value" >> "$SECRETS_FILE"
+              }
 
-                ${optionalString (cfg.secretKeyFile != null) ''
-                  read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
-                ''}
-                ${optionalString (cfg.openai.apiKeyFile != null) ''
-                  read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
-                ''}
-                ${optionalString (cfg.oidc.clientSecretFile != null) ''
-                  read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
-                ''}
-                ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
-                  read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
-                ''}
-                ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
-                  read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
-                ''}
-                ${optionalString (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null) ''
-                  read_secret "${cfg.vectorDb.qdrant.apiKeyFile}" "QDRANT_API_KEY"
-                ''}
+              ${optionalString (cfg.secretKeyFile != null) ''
+                read_secret "${cfg.secretKeyFile}" "WEBUI_SECRET_KEY"
+              ''}
+              ${optionalString (cfg.openai.apiKeyFile != null) ''
+                read_secret "${cfg.openai.apiKeyFile}" "OPENAI_API_KEY"
+              ''}
+              ${optionalString (cfg.oidc.clientSecretFile != null) ''
+                read_secret "${cfg.oidc.clientSecretFile}" "OAUTH_CLIENT_SECRET"
+              ''}
+              ${optionalString (cfg.tavilySearch.enable && cfg.tavilySearch.apiKeyFile != null) ''
+                read_secret "${cfg.tavilySearch.apiKeyFile}" "TAVILY_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "azure" && cfg.voice.tts.azure.apiKeyFile != null) ''
+                read_secret "${cfg.voice.tts.azure.apiKeyFile}" "AUDIO_TTS_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.tts.engine == "openai" && cfg.voice.tts.openai.apiKeyFile != null) ''
+                read_secret "${cfg.voice.tts.openai.apiKeyFile}" "AUDIO_TTS_OPENAI_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "openai" && cfg.voice.stt.openai.apiKeyFile != null) ''
+                read_secret "${cfg.voice.stt.openai.apiKeyFile}" "AUDIO_STT_OPENAI_API_KEY"
+              ''}
+              ${optionalString (cfg.voice.enable && cfg.voice.stt.engine == "deepgram" && cfg.voice.stt.deepgram.apiKeyFile != null) ''
+                read_secret "${cfg.voice.stt.deepgram.apiKeyFile}" "DEEPGRAM_API_KEY"
+              ''}
+              ${optionalString (cfg.vectorDb.type == "qdrant" && cfg.vectorDb.qdrant.apiKeyFile != null) ''
+                read_secret "${cfg.vectorDb.qdrant.apiKeyFile}" "QDRANT_API_KEY"
+              ''}
 
-                chmod 600 "$SECRETS_FILE"
-                chown open-webui:open-webui "$SECRETS_FILE"
-              '')
-            ];
-          }
+              chmod 600 "$SECRETS_FILE"
+              chown open-webui:open-webui "$SECRETS_FILE"
+            '')
+          ];
+        }
         )
       ];
     };
