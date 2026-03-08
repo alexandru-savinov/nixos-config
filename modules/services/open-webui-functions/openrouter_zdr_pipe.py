@@ -5,10 +5,9 @@ version: 0.1.0
 description: Only shows OpenRouter models with Zero Data Retention policy
 """
 
-import json
 import os
 import time
-from typing import Generator, Iterator, Optional, Union
+from typing import Generator, Iterator, Union
 
 import requests
 from pydantic import BaseModel, Field
@@ -105,9 +104,7 @@ class Pipe:
                     continue
 
                 seen_ids.add(model_id)
-                # Handle empty model_name by falling back to model_id
-                model_name = item.get("model_name", "")
-                display_name = model_name if model_name else model_id
+                display_name = item.get("model_name", "") or model_id
                 zdr_models.append(
                     {
                         "id": model_id,
@@ -136,11 +133,6 @@ class Pipe:
 
             return result
 
-        except requests.exceptions.RequestException as e:
-            # Return cached data on error if available
-            if self._zdr_cache:
-                return self._zdr_cache
-            return [{"id": "error", "name": f"Network error: {str(e)}"}]
         except Exception as e:
             # Return cached data on error if available
             if self._zdr_cache:

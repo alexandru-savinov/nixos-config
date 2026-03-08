@@ -11,7 +11,6 @@ SKILLS_DIR="./skills"
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 usage() {
@@ -39,10 +38,6 @@ EOF
 
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
 log_error() {
@@ -127,20 +122,18 @@ if [ -d "$SKILL_PATH" ] && [ "$DRY_RUN" = false ]; then
     exit 1
 fi
 
-# Dry run output
-if [ "$DRY_RUN" = true ]; then
-    log_info "Dry run - would create:"
-    echo "  $SKILL_PATH/"
-    echo "  $SKILL_PATH/SKILL.md"
-    echo ""
-    echo "Template content would be:"
-    echo "---"
+# Generate the title-cased skill name for the template heading
+SKILL_TITLE=$(echo "$SKILL_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
+
+# Render the SKILL.md template to stdout
+render_template() {
     cat << TEMPLATE
+---
 name: $SKILL_NAME
 description: "[TODO: Add a concise description of what this skill does and when to use it]"
 ---
 
-# $(echo "$SKILL_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
+# $SKILL_TITLE
 
 [TODO: Brief introduction explaining the skill's purpose]
 
@@ -164,6 +157,17 @@ This skill was extracted from a learning entry.
 - Learning ID: [TODO: Add original learning ID]
 - Original File: .learnings/LEARNINGS.md
 TEMPLATE
+}
+
+# Dry run output
+if [ "$DRY_RUN" = true ]; then
+    log_info "Dry run - would create:"
+    echo "  $SKILL_PATH/"
+    echo "  $SKILL_PATH/SKILL.md"
+    echo ""
+    echo "Template content would be:"
+    echo "---"
+    render_template
     echo "---"
     exit 0
 fi
@@ -176,36 +180,7 @@ mkdir -p "$SKILL_PATH"
 trap 'rm -rf "$SKILL_PATH"' ERR
 
 # Create SKILL.md from template
-cat > "$SKILL_PATH/SKILL.md" << TEMPLATE
----
-name: $SKILL_NAME
-description: "[TODO: Add a concise description of what this skill does and when to use it]"
----
-
-# $(echo "$SKILL_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
-
-[TODO: Brief introduction explaining the skill's purpose]
-
-## Quick Reference
-
-| Situation | Action |
-|-----------|--------|
-| [Trigger condition] | [What to do] |
-
-## Usage
-
-[TODO: Detailed usage instructions]
-
-## Examples
-
-[TODO: Add concrete examples]
-
-## Source Learning
-
-This skill was extracted from a learning entry.
-- Learning ID: [TODO: Add original learning ID]
-- Original File: .learnings/LEARNINGS.md
-TEMPLATE
+render_template > "$SKILL_PATH/SKILL.md"
 
 log_info "Created: $SKILL_PATH/SKILL.md"
 

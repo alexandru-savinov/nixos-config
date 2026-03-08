@@ -16,9 +16,7 @@ pkgs.testers.nixosTest {
   name = "qdrant-integration-test";
 
   nodes.machine = { config, pkgs, lib, ... }: {
-    imports = [
-      ../modules/services/qdrant.nix
-    ];
+    imports = [ ../modules/services/qdrant.nix ];
 
     # Qdrant service configuration
     services.qdrant-tailscale = {

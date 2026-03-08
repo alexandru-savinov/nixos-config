@@ -93,10 +93,12 @@ in
         "n8n-workflow-patterns"
       ];
 
-      skillFiles = listToAttrs (map (name: {
-        name = ".claude/skills/${name}";
-        value.source = "${n8nSkillsSrc}/skills/${name}";
-      }) skillNames);
+      skillFiles = listToAttrs (map
+        (name: {
+          name = ".claude/skills/${name}";
+          value.source = "${n8nSkillsSrc}/skills/${name}";
+        })
+        skillNames);
     in
     {
       # Configure home-manager for each user

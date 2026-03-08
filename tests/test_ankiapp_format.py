@@ -6,11 +6,10 @@ Tests that generated ZIP files conform to AnkiApp import requirements.
 
 import base64
 import hashlib
-import re
+import struct
 import zipfile
 import xml.etree.ElementTree as ET
 from io import BytesIO
-from pathlib import Path
 
 
 def validate_ankiapp_zip(zip_base64: str) -> dict:
@@ -143,210 +142,32 @@ def validate_ankiapp_zip(zip_base64: str) -> dict:
     }
 
 
-def create_sample_deck() -> str:
-    """Create a sample AnkiApp deck for testing."""
-    import struct
+def _crc32(data: bytes) -> int:
+    """Compute CRC32 matching the n8n workflow's ZIP implementation."""
+    crc = 0xFFFFFFFF
+    table = []
+    for i in range(256):
+        c = i
+        for _ in range(8):
+            c = (0xEDB88320 ^ (c >> 1)) if (c & 1) else (c >> 1)
+        table.append(c)
+    for byte in data:
+        crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
+    return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
 
-    # Sample image (1x1 red PNG)
-    png_data = bytes([
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,  # PNG signature
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,  # IHDR chunk
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,  # 1x1 image
-        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,  # IDAT chunk
-        0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-        0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-        0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,  # IEND chunk
-        0x44, 0xAE, 0x42, 0x60, 0x82
-    ])
 
-    image_hash = hashlib.sha256(png_data).hexdigest()
+def _build_zip(files: list[tuple[str, bytes]]) -> bytes:
+    """Build a ZIP archive from a list of (name, data) pairs.
 
-    # Create XML
-    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<deck name="Test Vocabulary" tags="test,sample">
-  <fields>
-    <img name="Image" sides="10"/>
-    <text lang="en-US" name="Word" sides="01"/>
-  </fields>
-  <cards>
-    <card>
-      <img name="Image" id="{image_hash}"/>
-      <text name="Word">bed</text>
-    </card>
-  </cards>
-</deck>
-'''
-
-    # Create ZIP manually (same as n8n code)
-    def crc32(data):
-        crc = 0xFFFFFFFF
-        table = []
-        for i in range(256):
-            c = i
-            for _ in range(8):
-                c = (0xEDB88320 ^ (c >> 1)) if (c & 1) else (c >> 1)
-            table.append(c)
-        for byte in data:
-            crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
-        return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
-
-    files = [
-        ("deck.xml", xml.encode("utf-8")),
-        (f"blobs/{image_hash}.png", png_data)
-    ]
-
+    Uses the same manual ZIP construction as the n8n workflow code.
+    """
     local_parts = []
     central_parts = []
     offset = 0
 
     for name, data in files:
         name_bytes = name.encode("utf-8")
-        crc = crc32(data)
-
-        # Local file header
-        local_header = struct.pack(
-            "<IHHHHHIIIHH",
-            0x04034b50,  # signature
-            20,          # version needed
-            0,           # flags
-            0,           # compression
-            0,           # mod time
-            0,           # mod date
-            crc,         # crc32
-            len(data),   # compressed size
-            len(data),   # uncompressed size
-            len(name_bytes),  # name length
-            0            # extra length
-        )
-        local_parts.append(local_header + name_bytes + data)
-
-        # Central directory header
-        central_header = struct.pack(
-            "<IHHHHHHIIIHHHHHII",
-            0x02014b50,  # signature
-            20,          # version made by
-            20,          # version needed
-            0,           # flags
-            0,           # compression
-            0,           # mod time
-            0,           # mod date
-            crc,         # crc32
-            len(data),   # compressed size
-            len(data),   # uncompressed size
-            len(name_bytes),  # name length
-            0,           # extra length
-            0,           # comment length
-            0,           # disk start
-            0,           # internal attrs
-            0,           # external attrs
-            offset       # local header offset
-        )
-        central_parts.append(central_header + name_bytes)
-        offset += len(local_header) + len(name_bytes) + len(data)
-
-    local_data = b"".join(local_parts)
-    central_data = b"".join(central_parts)
-
-    # End of central directory
-    end_record = struct.pack(
-        "<IHHHHIIH",
-        0x06054b50,      # signature
-        0,               # disk number
-        0,               # disk with central dir
-        len(files),      # entries on disk
-        len(files),      # total entries
-        len(central_data),  # central dir size
-        len(local_data),    # central dir offset
-        0                # comment length
-    )
-
-    zip_data = local_data + central_data + end_record
-    return base64.b64encode(zip_data).decode("ascii")
-
-
-def create_multi_card_deck(card_count: int = 5, words: list = None) -> str:
-    """
-    Create an AnkiApp deck with multiple cards for testing.
-
-    Args:
-        card_count: Number of cards to create (ignored if words provided)
-        words: List of word strings to use as card content
-    """
-    import struct
-
-    # XML escape function (same as workflow code)
-    def esc(s):
-        return (str(s)
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace('"', "&quot;"))
-
-    # Generate test words if not provided
-    if words is None:
-        words = [f"word{i}" for i in range(card_count)]
-
-    # Generate unique PNG data for each card (different color values)
-    cards_data = []
-    for i, word in enumerate(words):
-        # Create slightly different PNG data for each card (vary last byte)
-        png_data = bytes([
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-            0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-            0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-            0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-            0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-            0x44, 0xAE, 0x42, 0x60, (0x82 + i) & 0xFF  # Vary last byte
-        ])
-        image_hash = hashlib.sha256(png_data).hexdigest()
-        cards_data.append({"word": word, "png_data": png_data, "hash": image_hash})
-
-    # Build XML with escaped words
-    cards_xml = "\n".join(
-        f'    <card><img name="Image" id="{c["hash"]}"/><text name="Word">{esc(c["word"])}</text></card>'
-        for c in cards_data
-    )
-
-    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<deck name="Test Vocabulary" tags="test,multi">
-  <fields>
-    <img name="Image" sides="10"/>
-    <text lang="en-US" name="Word" sides="01"/>
-  </fields>
-  <cards>
-{cards_xml}
-  </cards>
-</deck>
-'''
-
-    # Create ZIP using same algorithm as create_sample_deck
-    def crc32(data):
-        crc = 0xFFFFFFFF
-        table = []
-        for i in range(256):
-            c = i
-            for _ in range(8):
-                c = (0xEDB88320 ^ (c >> 1)) if (c & 1) else (c >> 1)
-            table.append(c)
-        for byte in data:
-            crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
-        return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
-
-    files = [("deck.xml", xml.encode("utf-8"))]
-    for c in cards_data:
-        files.append((f"blobs/{c['hash']}.png", c["png_data"]))
-
-    local_parts = []
-    central_parts = []
-    offset = 0
-
-    for name, data in files:
-        name_bytes = name.encode("utf-8")
-        crc = crc32(data)
+        crc = _crc32(data)
 
         local_header = struct.pack(
             "<IHHHHHIIIHH",
@@ -372,8 +193,101 @@ def create_multi_card_deck(card_count: int = 5, words: list = None) -> str:
         len(central_data), len(local_data), 0
     )
 
-    zip_data = local_data + central_data + end_record
-    return base64.b64encode(zip_data).decode("ascii")
+    return local_data + central_data + end_record
+
+
+# Sample 1x1 red PNG used by test deck builders
+_SAMPLE_PNG = bytes([
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,  # PNG signature
+    0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,  # IHDR chunk
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,  # 1x1 image
+    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,  # IDAT chunk
+    0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
+    0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,  # IEND chunk
+    0x44, 0xAE, 0x42, 0x60, 0x82
+])
+
+
+def create_sample_deck() -> str:
+    """Create a sample AnkiApp deck for testing."""
+    image_hash = hashlib.sha256(_SAMPLE_PNG).hexdigest()
+
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<deck name="Test Vocabulary" tags="test,sample">
+  <fields>
+    <img name="Image" sides="10"/>
+    <text lang="en-US" name="Word" sides="01"/>
+  </fields>
+  <cards>
+    <card>
+      <img name="Image" id="{image_hash}"/>
+      <text name="Word">bed</text>
+    </card>
+  </cards>
+</deck>
+'''
+
+    files = [
+        ("deck.xml", xml.encode("utf-8")),
+        (f"blobs/{image_hash}.png", _SAMPLE_PNG)
+    ]
+
+    return base64.b64encode(_build_zip(files)).decode("ascii")
+
+
+def create_multi_card_deck(card_count: int = 5, words: list = None) -> str:
+    """
+    Create an AnkiApp deck with multiple cards for testing.
+
+    Args:
+        card_count: Number of cards to create (ignored if words provided)
+        words: List of word strings to use as card content
+    """
+    # XML escape function (same as workflow code)
+    def esc(s):
+        return (str(s)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;"))
+
+    # Generate test words if not provided
+    if words is None:
+        words = [f"word{i}" for i in range(card_count)]
+
+    # Generate unique PNG data for each card (different color values)
+    cards_data = []
+    for i, word in enumerate(words):
+        # Create slightly different PNG data for each card (vary last byte)
+        png_data = _SAMPLE_PNG[:-1] + bytes([(0x82 + i) & 0xFF])
+        image_hash = hashlib.sha256(png_data).hexdigest()
+        cards_data.append({"word": word, "png_data": png_data, "hash": image_hash})
+
+    # Build XML with escaped words
+    cards_xml = "\n".join(
+        f'    <card><img name="Image" id="{c["hash"]}"/><text name="Word">{esc(c["word"])}</text></card>'
+        for c in cards_data
+    )
+
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<deck name="Test Vocabulary" tags="test,multi">
+  <fields>
+    <img name="Image" sides="10"/>
+    <text lang="en-US" name="Word" sides="01"/>
+  </fields>
+  <cards>
+{cards_xml}
+  </cards>
+</deck>
+'''
+
+    files = [("deck.xml", xml.encode("utf-8"))]
+    for c in cards_data:
+        files.append((f"blobs/{c['hash']}.png", c["png_data"]))
+
+    return base64.b64encode(_build_zip(files)).decode("ascii")
 
 
 # =============================================================================
@@ -623,18 +537,7 @@ class TestBlobValidation:
     def test_unused_blob_warning(self):
         """Test that unused blobs generate warnings, not errors."""
         # Create valid deck with an extra unused blob
-        png_data = bytes([
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-            0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-            0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-            0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-            0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-            0x44, 0xAE, 0x42, 0x60, 0x82
-        ])
-        used_hash = hashlib.sha256(png_data).hexdigest()
+        used_hash = hashlib.sha256(_SAMPLE_PNG).hexdigest()
 
         # Different data for unused blob
         unused_data = b"unused blob data"
@@ -648,7 +551,7 @@ class TestBlobValidation:
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             zf.writestr("deck.xml", xml)
-            zf.writestr(f"blobs/{used_hash}.png", png_data)
+            zf.writestr(f"blobs/{used_hash}.png", _SAMPLE_PNG)
             zf.writestr(f"blobs/{unused_hash}.bin", unused_data)
         zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode()
 

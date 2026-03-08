@@ -1,4 +1,4 @@
-{ config, pkgs, pkgs-unstable, lib, ... }:
+{ pkgs, lib, ... }:
 
 {
   # Allow unfree packages
@@ -45,9 +45,6 @@
   # Firewall
   networking.firewall.enable = true;
   networking.firewall.allowedTCPPorts = [ 22 ];
-
-  # System packages moved to dev-tools.nix module
-  # Networking-specific packages can be added here if needed
 
   # Time zone
   time.timeZone = "Europe/Chisinau";

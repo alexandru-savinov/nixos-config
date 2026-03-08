@@ -21,63 +21,42 @@
 # - https://github.com/jemalloc/jemalloc/issues/467 (16KB page support)
 # - https://github.com/NixOS/nixpkgs/issues/312068 (ARM/aarch64 onnxruntime crash)
 
-{ config, pkgs, lib, ... }:
+{ lib, ... }:
 
 {
   nixpkgs.overlays = [
-    # Fix 1: Override Python packages that fail on ARM due to jemalloc/16KB pages
-    # polars has jemalloc statically linked (compiled for 4KB pages)
-    # deepdiff: Disable checks as precaution (may be transitively affected via unstructured)
     (final: prev:
       let
         isArm = prev.stdenv.isAarch64 && prev.stdenv.isLinux;
-        python3Packages = prev.python313Packages;
+        disableChecks = drv: drv.overridePythonAttrs {
+          pythonImportsCheck = [ ];
+          doCheck = false;
+          doInstallCheck = false;
+        };
       in
       lib.optionalAttrs isArm {
-        python313Packages = python3Packages.overrideScope (pyFinal: pyPrev: {
-          # Skip all checks for packages that use polars (jemalloc crash)
-          # polars has jemalloc statically linked, compiled for 4KB pages
-          deepdiff = pyPrev.deepdiff.overridePythonAttrs (oldAttrs: {
-            pythonImportsCheck = [ ];
-            doCheck = false;
-            doInstallCheck = false;
-          });
-
-          # Skip all checks for chromadb (onnxruntime crash)
-          chromadb = pyPrev.chromadb.overridePythonAttrs (oldAttrs: {
-            pythonImportsCheck = [ ];
-            doCheck = false;
-            doInstallCheck = false;
-          });
+        # Fix 1: Disable checks for Python packages that crash on ARM
+        # deepdiff: polars transitive dep with jemalloc (4KB pages vs 16KB kernel)
+        # chromadb: onnxruntime crashes on aarch64-linux
+        python313Packages = prev.python313Packages.overrideScope (pyFinal: pyPrev: {
+          deepdiff = disableChecks pyPrev.deepdiff;
+          chromadb = disableChecks pyPrev.chromadb;
         });
-      }
-    )
 
-    # Fix 2: Remove chromadb from open-webui on ARM (onnxruntime crashes)
-    (final: prev:
-      let isArm = prev.stdenv.isAarch64 && prev.stdenv.isLinux;
-      in {
-        open-webui =
-          if isArm
-          then
-            prev.open-webui.overridePythonAttrs
-              (oldAttrs: {
-                # Remove chromadb from propagatedBuildInputs on ARM (onnxruntime crash)
-                propagatedBuildInputs = builtins.filter
-                  (dep: (dep.pname or "") != "chromadb")
-                  (oldAttrs.propagatedBuildInputs or [ ]);
+        # Fix 2: Remove chromadb from open-webui on ARM (onnxruntime crash)
+        open-webui = prev.open-webui.overridePythonAttrs (oldAttrs: {
+          propagatedBuildInputs = builtins.filter
+            (dep: (dep.pname or "") != "chromadb")
+            (oldAttrs.propagatedBuildInputs or [ ]);
 
-                # Skip import check for chromadb
-                pythonImportsCheck = builtins.filter
-                  (check: check != "chromadb")
-                  (oldAttrs.pythonImportsCheck or [ ]);
+          pythonImportsCheck = builtins.filter
+            (check: check != "chromadb")
+            (oldAttrs.pythonImportsCheck or [ ]);
 
-                # Add metadata about the ARM fix
-                meta = (oldAttrs.meta or { }) // {
-                  description = (oldAttrs.meta.description or "") + " (ARM: no chromadb)";
-                };
-              })
-          else prev.open-webui;
+          meta = (oldAttrs.meta or { }) // {
+            description = (oldAttrs.meta.description or "") + " (ARM: no chromadb)";
+          };
+        });
       }
     )
   ];

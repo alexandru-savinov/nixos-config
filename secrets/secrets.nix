@@ -21,13 +21,16 @@ let
   # All keys (for secrets shared across all hosts)
   allKeys = users ++ systems;
 
+  # allKeys + sancta-claw (for secrets shared across all hosts including the VPS)
+  allPlusClaw = allKeys ++ [ sancta-claw ];
+
   # Keys for Kuzea-specific secrets (sancta-claw + owner machines)
   # rpi5 included so Alexandru can edit/re-encrypt from rpi5-full
   clawKeys = users ++ [ sancta-claw rpi5 ];
 in
 {
   # Tailscale - shared across all hosts (including sancta-claw)
-  "tailscale-auth-key.age".publicKeys = allKeys ++ [ sancta-claw ];
+  "tailscale-auth-key.age".publicKeys = allPlusClaw;
 
   # ── Kuzea secrets (sancta-claw only, least privilege) ──────────────────
   # Encrypt on sancta-choir: agenix -e secrets/kuzea-caldav-credentials.age
@@ -47,7 +50,7 @@ in
 
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;
-  "openrouter-api-key.age".publicKeys = allKeys ++ [ sancta-claw ];
+  "openrouter-api-key.age".publicKeys = allPlusClaw;
   "tavily-api-key.age".publicKeys = allKeys;
 
   # n8n workflow automation - shared across all hosts

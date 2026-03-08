@@ -68,12 +68,16 @@ let
     meta = {
       description = "MCP server for UniFi Network Controller";
       homepage = "https://github.com/sirkirby/unifi-network-mcp";
-      license = lib.licenses.mit;
+      license = licenses.mit;
     };
   };
 
-  # Docker image for simpler deployment
   dockerImage = "ghcr.io/sirkirby/unifi-network-mcp:latest";
+
+  portStr = toString cfg.port;
+  ssePortStr = toString cfg.service.ssePort;
+  httpsPortStr = toString cfg.tailscaleServe.httpsPort;
+
 in
 {
   options.services.unifi-mcp = {
@@ -282,7 +286,7 @@ in
     # Generate environment file for both modes
     environment.etc."unifi-mcp/env.template".text = ''
       UNIFI_HOST=${cfg.host}
-      UNIFI_PORT=${toString cfg.port}
+      UNIFI_PORT=${portStr}
       UNIFI_USERNAME=${cfg.username}
       UNIFI_SITE=${cfg.site}
       UNIFI_VERIFY_SSL=${boolToString cfg.verifySsl}
@@ -338,14 +342,14 @@ in
 
             # Enable SSE mode
             echo "UNIFI_ENABLE_SSE=true" >> "$ENV_FILE"
-            echo "UNIFI_SSE_PORT=${toString cfg.service.ssePort}" >> "$ENV_FILE"
+            echo "UNIFI_SSE_PORT=${ssePortStr}" >> "$ENV_FILE"
 
             chmod 600 "$ENV_FILE"
           '')
         ];
 
         ExecStart = mkIf cfg.useDocker
-          "${pkgs.docker}/bin/docker run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${toString cfg.service.ssePort}:${toString cfg.service.ssePort} ${dockerImage}";
+          "${pkgs.docker}/bin/docker run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${ssePortStr}:${ssePortStr} ${dockerImage}";
 
         ExecStop = mkIf cfg.useDocker "${pkgs.docker}/bin/docker stop unifi-mcp";
       };
@@ -388,19 +392,19 @@ in
 
         # Wait for unifi-mcp to be listening
         timeout=60
-        while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${toString cfg.service.ssePort} 2>/dev/null; do
+        while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${ssePortStr} 2>/dev/null; do
           timeout=$((timeout - 1))
           if [ $timeout -le 0 ]; then
-            echo "ERROR: unifi-mcp not listening on port ${toString cfg.service.ssePort} after 60 seconds"
+            echo "ERROR: unifi-mcp not listening on port ${ssePortStr} after 60 seconds"
             exit 1
           fi
           sleep 1
         done
 
         # Configure Tailscale Serve
-        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
+        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${httpsPortStr}"; then
           echo "Configuring Tailscale Serve for UniFi MCP..."
-          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://127.0.0.1:${toString cfg.service.ssePort}
+          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${httpsPortStr} http://127.0.0.1:${ssePortStr}
         else
           echo "Tailscale Serve already configured for UniFi MCP"
         fi
@@ -408,7 +412,7 @@ in
 
       preStop = ''
         echo "Removing Tailscale Serve configuration for UniFi MCP..."
-        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${httpsPortStr} off || true
       '';
     };
 
@@ -436,7 +440,7 @@ in
                 "args": [
                   "run", "--rm", "-i",
                   "-e", "UNIFI_HOST=${cfg.host}",
-                  "-e", "UNIFI_PORT=${toString cfg.port}",
+                  "-e", "UNIFI_PORT=${portStr}",
                   "-e", "UNIFI_USERNAME=${cfg.username}",
                   "-e", "UNIFI_PASSWORD=$PASSWORD",
                   "-e", "UNIFI_SITE=${cfg.site}",
@@ -448,7 +452,7 @@ in
                 '' else ''
                 "env": {
                   "UNIFI_HOST": "${cfg.host}",
-                  "UNIFI_PORT": "${toString cfg.port}",
+                  "UNIFI_PORT": "${portStr}",
                   "UNIFI_USERNAME": "${cfg.username}",
                   "UNIFI_PASSWORD": "$PASSWORD",
                   "UNIFI_SITE": "${cfg.site}",

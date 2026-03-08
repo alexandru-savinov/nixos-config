@@ -111,19 +111,8 @@ class PipeFunctionProvisioner:
             logger.error(f"Database connection error: {e}")
             return False
 
-    def _function_exists(self, name: str) -> bool:
-        """Check if function already exists in database."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM function WHERE name = ?", (name,))
-            count = cursor.fetchone()[0]
-            return count > 0
-        except sqlite3.Error as e:
-            logger.error(f"Error checking function existence: {e}")
-            return False
-
     def _get_existing_function_hash(self, name: str) -> Optional[str]:
-        """Get hash of existing function content."""
+        """Get hash of existing function content, or None if function doesn't exist."""
         try:
             cursor = self.conn.cursor()
             cursor.execute("SELECT content FROM function WHERE name = ?", (name,))
@@ -221,20 +210,18 @@ class PipeFunctionProvisioner:
             if not self._connect_db():
                 return False
 
-            # Check if function exists
-            if self._function_exists(function_name):
-                # Check if content has changed
-                existing_hash = self._get_existing_function_hash(function_name)
+            # Check if function exists and whether content has changed
+            existing_hash = self._get_existing_function_hash(function_name)
 
-                if existing_hash == current_hash:
-                    logger.info(f"Function {function_name} is up to date")
-                    return True
-                else:
-                    logger.info(f"Function {function_name} has changed, updating...")
-                    return self._update_function(function_name, content, metadata)
-            else:
+            if existing_hash is None:
                 logger.info(f"Function {function_name} does not exist, creating...")
                 return self._insert_function(function_name, content, metadata)
+            elif existing_hash == current_hash:
+                logger.info(f"Function {function_name} is up to date")
+                return True
+            else:
+                logger.info(f"Function {function_name} has changed, updating...")
+                return self._update_function(function_name, content, metadata)
 
         except Exception as e:
             logger.error(f"Error provisioning function: {e}")

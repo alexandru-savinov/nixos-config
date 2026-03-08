@@ -8,11 +8,7 @@
     # Add ~/.local/bin to PATH for user-installed binaries
     home.sessionPath = [ "$HOME/.local/bin" ];
 
-    # Additional user-specific home-manager configs can go here
-    programs.git = {
-      enable = true;
-      # Git config is already set via .gitconfig, just enable HM management
-    };
+    programs.git.enable = true;
 
     # Bash configuration
     programs.bash = {
