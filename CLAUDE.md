@@ -81,7 +81,7 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 |--------|------|-------------|
 | `services.open-webui-tailscale` | 8080 | AI gateway (OpenRouter + Tavily Search) |
 | `services.n8n-tailscale` | 5678 | Workflow automation with execution pruning |
-| `services.nixframe` | VT 7 / HDMI-A-2 | Digital photo frame with n8n upload |
+| `services.nixframe` | VT 7 / HDMI | Digital photo frame with n8n upload |
 | `services.gatus-tailscale` | 3001 | Declarative status monitoring |
 | `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
 | `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) |

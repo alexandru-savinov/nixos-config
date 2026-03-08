@@ -1,6 +1,6 @@
 # NixFrame — Digital Photo Frame for Raspberry Pi 5
 #
-# Displays a rotating slideshow on HDMI-A-2 with a clock/date sidebar.
+# Displays a rotating slideshow with a clock/date sidebar on any connected HDMI output.
 # Photos are uploaded via n8n webhook (mobile-friendly web form).
 #
 # Components:
@@ -9,12 +9,12 @@
 #
 # Display isolation:
 #   VT 1: root auto-login + btop (plain console, output depends on fbcon)
-#   VT 7: nixframe auto-login + Sway (configured to target HDMI-A-2 only)
+#   VT 7: nixframe auto-login + Sway (targets all connected outputs by default)
 #   Sway takes GPU control when VT 7 is active, returns it on VT switch.
 #
 # Usage in host configuration:
 #   services.nixframe.enable = true;
-#   # All defaults match RPi5 + Samsung 4K TV on HDMI-A-2
+#   # All defaults match RPi5 + Samsung 4K TV (auto-detects HDMI port)
 #
 # Access upload form via Tailscale HTTPS:
 #   https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui
@@ -896,7 +896,7 @@ let
 
   # Generated Sway config
   swayConfig = pkgs.writeText "sway-nixframe.conf" ''
-    # Target HDMI-A-2 for photo frame display
+    # Target all outputs — resilient to HDMI port changes after power surges
     output ${cfg.output} {
       resolution ${cfg.resolution}
       bg #000000 solid_color
@@ -940,8 +940,8 @@ in
 
     output = mkOption {
       type = types.str;
-      default = "HDMI-A-2";
-      description = "Sway output name for the display.";
+      default = "*";
+      description = "Sway output name for the display (* = all connected outputs).";
     };
 
     resolution = mkOption {
@@ -1060,10 +1060,26 @@ in
     # ──────────────────────────────────────────────────────────────
     systemd.services."getty@tty${toString cfg.vt}" = {
       overrideStrategy = "asDropin";
+      wantedBy = [ "getty.target" ];
       serviceConfig.ExecStart = [
         "" # Clear the default ExecStart
         "@${pkgs.util-linux}/sbin/agetty agetty --autologin nixframe --noclear %I $TERM"
       ];
+    };
+
+    # Switch to VT 7 at boot so Sway can acquire the DRM session.
+    # Without this, VT 1 (root/btop) stays active and Sway times out
+    # with "Timeout waiting session to become active" because the
+    # nixframe user cannot open /dev/tty0 to switch VTs itself.
+    systemd.services.nixframe-activate-vt = {
+      description = "Activate NixFrame display VT";
+      after = [ "getty@tty${toString cfg.vt}.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.kbd}/bin/chvt ${toString cfg.vt}";
+      };
     };
 
     # Auto-start Sway when nixframe logs into tty7
