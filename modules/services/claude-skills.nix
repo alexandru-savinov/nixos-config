@@ -35,6 +35,7 @@ in
       home.stateVersion = mkDefault "24.05";
       home.file = {
         ".claude/skills/verify-first".source = "${skillsDir}/verify-first";
+        ".claude/skills/review-fix-loop".source = "${skillsDir}/review-fix-loop";
       };
     });
   };
