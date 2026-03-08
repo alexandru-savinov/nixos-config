@@ -49,7 +49,7 @@
   fileSystems."/boot/firmware" = lib.mkForce {
     device = "/dev/disk/by-label/FIRMWARE";
     fsType = "vfat";
-    options = [ ];
+    options = [ "defaults" ];
   };
 
   # Enable redistributable firmware for WiFi, Bluetooth, etc.
