@@ -33,11 +33,17 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            extra-platforms = aarch64-linux
 
       - name: Setup Cachix
         uses: cachix/cachix-action@v15
         with:
           name: nix-community
+
+      - name: Set up QEMU for aarch64 emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Get current flake.lock hash
         id: before
@@ -86,14 +92,16 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Verify flake still builds
+      - name: Verify configurations still evaluate
         if: steps.changes.outputs.changed == 'true'
         run: |
           echo "Checking flake validity..."
           nix flake check --all-systems
 
-          echo "Evaluating sancta-choir configuration..."
+          echo "Evaluating configurations..."
           nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel.drvPath
+          nix eval .#nixosConfigurations.sancta-claw.config.system.build.toplevel.drvPath
+          nix eval .#nixosConfigurations.rpi5-full.config.system.build.toplevel.drvPath
 
       # Nightly: commit directly to main (security patches, already validated above)
       - name: Push directly to main

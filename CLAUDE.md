@@ -112,7 +112,7 @@ Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-
 
 ## CI/CD
 
-GitHub Actions on push/PR: `nix flake check`, build sancta-choir + sancta-claw (x86_64), evaluate rpi5 (aarch64 minimal), format check. **Note:** `rpi5-full` is NOT verified in CI — validate locally with `nixos-rebuild build --flake .#rpi5-full`. Main branch protected - use PRs.
+GitHub Actions on push/PR: `nix flake check`, build sancta-choir + sancta-claw (x86_64), evaluate rpi5 + rpi5-full (aarch64), format check. Main branch protected - use PRs.
 
 ## Git Workflow
 

@@ -157,3 +157,6 @@ jobs:
 
             - name: Evaluate rpi5 (aarch64-linux)
               run: nix eval .#nixosConfigurations.rpi5.config.system.build.toplevel.drvPath
+
+            - name: Evaluate rpi5-full (aarch64-linux)
+              run: nix eval .#nixosConfigurations.rpi5-full.config.system.build.toplevel.drvPath
