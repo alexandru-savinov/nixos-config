@@ -163,27 +163,20 @@ in
       };
 
       script = ''
-        # Wait for tailscaled to be ready (timeout: 60 seconds)
-        timeout=60
-        while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
-          timeout=$((timeout - 1))
-          if [ $timeout -le 0 ]; then
-            echo "ERROR: tailscaled not ready after 60 seconds"
-            exit 1
-          fi
-          sleep 1
-        done
+        wait_for() {
+          local label="$1" timeout=60; shift
+          while ! "$@" 2>/dev/null; do
+            timeout=$((timeout - 1))
+            if [ $timeout -le 0 ]; then
+              echo "ERROR: $label not ready after 60 seconds"
+              exit 1
+            fi
+            sleep 1
+          done
+        }
 
-        # Wait for Qdrant to be listening (timeout: 60 seconds)
-        timeout=60
-        while ! ${pkgs.netcat}/bin/nc -z ${cfg.host} ${toString cfg.port} 2>/dev/null; do
-          timeout=$((timeout - 1))
-          if [ $timeout -le 0 ]; then
-            echo "ERROR: Qdrant not listening on port ${toString cfg.port} after 60 seconds"
-            exit 1
-          fi
-          sleep 1
-        done
+        wait_for "tailscaled" ${pkgs.tailscale}/bin/tailscale status
+        wait_for "Qdrant (port ${toString cfg.port})" ${pkgs.netcat}/bin/nc -z ${cfg.host} ${toString cfg.port}
 
         # Check if serve is already configured for this port
         if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
@@ -202,9 +195,5 @@ in
       '';
     };
 
-    # Service binds to localhost only - accessible via Tailscale Serve (HTTPS)
-    # Access Qdrant via:
-    #   REST API: https://<hostname>.<tailnet>.ts.net:6333
-    #   Web UI:   https://<hostname>.<tailnet>.ts.net:6333/dashboard
   };
 }

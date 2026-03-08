@@ -21,27 +21,27 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (lib) mkEnableOption mkOption mkIf types concatMapStringsSep;
+  inherit (lib) mkEnableOption mkOption mkIf types concatMapStringsSep escapeShellArg;
   cfg = config.services.backup-pull;
   # Derive service name from remote host (sanitized for systemd)
   backupName = builtins.replaceStrings [ "." ] [ "-" ] cfg.remoteHost;
 in
 {
   options.services.backup-pull = {
-    enable = lib.mkEnableOption "Pull-based backup from remote host";
+    enable = mkEnableOption "Pull-based backup from remote host";
 
-    remoteHost = lib.mkOption {
+    remoteHost = mkOption {
       type = types.str;
       description = "SSH host to pull from (Tailscale hostname or IP).";
     };
 
-    remoteUser = lib.mkOption {
+    remoteUser = mkOption {
       type = types.str;
       default = "backup-pull";
       description = "SSH user on remote host (should have rrsync read-only access).";
     };
 
-    remotePaths = lib.mkOption {
+    remotePaths = mkOption {
       type = types.listOf types.str;
       description = ''
         Paths to rsync from remote host. These are relative to the rrsync
@@ -49,35 +49,35 @@ in
       '';
     };
 
-    sshKeyFile = lib.mkOption {
+    sshKeyFile = mkOption {
       type = types.path;
       description = "Path to SSH private key for remote access (from agenix).";
     };
 
-    resticPasswordFile = lib.mkOption {
+    resticPasswordFile = mkOption {
       type = types.path;
       description = "Path to restic repository password file (from agenix).";
     };
 
-    repository = lib.mkOption {
+    repository = mkOption {
       type = types.str;
       default = "/backups/restic/sancta-claw";
       description = "Local path for the restic repository.";
     };
 
-    stagingDir = lib.mkOption {
+    stagingDir = mkOption {
       type = types.str;
       default = "/backups/staging";
       description = "Tmpfs staging directory for unencrypted data.";
     };
 
-    stagingSize = lib.mkOption {
+    stagingSize = mkOption {
       type = types.str;
       default = "512M";
       description = "Size limit for the tmpfs staging mount.";
     };
 
-    knownHostsEntry = lib.mkOption {
+    knownHostsEntry = mkOption {
       type = types.str;
       default = "";
       description = ''
@@ -87,7 +87,7 @@ in
       '';
     };
 
-    excludePatterns = lib.mkOption {
+    excludePatterns = mkOption {
       type = types.listOf types.str;
       default = [
         "sessions/"
@@ -98,14 +98,14 @@ in
       description = "Patterns to exclude from rsync.";
     };
 
-    timerOnCalendar = lib.mkOption {
+    timerOnCalendar = mkOption {
       type = types.str;
       default = "*-*-* 03:00:00";
       description = "systemd OnCalendar expression for backup schedule.";
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = mkIf cfg.enable {
     # Tmpfs staging — data never persists on rpi5 disk unencrypted
     fileSystems.${cfg.stagingDir} = {
       device = "tmpfs";
@@ -114,16 +114,15 @@ in
     };
 
     # Pre-seed known_hosts for strict host key checking
-    environment.etc."backup-pull/known_hosts" = lib.mkIf (cfg.knownHostsEntry != "") {
+    environment.etc."backup-pull/known_hosts" = mkIf (cfg.knownHostsEntry != "") {
       text = cfg.knownHostsEntry + "\n";
       mode = "0644";
     };
 
-    # Ensure directories exist (including parent)
+    # Ensure directories exist (staging dir created by fileSystems tmpfs mount)
     systemd.tmpfiles.rules = [
       "d /backups 0700 root root -"
       "d ${dirOf cfg.repository} 0700 root root -"
-      "d ${cfg.stagingDir} 0700 root root -"
     ];
 
     # Restic backup using NixOS built-in module
@@ -149,8 +148,8 @@ in
       # rsync pull before backup
       backupPrepareCommand =
         let
-          excludeArgs = concatMapStringsSep " " (p: "--exclude=${lib.escapeShellArg p}") cfg.excludePatterns;
-          rsyncPaths = concatMapStringsSep " " (p: lib.escapeShellArg "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
+          excludeArgs = concatMapStringsSep " " (p: "--exclude=${escapeShellArg p}") cfg.excludePatterns;
+          rsyncPaths = concatMapStringsSep " " (p: escapeShellArg "${cfg.remoteUser}@${cfg.remoteHost}:${p}") cfg.remotePaths;
           sshHostKeyOpts =
             if cfg.knownHostsEntry != "" then
               "-o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/backup-pull/known_hosts"
@@ -179,7 +178,7 @@ in
 
     # Weekly integrity check (Sunday 05:00)
     systemd.services."restic-check-${backupName}" = {
-      description = "Restic repository integrity check (sancta-claw)";
+      description = "Restic repository integrity check (${cfg.remoteHost})";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
 

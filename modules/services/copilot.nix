@@ -1,9 +1,8 @@
-{ config, pkgs, lib, ... }:
+{ pkgs, ... }:
 
 {
   # GitHub Copilot CLI MCP Server Configuration
   home-manager.users.root = {
-    # MCP configuration file for GitHub Copilot CLI
     home.file.".copilot/mcp-config.json".text = builtins.toJSON {
       mcpServers = {
         context7 = {
