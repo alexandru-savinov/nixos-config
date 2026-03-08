@@ -6,26 +6,29 @@ on:
     pull_request:
         branches: [main]
 
+permissions:
+    contents: read
+
 jobs:
     check:
         name: Check Flake & Formatting
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
             - name: Install Nix
-              uses: cachix/install-nix-action@v30
+              uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
               with:
                   extra_nix_config: |
                       experimental-features = nix-command flakes
 
             - name: Setup Cachix
-              uses: cachix/cachix-action@v15
+              uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
               with:
                   name: nix-community
 
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@v6
+              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
               with:
                   # Cache key based on flake.lock - changes when dependencies update
                   primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}
@@ -57,21 +60,21 @@ jobs:
                   sudo docker image prune --all --force
                   df -h
 
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
             - name: Install Nix
-              uses: cachix/install-nix-action@v30
+              uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
               with:
                   extra_nix_config: |
                       experimental-features = nix-command flakes
 
             - name: Setup Cachix
-              uses: cachix/cachix-action@v15
+              uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
               with:
                   name: nix-community
 
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@v6
+              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
               with:
                   primary-key: nix-${{ runner.os }}-build-x86-${{ hashFiles('flake.lock') }}
                   restore-prefixes-all-matches: |
@@ -94,21 +97,21 @@ jobs:
             matrix:
                 script: [install, deploy, bootstrap]
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
             - name: Install Nix
-              uses: cachix/install-nix-action@v30
+              uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
               with:
                   extra_nix_config: |
                       experimental-features = nix-command flakes
 
             - name: Setup Cachix
-              uses: cachix/cachix-action@v15
+              uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
               with:
                   name: nix-community
 
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@v6
+              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
               with:
                   primary-key: nix-${{ runner.os }}-scripts-${{ matrix.script }}-${{ hashFiles('flake.lock') }}
                   restore-prefixes-all-matches: |
@@ -126,22 +129,22 @@ jobs:
         runs-on: ubuntu-latest
         needs: check
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
             - name: Install Nix
-              uses: cachix/install-nix-action@v30
+              uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
               with:
                   extra_nix_config: |
                       experimental-features = nix-command flakes
                       extra-platforms = aarch64-linux
 
             - name: Setup Cachix
-              uses: cachix/cachix-action@v15
+              uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
               with:
                   name: nix-community
 
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@v6
+              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
               with:
                   primary-key: nix-${{ runner.os }}-aarch64-${{ hashFiles('flake.lock') }}
                   restore-prefixes-all-matches: |
@@ -151,7 +154,7 @@ jobs:
                   gc-max-store-size: 5G
 
             - name: Set up QEMU for aarch64 emulation
-              uses: docker/setup-qemu-action@v3
+              uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
               with:
                   platforms: arm64
 

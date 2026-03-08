@@ -24,24 +24,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v30
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
             extra-platforms = aarch64-linux
 
       - name: Setup Cachix
-        uses: cachix/cachix-action@v15
+        uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
         with:
           name: nix-community
 
       - name: Set up QEMU for aarch64 emulation
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: arm64
 
@@ -137,7 +137,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'false'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore(deps): update flake inputs"
