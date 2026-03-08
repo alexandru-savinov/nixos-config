@@ -17,6 +17,32 @@
 , ...
 }:
 
+let
+  secret = name: config.age.secrets.${name}.path;
+  openaiApiKeyPath = secret "openai-api-key";
+
+  # Gatus endpoint helpers — reduce boilerplate across monitored services
+  httpEndpoint = group: name: url: {
+    inherit name group url;
+    interval = "1m";
+    conditions = [ "[STATUS] == 200" ];
+  };
+
+  remoteHttpEndpoint = group: name: url: {
+    inherit name group url;
+    interval = "1m";
+    conditions = [
+      "[STATUS] == 200"
+      "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
+    ];
+  };
+
+  icmpEndpoint = group: name: url: {
+    inherit name group url;
+    interval = "30s";
+    conditions = [ "[CONNECTED] == true" ];
+  };
+in
 {
   imports = [
     # Import the base rpi5 configuration
@@ -57,37 +83,46 @@
   ];
 
   # Agenix secrets for additional services
-  age.secrets = {
-    # Open-WebUI secrets
-    open-webui-secret-key.file = "${self}/secrets/open-webui-secret-key.age";
-    openrouter-api-key.file = "${self}/secrets/openrouter-api-key.age";
-    tavily-api-key.file = "${self}/secrets/tavily-api-key.age";
+  age.secrets =
+    let
+      simpleSecret = name: { file = "${self}/secrets/${name}.age"; };
+    in
+    {
+      # Open-WebUI
+      open-webui-secret-key = simpleSecret "open-webui-secret-key";
+      openrouter-api-key = simpleSecret "openrouter-api-key";
+      tavily-api-key = simpleSecret "tavily-api-key";
+      openai-api-key = simpleSecret "openai-api-key";
+      e2e-test-api-key = simpleSecret "e2e-test-api-key";
 
-    # n8n workflow automation
-    n8n-encryption-key.file = "${self}/secrets/n8n-encryption-key.age";
-    n8n-admin-password.file = "${self}/secrets/n8n-admin-password.age";
-    # n8n API key for Claude Code MCP (workflow management)
-    # Generate in n8n: Settings > API > Create API Key
-    n8n-api-key = {
-      file = "${self}/secrets/n8n-api-key.age";
-      mode = "0400"; # Readable only by root (systemd service runs as root)
+      # n8n workflow automation
+      n8n-encryption-key = simpleSecret "n8n-encryption-key";
+      n8n-admin-password = simpleSecret "n8n-admin-password";
+      telegram-bot-token = simpleSecret "telegram-bot-token";
+
+      # n8n API key for Claude Code MCP (workflow management)
+      # Generate in n8n: Settings > API > Create API Key
+      n8n-api-key = {
+        file = "${self}/secrets/n8n-api-key.age";
+        mode = "0400"; # Readable only by root (systemd service runs as root)
+      };
+
+      # CalDAV credentials for NixFrame calendar sidebar
+      caldav-credentials = {
+        file = "${self}/secrets/caldav-credentials.age";
+        owner = "nixframe";
+      };
+
+      # Backup pull secrets
+      rpi5-backup-ssh-key = {
+        file = "${self}/secrets/rpi5-backup-ssh-key.age";
+        mode = "0400";
+      };
+      restic-password = {
+        file = "${self}/secrets/restic-password.age";
+        mode = "0400";
+      };
     };
-
-    # OpenAI API key (for TTS/STT)
-    openai-api-key.file = "${self}/secrets/openai-api-key.age";
-
-    # Telegram bot token for workflow notifications
-    telegram-bot-token.file = "${self}/secrets/telegram-bot-token.age";
-
-    # E2E test credentials
-    e2e-test-api-key.file = "${self}/secrets/e2e-test-api-key.age";
-
-    # CalDAV credentials for NixFrame calendar sidebar
-    caldav-credentials = {
-      file = "${self}/secrets/caldav-credentials.age";
-      owner = "nixframe";
-    };
-  };
 
   # Open-WebUI with OpenRouter backend
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
@@ -99,8 +134,8 @@
   services.open-webui-tailscale = {
     enable = true;
     enableSignup = false;
-    secretKeyFile = config.age.secrets.open-webui-secret-key.path;
-    openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
+    secretKeyFile = secret "open-webui-secret-key";
+    openai.apiKeyFile = secret "openrouter-api-key";
     webuiUrl = "https://rpi5.tail4249a9.ts.net";
 
     # Only show ZDR (Zero Data Retention) models from OpenRouter
@@ -109,7 +144,7 @@
     # Tavily Search API for web search (works without chromadb; document embedding requires it)
     tavilySearch = {
       enable = true;
-      apiKeyFile = config.age.secrets.tavily-api-key.path;
+      apiKeyFile = secret "tavily-api-key";
     };
 
     # Vector Database: Use Qdrant instead of chromadb (which crashes on ARM)
@@ -153,9 +188,6 @@
       # Document embedding works! Web search continues to work via Tavily.
     };
 
-    # OIDC authentication - disabled (same issue as sancta-choir with tsidp on same host)
-    oidc.enable = false;
-
     # Voice Support - use OpenAI APIs for better performance on RPi5
     # Local Whisper would be too slow on ARM
     voice = {
@@ -163,13 +195,13 @@
 
       stt = {
         engine = "openai";
-        openai.apiKeyFile = config.age.secrets.openai-api-key.path;
+        openai.apiKeyFile = openaiApiKeyPath;
       };
 
       tts = {
         engine = "openai";
         openai = {
-          apiKeyFile = config.age.secrets.openai-api-key.path;
+          apiKeyFile = openaiApiKeyPath;
           model = "tts-1";
           voice = "nova";
         };
@@ -198,7 +230,7 @@
     #   nix-shell --run "pytest tests/e2e/ -v"
     testing = {
       enable = true;
-      apiKeyFile = config.age.secrets.e2e-test-api-key.path;
+      apiKeyFile = secret "e2e-test-api-key";
     };
   };
 
@@ -206,18 +238,18 @@
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net:5678
   services.n8n-tailscale = {
     enable = true;
-    encryptionKeyFile = config.age.secrets.n8n-encryption-key.path;
+    encryptionKeyFile = secret "n8n-encryption-key";
 
     # OpenRouter API key - injected as OPENROUTER_API_KEY environment variable
     # Workflows can reference it using: Bearer {{ $env.OPENROUTER_API_KEY }}
-    openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
+    openrouterApiKeyFile = secret "openrouter-api-key";
 
     # OpenAI API key - for TTS pronunciation audio in image-to-anki workflow
     # Workflows can reference it using: Bearer {{ $env.OPENAI_API_KEY }}
-    openaiApiKeyFile = config.age.secrets.openai-api-key.path;
+    openaiApiKeyFile = openaiApiKeyPath;
 
     # Telegram bot token - for tender monitor and other workflow notifications
-    telegramBotTokenFile = config.age.secrets.telegram-bot-token.path;
+    telegramBotTokenFile = secret "telegram-bot-token";
 
     # Allow $env expressions in workflows (required for declarative API keys)
     # Safe here because workflows are controlled via workflowsDir, not user-created
@@ -235,7 +267,7 @@
     webhookHealthCheck = "image-to-anki-ui";
 
     # Admin password for REST API authentication (required for community packages)
-    adminPasswordFile = config.age.secrets.n8n-admin-password.path;
+    adminPasswordFile = secret "n8n-admin-password";
 
     # Community packages installed via REST API
     # Requires adminPasswordFile to authenticate with n8n
@@ -258,7 +290,7 @@
   # Enables Claude Code to create/update/delete workflows via n8n API
   services.n8n-mcp-claude = {
     n8nUrl = "http://127.0.0.1:5678";
-    apiKeyFile = config.age.secrets.n8n-api-key.path;
+    apiKeyFile = secret "n8n-api-key";
   };
 
   # Qdrant Vector Database - External vector DB for RAG on ARM
@@ -336,94 +368,20 @@
 
     # Monitored Endpoints
     endpoints = {
-      # ----------------------------------------------------------------------
       # rpi5 local services (this host)
-      # ----------------------------------------------------------------------
-      rpi5-open-webui = {
-        name = "Open-WebUI";
-        group = "rpi5";
-        url = "http://127.0.0.1:8080/health";
-        interval = "1m";
-        conditions = [ "[STATUS] == 200" ];
-      };
+      rpi5-open-webui = httpEndpoint "rpi5" "Open-WebUI" "http://127.0.0.1:8080/health";
+      rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";
+      rpi5-anki-workflow = httpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui";
+      rpi5-nixframe = httpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui";
+      rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
+      rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 
-      rpi5-n8n = {
-        name = "n8n";
-        group = "rpi5";
-        url = "http://127.0.0.1:5678/healthz";
-        interval = "1m";
-        conditions = [ "[STATUS] == 200" ];
-      };
-
-      rpi5-anki-workflow = {
-        name = "Anki Workflow";
-        group = "rpi5";
-        url = "http://127.0.0.1:5678/webhook/image-to-anki-ui";
-        interval = "1m";
-        conditions = [ "[STATUS] == 200" ];
-      };
-
-      rpi5-nixframe = {
-        name = "NixFrame Upload";
-        group = "rpi5";
-        url = "http://127.0.0.1:5678/webhook/nixframe-ui";
-        interval = "1m";
-        conditions = [ "[STATUS] == 200" ];
-      };
-
-      rpi5-qdrant = {
-        name = "Qdrant";
-        group = "rpi5";
-        url = "http://127.0.0.1:6333/readyz";
-        interval = "1m";
-        conditions = [ "[STATUS] == 200" ];
-      };
-
-      rpi5-tailscale = {
-        name = "Tailscale";
-        group = "rpi5";
-        # Use Tailscale hostname to verify actual Tailscale connectivity
-        url = "icmp://rpi5.tail4249a9.ts.net";
-        interval = "30s";
-        conditions = [ "[CONNECTED] == true" ];
-      };
-
-      # ----------------------------------------------------------------------
       # sancta-choir services (remote host via Tailscale)
-      # ----------------------------------------------------------------------
-      sancta-choir-open-webui = {
-        name = "Open-WebUI";
-        group = "sancta-choir";
-        url = "https://sancta-choir.tail4249a9.ts.net/health";
-        interval = "1m";
-        conditions = [
-          "[STATUS] == 200"
-          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
-        ];
-      };
+      sancta-choir-open-webui = remoteHttpEndpoint "sancta-choir" "Open-WebUI" "https://sancta-choir.tail4249a9.ts.net/health";
+      sancta-choir-n8n = remoteHttpEndpoint "sancta-choir" "n8n" "https://sancta-choir.tail4249a9.ts.net:5678/healthz";
+      sancta-choir-tailscale = icmpEndpoint "sancta-choir" "Tailscale" "icmp://sancta-choir.tail4249a9.ts.net";
 
-      sancta-choir-n8n = {
-        name = "n8n";
-        group = "sancta-choir";
-        url = "https://sancta-choir.tail4249a9.ts.net:5678/healthz";
-        interval = "1m";
-        conditions = [
-          "[STATUS] == 200"
-          "[RESPONSE_TIME] < 5000" # 5s threshold for Tailscale routing latency
-        ];
-      };
-
-      sancta-choir-tailscale = {
-        name = "Tailscale";
-        group = "sancta-choir";
-        url = "icmp://sancta-choir.tail4249a9.ts.net";
-        interval = "30s";
-        conditions = [ "[CONNECTED] == true" ];
-      };
-
-      # ----------------------------------------------------------------------
       # External services
-      # ----------------------------------------------------------------------
       external-openrouter = {
         name = "OpenRouter API";
         group = "external";
@@ -505,31 +463,24 @@
   # ──────────────────────────────────────────────────────────────
   # Displays rotating slideshow with clock sidebar on the TV.
   # Upload photos: https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui
-  services.nixframe.enable = true;
-  services.nixframe.weather.enable = true;
-  services.nixframe.calendar = {
+  services.nixframe = {
     enable = true;
-    credentialsFile = config.age.secrets.caldav-credentials.path;
+    weather.enable = true;
+    calendar = {
+      enable = true;
+      credentialsFile = secret "caldav-credentials";
+    };
   };
 
   # ── Backup: pull from sancta-claw ──────────────────────────────────────
   # Daily rsync → tmpfs staging → restic encrypted repo
   # See modules/services/backup-pull.nix for architecture details
-  age.secrets.rpi5-backup-ssh-key = {
-    file = "${self}/secrets/rpi5-backup-ssh-key.age";
-    mode = "0400";
-  };
-  age.secrets.restic-password = {
-    file = "${self}/secrets/restic-password.age";
-    mode = "0400";
-  };
-
   services.backup-pull = {
     enable = true;
     remoteHost = "46.225.168.24"; # sancta-claw public IP (bypasses Tailscale SSH policy)
     remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
-    sshKeyFile = config.age.secrets.rpi5-backup-ssh-key.path;
-    resticPasswordFile = config.age.secrets.restic-password.path;
+    sshKeyFile = secret "rpi5-backup-ssh-key";
+    resticPasswordFile = secret "restic-password";
     excludePatterns = [
       "sessions/"
       "*.log"

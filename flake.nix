@@ -46,6 +46,23 @@
 
       # Import nixpkgs for each system
       nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; });
+
+      # Import unstable nixpkgs per architecture (shared across host configs)
+      pkgs-unstable-x86 = import nixpkgs-unstable {
+        system = "x86_64-linux";
+        config.allowUnfree = true;
+      };
+      pkgs-unstable-aarch64 = import nixpkgs-unstable {
+        system = "aarch64-linux";
+        config.allowUnfree = true;
+      };
+
+      # Agenix CLI package module (shared across all hosts)
+      agenixModule = { pkgs, ... }: {
+        environment.systemPackages = [
+          agenix.packages.${pkgs.system}.default
+        ];
+      };
     in
     {
       # Formatter for `nix fmt`
@@ -84,23 +101,15 @@
         sancta-choir = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           specialArgs = {
-            pkgs-unstable = import nixpkgs-unstable {
-              system = "x86_64-linux";
-              config.allowUnfree = true;
-            };
-            inherit self; # Pass self for accessing flake root
-            inherit claude-code; # Pass claude-code flake
+            pkgs-unstable = pkgs-unstable-x86;
+            inherit self claude-code;
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
-            ({ pkgs, ... }: {
-              environment.systemPackages = [
-                agenix.packages.${pkgs.system}.default
-              ];
-            })
+            agenixModule
           ];
         };
 
@@ -108,23 +117,15 @@
         sancta-claw = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           specialArgs = {
-            pkgs-unstable = import nixpkgs-unstable {
-              system = "x86_64-linux";
-              config.allowUnfree = true;
-            };
-            inherit self;
-            inherit claude-code;
+            pkgs-unstable = pkgs-unstable-x86;
+            inherit self claude-code;
           };
           modules = [
             ./hosts/sancta-claw/configuration.nix
             disko.nixosModules.disko
             home-manager.nixosModules.home-manager
             agenix.nixosModules.default
-            ({ pkgs, ... }: {
-              environment.systemPackages = [
-                agenix.packages.${pkgs.system}.default
-              ];
-            })
+            agenixModule
           ];
         };
 
@@ -132,20 +133,14 @@
         zero-kuzea = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           specialArgs = {
-            pkgs-unstable = import nixpkgs-unstable {
-              system = "x86_64-linux";
-            };
+            pkgs-unstable = import nixpkgs-unstable { system = "x86_64-linux"; };
             inherit self;
           };
           modules = [
             ./hosts/zero-kuzea/configuration.nix
             disko.nixosModules.disko
             agenix.nixosModules.default
-            ({ pkgs, ... }: {
-              environment.systemPackages = [
-                agenix.packages.${pkgs.system}.default
-              ];
-            })
+            agenixModule
           ];
         };
 
@@ -155,26 +150,16 @@
         # Build SD image with: nix build .#images.rpi5-sd-image
         rpi5 = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
-            inherit nixos-raspberrypi; # Required by nixos-raspberrypi.lib.nixosSystem
-            pkgs-unstable = import nixpkgs-unstable {
-              system = "aarch64-linux";
-              config.allowUnfree = true;
-            };
-            inherit self; # Pass self for accessing flake root
-            inherit claude-code; # Pass claude-code flake
+            inherit nixos-raspberrypi self claude-code;
+            pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [
-            # nixos-raspberrypi modules for RPi5 with kernel 6.12.34
             nixos-raspberrypi.nixosModules.raspberry-pi-5.base
             ./hosts/rpi5/configuration.nix
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
-            ({ pkgs, ... }: {
-              environment.systemPackages = [
-                agenix.packages.${pkgs.system}.default
-              ];
-            })
+            agenixModule
           ];
         };
 
@@ -186,13 +171,8 @@
         #   sudo nixos-rebuild switch --flake github:user/nixos-config#rpi5-full
         rpi5-full = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
-            inherit nixos-raspberrypi;
-            pkgs-unstable = import nixpkgs-unstable {
-              system = "aarch64-linux";
-              config.allowUnfree = true;
-            };
-            inherit self;
-            inherit claude-code;
+            inherit nixos-raspberrypi self claude-code;
+            pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [
             nixos-raspberrypi.nixosModules.raspberry-pi-5.base
@@ -200,11 +180,7 @@
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
-            ({ pkgs, ... }: {
-              environment.systemPackages = [
-                agenix.packages.${pkgs.system}.default
-              ];
-            })
+            agenixModule
           ];
         };
       };

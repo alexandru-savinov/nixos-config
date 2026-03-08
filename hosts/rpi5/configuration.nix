@@ -18,7 +18,6 @@
 
 { config
 , pkgs
-, pkgs-unstable
 , lib
 , self
 , ...
@@ -28,12 +27,6 @@
   imports = [
     ./hardware-configuration.nix
     ../common.nix
-    # Note: We don't import host.nix or networking.nix because they contain sancta-choir-specific settings:
-    # - Hetzner Cloud networking with hardcoded static IPs
-    # - MAC address binding for eth0
-    # - sancta-choir hostname
-    # ../../modules/system/host.nix
-    # ../../modules/system/networking.nix  # Hetzner Cloud specific, incompatible with RPi5
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
@@ -43,8 +36,7 @@
     ../../modules/services/n8n-skills.nix
     ../../modules/services/claude-skills.nix
     ../../modules/services/n8n-mcp-claude.nix
-    # Additional services are in rpi5-full config:
-    # - open-webui, n8n, gatus
+    # Additional services (open-webui, n8n, gatus) are in rpi5-full
   ];
 
   # Enable development tools and Claude Code
@@ -62,53 +54,35 @@
     sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
-  # Allow unfree packages (Open-WebUI license changed in v0.6+)
   # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides
   # the correct kernel for RPi5 via flake.nix module configuration.
   nixpkgs.config.allowUnfree = true;
 
-  # SSH configuration
-  services.openssh = {
-    enable = true;
-    settings = {
-      PermitRootLogin = "prohibit-password"; # Allow root login only via SSH keys
-      # MIGRATION: Keep password auth enabled until key-based access is verified
-      # Change to 'false' after confirming SSH key login works
-      PasswordAuthentication = lib.mkForce true;
-    };
+  # SSH configuration (openssh.enable is set in common.nix)
+  services.openssh.settings = {
+    PermitRootLogin = "prohibit-password";
+    PasswordAuthentication = lib.mkForce true;
   };
 
   # VSCode Server support (for remote development)
   services.vscode-server.enable = true;
 
-  # Firewall
-  networking.firewall.enable = true;
+  # Firewall (enabled by default in NixOS)
   networking.firewall.allowedTCPPorts = [ 22 ];
 
-  # System packages (RPi5-specific utilities)
-  # Common dev tools (helix, tmux, nodejs, gh, etc.) are in dev-tools.nix
+  # RPi5-specific packages (common dev tools are in dev-tools.nix)
   environment.systemPackages = with pkgs; [
-    # Additional editors for RPi5
     neovim
-
-    # RPi5-specific system utilities
     iotop
     lsof
-
-    # Network tools
     dig
     tcpdump
     iperf3
-
-    # Hardware monitoring
     lm_sensors
-
-    # Nix tooling
     cachix
   ];
 
-  # Agenix secrets (minimal - only Tailscale for this config)
-  # Additional secrets for Open-WebUI, n8n, etc. are in rpi5-full
+  # Agenix secrets (additional secrets for Open-WebUI, n8n, etc. are in rpi5-full)
   age.secrets = {
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
     unifi-password = {
@@ -128,31 +102,10 @@
     host = "192.168.1.1";
     username = "tLoVYfJXE0eE";
     passwordFile = config.age.secrets.unifi-password.path;
-    verifySsl = false; # UDM uses self-signed certs
-
-    # Tool registration: lazy mode reduces token usage by 96%
-    toolRegistration = "lazy";
-
-    # Permissions - start with read-only + safe modifications
-    permissions = {
-      # High-risk operations disabled by default
-      networksCreate = false;
-      networksUpdate = false;
-      networksDelete = false;
-      wlanCreate = false;
-      wlanUpdate = false;
-      wlanDelete = false;
-      deviceReboot = false;
-
-      # Safe operations enabled
-      firewallManage = true;
-      portForwardManage = true;
-      trafficRouteManage = true;
-      qosManage = true;
-    };
-
-    # Don't run as persistent service - use stdio mode for Claude Code
-    service.enable = false;
+    # verifySsl defaults to false (UDM uses self-signed certs)
+    # toolRegistration defaults to "lazy" (96% fewer tokens)
+    # permissions use safe defaults (high-risk ops disabled)
+    # service.enable defaults to false (stdio mode for Claude Code)
   };
 
   # ==========================================================================
@@ -179,28 +132,9 @@
 
   # Hostname
   networking.hostName = "rpi5";
-  networking.domain = "";
-
-  # RPi5 specific networking
   networking.useDHCP = lib.mkDefault true;
-  # Uncomment for static IP:
-  # networking.interfaces.end0.ipv4.addresses = [{
-  #   address = "192.168.1.100";
-  #   prefixLength = 24;
-  # }];
-  # networking.defaultGateway = "192.168.1.1";
-  # networking.nameservers = [ "1.1.1.1" "8.8.8.8" ];
 
-  # Enable wireless if needed (RPi5 has built-in WiFi)
-  # networking.wireless.enable = true;
-  # Or use NetworkManager:
-  # networking.networkmanager.enable = true;
-
-  # ============================================================
-  # CRITICAL: SSH ACCESS WILL BE DISABLED IF THIS IS NOT UPDATED!
-  # You MUST replace the placeholder below with your actual SSH public key
-  # BEFORE deploying this system, or you will be locked out.
-  # ============================================================
+  # Root SSH authorized keys
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
   ];
@@ -282,11 +216,10 @@
     }
   ];
 
-  # Enhanced zram configuration for better memory management
+  # Enhanced zram configuration (enable is set in common.nix)
   zramSwap = {
-    enable = true;
-    memoryPercent = 50; # Use up to 50% of RAM for compressed swap
-    algorithm = "zstd"; # Better compression ratio
+    memoryPercent = 50;
+    algorithm = "zstd";
     priority = 100; # Higher priority than disk swap
   };
 
@@ -354,7 +287,6 @@
     fi
   '';
 
-  # Timezone (adjust as needed)
   time.timeZone = "Europe/Chisinau";
 
   # System state version - do NOT change on existing systems

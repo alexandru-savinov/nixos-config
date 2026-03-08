@@ -1,8 +1,6 @@
-{ config
-, pkgs
+{ pkgs
 , lib
 , self
-, claude-code
 , ...
 }:
 
@@ -37,8 +35,6 @@
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
-    # Disable old container-based OpenClaw (replaced with nix-openclaw)
-    # ../../modules/services/openclaw-container.nix
   ];
 
   # Enable development tools and Claude Code
@@ -50,9 +46,7 @@
     tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
   };
 
-  # Home Manager settings (root user config provided by modules/users/root.nix)
-  # nix-openclaw Home Manager integration disabled — upstream bird2/bird3
-  # alias bug (same issue as sancta-kuzea). Will use npm install instead.
+  # Home Manager (root user config provided by modules/users/root.nix)
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
@@ -66,9 +60,7 @@
     }
   ];
 
-  # Hostname
   networking.hostName = "sancta-choir";
-  networking.domain = "";
 
   # SSH authorized keys for remote access
   users.users.root.openssh.authorizedKeys.keys = [

@@ -41,6 +41,18 @@ let
     then claude-code.packages.${pkgs.system}.default
     else null;
 
+  inherit (pkgs) coreutils findutils git jq curl nftables dnsutils gnugrep nix;
+  cu = "${coreutils}/bin";
+
+  # Helper: assert a file option does not point into /nix/store (world-readable)
+  mkNixStoreAssertion = name: value: {
+    assertion = value == null || !(hasPrefix "/nix/store" (toString value));
+    message = ''
+      services.openclaw.${name} points to the Nix store!
+      Files in /nix/store are WORLD-READABLE. Use agenix instead.
+    '';
+  };
+
   # Sudo wrapper script that ONLY allows specific safe commands
   openclawSudo = pkgs.writeShellScript "openclaw-sudo" ''
     set -euo pipefail
@@ -74,11 +86,11 @@ let
         ;;
       check)
         echo "openclaw-sudo: running nix flake check" >&2
-        exec ${pkgs.nix}/bin/nix flake check /var/lib/openclaw/nixos-config
+        exec ${nix}/bin/nix flake check /var/lib/openclaw/nixos-config
         ;;
       fmt)
         echo "openclaw-sudo: running nix fmt" >&2
-        exec ${pkgs.nix}/bin/nix fmt /var/lib/openclaw/nixos-config
+        exec ${nix}/bin/nix fmt /var/lib/openclaw/nixos-config
         ;;
       *)
         echo "ERROR: unknown command: ''${1:-}. Allowed: build <target>, check, fmt" >&2
@@ -100,13 +112,13 @@ let
     PROCESSING_FILE=""
     trap '
       if [ -n "$PROCESSING_FILE" ] && [ -f "$PROCESSING_FILE" ]; then
-        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/" 2>&1 || echo "ERROR: ERR trap failed to move $PROCESSING_FILE to $FAILED/" >&2
+        ${cu}/mv "$PROCESSING_FILE" "$FAILED/" 2>&1 || echo "ERROR: ERR trap failed to move $PROCESSING_FILE to $FAILED/" >&2
       fi
     ' ERR
 
     # Process all available tasks (DirectoryNotEmpty only triggers on transition)
     while true; do
-      TASK_FILE=$(${pkgs.findutils}/bin/find "$INBOX" -maxdepth 1 -type f -name '*.task' -printf '%T+ %p\n' | ${pkgs.coreutils}/bin/sort | ${pkgs.coreutils}/bin/head -n1 | ${pkgs.coreutils}/bin/cut -d' ' -f2-)
+      TASK_FILE=$(${findutils}/bin/find "$INBOX" -maxdepth 1 -type f -name '*.task' -printf '%T+ %p\n' | ${cu}/sort | ${cu}/head -n1 | ${cu}/cut -d' ' -f2-)
 
       if [ -z "$TASK_FILE" ]; then
         break
@@ -115,23 +127,23 @@ let
       echo "Processing task: $TASK_FILE"
 
       # Generate task ID from filename + timestamp
-      TASK_BASENAME=$(${pkgs.coreutils}/bin/basename "$TASK_FILE" .task)
-      TASK_ID="$(${pkgs.coreutils}/bin/date +%Y%m%d-%H%M%S)-$TASK_BASENAME"
+      TASK_BASENAME=$(${cu}/basename "$TASK_FILE" .task)
+      TASK_ID="$(${cu}/date +%Y%m%d-%H%M%S)-$TASK_BASENAME"
       RESULT_DIR="$RESULTS/$TASK_ID"
-      ${pkgs.coreutils}/bin/mkdir -p "$RESULT_DIR" "$FAILED"
+      ${cu}/mkdir -p "$RESULT_DIR" "$FAILED"
 
       # Move task out of inbox BEFORE processing. Without this, an OOM kill would
       # leave the task in inbox, DirectoryNotEmpty would re-trigger, and it would
       # OOM again in a loop.
-      PROCESSING_FILE="$RESULT_DIR/$(${pkgs.coreutils}/bin/basename "$TASK_FILE")"
-      ${pkgs.coreutils}/bin/mv "$TASK_FILE" "$PROCESSING_FILE"
+      PROCESSING_FILE="$RESULT_DIR/$(${cu}/basename "$TASK_FILE")"
+      ${cu}/mv "$TASK_FILE" "$PROCESSING_FILE"
 
-      TASK_CONTENT=$(${pkgs.coreutils}/bin/cat "$PROCESSING_FILE")
+      TASK_CONTENT=$(${cu}/cat "$PROCESSING_FILE")
 
       if [ -z "$TASK_CONTENT" ]; then
         echo "ERROR: Task file is empty: $PROCESSING_FILE" >&2
         echo '{"error": "empty task file"}' > "$RESULT_DIR/output.json"
-        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/"
+        ${cu}/mv "$PROCESSING_FILE" "$FAILED/"
         PROCESSING_FILE=""
         continue
       fi
@@ -167,24 +179,24 @@ let
 
       echo "Claude exited with code: $EXIT_CODE"
 
-      ${pkgs.jq}/bin/jq -n \
+      ${jq}/bin/jq -n \
         --arg task_id "$TASK_ID" \
-        --arg task_file "$(${pkgs.coreutils}/bin/basename "$PROCESSING_FILE")" \
+        --arg task_file "$(${cu}/basename "$PROCESSING_FILE")" \
         --arg exit_code "$EXIT_CODE" \
-        --arg timestamp "$(${pkgs.coreutils}/bin/date -Iseconds)" \
+        --arg timestamp "$(${cu}/date -Iseconds)" \
         '{task_id: $task_id, task_file: $task_file, exit_code: ($exit_code | tonumber), timestamp: $timestamp}' \
         > "$RESULT_DIR/metadata.json.tmp" \
-        && ${pkgs.coreutils}/bin/mv "$RESULT_DIR/metadata.json.tmp" "$RESULT_DIR/metadata.json"
+        && ${cu}/mv "$RESULT_DIR/metadata.json.tmp" "$RESULT_DIR/metadata.json"
 
       if [ "$EXIT_CODE" -eq 0 ]; then
-        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$COMPLETED/"
+        ${cu}/mv "$PROCESSING_FILE" "$COMPLETED/"
       else
-        ${pkgs.coreutils}/bin/mv "$PROCESSING_FILE" "$FAILED/"
+        ${cu}/mv "$PROCESSING_FILE" "$FAILED/"
       fi
 
       ${optionalString (cfg.notifications.n8nWebhookUrl != null) ''
-        SUMMARY=$(${pkgs.jq}/bin/jq -c '{task_id: .task_id, exit_code: .exit_code, timestamp: .timestamp}' "$RESULT_DIR/metadata.json")
-        HTTP_CODE=$(${pkgs.curl}/bin/curl --no-progress-meter -o /dev/null -w "%{http_code}" -X POST \
+        SUMMARY=$(${jq}/bin/jq -c '{task_id: .task_id, exit_code: .exit_code, timestamp: .timestamp}' "$RESULT_DIR/metadata.json")
+        HTTP_CODE=$(${curl}/bin/curl --no-progress-meter -o /dev/null -w "%{http_code}" -X POST \
           -H "Content-Type: application/json" \
           -d "$SUMMARY" \
           "${cfg.notifications.n8nWebhookUrl}" 2>&1) \
@@ -208,30 +220,30 @@ let
     if [ ! -w "/var/lib/openclaw/.gitconfig" ] && [ -f "/var/lib/openclaw/.gitconfig" ]; then
       echo "Using existing .gitconfig (read-only mount)"
     else
-      ${pkgs.git}/bin/git config --global user.name "OpenClaw Bot"
-      ${pkgs.git}/bin/git config --global user.email "openclaw@sancta-choir"
+      ${git}/bin/git config --global user.name "OpenClaw Bot"
+      ${git}/bin/git config --global user.email "openclaw@sancta-choir"
 
       ${optionalString (cfg.githubTokenFile != null) ''
         # Configure credential helper for HTTPS with GH_TOKEN
         # GH_TOKEN is set via EnvironmentFile
-        ${pkgs.git}/bin/git config --global credential.helper \
+        ${git}/bin/git config --global credential.helper \
           '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'
       ''}
     fi
 
     if [ ! -d "$REPO_DIR/.git" ]; then
       echo "Cloning repository: ${cfg.repoUrl}"
-      ${pkgs.git}/bin/git clone --branch "${cfg.repoBranch}" "${cfg.repoUrl}" "$REPO_DIR"
+      ${git}/bin/git clone --branch "${cfg.repoBranch}" "${cfg.repoUrl}" "$REPO_DIR"
     else
       echo "Repository exists, updating..."
       cd "$REPO_DIR"
-      ${pkgs.git}/bin/git fetch origin
-      ${pkgs.git}/bin/git checkout "${cfg.repoBranch}"
-      ${pkgs.git}/bin/git pull --ff-only origin "${cfg.repoBranch}" || {
+      ${git}/bin/git fetch origin
+      ${git}/bin/git checkout "${cfg.repoBranch}"
+      ${git}/bin/git pull --ff-only origin "${cfg.repoBranch}" || {
         echo "ERROR: Fast-forward pull failed. Local state has diverged from origin/${cfg.repoBranch}." >&2
-        echo "Current HEAD: $(${pkgs.git}/bin/git rev-parse HEAD)" >&2
+        echo "Current HEAD: $(${git}/bin/git rev-parse HEAD)" >&2
         echo "Unpushed commits:" >&2
-        ${pkgs.git}/bin/git log --oneline "origin/${cfg.repoBranch}..HEAD" >&2 || true
+        ${git}/bin/git log --oneline "origin/${cfg.repoBranch}..HEAD" >&2 || true
         echo "Manual intervention required. Refusing to reset --hard." >&2
         exit 1
       }
@@ -242,58 +254,58 @@ let
 
   # DNS resolver script for nftables sets
   nftDnsScript = pkgs.writeShellScript "openclaw-nft-dns-update" ''
-        set -euo pipefail
+    set -euo pipefail
 
-        V4_ELEMENTS=""
-        V6_ELEMENTS=""
+    V4_ELEMENTS=""
+    V6_ELEMENTS=""
 
-        for domain in ${concatStringsSep " " (map escapeShellArg cfg.networkRestriction.allowedDomains)}; do
-          # IPv4 — per-domain failure is OK, but log it
-          IPS=$(${pkgs.dnsutils}/bin/dig +short "$domain" A 2>/dev/null) || {
-            echo "WARNING: Failed to resolve $domain A record" >&2
-            IPS=""
-          }
-          for ip in $IPS; do
-            if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-              [ -n "$V4_ELEMENTS" ] && V4_ELEMENTS="$V4_ELEMENTS, "
-              V4_ELEMENTS="$V4_ELEMENTS$ip"
-            fi
-          done
-
-          # IPv6 — stricter regex requiring colon-separated hex groups
-          IPS6=$(${pkgs.dnsutils}/bin/dig +short "$domain" AAAA 2>/dev/null) || {
-            echo "WARNING: Failed to resolve $domain AAAA record" >&2
-            IPS6=""
-          }
-          for ip in $IPS6; do
-            if echo "$ip" | ${pkgs.gnugrep}/bin/grep -qE '^([0-9a-f]{1,4}:)+[0-9a-f]{1,4}$'; then
-              [ -n "$V6_ELEMENTS" ] && V6_ELEMENTS="$V6_ELEMENTS, "
-              V6_ELEMENTS="$V6_ELEMENTS$ip"
-            fi
-          done
-        done
-
-        if [ -z "$V4_ELEMENTS" ] && [ -z "$V6_ELEMENTS" ]; then
-          echo "ERROR: No IPs resolved for any allowed domain. nftables sets are empty." >&2
-          exit 1
+    for domain in ${concatStringsSep " " (map escapeShellArg cfg.networkRestriction.allowedDomains)}; do
+      # IPv4 — per-domain failure is OK, but log it
+      IPS=$(${dnsutils}/bin/dig +short "$domain" A 2>/dev/null) || {
+        echo "WARNING: Failed to resolve $domain A record" >&2
+        IPS=""
+      }
+      for ip in $IPS; do
+        if echo "$ip" | ${gnugrep}/bin/grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+          [ -n "$V4_ELEMENTS" ] && V4_ELEMENTS="$V4_ELEMENTS, "
+          V4_ELEMENTS="$V4_ELEMENTS$ip"
         fi
+      done
 
-        # Atomic update — flush+add in a single nft transaction to avoid empty-set window
-        if [ -n "$V4_ELEMENTS" ]; then
-          ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
+      # IPv6 — stricter regex requiring colon-separated hex groups
+      IPS6=$(${dnsutils}/bin/dig +short "$domain" AAAA 2>/dev/null) || {
+        echo "WARNING: Failed to resolve $domain AAAA record" >&2
+        IPS6=""
+      }
+      for ip in $IPS6; do
+        if echo "$ip" | ${gnugrep}/bin/grep -qE '^([0-9a-f]{1,4}:)+[0-9a-f]{1,4}$'; then
+          [ -n "$V6_ELEMENTS" ] && V6_ELEMENTS="$V6_ELEMENTS, "
+          V6_ELEMENTS="$V6_ELEMENTS$ip"
+        fi
+      done
+    done
+
+    if [ -z "$V4_ELEMENTS" ] && [ -z "$V6_ELEMENTS" ]; then
+      echo "ERROR: No IPs resolved for any allowed domain. nftables sets are empty." >&2
+      exit 1
+    fi
+
+    # Atomic update — flush+add in a single nft transaction to avoid empty-set window
+    if [ -n "$V4_ELEMENTS" ]; then
+      ${nftables}/bin/nft -f - <<NFT_EOF
     flush set inet openclaw-restrict allowed_dns_ips_v4
     add element inet openclaw-restrict allowed_dns_ips_v4 { $V4_ELEMENTS }
     NFT_EOF
-          echo "Updated nftables IPv4 set: $V4_ELEMENTS"
-        fi
+      echo "Updated nftables IPv4 set: $V4_ELEMENTS"
+    fi
 
-        if [ -n "$V6_ELEMENTS" ]; then
-          ${pkgs.nftables}/bin/nft -f - <<NFT_EOF
+    if [ -n "$V6_ELEMENTS" ]; then
+      ${nftables}/bin/nft -f - <<NFT_EOF
     flush set inet openclaw-restrict allowed_dns_ips_v6
     add element inet openclaw-restrict allowed_dns_ips_v6 { $V6_ELEMENTS }
     NFT_EOF
-          echo "Updated nftables IPv6 set: $V6_ELEMENTS"
-        fi
+      echo "Updated nftables IPv6 set: $V6_ELEMENTS"
+    fi
   '';
 
   # Cleanup script
@@ -307,17 +319,17 @@ let
     RESULTS="/var/lib/openclaw/results"
 
     if [ -d "$COMPLETED" ]; then
-      DELETED=$(${pkgs.findutils}/bin/find "$COMPLETED" -maxdepth 1 -type f -mtime +30 -delete -print | ${pkgs.coreutils}/bin/wc -l)
+      DELETED=$(${findutils}/bin/find "$COMPLETED" -maxdepth 1 -type f -mtime +30 -delete -print | ${cu}/wc -l)
       echo "Removed $DELETED completed task files"
     fi
 
     if [ -d "$FAILED" ]; then
-      DELETED=$(${pkgs.findutils}/bin/find "$FAILED" -maxdepth 1 -type f -mtime +30 -delete -print | ${pkgs.coreutils}/bin/wc -l)
+      DELETED=$(${findutils}/bin/find "$FAILED" -maxdepth 1 -type f -mtime +30 -delete -print | ${cu}/wc -l)
       echo "Removed $DELETED failed task files"
     fi
 
     if [ -d "$RESULTS" ]; then
-      DELETED=$(${pkgs.findutils}/bin/find "$RESULTS" -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + -print | ${pkgs.coreutils}/bin/wc -l)
+      DELETED=$(${findutils}/bin/find "$RESULTS" -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + -print | ${cu}/wc -l)
       echo "Removed $DELETED result directories"
     fi
 
@@ -475,38 +487,9 @@ in
             specialArgs = { inherit claude-code; };
         '';
       }
-      {
-        assertion = !(hasPrefix "/nix/store" (toString cfg.anthropicApiKeyFile));
-        message = ''
-          services.openclaw.anthropicApiKeyFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your API key would be exposed.
-
-          Use agenix instead:
-            age.secrets.anthropic-api-key.file = ./secrets/anthropic-api-key.age;
-            services.openclaw.anthropicApiKeyFile = config.age.secrets.anthropic-api-key.path;
-        '';
-      }
-      {
-        assertion = cfg.githubTokenFile == null ||
-          !(hasPrefix "/nix/store" (toString cfg.githubTokenFile));
-        message = ''
-          services.openclaw.githubTokenFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your token would be exposed.
-
-          Use agenix instead:
-            age.secrets.github-token.file = ./secrets/github-token.age;
-            services.openclaw.githubTokenFile = config.age.secrets.github-token.path;
-        '';
-      }
-      {
-        assertion = cfg.mcpConfigFile == null ||
-          !(hasPrefix "/nix/store" (toString cfg.mcpConfigFile));
-        message = ''
-          services.openclaw.mcpConfigFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your MCP config may contain secrets.
-          Use agenix or a runtime directory instead.
-        '';
-      }
+      (mkNixStoreAssertion "anthropicApiKeyFile" cfg.anthropicApiKeyFile)
+      (mkNixStoreAssertion "githubTokenFile" cfg.githubTokenFile)
+      (mkNixStoreAssertion "mcpConfigFile" cfg.mcpConfigFile)
       {
         assertion = cfg.allowedBuildTargets != [ ];
         message = ''
@@ -588,46 +571,46 @@ in
           ("+" + pkgs.writeShellScript "openclaw-git-setup-env" ''
             set -euo pipefail
 
-            ${pkgs.coreutils}/bin/mkdir -p /run/openclaw
+            ${cu}/mkdir -p /run/openclaw
             ENV_FILE="/run/openclaw/env"
             : > "$ENV_FILE"
 
             # Anthropic API key
             if [ ! -f "${cfg.anthropicApiKeyFile}" ]; then
-              ${pkgs.coreutils}/bin/echo "ERROR: Anthropic API key file not found: ${cfg.anthropicApiKeyFile}" >&2
+              echo "ERROR: Anthropic API key file not found: ${cfg.anthropicApiKeyFile}" >&2
               exit 1
             fi
-            ANTHROPIC_KEY=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.anthropicApiKeyFile}")
+            ANTHROPIC_KEY=$(${cu}/tr -d '\n' < "${cfg.anthropicApiKeyFile}")
             if [ -z "$ANTHROPIC_KEY" ]; then
-              ${pkgs.coreutils}/bin/echo "ERROR: Anthropic API key file is empty: ${cfg.anthropicApiKeyFile}" >&2
+              echo "ERROR: Anthropic API key file is empty: ${cfg.anthropicApiKeyFile}" >&2
               exit 1
             fi
             printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_KEY" >> "$ENV_FILE"
 
             # Isolate Claude config directory
-            ${pkgs.coreutils}/bin/echo "CLAUDE_CONFIG_DIR=/var/lib/openclaw/.claude" >> "$ENV_FILE"
+            echo "CLAUDE_CONFIG_DIR=/var/lib/openclaw/.claude" >> "$ENV_FILE"
 
             # GitHub token (if provided)
             ${optionalString (cfg.githubTokenFile != null) ''
               if [ ! -f "${cfg.githubTokenFile}" ]; then
-                ${pkgs.coreutils}/bin/echo "ERROR: GitHub token file not found: ${cfg.githubTokenFile}" >&2
+                echo "ERROR: GitHub token file not found: ${cfg.githubTokenFile}" >&2
                 exit 1
               fi
-              GH_TOKEN=$(${pkgs.coreutils}/bin/tr -d '\n' < "${cfg.githubTokenFile}")
+              GH_TOKEN=$(${cu}/tr -d '\n' < "${cfg.githubTokenFile}")
               if [ -z "$GH_TOKEN" ]; then
-                ${pkgs.coreutils}/bin/echo "ERROR: GitHub token file is empty: ${cfg.githubTokenFile}" >&2
+                echo "ERROR: GitHub token file is empty: ${cfg.githubTokenFile}" >&2
                 exit 1
               fi
               printf 'GH_TOKEN=%s\n' "$GH_TOKEN" >> "$ENV_FILE"
             ''}
 
-            ${pkgs.coreutils}/bin/chmod 600 "$ENV_FILE"
-            ${pkgs.coreutils}/bin/chown openclaw:openclaw "$ENV_FILE"
+            ${cu}/chmod 600 "$ENV_FILE"
+            ${cu}/chown openclaw:openclaw "$ENV_FILE"
           '')
         ];
       };
 
-      path = [ pkgs.git pkgs.gh ];
+      path = [ git pkgs.gh ];
     };
 
     # ──────────────────────────────────────────────────────────────
@@ -668,14 +651,7 @@ in
         TimeoutStartSec = "1800";
       };
 
-      path = [
-        claudeCodePkg
-        pkgs.git
-        pkgs.gh
-        pkgs.curl
-        pkgs.jq
-        pkgs.nix
-      ];
+      path = [ claudeCodePkg git pkgs.gh curl jq nix ];
     };
 
     # ──────────────────────────────────────────────────────────────
@@ -708,8 +684,8 @@ in
         Type = "oneshot";
         User = "openclaw";
         Group = "openclaw";
+        ExecStart = cleanupScript;
       };
-      script = "${cleanupScript}";
     };
 
     # ──────────────────────────────────────────────────────────────
@@ -839,8 +815,8 @@ in
       wants = [ "network-online.target" ];
       serviceConfig = {
         Type = "oneshot";
+        ExecStart = nftDnsScript;
       };
-      script = "${nftDnsScript}";
     };
   };
 }

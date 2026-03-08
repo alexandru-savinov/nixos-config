@@ -5,6 +5,12 @@ with lib;
 let
   cfg = config.services.gatus-tailscale;
 
+  # Shared optional HTTP fields used by both endpoints and suite endpoints
+  optionalHttpAttrs = ep:
+    optionalAttrs (ep.method != null) { method = ep.method; }
+    // optionalAttrs (ep.body != null) { body = ep.body; }
+    // optionalAttrs (ep.headers != { }) { headers = ep.headers; };
+
   # Convert Nix endpoint definitions to Gatus attrset format
   # Note: 'enabled' is a Nix-only option for filtering, not a Gatus config field
   endpointToYaml = ep: {
@@ -13,9 +19,7 @@ let
     url = ep.url;
     interval = ep.interval;
     conditions = ep.conditions;
-  } // optionalAttrs (ep.method != null) { method = ep.method; }
-  // optionalAttrs (ep.body != null) { body = ep.body; }
-  // optionalAttrs (ep.headers != { }) { headers = ep.headers; }
+  } // optionalHttpAttrs ep
   // optionalAttrs (ep.dns != null) { dns = ep.dns; }
   // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; };
 
@@ -24,9 +28,7 @@ let
     name = ep.name;
     url = ep.url;
     conditions = ep.conditions;
-  } // optionalAttrs (ep.method != null) { method = ep.method; }
-  // optionalAttrs (ep.body != null) { body = ep.body; }
-  // optionalAttrs (ep.headers != { }) { headers = ep.headers; }
+  } // optionalHttpAttrs ep
   // optionalAttrs (ep.store != { }) { store = ep.store; }
   // optionalAttrs ep.always-run { always-run = true; };
 
@@ -44,11 +46,8 @@ let
     else {
       type = cfg.storage.type;
       caching = cfg.storage.caching;
-    } // optionalAttrs (cfg.storage.type == "sqlite") {
-      # SQLite requires an explicit path - use state directory
+    } // optionalAttrs (cfg.storage.path != null || cfg.storage.type == "sqlite") {
       path = if cfg.storage.path != null then cfg.storage.path else "/var/lib/gatus/data.db";
-    } // optionalAttrs (cfg.storage.path != null && cfg.storage.type != "sqlite") {
-      path = cfg.storage.path;
     };
 
   # Transform UI config - filter null values
@@ -551,7 +550,7 @@ in
         fi
 
         # Read and validate API key content
-        API_KEY=$(cat "$API_KEY_FILE" | tr -d '[:space:]')
+        API_KEY=$(tr -d '[:space:]' < "$API_KEY_FILE")
 
         if [ -z "$API_KEY" ]; then
           echo "ERROR: API key file is empty or contains only whitespace: $API_KEY_FILE"

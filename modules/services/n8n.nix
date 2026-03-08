@@ -36,6 +36,42 @@ let
     #!${pythonWithGenanki}/bin/python3
     ${builtins.readFile "${self}/scripts/generate-apkg.py"}
   '';
+
+  # Secret file options that follow the same pattern: nullable path with Nix-store assertion
+  secretFileOptions = [
+    { attr = "encryptionKeyFile"; envVar = "N8N_ENCRYPTION_KEY"; label = "encryption key"; }
+    { attr = "openrouterApiKeyFile"; envVar = "OPENROUTER_API_KEY"; label = "OpenRouter API key"; }
+    { attr = "openaiApiKeyFile"; envVar = "OPENAI_API_KEY"; label = "OpenAI API key"; }
+    { attr = "telegramBotTokenFile"; envVar = "TELEGRAM_BOT_TOKEN"; label = "Telegram bot token"; }
+    { attr = "adminPasswordFile"; envVar = null; label = "admin password"; }
+    { attr = "credentialsFile"; envVar = null; label = "credentials"; }
+  ];
+
+  # Generate a Nix-store assertion for a secret file option
+  mkStoreAssertion = { attr, label, ... }: {
+    assertion = cfg.${attr} == null ||
+      !(hasPrefix "/nix/store" (toString cfg.${attr}));
+    message = ''
+      services.n8n-tailscale.${attr} points to the Nix store!
+      Files in /nix/store are WORLD-READABLE. Your ${label} would be exposed.
+      Use agenix instead.
+    '';
+  };
+
+  # Generate shell script to read a secret file into an env var
+  mkSecretEnvSnippet = { attr, envVar, label, ... }:
+    optionalString (envVar != null && cfg.${attr} != null) ''
+      if [[ ! -f "${cfg.${attr}}" ]]; then
+        echo "ERROR: ${label} file not found: ${cfg.${attr}}" >&2
+        exit 1
+      fi
+      _secret_val=$(cat "${cfg.${attr}}")
+      if [[ -z "$_secret_val" ]]; then
+        echo "ERROR: ${label} file is empty: ${cfg.${attr}}" >&2
+        exit 1
+      fi
+      echo "${envVar}=$_secret_val" >> "$ENV_FILE"
+    '';
 in
 {
   options.services.n8n-tailscale = {
@@ -306,68 +342,7 @@ in
     users.groups.n8n = { };
 
     # Security assertions: prevent secrets in Nix store (world-readable!)
-    assertions = [
-      {
-        assertion = cfg.credentialsFile == null ||
-          !(hasPrefix "/nix/store" (toString cfg.credentialsFile));
-        message = ''
-          services.n8n-tailscale.credentialsFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your credentials would be exposed.
-
-          Use agenix instead:
-            age.secrets.n8n-credentials.file = ./secrets/n8n-credentials.age;
-            services.n8n-tailscale.credentialsFile = config.age.secrets.n8n-credentials.path;
-        '';
-      }
-      {
-        assertion = cfg.openrouterApiKeyFile == null ||
-          !(hasPrefix "/nix/store" (toString cfg.openrouterApiKeyFile));
-        message = ''
-          services.n8n-tailscale.openrouterApiKeyFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your API key would be exposed.
-
-          Use agenix instead:
-            age.secrets.openrouter-api-key.file = ./secrets/openrouter-api-key.age;
-            services.n8n-tailscale.openrouterApiKeyFile = config.age.secrets.openrouter-api-key.path;
-        '';
-      }
-      {
-        assertion = cfg.openaiApiKeyFile == null ||
-          !(hasPrefix "/nix/store" (toString cfg.openaiApiKeyFile));
-        message = ''
-          services.n8n-tailscale.openaiApiKeyFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your API key would be exposed.
-
-          Use agenix instead:
-            age.secrets.openai-api-key.file = ./secrets/openai-api-key.age;
-            services.n8n-tailscale.openaiApiKeyFile = config.age.secrets.openai-api-key.path;
-        '';
-      }
-      {
-        assertion = cfg.adminPasswordFile == null ||
-          !(hasPrefix "/nix/store" (toString cfg.adminPasswordFile));
-        message = ''
-          services.n8n-tailscale.adminPasswordFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your admin password would be exposed.
-
-          Use agenix instead:
-            age.secrets.n8n-admin-password.file = ./secrets/n8n-admin-password.age;
-            services.n8n-tailscale.adminPasswordFile = config.age.secrets.n8n-admin-password.path;
-        '';
-      }
-      {
-        assertion = cfg.telegramBotTokenFile == null ||
-          !(hasPrefix "/nix/store" (toString cfg.telegramBotTokenFile));
-        message = ''
-          services.n8n-tailscale.telegramBotTokenFile points to the Nix store!
-          Files in /nix/store are WORLD-READABLE. Your bot token would be exposed.
-
-          Use agenix instead:
-            age.secrets.telegram-bot-token.file = ./secrets/telegram-bot-token.age;
-            services.n8n-tailscale.telegramBotTokenFile = config.age.secrets.telegram-bot-token.path;
-        '';
-      }
-    ];
+    assertions = map mkStoreAssertion secretFileOptions;
 
     # Warn if no encryption key file is provided
     warnings = optional (cfg.encryptionKeyFile == null) ''
@@ -420,64 +395,8 @@ in
                         # Security: disable public API by default (access via UI)
                         echo "N8N_PUBLIC_API_DISABLED=true" >> "$ENV_FILE"
 
-                        # Encryption key (if provided)
-                        ${optionalString (cfg.encryptionKeyFile != null) ''
-                          if [[ ! -f "${cfg.encryptionKeyFile}" ]]; then
-                            echo "ERROR: Encryption key file not found: ${cfg.encryptionKeyFile}" >&2
-                            exit 1
-                          fi
-                          ENCRYPTION_KEY=$(cat "${cfg.encryptionKeyFile}")
-                          if [[ -z "$ENCRYPTION_KEY" ]]; then
-                            echo "ERROR: Encryption key file is empty: ${cfg.encryptionKeyFile}" >&2
-                            exit 1
-                          fi
-                          echo "N8N_ENCRYPTION_KEY=$ENCRYPTION_KEY" >> "$ENV_FILE"
-                        ''}
-
-                        # OpenRouter API key (if provided)
-                        ${optionalString (cfg.openrouterApiKeyFile != null) ''
-                          if [[ ! -f "${cfg.openrouterApiKeyFile}" ]]; then
-                            echo "ERROR: OpenRouter API key file not found: ${cfg.openrouterApiKeyFile}" >&2
-                            exit 1
-                          fi
-                          OPENROUTER_KEY=$(cat "${cfg.openrouterApiKeyFile}")
-                          if [[ -z "$OPENROUTER_KEY" ]]; then
-                            echo "ERROR: OpenRouter API key file is empty: ${cfg.openrouterApiKeyFile}" >&2
-                            exit 1
-                          fi
-                          echo "OPENROUTER_API_KEY=$OPENROUTER_KEY" >> "$ENV_FILE"
-                          echo "OpenRouter API key configured for workflow expressions"
-                        ''}
-
-                        # OpenAI API key (if provided) - for TTS/STT in workflows
-                        ${optionalString (cfg.openaiApiKeyFile != null) ''
-                          if [[ ! -f "${cfg.openaiApiKeyFile}" ]]; then
-                            echo "ERROR: OpenAI API key file not found: ${cfg.openaiApiKeyFile}" >&2
-                            exit 1
-                          fi
-                          OPENAI_KEY=$(cat "${cfg.openaiApiKeyFile}")
-                          if [[ -z "$OPENAI_KEY" ]]; then
-                            echo "ERROR: OpenAI API key file is empty: ${cfg.openaiApiKeyFile}" >&2
-                            exit 1
-                          fi
-                          echo "OPENAI_API_KEY=$OPENAI_KEY" >> "$ENV_FILE"
-                          echo "OpenAI API key configured for workflow expressions"
-                        ''}
-
-                        # Telegram bot token (if provided) - for workflow notifications
-                        ${optionalString (cfg.telegramBotTokenFile != null) ''
-                          if [[ ! -f "${cfg.telegramBotTokenFile}" ]]; then
-                            echo "ERROR: Telegram bot token file not found: ${cfg.telegramBotTokenFile}" >&2
-                            exit 1
-                          fi
-                          TELEGRAM_TOKEN=$(cat "${cfg.telegramBotTokenFile}")
-                          if [[ -z "$TELEGRAM_TOKEN" ]]; then
-                            echo "ERROR: Telegram bot token file is empty: ${cfg.telegramBotTokenFile}" >&2
-                            exit 1
-                          fi
-                          echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN" >> "$ENV_FILE"
-                          echo "Telegram bot token configured for workflow expressions"
-                        ''}
+                        # Load secret files into environment variables
+                        ${concatMapStrings mkSecretEnvSnippet secretFileOptions}
 
                         # Admin password (if provided) - for REST API authentication
                         ${optionalString (cfg.adminPasswordFile != null) ''
@@ -575,25 +494,16 @@ in
                           chown -R n8n:n8n /var/lib/n8n/.npm
                         fi
 
-                        # Create APKG output directory for generate-apkg script used by image-to-anki workflow
-                        # Uses /var/lib/n8n (StateDirectory) for persistence and security (no shared /tmp)
-                        APKG_DIR="/var/lib/n8n/anki-decks"
-                        mkdir -p "$APKG_DIR"
-                        if ! chown n8n:n8n "$APKG_DIR"; then
-                          echo "ERROR: Failed to set ownership of $APKG_DIR to n8n:n8n" >&2
-                          exit 1
-                        fi
-                        echo "APKG output directory configured: $APKG_DIR"
-
-                        # Create jobs directory for async workflow status tracking
-                        # Used by image-to-anki async pattern for job status files
-                        JOBS_DIR="/var/lib/n8n/jobs"
-                        mkdir -p "$JOBS_DIR"
-                        if ! chown n8n:n8n "$JOBS_DIR"; then
-                          echo "ERROR: Failed to set ownership of $JOBS_DIR to n8n:n8n" >&2
-                          exit 1
-                        fi
-                        echo "Jobs directory configured: $JOBS_DIR"
+                        # Create data directories under StateDirectory for persistence and security
+                        # anki-decks: APKG output for image-to-anki workflow
+                        # jobs: async workflow status tracking (cleaned by n8n-cleanup-jobs timer)
+                        for dir in /var/lib/n8n/anki-decks /var/lib/n8n/jobs; do
+                          mkdir -p "$dir"
+                          if ! chown n8n:n8n "$dir"; then
+                            echo "ERROR: Failed to set ownership of $dir to n8n:n8n" >&2
+                            exit 1
+                          fi
+                        done
 
                         # Make readable only by n8n user (600 + dir 0700 = secure)
                         chmod 600 "$ENV_FILE"

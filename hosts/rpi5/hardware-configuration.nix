@@ -10,7 +10,7 @@
 #
 # Uses lib.mkForce to override raspberry-pi-nix defaults from sd-image.nix
 
-{ config, lib, pkgs, modulesPath, ... }:
+{ lib, modulesPath, ... }:
 
 {
   imports = [
@@ -24,9 +24,6 @@
   # but we need to preserve the hybrid boot setup
 
   boot.initrd.availableKernelModules = [ "nvme" "usbhid" ];
-  boot.initrd.kernelModules = [ ];
-  boot.kernelModules = [ ];
-  boot.extraModulePackages = [ ];
 
   # Kernel parameters for Raspberry Pi 5
   boot.kernelParams = [
@@ -52,22 +49,11 @@
   fileSystems."/boot/firmware" = lib.mkForce {
     device = "/dev/disk/by-label/FIRMWARE";
     fsType = "vfat";
-    options = [ "defaults" ];
+    options = [ ];
   };
 
-  # ============================================================
-  # SWAP CONFIGURATION
-  # ============================================================
-  # Swap is configured in configuration.nix with size parameter
-  # No swapDevices here to avoid duplication and maintain single source of truth
-
-  # ============================================================
-  # HARDWARE SETTINGS
-  # ============================================================
-  hardware = {
-    # Enable redistributable firmware for WiFi, Bluetooth, etc.
-    enableRedistributableFirmware = true;
-  };
+  # Enable redistributable firmware for WiFi, Bluetooth, etc.
+  hardware.enableRedistributableFirmware = true;
 
   # CPU frequency scaling
   powerManagement.cpuFreqGovernor = lib.mkDefault "ondemand";

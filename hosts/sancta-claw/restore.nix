@@ -19,8 +19,6 @@ let
     runtimeInputs = with pkgs; [ openssh rsync coreutils ];
     excludeShellChecks = [ "SC2029" ]; # Variables intentionally expand locally for SSH
     text = ''
-      set -euo pipefail
-
       RPI5="''${1:-rpi5}"
 
       echo "=== sancta-claw disaster recovery ==="
@@ -68,7 +66,7 @@ let
       # Rsync restored files back to sancta-claw
       echo "Syncing restored files to /var/lib/openclaw/..."
       rsync -az --delete \
-        "root@$RPI5:$REMOTE_RESTORE_DIR/backups/staging/" \
+        "root@$RPI5:$RESTORE_SRC/" \
         /var/lib/openclaw/
 
       # Clean up remote temp dir
