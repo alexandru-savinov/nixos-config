@@ -347,7 +347,9 @@ let
           };
         }
       ];
-      specialArgs = { claude-code = null; };
+      # Provide a mock claude-code so the null-input assertion doesn't fire;
+      # we're testing ONLY the /nix/store secret assertion here.
+      specialArgs = { claude-code = { packages.${system}.default = pkgs.hello; }; };
     };
 
     openclaw-disabled = shouldEval "openclaw: disabled" {
@@ -448,18 +450,21 @@ let
   # ── Build the check derivation ──────────────────────────────────
   # Force evaluation of all tests. If any test throws, the derivation
   # evaluation fails and `nix flake check` reports it.
+  #
+  # Note: each test returns `true` on success or calls `builtins.throw`
+  # on failure. A throw aborts evaluation immediately, so there is no
+  # `false` case — `allPass` is always `true` when we reach runCommand.
+  testNames = builtins.attrNames tests;
+  testCount = builtins.length testNames;
   allResults = builtins.attrValues tests;
   allPass = builtins.all (x: x) allResults;
 
 in
+assert allPass;
 pkgs.runCommand "module-eval-tests" {
   passthru = { inherit tests; };
 } ''
-  ${if allPass then ''
-    echo "All ${toString (builtins.length allResults)} module evaluation tests passed."
-    echo "${toString (builtins.attrNames tests)}" > $out
-  '' else ''
-    echo "FAIL: some module evaluation tests did not pass"
-    exit 1
-  ''}
+  echo "All ${toString testCount} module evaluation tests passed:"
+  ${builtins.concatStringsSep "\n" (map (name: "echo '  ✓ ${name}'") testNames)}
+  echo "${toString testNames}" > $out
 ''
