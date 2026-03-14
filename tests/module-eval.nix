@@ -119,6 +119,7 @@ let
             tailscaleServe.enable = false;
             endpoints = {
               test-health = {
+                name = "Test Health";
                 url = "http://127.0.0.1:8080/health";
                 interval = "60s";
                 conditions = [ "[STATUS] == 200" ];
@@ -138,7 +139,7 @@ let
             tailscaleServe.enable = false;
             suites = {
               test-suite = {
-                description = "Test functional suite";
+                name = "Test Suite";
                 endpoints = [
                   {
                     name = "step-1";
