@@ -49,13 +49,13 @@ let
     builtins.seq config.system.build.toplevel.drvPath true;
 
   # Check that evaluation succeeds (module is valid with given config).
+  # Does NOT wrap with tryEval — if evaluation fails, the raw Nix error
+  # propagates with full context (option path, assertion message, etc.).
   shouldEval = name: args:
     let
       config = evalConfig args;
-      result = builtins.tryEval (forceEval config);
     in
-    if result.success then true
-    else builtins.throw "FAIL: ${name} — module should evaluate but threw an error";
+    builtins.addErrorContext "in test '${name}'" (forceEval config);
 
   # Check that evaluation fails (assertion should fire for bad config).
   shouldFail = name: args:
