@@ -236,6 +236,21 @@
           };
         });
 
+      # Checks - run with `nix flake check`
+      checks = forAllSystems (system:
+        let
+          pkgs = nixpkgsFor.${system};
+        in
+        {
+          # Module evaluation tests — verify all service modules evaluate
+          # correctly with minimal config, and that assertions fire for
+          # invalid inputs (e.g. secrets in /nix/store).
+          module-eval = import ./tests/module-eval.nix {
+            inherit pkgs nixpkgs self;
+            lib = nixpkgs.lib;
+          };
+        });
+
       # Apps - makes packages runnable with `nix run`
       apps = forAllSystems (system: {
         # Default app (what runs with `nix run github:user/repo`)
