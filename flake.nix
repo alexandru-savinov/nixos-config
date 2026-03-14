@@ -250,7 +250,6 @@
           # invalid inputs (e.g. secrets in /nix/store).
           module-eval = import ./tests/module-eval.nix {
             inherit pkgs nixpkgs self;
-            lib = nixpkgs.lib;
           };
         };
 

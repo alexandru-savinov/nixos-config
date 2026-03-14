@@ -15,9 +15,9 @@
 #
 # Run: nix build .#checks.<system>.module-eval
 #
-# Called from flake.nix with: { pkgs, lib, nixpkgs, self }
+# Called from flake.nix with: { pkgs, nixpkgs, self }
 
-{ pkgs, lib, nixpkgs, self }:
+{ pkgs, nixpkgs, self }:
 
 let
   system = pkgs.system;
@@ -392,6 +392,9 @@ let
           services.nullclaw = {
             enable = true;
             apiKeyFile = "/run/secrets/anthropic-key";
+            # telegram.enable defaults to true, requiring botTokenFile;
+            # disable it for the minimal-config test.
+            telegram.enable = false;
           };
         }
       ];
@@ -476,24 +479,21 @@ let
   };
 
   # ── Build the check derivation ──────────────────────────────────
-  # Force evaluation of all tests. If any test throws, the derivation
-  # evaluation fails and `nix flake check` reports it.
-  #
-  # Note: each test returns `true` on success or calls `builtins.throw`
-  # on failure. A throw aborts evaluation immediately, so there is no
-  # `false` case — `allPass` is always `true` when we reach runCommand.
+  # Each test returns `true` on success or calls `builtins.throw` on
+  # failure. Sequencing `builtins.deepSeq allResults` forces every test
+  # to evaluate; a throw aborts immediately and `nix flake check` reports it.
   testNames = builtins.attrNames tests;
   testCount = builtins.length testNames;
   allResults = builtins.attrValues tests;
-  allPass = builtins.all (x: x) allResults;
 
 in
-assert allPass;
 pkgs.runCommand "module-eval-tests"
 {
   passthru = { inherit tests; };
-} ''
-  echo "All ${toString testCount} module evaluation tests passed:"
-  ${builtins.concatStringsSep "\n" (map (name: "echo '  ✓ ${name}'") testNames)}
-  echo "${toString testNames}" > $out
-''
+}
+  # deepSeq ensures all test thunks are forced before the builder runs.
+  (builtins.deepSeq allResults ''
+    echo "All ${toString testCount} module evaluation tests passed:"
+    ${builtins.concatStringsSep "\n" (map (name: "echo '  ✓ ${name}'") testNames)}
+    echo "${toString testNames}" > $out
+  '')
