@@ -74,17 +74,21 @@ let
     qdrant-minimal = shouldEval "qdrant: minimal config" {
       modules = [
         ../modules/services/qdrant.nix
-        { services.qdrant-tailscale.enable = true;
-          services.qdrant-tailscale.tailscaleServe.enable = false; }
+        {
+          services.qdrant-tailscale.enable = true;
+          services.qdrant-tailscale.tailscaleServe.enable = false;
+        }
       ];
     };
 
     qdrant-on-disk = shouldEval "qdrant: on-disk storage" {
       modules = [
         ../modules/services/qdrant.nix
-        { services.qdrant-tailscale.enable = true;
+        {
+          services.qdrant-tailscale.enable = true;
           services.qdrant-tailscale.storage.onDisk = true;
-          services.qdrant-tailscale.tailscaleServe.enable = false; }
+          services.qdrant-tailscale.tailscaleServe.enable = false;
+        }
       ];
     };
 
@@ -99,15 +103,18 @@ let
     gatus-minimal = shouldEval "gatus: minimal config" {
       modules = [
         ../modules/services/gatus.nix
-        { services.gatus-tailscale.enable = true;
-          services.gatus-tailscale.tailscaleServe.enable = false; }
+        {
+          services.gatus-tailscale.enable = true;
+          services.gatus-tailscale.tailscaleServe.enable = false;
+        }
       ];
     };
 
     gatus-with-endpoint = shouldEval "gatus: with endpoint" {
       modules = [
         ../modules/services/gatus.nix
-        { services.gatus-tailscale = {
+        {
+          services.gatus-tailscale = {
             enable = true;
             tailscaleServe.enable = false;
             endpoints = {
@@ -125,20 +132,25 @@ let
     gatus-with-suite = shouldEval "gatus: with suite" {
       modules = [
         ../modules/services/gatus.nix
-        { services.gatus-tailscale = {
+        {
+          services.gatus-tailscale = {
             enable = true;
             tailscaleServe.enable = false;
             suites = {
               test-suite = {
                 description = "Test functional suite";
                 endpoints = [
-                  { name = "step-1";
+                  {
+                    name = "step-1";
                     url = "http://127.0.0.1:8080/api/test";
                     conditions = [ "[STATUS] == 200" ];
-                    store = { response_id = "[BODY].id"; }; }
-                  { name = "step-2";
+                    store = { response_id = "[BODY].id"; };
+                  }
+                  {
+                    name = "step-2";
                     url = "http://127.0.0.1:8080/api/test/[CONTEXT].response_id";
-                    conditions = [ "[STATUS] == 200" ]; }
+                    conditions = [ "[STATUS] == 200" ];
+                  }
                 ];
               };
             };
@@ -165,7 +177,8 @@ let
     nixframe-with-weather = shouldEval "nixframe: with weather" {
       modules = [
         ../modules/services/nixframe.nix
-        { services.nixframe = {
+        {
+          services.nixframe = {
             enable = true;
             weather.enable = true;
           };
@@ -176,7 +189,8 @@ let
     nixframe-with-calendar = shouldEval "nixframe: with calendar" {
       modules = [
         ../modules/services/nixframe.nix
-        { services.nixframe = {
+        {
+          services.nixframe = {
             enable = true;
             calendar.enable = true;
             calendar.credentialsFile = "/run/secrets/caldav";
@@ -196,7 +210,8 @@ let
     backup-pull-minimal = shouldEval "backup-pull: minimal config" {
       modules = [
         ../modules/services/backup-pull.nix
-        { services.backup-pull = {
+        {
+          services.backup-pull = {
             enable = true;
             remoteHost = "test-host";
             remotePaths = [ "/var/lib/data" ];
@@ -218,7 +233,8 @@ let
     n8n-minimal = shouldEval "n8n: minimal config" {
       modules = [
         ../modules/services/n8n.nix
-        { services.n8n-tailscale = {
+        {
+          services.n8n-tailscale = {
             enable = true;
             tailscaleServe.enable = false;
           };
@@ -229,7 +245,8 @@ let
     n8n-with-encryption-key = shouldEval "n8n: with encryption key" {
       modules = [
         ../modules/services/n8n.nix
-        { services.n8n-tailscale = {
+        {
+          services.n8n-tailscale = {
             enable = true;
             encryptionKeyFile = "/run/secrets/n8n-encryption-key";
             tailscaleServe.enable = false;
@@ -241,7 +258,8 @@ let
     n8n-nix-store-secret-rejected = shouldFail "n8n: nix-store secret rejected" {
       modules = [
         ../modules/services/n8n.nix
-        { services.n8n-tailscale = {
+        {
+          services.n8n-tailscale = {
             enable = true;
             encryptionKeyFile = "/nix/store/fake-hash-secret";
             tailscaleServe.enable = false;
@@ -261,7 +279,8 @@ let
     open-webui-minimal = shouldEval "open-webui: minimal config" {
       modules = [
         ../modules/services/open-webui.nix
-        { services.open-webui-tailscale = {
+        {
+          services.open-webui-tailscale = {
             enable = true;
             tailscaleServe.enable = false;
           };
@@ -273,7 +292,8 @@ let
     open-webui-with-testing = shouldEval "open-webui: with testing enabled" {
       modules = [
         ../modules/services/open-webui.nix
-        { services.open-webui-tailscale = {
+        {
+          services.open-webui-tailscale = {
             enable = true;
             tailscaleServe.enable = false;
             testing.enable = true;
@@ -288,7 +308,8 @@ let
     open-webui-testing-requires-secret-key = shouldFail "open-webui: testing without secretKeyFile" {
       modules = [
         ../modules/services/open-webui.nix
-        { services.open-webui-tailscale = {
+        {
+          services.open-webui-tailscale = {
             enable = true;
             tailscaleServe.enable = false;
             testing.enable = true;
@@ -303,7 +324,8 @@ let
     open-webui-auto-memory-requires-memory = shouldFail "open-webui: autoMemory without memory" {
       modules = [
         ../modules/services/open-webui.nix
-        { services.open-webui-tailscale = {
+        {
+          services.open-webui-tailscale = {
             enable = true;
             tailscaleServe.enable = false;
             autoMemory.enable = true;
@@ -326,7 +348,8 @@ let
     openclaw-missing-claude-code = shouldFail "openclaw: missing claude-code input" {
       modules = [
         ../modules/services/openclaw.nix
-        { services.openclaw = {
+        {
+          services.openclaw = {
             enable = true;
             anthropicApiKeyFile = "/run/secrets/anthropic-key";
             githubTokenFile = "/run/secrets/github-token";
@@ -340,7 +363,8 @@ let
     openclaw-nix-store-secret-rejected = shouldFail "openclaw: nix-store secret rejected" {
       modules = [
         ../modules/services/openclaw.nix
-        { services.openclaw = {
+        {
+          services.openclaw = {
             enable = true;
             anthropicApiKeyFile = "/nix/store/fake-hash-secret";
             githubTokenFile = "/run/secrets/github-token";
@@ -364,7 +388,8 @@ let
     nullclaw-minimal = shouldEval "nullclaw: minimal config" {
       modules = [
         ../modules/services/nullclaw.nix
-        { services.nullclaw = {
+        {
+          services.nullclaw = {
             enable = true;
             apiKeyFile = "/run/secrets/anthropic-key";
           };
@@ -376,7 +401,8 @@ let
     nullclaw-nix-store-secret-rejected = shouldFail "nullclaw: nix-store api key rejected" {
       modules = [
         ../modules/services/nullclaw.nix
-        { services.nullclaw = {
+        {
+          services.nullclaw = {
             enable = true;
             apiKeyFile = "/nix/store/fake-hash-key";
           };
@@ -388,7 +414,8 @@ let
     nullclaw-telegram-nix-store-rejected = shouldFail "nullclaw: nix-store telegram token rejected" {
       modules = [
         ../modules/services/nullclaw.nix
-        { services.nullclaw = {
+        {
+          services.nullclaw = {
             enable = true;
             apiKeyFile = "/run/secrets/anthropic-key";
             telegram.enable = true;
@@ -412,7 +439,8 @@ let
     unifi-mcp-minimal = shouldEval "unifi-mcp: minimal config" {
       modules = [
         ../modules/services/unifi-mcp.nix
-        { services.unifi-mcp = {
+        {
+          services.unifi-mcp = {
             enable = true;
             host = "192.168.1.1";
             passwordFile = "/run/secrets/unifi-password";
@@ -461,7 +489,8 @@ let
 
 in
 assert allPass;
-pkgs.runCommand "module-eval-tests" {
+pkgs.runCommand "module-eval-tests"
+{
   passthru = { inherit tests; };
 } ''
   echo "All ${toString testCount} module evaluation tests passed:"
