@@ -275,6 +275,11 @@
   # Start btop automatically when logged into tty1
   # Quitting btop (q) returns to a bash shell; type 'exit' to trigger re-login and restart btop
   programs.bash.interactiveShellInit = ''
+    # When su'd into nixos from root, cd to home instead of staying in /root
+    if [[ "$(id -un)" == "nixos" && "$PWD" == "/root" ]]; then
+      cd ~
+    fi
+
     if [[ $(tty) == "/dev/tty1" ]] && [[ -z "$BTOP_RUNNING" ]]; then
       export BTOP_RUNNING=1
       ${pkgs.btop}/bin/btop
