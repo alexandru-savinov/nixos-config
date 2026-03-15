@@ -222,6 +222,9 @@ in
         done
         echo "pgvector is ready"
 
+        # Docker socket GID for container access (PentAGI uses DOCKER_GID internally)
+        DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+
         # PentAGI runs as root:root (upstream design) with Docker socket access
         # to spawn tool containers (nmap, metasploit, etc.)
         # DOCKER_NETWORK=host: tool containers get Tailscale access for audit targets
@@ -229,6 +232,7 @@ in
           --name pentagi \
           --network pentagi-network \
           --hostname pentagi \
+          --group-add "$DOCKER_GID" \
           -p 127.0.0.1:${toString cfg.listenPort}:8443 \
           -v /var/lib/pentagi/data:/opt/pentagi/data \
           -v /var/run/docker.sock:/var/run/docker.sock \
@@ -239,6 +243,7 @@ in
           -e "SERVER_HOST=0.0.0.0" \
           -e "SERVER_USE_SSL=false" \
           -e "PUBLIC_URL=https://localhost:${toString cfg.listenPort}" \
+          -e "DOCKER_GID=$DOCKER_GID" \
           -e "DOCKER_INSIDE=true" \
           -e "DOCKER_HOST=unix:///var/run/docker.sock" \
           -e "DOCKER_NETWORK=host" \
