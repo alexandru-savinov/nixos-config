@@ -255,6 +255,9 @@ in
         NoNewPrivileges = true;
         # Memory limit for pentagi main container process
         MemoryMax = "4G";
+        # Bound crash-loops: max 5 restarts in 5 minutes
+        StartLimitIntervalSec = 300;
+        StartLimitBurst = 5;
       };
 
       script = ''
@@ -265,9 +268,27 @@ in
         # Remove stale container if exists
         ${podman} rm -f pentagi 2>/dev/null || true
 
+        # Wait for PostgreSQL to accept connections before starting PentAGI
+        echo "Waiting for pgvector to be ready..."
+        pg_timeout=60
+        while ! ${podman} exec pentagi-pgvector pg_isready -U postgres 2>/dev/null; do
+          pg_timeout=$((pg_timeout - 1))
+          if [ $pg_timeout -le 0 ]; then
+            echo "ERROR: pgvector not ready after 60 seconds"
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "pgvector is ready"
+
         # Podman rootless socket path
         PODMAN_SOCK="/run/user/$(id -u)/podman/podman.sock"
 
+        # ACCEPTED RISKS (inherent to autonomous pentesting):
+        # - Podman socket mount: PentAGI must spawn tool containers (nmap, metasploit, etc.)
+        #   Compromise is limited to the rootless pentagi user, not root.
+        # - DOCKER_NETWORK=host: Tool containers need Tailscale access to reach audit targets.
+        #   Mitigated by on-demand lifecycle (disable after audit).
         exec ${podman} run --rm \
           --name pentagi \
           --network pentagi-network \
