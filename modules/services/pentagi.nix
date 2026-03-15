@@ -129,6 +129,9 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
+      # newuidmap/newgidmap are in /run/wrappers/bin (NixOS setuid wrappers)
+      path = [ "/run/wrappers" ];
+
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -156,6 +159,8 @@ in
       after = [ "pentagi-network.service" ];
       requires = [ "pentagi-network.service" ];
       wantedBy = [ "multi-user.target" ];
+
+      path = [ "/run/wrappers" ];
 
       serviceConfig = {
         Type = "simple";
@@ -196,6 +201,8 @@ in
       after = [ "pentagi-network.service" ];
       requires = [ "pentagi-network.service" ];
       wantedBy = [ "multi-user.target" ];
+
+      path = [ "/run/wrappers" ];
 
       serviceConfig = {
         Type = "simple";
@@ -243,6 +250,8 @@ in
         "pentagi-scraper.service"
       ];
       wantedBy = [ "multi-user.target" ];
+
+      path = [ "/run/wrappers" ];
 
       serviceConfig = {
         Type = "simple";
