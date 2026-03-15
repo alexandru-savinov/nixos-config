@@ -213,6 +213,7 @@ in
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
+    ../../modules/services/pentagi.nix
   ];
 
   # Enable development tools and Claude Code
@@ -291,6 +292,12 @@ in
       kuzea-github-token = kuzeaSecret "kuzea-github-token";
       kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
       kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
+
+      # PentAGI secrets — separate anthropic key declaration to avoid
+      # owner conflict with openclaw's use of the same .age file.
+      anthropic-api-key-pentagi.file = "${self}/secrets/anthropic-api-key.age";
+      pentagi-postgres-password.file = "${self}/secrets/pentagi-postgres-password.age";
+      pentagi-cookie-salt.file = "${self}/secrets/pentagi-cookie-salt.age";
     };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
@@ -635,6 +642,17 @@ in
       "r /var/lib/openclaw/.git-credentials - - - -"
       "r /var/lib/openclaw/.git-credentials.bak - - - -"
     ];
+
+  # ── PentAGI (on-demand security audit) ─────────────────────────────
+  # Flip to true when ready to run a security audit, false when done.
+  # Uses Podman rootless containers: pentagi + pgvector + scraper.
+  # Web UI: https://sancta-claw.tail4249a9.ts.net:8443
+  services.pentagi = {
+    enable = false;
+    anthropicApiKeyFile = config.age.secrets.anthropic-api-key-pentagi.path;
+    postgresPasswordFile = config.age.secrets.pentagi-postgres-password.path;
+    cookieSaltFile = config.age.secrets.pentagi-cookie-salt.path;
+  };
 
   # Fresh install — NixOS 25.05
   system.stateVersion = lib.mkForce "25.05";
