@@ -30,6 +30,19 @@
     zellij
   ];
 
+  # ── fail2ban — brute-force protection ───────────────────────────────────
+  services.fail2ban = {
+    enable = true;
+    maxretry = 5;
+    bantime = "1h";
+    bantime-increment.enable = true;
+    jails.sshd.settings = {
+      enabled = true;
+      filter = "sshd[mode=aggressive]";
+      maxretry = 3;
+    };
+  };
+
   # Default state version (override per host if needed)
   system.stateVersion = "23.11";
 }
