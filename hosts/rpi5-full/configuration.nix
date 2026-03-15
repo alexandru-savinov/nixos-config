@@ -492,6 +492,9 @@ in
     ];
   };
 
+  # Add n8n to nixframe group so it can write photos to nixframe's home dir
+  users.users.n8n.extraGroups = [ "nixframe" ];
+
   # Add ImageMagick to n8n PATH for HEIC conversion and EXIF auto-orient
   # Allow n8n to write to nixframe photo directory (ProtectSystem=strict blocks it)
   systemd.services.n8n = {

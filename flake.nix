@@ -236,6 +236,23 @@
           };
         });
 
+      # Checks - run with `nix flake check`
+      # x86_64-linux only: CI runs `nix flake check --all-systems` on x86_64
+      # runners without aarch64 builders. Module eval tests are architecture-
+      # independent (they test option merging, not package builds).
+      checks.x86_64-linux =
+        let
+          pkgs = nixpkgsFor.x86_64-linux;
+        in
+        {
+          # Module evaluation tests — verify all service modules evaluate
+          # correctly with minimal config, and that assertions fire for
+          # invalid inputs (e.g. secrets in /nix/store).
+          module-eval = import ./tests/module-eval.nix {
+            inherit pkgs nixpkgs self;
+          };
+        };
+
       # Apps - makes packages runnable with `nix run`
       apps = forAllSystems (system: {
         # Default app (what runs with `nix run github:user/repo`)
