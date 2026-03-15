@@ -88,9 +88,8 @@ let
           version = "0.14.0";
           inherit src;
           # fetcherVersion required since nixpkgs 25.11; use 3 for reproducible tarballs.
-          # Hash must be recomputed on x86_64 (can't cross-build from aarch64).
           fetcherVersion = 3;
-          hash = "";
+          hash = "sha256-ajlazaN9vdQ/d0g3DshHaHL0f4S8TsCi1P1sc3hEBgc=";
         };
         nativeBuildInputs = with pkgs; [
           nodejs_22
