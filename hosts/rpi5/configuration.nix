@@ -57,7 +57,7 @@
   # SSH configuration (openssh.enable is set in common.nix)
   services.openssh.settings = {
     PermitRootLogin = "prohibit-password";
-    PasswordAuthentication = lib.mkForce true;
+    PasswordAuthentication = lib.mkDefault true;
   };
 
   # VSCode Server support (for remote development)
@@ -151,15 +151,8 @@
     initialPassword = "nixos";
   };
 
-  # Claude YOLO mode user (runs claude --dangerously-skip-permissions)
-  users.users.claude-yolo = {
-    isNormalUser = true;
-    extraGroups = [ "wheel" ];
-    initialPassword = "yolo";
-    description = "Claude Code YOLO mode user";
-  };
-
-  # Allow wheel group to sudo without password initially
+  # Allow wheel group to sudo without password for SD-card bootstrap
+  # rpi5-full overrides this to require password (lib.mkForce true)
   security.sudo.wheelNeedsPassword = false;
 
   # ============================================================
