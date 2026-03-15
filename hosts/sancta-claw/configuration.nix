@@ -293,14 +293,20 @@ in
       kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
       kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
 
-      # PentAGI — on-demand security audit (reuses existing Anthropic key)
-      anthropic-api-key = {
+      # PentAGI — separate agenix declarations to avoid owner conflicts.
+      # Same .age file, decrypted to different paths with independent ownership.
+      anthropic-api-key-pentagi = {
         file = "${self}/secrets/anthropic-api-key.age";
         owner = "pentagi";
         group = "pentagi";
       };
       pentagi-postgres-password = {
         file = "${self}/secrets/pentagi-postgres-password.age";
+        owner = "pentagi";
+        group = "pentagi";
+      };
+      pentagi-cookie-salt = {
+        file = "${self}/secrets/pentagi-cookie-salt.age";
         owner = "pentagi";
         group = "pentagi";
       };
@@ -655,8 +661,9 @@ in
   # Web UI: https://sancta-claw.tail4249a9.ts.net:8443
   services.pentagi = {
     enable = false;
-    anthropicApiKeyFile = config.age.secrets.anthropic-api-key.path;
+    anthropicApiKeyFile = config.age.secrets.anthropic-api-key-pentagi.path;
     postgresPasswordFile = config.age.secrets.pentagi-postgres-password.path;
+    cookieSaltFile = config.age.secrets.pentagi-cookie-salt.path;
   };
 
   # Fresh install — NixOS 25.05

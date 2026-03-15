@@ -101,4 +101,6 @@ in
   # ── PentAGI (on-demand security audit) ─────────────────────────────
   # PostgreSQL password for PentAGI pgvector container
   "pentagi-postgres-password.age".publicKeys = clawKeys;
+  # Cookie signing salt (stable across restarts)
+  "pentagi-cookie-salt.age".publicKeys = clawKeys;
 }

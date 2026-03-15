@@ -44,6 +44,11 @@ in
       description = "Path to file containing PostgreSQL password for pgvector (agenix).";
     };
 
+    cookieSaltFile = mkOption {
+      type = types.path;
+      description = "Path to file containing cookie signing salt (agenix). Must be stable across restarts.";
+    };
+
     listenPort = mkOption {
       type = types.port;
       default = 8443;
@@ -80,14 +85,16 @@ in
         assertion = !(hasPrefix "/nix/store" (toString cfg.postgresPasswordFile));
         message = "services.pentagi.postgresPasswordFile must not point to /nix/store (world-readable).";
       }
+      {
+        assertion = !(hasPrefix "/nix/store" (toString cfg.cookieSaltFile));
+        message = "services.pentagi.cookieSaltFile must not point to /nix/store (world-readable).";
+      }
     ];
 
     # ── Podman ──────────────────────────────────────────────────────────
-    virtualisation.podman = {
-      enable = true;
-      # Docker-compat socket so PentAGI can spawn tool containers
-      dockerSocket.enable = true;
-    };
+    # Rootless Podman — no system-wide Docker socket needed.
+    # PentAGI uses the per-user Podman socket at /run/user/<uid>/podman/podman.sock.
+    virtualisation.podman.enable = true;
 
     # ── User ────────────────────────────────────────────────────────────
     users.users.pentagi = {
@@ -158,6 +165,7 @@ in
         RestartSec = 10;
         TimeoutStartSec = 120;
         TimeoutStopSec = 30;
+        NoNewPrivileges = true;
       };
 
       script = ''
@@ -197,6 +205,7 @@ in
         RestartSec = 10;
         TimeoutStartSec = 120;
         TimeoutStopSec = 30;
+        NoNewPrivileges = true;
       };
 
       script = ''
@@ -243,6 +252,7 @@ in
         RestartSec = 10;
         TimeoutStartSec = 180;
         TimeoutStopSec = 30;
+        NoNewPrivileges = true;
         # Memory limit for pentagi main container process
         MemoryMax = "4G";
       };
@@ -250,6 +260,7 @@ in
       script = ''
         PG_PASS=$(cat "${cfg.postgresPasswordFile}")
         ANTHROPIC_KEY=$(cat "${cfg.anthropicApiKeyFile}")
+        COOKIE_SALT=$(cat "${cfg.cookieSaltFile}")
 
         # Remove stale container if exists
         ${podman} rm -f pentagi 2>/dev/null || true
@@ -278,7 +289,7 @@ in
           -e "DOCKER_PUBLIC_IP=0.0.0.0" \
           -e "DUCKDUCKGO_ENABLED=true" \
           -e "SPLOITUS_ENABLED=true" \
-          -e "COOKIE_SIGNING_SALT=$(head -c 32 /dev/urandom | base64)" \
+          -e "COOKIE_SIGNING_SALT=$COOKIE_SALT" \
           ${cfg.image}
       '';
 
