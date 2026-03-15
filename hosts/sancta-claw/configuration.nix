@@ -87,7 +87,10 @@ let
           pname = "agent-browser-daemon";
           version = "0.14.0";
           inherit src;
-          hash = "sha256-W2UD2bCmyHwzAknw2jxfgVFvd1r2y0/XX5ujT6RO3xM=";
+          # fetcherVersion required since nixpkgs 25.11; use 3 for reproducible tarballs.
+          # Hash must be recomputed on x86_64 (can't cross-build from aarch64).
+          fetcherVersion = 3;
+          hash = "";
         };
         nativeBuildInputs = with pkgs; [
           nodejs_22
@@ -297,7 +300,6 @@ in
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
-    sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
   # ── Swap (12GB — prevents OOM during builds and heavy workloads on CX33) ────────────────────

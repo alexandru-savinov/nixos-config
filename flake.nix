@@ -2,10 +2,14 @@
   description = "NixOS configurations for multiple machines";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    # Upgraded from nixos-25.05 to fix CVE-2025-68613 (n8n RCE, CVSS 9.9)
+    # nixos-25.05 has n8n 1.91.3 (vulnerable); nixos-25.11 has n8n 1.123.23 (patched)
+    # Also resolves Home Manager version mismatch (#264): nixos-raspberrypi
+    # already uses nixpkgs 25.11, so this aligns all hosts.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     home-manager = {
-      url = "github:nix-community/home-manager/release-25.05";
+      url = "github:nix-community/home-manager/release-25.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     vscode-server = {
@@ -13,7 +17,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     agenix = {
-      url = "github:ryantm/agenix/0.15.0";
+      # Unpinned from 0.15.0: that tag uses substituteAll, removed in nixpkgs 25.11.
+      # Main branch uses replaceVars. Pin to next release when available.
+      url = "github:ryantm/agenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # Raspberry Pi 5 support - provides kernel 6.12.34, firmware, and config.txt management
