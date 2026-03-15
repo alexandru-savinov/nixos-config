@@ -51,7 +51,8 @@
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
       # Import nixpkgs for each system
-      nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; });
+      # allowUnfree needed for open-webui (changed to "Open WebUI License" in 25.11)
+      nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; config.allowUnfree = true; });
 
       # Import unstable nixpkgs per architecture (shared across host configs)
       pkgs-unstable-x86 = import nixpkgs-unstable {
