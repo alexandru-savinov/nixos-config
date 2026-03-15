@@ -293,23 +293,11 @@ in
       kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
       kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
 
-      # PentAGI — separate agenix declarations to avoid owner conflicts.
-      # Same .age file, decrypted to different paths with independent ownership.
-      anthropic-api-key-pentagi = {
-        file = "${self}/secrets/anthropic-api-key.age";
-        owner = "pentagi";
-        group = "pentagi";
-      };
-      pentagi-postgres-password = {
-        file = "${self}/secrets/pentagi-postgres-password.age";
-        owner = "pentagi";
-        group = "pentagi";
-      };
-      pentagi-cookie-salt = {
-        file = "${self}/secrets/pentagi-cookie-salt.age";
-        owner = "pentagi";
-        group = "pentagi";
-      };
+      # PentAGI secrets — separate anthropic key declaration to avoid
+      # owner conflict with openclaw's use of the same .age file.
+      anthropic-api-key-pentagi.file = "${self}/secrets/anthropic-api-key.age";
+      pentagi-postgres-password.file = "${self}/secrets/pentagi-postgres-password.age";
+      pentagi-cookie-salt.file = "${self}/secrets/pentagi-cookie-salt.age";
     };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──

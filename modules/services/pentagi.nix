@@ -1,17 +1,15 @@
 # PentAGI — Autonomous AI-Powered Penetration Testing
 #
-# Deploys PentAGI (vxcontrol/pentagi) as Podman rootless containers:
+# Deploys PentAGI (vxcontrol/pentagi) as Docker containers via NixOS oci-containers:
 #   pentagi       — Go backend + React UI (port 8443)
 #   pgvector      — PostgreSQL with vector extension
-#   scraper       — Headless browser for web intelligence (port 3000, rootless)
+#   scraper       — Headless browser for web intelligence (port 3000)
 #
 # On-demand: enable = false by default. Flip to true, rebuild, run audit, flip back.
 #
-# ACCEPTED RISKS (inherent to autonomous pentesting):
-# - Podman socket mount: PentAGI must spawn tool containers (nmap, metasploit, etc.)
-#   Compromise is limited to the rootless pentagi user, not root.
-# - DOCKER_NETWORK=host: Tool containers need Tailscale access to reach audit targets.
-#   Mitigated by on-demand lifecycle (disable after audit).
+# Uses rootful Docker (not rootless Podman) because PentAGI requires Docker socket
+# access to spawn tool containers (nmap, metasploit, sqlmap, etc.) and runs as root
+# inside its container (upstream design). Security mitigated by on-demand lifecycle.
 #
 # Usage:
 #   services.pentagi = {
@@ -28,30 +26,9 @@ with lib;
 let
   cfg = config.services.pentagi;
 
-  pentagiUid = 989;
-  pentagiGid = 989;
-
-  podman = "${pkgs.podman}/bin/podman";
-
-  # Scraper credentials (non-secret, used for inter-container auth only)
+  # Scraper credentials (inter-container auth only, not externally exposed)
   scraperUser = "pentagi";
   scraperPass = "scraper-local";
-
-  # Common environment for all pentagi services running as the pentagi user.
-  # System services with User= don't get user session env vars automatically.
-  pentagiEnv = {
-    HOME = "/var/lib/pentagi";
-    XDG_RUNTIME_DIR = "/run/user/${toString pentagiUid}";
-  };
-
-  # Common serviceConfig for all container-launcher services
-  pentagiServiceConfig = {
-    User = "pentagi";
-    Group = "pentagi";
-    Restart = "on-failure";
-    RestartSec = 10;
-    NoNewPrivileges = true;
-  };
 in
 {
   options.services.pentagi = {
@@ -105,60 +82,35 @@ in
         message = "services.pentagi.${name} must not point to /nix/store (world-readable).";
       }) [ "anthropicApiKeyFile" "postgresPasswordFile" "cookieSaltFile" ];
 
-    # ── Podman (rootless — no system-wide Docker socket) ────────────────
-    virtualisation.podman.enable = true;
-
-    # ── User ────────────────────────────────────────────────────────────
-    users.users.pentagi = {
-      isSystemUser = true;
-      uid = pentagiUid;
-      group = "pentagi";
-      home = "/var/lib/pentagi";
-      createHome = true;
-      shell = pkgs.bash;
-      subUidRanges = [{ startUid = 100000; count = 65536; }];
-      subGidRanges = [{ startGid = 100000; count = 65536; }];
-      linger = true;
-    };
-
-    users.groups.pentagi.gid = pentagiGid;
+    # ── Docker ──────────────────────────────────────────────────────────
+    virtualisation.docker.enable = true;
 
     # ── Directories ─────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
-      "d /var/lib/pentagi 0700 pentagi pentagi -"
-      "d /var/lib/pentagi/data 0700 pentagi pentagi -"
-      "d /var/lib/pentagi/pgdata 0700 pentagi pentagi -"
+      "d /var/lib/pentagi 0700 root root -"
+      "d /var/lib/pentagi/data 0700 root root -"
+      "d /var/lib/pentagi/pgdata 0700 root root -"
     ];
 
-    # ── Podman network setup ───────────────────────────────────────────
+    # ── Docker network ──────────────────────────────────────────────────
     systemd.services.pentagi-network = {
-      description = "Create PentAGI Podman network";
-      after = [ "network-online.target" "user@${toString pentagiUid}.service" ];
-      wants = [ "network-online.target" ];
-      requires = [ "user@${toString pentagiUid}.service" ];
+      description = "Create PentAGI Docker network";
+      after = [ "docker.service" ];
+      requires = [ "docker.service" ];
       wantedBy = [ "multi-user.target" ];
-
-      path = [ "/run/wrappers" ];
-      environment = pentagiEnv;
 
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        User = "pentagi";
-        Group = "pentagi";
       };
 
       script = ''
-        if ! ${podman} network exists pentagi-network 2>/dev/null; then
-          ${podman} network create pentagi-network
-          echo "Created pentagi-network"
-        else
-          echo "pentagi-network already exists"
-        fi
+        ${pkgs.docker}/bin/docker network inspect pentagi-network >/dev/null 2>&1 || \
+          ${pkgs.docker}/bin/docker network create pentagi-network
       '';
 
       preStop = ''
-        ${podman} network rm -f pentagi-network 2>/dev/null || true
+        ${pkgs.docker}/bin/docker network rm pentagi-network 2>/dev/null || true
       '';
     };
 
@@ -169,25 +121,21 @@ in
       requires = [ "pentagi-network.service" ];
       wantedBy = [ "multi-user.target" ];
 
-      path = [ "/run/wrappers" ];
-      environment = pentagiEnv;
-
-      serviceConfig = pentagiServiceConfig // {
+      serviceConfig = {
         Type = "simple";
+        Restart = "on-failure";
+        RestartSec = 10;
         TimeoutStartSec = 120;
         TimeoutStopSec = 30;
       };
 
       script = ''
         PG_PASS=$(cat "${cfg.postgresPasswordFile}")
-
-        ${podman} rm -f pentagi-pgvector 2>/dev/null || true
-
-        exec ${podman} run --rm \
+        ${pkgs.docker}/bin/docker rm -f pentagi-pgvector 2>/dev/null || true
+        exec ${pkgs.docker}/bin/docker run --rm \
           --name pentagi-pgvector \
           --network pentagi-network \
           --hostname pgvector \
-          --security-opt label=disable \
           -e POSTGRES_USER=postgres \
           -e "POSTGRES_PASSWORD=$PG_PASS" \
           -e POSTGRES_DB=pentagidb \
@@ -195,9 +143,7 @@ in
           ${cfg.pgvectorImage}
       '';
 
-      preStop = ''
-        ${podman} stop pentagi-pgvector 2>/dev/null || true
-      '';
+      preStop = "${pkgs.docker}/bin/docker stop pentagi-pgvector 2>/dev/null || true";
     };
 
     # ── Scraper (headless browser) ──────────────────────────────────────
@@ -207,23 +153,20 @@ in
       requires = [ "pentagi-network.service" ];
       wantedBy = [ "multi-user.target" ];
 
-      path = [ "/run/wrappers" ];
-      environment = pentagiEnv;
-
-      serviceConfig = pentagiServiceConfig // {
+      serviceConfig = {
         Type = "simple";
+        Restart = "on-failure";
+        RestartSec = 10;
         TimeoutStartSec = 120;
         TimeoutStopSec = 30;
       };
 
       script = ''
-        ${podman} rm -f pentagi-scraper 2>/dev/null || true
-
-        exec ${podman} run --rm \
+        ${pkgs.docker}/bin/docker rm -f pentagi-scraper 2>/dev/null || true
+        exec ${pkgs.docker}/bin/docker run --rm \
           --name pentagi-scraper \
           --network pentagi-network \
           --hostname scraper \
-          --security-opt label=disable \
           --shm-size=2g \
           -e MAX_CONCURRENT_SESSIONS=10 \
           -e "USERNAME=${scraperUser}" \
@@ -233,9 +176,7 @@ in
           ${cfg.scraperImage}
       '';
 
-      preStop = ''
-        ${podman} stop pentagi-scraper 2>/dev/null || true
-      '';
+      preStop = "${pkgs.docker}/bin/docker stop pentagi-scraper 2>/dev/null || true";
     };
 
     # ── PentAGI main service ────────────────────────────────────────────
@@ -244,7 +185,6 @@ in
       after = [
         "pentagi-pgvector.service"
         "pentagi-scraper.service"
-        "network-online.target"
       ];
       requires = [
         "pentagi-pgvector.service"
@@ -252,14 +192,12 @@ in
       ];
       wantedBy = [ "multi-user.target" ];
 
-      path = [ "/run/wrappers" ];
-      environment = pentagiEnv;
-
-      serviceConfig = pentagiServiceConfig // {
+      serviceConfig = {
         Type = "simple";
+        Restart = "on-failure";
+        RestartSec = 10;
         TimeoutStartSec = 180;
         TimeoutStopSec = 30;
-        MemoryMax = "4G";
         StartLimitIntervalSec = 300;
         StartLimitBurst = 5;
       };
@@ -269,12 +207,12 @@ in
         ANTHROPIC_KEY=$(cat "${cfg.anthropicApiKeyFile}")
         COOKIE_SALT=$(cat "${cfg.cookieSaltFile}")
 
-        ${podman} rm -f pentagi 2>/dev/null || true
+        ${pkgs.docker}/bin/docker rm -f pentagi 2>/dev/null || true
 
         # Wait for PostgreSQL to accept connections
         echo "Waiting for pgvector to be ready..."
         pg_timeout=60
-        while ! ${podman} exec pentagi-pgvector pg_isready -U postgres 2>/dev/null; do
+        while ! ${pkgs.docker}/bin/docker exec pentagi-pgvector pg_isready -U postgres 2>/dev/null; do
           pg_timeout=$((pg_timeout - 1))
           if [ $pg_timeout -le 0 ]; then
             echo "ERROR: pgvector not ready after 60 seconds"
@@ -284,16 +222,16 @@ in
         done
         echo "pgvector is ready"
 
-        PODMAN_SOCK="$XDG_RUNTIME_DIR/podman/podman.sock"
-
-        exec ${podman} run --rm \
+        # PentAGI runs as root:root (upstream design) with Docker socket access
+        # to spawn tool containers (nmap, metasploit, etc.)
+        # DOCKER_NETWORK=host: tool containers get Tailscale access for audit targets
+        exec ${pkgs.docker}/bin/docker run --rm \
           --name pentagi \
           --network pentagi-network \
           --hostname pentagi \
-          --security-opt label=disable \
           -p 127.0.0.1:${toString cfg.listenPort}:8443 \
           -v /var/lib/pentagi/data:/opt/pentagi/data \
-          -v "$PODMAN_SOCK":/var/run/docker.sock \
+          -v /var/run/docker.sock:/var/run/docker.sock \
           -e "ANTHROPIC_API_KEY=$ANTHROPIC_KEY" \
           -e "DATABASE_URL=postgres://postgres:$PG_PASS@pentagi-pgvector:5432/pentagidb?sslmode=disable" \
           -e "SCRAPER_PRIVATE_URL=http://${scraperUser}:${scraperPass}@pentagi-scraper:3000/" \
@@ -312,9 +250,7 @@ in
           ${cfg.image}
       '';
 
-      preStop = ''
-        ${podman} stop pentagi 2>/dev/null || true
-      '';
+      preStop = "${pkgs.docker}/bin/docker stop pentagi 2>/dev/null || true";
     };
 
     # ── Tailscale Serve ─────────────────────────────────────────────────
@@ -341,7 +277,6 @@ in
       };
 
       script = ''
-        # Wait for tailscaled to be ready
         ts_timeout=60
         while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
           ts_timeout=$((ts_timeout - 1))
@@ -352,7 +287,6 @@ in
           sleep 1
         done
 
-        # Wait for PentAGI to be listening
         port_timeout=60
         while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${toString cfg.listenPort} 2>/dev/null; do
           port_timeout=$((port_timeout - 1))
@@ -364,15 +298,11 @@ in
         done
 
         if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.listenPort}"; then
-          echo "Configuring Tailscale Serve for PentAGI..."
           ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.listenPort} http://127.0.0.1:${toString cfg.listenPort}
-        else
-          echo "Tailscale Serve already configured for PentAGI"
         fi
       '';
 
       preStop = ''
-        echo "Removing Tailscale Serve configuration for PentAGI..."
         ${pkgs.tailscale}/bin/tailscale serve --https ${toString cfg.listenPort} off || true
       '';
     };
