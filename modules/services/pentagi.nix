@@ -7,11 +7,18 @@
 #
 # On-demand: enable = false by default. Flip to true, rebuild, run audit, flip back.
 #
+# ACCEPTED RISKS (inherent to autonomous pentesting):
+# - Podman socket mount: PentAGI must spawn tool containers (nmap, metasploit, etc.)
+#   Compromise is limited to the rootless pentagi user, not root.
+# - DOCKER_NETWORK=host: Tool containers need Tailscale access to reach audit targets.
+#   Mitigated by on-demand lifecycle (disable after audit).
+#
 # Usage:
 #   services.pentagi = {
 #     enable = true;
-#     anthropicApiKeyFile = config.age.secrets.anthropic-api-key.path;
+#     anthropicApiKeyFile = config.age.secrets.anthropic-api-key-pentagi.path;
 #     postgresPasswordFile = config.age.secrets.pentagi-postgres-password.path;
+#     cookieSaltFile = config.age.secrets.pentagi-cookie-salt.path;
 #   };
 
 { config, pkgs, lib, ... }:
@@ -26,9 +33,25 @@ let
 
   podman = "${pkgs.podman}/bin/podman";
 
-  # Scraper credentials (non-secret, used for inter-container auth)
+  # Scraper credentials (non-secret, used for inter-container auth only)
   scraperUser = "pentagi";
   scraperPass = "scraper-local";
+
+  # Common environment for all pentagi services running as the pentagi user.
+  # System services with User= don't get user session env vars automatically.
+  pentagiEnv = {
+    HOME = "/var/lib/pentagi";
+    XDG_RUNTIME_DIR = "/run/user/${toString pentagiUid}";
+  };
+
+  # Common serviceConfig for all container-launcher services
+  pentagiServiceConfig = {
+    User = "pentagi";
+    Group = "pentagi";
+    Restart = "on-failure";
+    RestartSec = 10;
+    NoNewPrivileges = true;
+  };
 in
 {
   options.services.pentagi = {
@@ -41,7 +64,7 @@ in
 
     postgresPasswordFile = mkOption {
       type = types.path;
-      description = "Path to file containing PostgreSQL password for pgvector (agenix).";
+      description = "Path to file containing PostgreSQL password for pgvector (agenix). Must be URL-safe (no +/= chars).";
     };
 
     cookieSaltFile = mkOption {
@@ -76,24 +99,13 @@ in
 
   config = mkIf cfg.enable {
     # ── Assertions ──────────────────────────────────────────────────────
-    assertions = [
-      {
-        assertion = !(hasPrefix "/nix/store" (toString cfg.anthropicApiKeyFile));
-        message = "services.pentagi.anthropicApiKeyFile must not point to /nix/store (world-readable).";
-      }
-      {
-        assertion = !(hasPrefix "/nix/store" (toString cfg.postgresPasswordFile));
-        message = "services.pentagi.postgresPasswordFile must not point to /nix/store (world-readable).";
-      }
-      {
-        assertion = !(hasPrefix "/nix/store" (toString cfg.cookieSaltFile));
-        message = "services.pentagi.cookieSaltFile must not point to /nix/store (world-readable).";
-      }
-    ];
+    assertions = map
+      (name: {
+        assertion = !(hasPrefix "/nix/store" (toString cfg.${name}));
+        message = "services.pentagi.${name} must not point to /nix/store (world-readable).";
+      }) [ "anthropicApiKeyFile" "postgresPasswordFile" "cookieSaltFile" ];
 
-    # ── Podman ──────────────────────────────────────────────────────────
-    # Rootless Podman — no system-wide Docker socket needed.
-    # PentAGI uses the per-user Podman socket at /run/user/<uid>/podman/podman.sock.
+    # ── Podman (rootless — no system-wide Docker socket) ────────────────
     virtualisation.podman.enable = true;
 
     # ── User ────────────────────────────────────────────────────────────
@@ -104,16 +116,12 @@ in
       home = "/var/lib/pentagi";
       createHome = true;
       shell = pkgs.bash;
-      # subuid/subgid ranges required for rootless Podman
       subUidRanges = [{ startUid = 100000; count = 65536; }];
       subGidRanges = [{ startGid = 100000; count = 65536; }];
-      # Podman rootless needs lingering for user systemd session
       linger = true;
     };
 
-    users.groups.pentagi = {
-      gid = pentagiGid;
-    };
+    users.groups.pentagi.gid = pentagiGid;
 
     # ── Directories ─────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
@@ -125,12 +133,13 @@ in
     # ── Podman network setup ───────────────────────────────────────────
     systemd.services.pentagi-network = {
       description = "Create PentAGI Podman network";
-      after = [ "network-online.target" ];
+      after = [ "network-online.target" "user@${toString pentagiUid}.service" ];
       wants = [ "network-online.target" ];
+      requires = [ "user@${toString pentagiUid}.service" ];
       wantedBy = [ "multi-user.target" ];
 
-      # newuidmap/newgidmap are in /run/wrappers/bin (NixOS setuid wrappers)
       path = [ "/run/wrappers" ];
+      environment = pentagiEnv;
 
       serviceConfig = {
         Type = "oneshot";
@@ -149,7 +158,7 @@ in
       '';
 
       preStop = ''
-        ${podman} network rm pentagi-network 2>/dev/null || true
+        ${podman} network rm -f pentagi-network 2>/dev/null || true
       '';
     };
 
@@ -161,32 +170,28 @@ in
       wantedBy = [ "multi-user.target" ];
 
       path = [ "/run/wrappers" ];
+      environment = pentagiEnv;
 
-      serviceConfig = {
+      serviceConfig = pentagiServiceConfig // {
         Type = "simple";
-        User = "pentagi";
-        Group = "pentagi";
-        Restart = "on-failure";
-        RestartSec = 10;
         TimeoutStartSec = 120;
         TimeoutStopSec = 30;
-        NoNewPrivileges = true;
       };
 
       script = ''
         PG_PASS=$(cat "${cfg.postgresPasswordFile}")
 
-        # Remove stale container if exists
         ${podman} rm -f pentagi-pgvector 2>/dev/null || true
 
         exec ${podman} run --rm \
           --name pentagi-pgvector \
           --network pentagi-network \
           --hostname pgvector \
+          --security-opt label=disable \
           -e POSTGRES_USER=postgres \
           -e "POSTGRES_PASSWORD=$PG_PASS" \
           -e POSTGRES_DB=pentagidb \
-          -v /var/lib/pentagi/pgdata:/var/lib/postgresql/data:Z \
+          -v /var/lib/pentagi/pgdata:/var/lib/postgresql/data \
           ${cfg.pgvectorImage}
       '';
 
@@ -203,26 +208,22 @@ in
       wantedBy = [ "multi-user.target" ];
 
       path = [ "/run/wrappers" ];
+      environment = pentagiEnv;
 
-      serviceConfig = {
+      serviceConfig = pentagiServiceConfig // {
         Type = "simple";
-        User = "pentagi";
-        Group = "pentagi";
-        Restart = "on-failure";
-        RestartSec = 10;
         TimeoutStartSec = 120;
         TimeoutStopSec = 30;
-        NoNewPrivileges = true;
       };
 
       script = ''
-        # Remove stale container if exists
         ${podman} rm -f pentagi-scraper 2>/dev/null || true
 
         exec ${podman} run --rm \
           --name pentagi-scraper \
           --network pentagi-network \
           --hostname scraper \
+          --security-opt label=disable \
           --shm-size=2g \
           -e MAX_CONCURRENT_SESSIONS=10 \
           -e "USERNAME=${scraperUser}" \
@@ -252,19 +253,13 @@ in
       wantedBy = [ "multi-user.target" ];
 
       path = [ "/run/wrappers" ];
+      environment = pentagiEnv;
 
-      serviceConfig = {
+      serviceConfig = pentagiServiceConfig // {
         Type = "simple";
-        User = "pentagi";
-        Group = "pentagi";
-        Restart = "on-failure";
-        RestartSec = 10;
         TimeoutStartSec = 180;
         TimeoutStopSec = 30;
-        NoNewPrivileges = true;
-        # Memory limit for pentagi main container process
         MemoryMax = "4G";
-        # Bound crash-loops: max 5 restarts in 5 minutes
         StartLimitIntervalSec = 300;
         StartLimitBurst = 5;
       };
@@ -274,10 +269,9 @@ in
         ANTHROPIC_KEY=$(cat "${cfg.anthropicApiKeyFile}")
         COOKIE_SALT=$(cat "${cfg.cookieSaltFile}")
 
-        # Remove stale container if exists
         ${podman} rm -f pentagi 2>/dev/null || true
 
-        # Wait for PostgreSQL to accept connections before starting PentAGI
+        # Wait for PostgreSQL to accept connections
         echo "Waiting for pgvector to be ready..."
         pg_timeout=60
         while ! ${podman} exec pentagi-pgvector pg_isready -U postgres 2>/dev/null; do
@@ -290,21 +284,16 @@ in
         done
         echo "pgvector is ready"
 
-        # Podman rootless socket path
-        PODMAN_SOCK="/run/user/$(id -u)/podman/podman.sock"
+        PODMAN_SOCK="$XDG_RUNTIME_DIR/podman/podman.sock"
 
-        # ACCEPTED RISKS (inherent to autonomous pentesting):
-        # - Podman socket mount: PentAGI must spawn tool containers (nmap, metasploit, etc.)
-        #   Compromise is limited to the rootless pentagi user, not root.
-        # - DOCKER_NETWORK=host: Tool containers need Tailscale access to reach audit targets.
-        #   Mitigated by on-demand lifecycle (disable after audit).
         exec ${podman} run --rm \
           --name pentagi \
           --network pentagi-network \
           --hostname pentagi \
+          --security-opt label=disable \
           -p 127.0.0.1:${toString cfg.listenPort}:8443 \
-          -v /var/lib/pentagi/data:/opt/pentagi/data:Z \
-          -v "$PODMAN_SOCK":/var/run/docker.sock:Z \
+          -v /var/lib/pentagi/data:/opt/pentagi/data \
+          -v "$PODMAN_SOCK":/var/run/docker.sock \
           -e "ANTHROPIC_API_KEY=$ANTHROPIC_KEY" \
           -e "DATABASE_URL=postgres://postgres:$PG_PASS@pentagi-pgvector:5432/pentagidb?sslmode=disable" \
           -e "SCRAPER_PRIVATE_URL=http://${scraperUser}:${scraperPass}@pentagi-scraper:3000/" \
