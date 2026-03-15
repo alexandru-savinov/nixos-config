@@ -1,0 +1,21 @@
+title = "gitleaks config for nixos-config"
+
+# Allowlist paths and patterns that are not real secrets
+[allowlist]
+  description = "Known safe patterns"
+
+  # Agenix-encrypted secrets (*.age files are encrypted, not plaintext)
+  paths = [
+    '''secrets/.*\.age$''',
+    '''\.gitleaks\.toml$''',
+  ]
+
+  # Known non-secret values used in SD image bootstrap
+  regexes = [
+    # SD image bootstrap passwords (intentionally public, changed on first boot)
+    '''initialPassword\s*=\s*"nixos"''',
+    '''initialHashedPassword\s*=\s*"\$6\$rounds''',
+    # Nix binary cache public keys (public by design)
+    '''cache\.nixos\.org-1:''',
+    '''cachix\.org-1:''',
+  ]
