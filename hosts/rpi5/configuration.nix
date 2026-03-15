@@ -45,14 +45,9 @@
   customModules.claude.enable = true;
 
   # Home Manager: use system pkgs and suppress the version mismatch warning.
-  # rpi5 uses nvmd/nixos-raspberrypi's internal nixpkgs fork as system pkgs;
-  # the HM input tracks NixOS/nixpkgs release-25.05. There is no matching HM
-  # release for the raspberrypi fork, so the mismatch is intentional and
-  # accepted — suppress the warning for all HM-managed users via sharedModules.
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
-    sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
   # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides

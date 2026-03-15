@@ -37,10 +37,9 @@ let
         ({ lib, ... }: {
           boot.loader.grub.enable = lib.mkDefault false;
           fileSystems."/" = lib.mkDefault { device = "/dev/sda1"; fsType = "ext4"; };
-          system.stateVersion = lib.mkDefault "25.05";
+          system.stateVersion = lib.mkDefault "25.11";
           nixpkgs.hostPlatform = lib.mkDefault system;
           nixpkgs.config.allowUnfree = true;
-          nixpkgs.config.permittedInsecurePackages = [ "n8n-1.91.3" ];
         })
       ] ++ modules;
     }).config;
