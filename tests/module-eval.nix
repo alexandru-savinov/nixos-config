@@ -39,6 +39,8 @@ let
           fileSystems."/" = lib.mkDefault { device = "/dev/sda1"; fsType = "ext4"; };
           system.stateVersion = lib.mkDefault "25.05";
           nixpkgs.hostPlatform = lib.mkDefault system;
+          nixpkgs.config.allowUnfree = true;
+          nixpkgs.config.permittedInsecurePackages = [ "n8n-1.91.3" ];
         })
       ] ++ modules;
     }).config;
@@ -409,6 +411,9 @@ let
           services.nullclaw = {
             enable = true;
             apiKeyFile = "/nix/store/fake-hash-key";
+            # Disable telegram so only the /nix/store assertion fires,
+            # not the missing botTokenFile error.
+            telegram.enable = false;
           };
         }
       ];

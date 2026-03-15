@@ -969,9 +969,6 @@ in
 
     users.groups.nixframe = { };
 
-    # Add n8n user to nixframe group so n8n can write photos
-    users.users.n8n.extraGroups = mkIf config.services.n8n-tailscale.enable [ "nixframe" ];
-
     # ──────────────────────────────────────────────────────────────
     # Directories
     # ──────────────────────────────────────────────────────────────
