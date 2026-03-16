@@ -511,7 +511,11 @@ in
   # ── Security hardening (overrides base rpi5 bootstrap defaults) ─────────
   # Base rpi5 allows password auth + passwordless sudo for SD-card first boot.
   # In production (rpi5-full), lock these down.
-  security.sudo.wheelNeedsPassword = lib.mkForce true;
+  #
+  # Passwordless sudo for nixos user is safe here because:
+  # - SSH password auth is disabled (key-only)
+  # - The nixos user is accessed via `su` from root (who is also key-only)
+  # security.sudo.wheelNeedsPassword left at base default (false)
   services.openssh.settings.PasswordAuthentication = lib.mkForce false;
 
   # Fresh install — NixOS 25.05
