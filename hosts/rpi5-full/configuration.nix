@@ -251,9 +251,9 @@ in
     # Telegram bot token - for tender monitor and other workflow notifications
     telegramBotTokenFile = secret "telegram-bot-token";
 
-    # Allow $env expressions in workflows (required for declarative API keys)
-    # Safe here because workflows are controlled via workflowsDir, not user-created
-    blockEnvAccessInCode = false;
+    # blockEnvAccessInCode defaults to true (module default).
+    # $env is still available in expression fields (e.g. HTTP Request headers),
+    # but blocked in Code node JavaScript to prevent secret exfiltration. (#229)
 
     # Lower concurrency for RPi5 resource constraints
     concurrencyLimit = 2;
@@ -276,7 +276,8 @@ in
     # Enable Node.js built-in modules in Code nodes:
     # - crypto: efficient SHA256 hashing (pure JS is slow on ARM)
     # - fs, path: file-based job status tracking for async workflow patterns
-    # - child_process: ImageMagick convert for NixFrame photo processing (HEIC→JPEG, EXIF auto-orient)
+    # - child_process: NixFrame HEIC→JPEG conversion (removing doesn't help —
+    #   n8n's Execute Command node allows the same; real protection is blockEnvAccessInCode)
     extraEnvironment = {
       NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto,child_process";
       # Enable n8n Public API for Claude Code MCP integration
