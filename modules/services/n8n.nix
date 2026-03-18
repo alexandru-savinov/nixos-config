@@ -194,9 +194,13 @@ in
       type = types.bool;
       default = true;
       description = ''
-        Prevent Code nodes from accessing environment variables.
-        SECURITY: When enabled, process.env cannot be read from Code nodes,
-        protecting secrets like N8N_ENCRYPTION_KEY from being exfiltrated.
+        Block $env access in all n8n expression fields and Code nodes.
+        WARNING: N8N_BLOCK_ENV_ACCESS_IN_NODE is all-or-nothing — it blocks
+        $env everywhere (not just Code nodes), so workflows using {{ $env.X }}
+        in HTTP Request headers will break. Migrate to n8n Credentials first.
+        When disabled, secrets (API keys, encryption key) are readable via
+        $env in Code nodes. Mitigated by workflowsDir (no user-created
+        workflows) and systemd sandboxing of the n8n user.
       '';
     };
 
