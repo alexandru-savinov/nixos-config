@@ -1,7 +1,7 @@
 {
   "id": "tender-news-monitor",
   "name": "Tender & News Monitor",
-  "active": true,
+  "active": false,
   "nodes": [
     {
       "id": "trigger_1",

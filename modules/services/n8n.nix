@@ -845,10 +845,11 @@ in
         login_attempts=0
         max_login_attempts=30
         while true; do
-          LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+          LOGIN_RESPONSE=$(printf '{"emailOrLdapLoginId":"admin@localhost.com","password":"%s"}' "$ADMIN_PASSWORD" | \
+            curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
             -X POST \
             -H "Content-Type: application/json" \
-            -d "{\"emailOrLdapLoginId\":\"admin@localhost.com\",\"password\":\"$ADMIN_PASSWORD\"}" \
+            -d @- \
             "$N8N_URL/rest/login" 2>&1)
 
           if echo "$LOGIN_RESPONSE" | jq -e '.data.id' >/dev/null 2>&1; then
