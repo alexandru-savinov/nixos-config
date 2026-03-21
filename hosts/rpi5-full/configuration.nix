@@ -251,8 +251,10 @@ in
     # Telegram bot token - for tender monitor and other workflow notifications
     telegramBotTokenFile = secret "telegram-bot-token";
 
-    # Allow $env expressions in workflows (required for declarative API keys)
-    # Safe here because workflows are controlled via workflowsDir, not user-created
+    # N8N_BLOCK_ENV_ACCESS_IN_NODE is all-or-nothing: it blocks $env in ALL
+    # expression fields (HTTP Request headers, etc.), not just Code nodes.
+    # Our workflows use {{ $env.OPENROUTER_API_KEY }} in HTTP Request headers,
+    # so we must keep this disabled until workflows migrate to n8n Credentials. (#229)
     blockEnvAccessInCode = false;
 
     # Lower concurrency for RPi5 resource constraints
@@ -276,7 +278,8 @@ in
     # Enable Node.js built-in modules in Code nodes:
     # - crypto: efficient SHA256 hashing (pure JS is slow on ARM)
     # - fs, path: file-based job status tracking for async workflow patterns
-    # - child_process: ImageMagick convert for NixFrame photo processing (HEIC→JPEG, EXIF auto-orient)
+    # - child_process: NixFrame HEIC→JPEG conversion (removing from Code nodes doesn't
+    #   help — n8n's Execute Command node allows the same; n8n user is systemd-sandboxed)
     extraEnvironment = {
       NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto,child_process";
       # Enable n8n Public API for Claude Code MCP integration
@@ -507,6 +510,16 @@ in
       Nice = 7; # Between Open-WebUI (5) and qdrant (10)
     };
   };
+
+  # ── Security hardening (overrides base rpi5 bootstrap defaults) ─────────
+  # Base rpi5 allows password auth + passwordless sudo for SD-card first boot.
+  # In production (rpi5-full), lock these down.
+  #
+  # Passwordless sudo for nixos user is safe here because:
+  # - SSH password auth is disabled (key-only)
+  # - The nixos user is accessed via `su` from root (who is also key-only)
+  # security.sudo.wheelNeedsPassword left at base default (false)
+  services.openssh.settings.PasswordAuthentication = lib.mkForce false;
 
   # Fresh install — NixOS 25.05
   # mkOverride 49 beats rpi5's mkForce (priority 50) which fights nixos-raspberrypi upstream

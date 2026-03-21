@@ -45,14 +45,9 @@
   customModules.claude.enable = true;
 
   # Home Manager: use system pkgs and suppress the version mismatch warning.
-  # rpi5 uses nvmd/nixos-raspberrypi's internal nixpkgs fork as system pkgs;
-  # the HM input tracks NixOS/nixpkgs release-25.05. There is no matching HM
-  # release for the raspberrypi fork, so the mismatch is intentional and
-  # accepted — suppress the warning for all HM-managed users via sharedModules.
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
-    sharedModules = [{ home.enableNixpkgsReleaseCheck = false; }];
   };
 
   # CRITICAL: Do NOT override boot.kernelPackages - nvmd/nixos-raspberrypi provides
@@ -62,7 +57,7 @@
   # SSH configuration (openssh.enable is set in common.nix)
   services.openssh.settings = {
     PermitRootLogin = "prohibit-password";
-    PasswordAuthentication = lib.mkForce true;
+    PasswordAuthentication = lib.mkDefault true;
   };
 
   # VSCode Server support (for remote development)
@@ -156,15 +151,8 @@
     initialPassword = "nixos";
   };
 
-  # Claude YOLO mode user (runs claude --dangerously-skip-permissions)
-  users.users.claude-yolo = {
-    isNormalUser = true;
-    extraGroups = [ "wheel" ];
-    initialPassword = "yolo";
-    description = "Claude Code YOLO mode user";
-  };
-
-  # Allow wheel group to sudo without password initially
+  # Allow wheel group to sudo without password for SD-card bootstrap
+  # rpi5-full overrides this to require password (lib.mkForce true)
   security.sudo.wheelNeedsPassword = false;
 
   # ============================================================
@@ -287,6 +275,11 @@
   # Start btop automatically when logged into tty1
   # Quitting btop (q) returns to a bash shell; type 'exit' to trigger re-login and restart btop
   programs.bash.interactiveShellInit = ''
+    # When su'd into nixos from root, cd to home instead of staying in /root
+    if [[ "$(id -un)" == "nixos" && "$PWD" == "/root" ]]; then
+      cd ~
+    fi
+
     if [[ $(tty) == "/dev/tty1" ]] && [[ -z "$BTOP_RUNNING" ]]; then
       export BTOP_RUNNING=1
       ${pkgs.btop}/bin/btop
