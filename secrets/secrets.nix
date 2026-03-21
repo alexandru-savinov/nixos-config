@@ -53,6 +53,9 @@ in
   "openrouter-api-key.age".publicKeys = allPlusClaw;
   "tavily-api-key.age".publicKeys = allKeys;
 
+  # Tavily API key for Kuzea web search (separate from open-webui)
+  "kuzea-tavily-api-key.age".publicKeys = clawKeys;
+
   # n8n workflow automation - shared across all hosts
   "n8n-encryption-key.age".publicKeys = allKeys;
   "n8n-admin-password.age".publicKeys = allKeys;

@@ -181,6 +181,12 @@ let
     models.setdefault("anthropic/claude-sonnet-4-6", {})
     models.setdefault("anthropic/claude-opus-4-6", {})
 
+    # Compaction: preserve 4 recent turns so Kuzea keeps conversational
+    # context after auto-compaction instead of losing the thread.
+    compaction = defaults.setdefault("compaction", {})
+    compaction["mode"] = "safeguard"
+    compaction["recentTurnsPreserve"] = 4
+
     # Enable self-improvement hook (agent:bootstrap reminder to log learnings).
     # Declarative equivalent of: openclaw hooks enable self-improvement
     hooks = config.setdefault("hooks", {})
@@ -293,6 +299,7 @@ in
       kuzea-github-token = kuzeaSecret "kuzea-github-token";
       kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
       kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
+      kuzea-tavily-api-key = kuzeaSecret "kuzea-tavily-api-key";
     };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
@@ -349,6 +356,7 @@ in
       EnvironmentFile = [
         config.age.secrets.kuzea-todoist-credentials.path
         config.age.secrets.kuzea-airtable-credentials.path
+        config.age.secrets.kuzea-tavily-api-key.path
       ];
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
@@ -553,6 +561,9 @@ in
       selfImprovingHook = copyDir "self-improvement-hook" ./kuzea/hooks/self-improvement;
     in
     [
+      # Home dir must be group-readable (0750) so backup-pull user
+      # (member of openclaw group) can rsync via rrsync.
+      "d /var/lib/openclaw 0750 openclaw openclaw -"
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
       # Ensure parent directories exist before creating the skills symlink.
