@@ -93,6 +93,10 @@ in
   # Only rpi5 needs to decrypt this (it holds the private key)
   "rpi5-backup-ssh-key.age".publicKeys = users ++ [ rpi5 ];
 
+  # Telegram credentials for backup failure alerts (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
+  # EnvironmentFile format — only rpi5 needs this (runs the backup service)
+  "backup-telegram-env.age".publicKeys = users ++ [ rpi5 ];
+
   # ── Zero_kuzea secrets (NullClaw bot on dedicated VPS) ─────────────────
   # Uses sancta-claw recovery key (same trust level, both are throwaway VPS)
   # Telegram bot token for Zero_kuzea bot

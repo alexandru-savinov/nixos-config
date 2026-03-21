@@ -103,6 +103,16 @@ in
       default = "*-*-* 03:00:00";
       description = "systemd OnCalendar expression for backup schedule.";
     };
+
+    telegramEnvFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = ''
+        Path to EnvironmentFile with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+        When set, backup failure alerts are sent via Telegram.
+        File format: KEY=value (one per line).
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -181,6 +191,7 @@ in
       description = "Restic repository integrity check (${cfg.remoteHost})";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      unitConfig.OnFailure = [ "backup-failure-alert@%N.service" ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -200,7 +211,7 @@ in
       };
     };
 
-    # OnFailure alert — logs prominently for monitoring
+    # OnFailure alert — logs + Telegram notification
     systemd.services."restic-backups-${backupName}" = {
       unitConfig = {
         OnFailure = [ "backup-failure-alert@%N.service" ];
@@ -208,11 +219,31 @@ in
       };
     };
 
+
     systemd.services."backup-failure-alert@" = {
       description = "Backup failure alert for %i";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${pkgs.bash}/bin/bash -c 'echo \"BACKUP FAILURE: %i failed at $(date -Iseconds)\" | ${pkgs.systemd}/bin/systemd-cat -t backup-alert -p err'";
+        ExecStart =
+          let
+            telegramCmd =
+              if cfg.telegramEnvFile != null then
+                ''
+                  ${pkgs.curl}/bin/curl -sf -X POST \
+                    "https://api.telegram.org/bot''${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"chat_id\":\"''${TELEGRAM_CHAT_ID}\",\"text\":\"$msg\"}" \
+                    || echo "WARNING: Telegram notification failed"
+                ''
+              else
+                "";
+          in
+          "${pkgs.bash}/bin/bash -c ${lib.escapeShellArg ''
+            msg="❌ BACKUP FAILURE: %i failed at $(date -Iseconds) on $(hostname)"
+            echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t backup-alert -p err
+            ${telegramCmd}
+          ''}";
+        EnvironmentFile = lib.mkIf (cfg.telegramEnvFile != null) cfg.telegramEnvFile;
       };
     };
   };

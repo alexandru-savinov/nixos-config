@@ -122,6 +122,10 @@ in
         file = "${self}/secrets/restic-password.age";
         mode = "0400";
       };
+      backup-telegram-env = {
+        file = "${self}/secrets/backup-telegram-env.age";
+        mode = "0400";
+      };
     };
 
   # Open-WebUI with OpenRouter backend
@@ -493,6 +497,7 @@ in
       ".npm-global/lib/"
       "models/" # whisper models (~607M), re-downloadable
     ];
+    telegramEnvFile = secret "backup-telegram-env";
   };
 
   # Add n8n to nixframe group so it can write photos to nixframe's home dir
