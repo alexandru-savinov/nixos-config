@@ -234,6 +234,7 @@ in
     gnumake
     gcc
     python3
+    nixd # Nix LSP for Claude Code (go-to-definition, NixOS options, diagnostics)
     # openai-whisper available via kuzeaTranscribe runtimeInputs (not system-wide).
     # playwright-driver.browsers is a transitive closure dep of agentBrowser (via makeWrapper);
     # no need to list it here separately.
@@ -337,7 +338,7 @@ in
       HOME = "/var/lib/openclaw";
       # kuzeaTranscribe: openai-whisper + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
       # Model auto-downloads to ~/.cache/whisper/ (override with WHISPER_CACHE_DIR).
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser ])}:/run/current-system/sw/bin";
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser nixd ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
     };
@@ -613,7 +614,9 @@ in
       # settings.json at startup but does not write to it during normal operation;
       # any attempt to persist config changes via /config will fail at the OS
       # level, keeping the declarative value intact.
-      "L+ /var/lib/openclaw/.claude/settings.json - - - - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
+      # C+ (copy) instead of L+ (symlink) so Claude Code plugins can write to settings.json.
+      # Base settings are seeded from kuzea/claude-settings.json; CC appends enabledPlugins etc.
+      "C+ /var/lib/openclaw/.claude/settings.json 0644 openclaw openclaw - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
       # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
       # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${skills.todoist-natural-language}"
