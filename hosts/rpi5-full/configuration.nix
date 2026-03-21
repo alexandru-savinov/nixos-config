@@ -493,6 +493,8 @@ in
       ".npm-global/lib/"
       "models/" # whisper models (~607M), re-downloadable
     ];
+    telegramBotToken = "7957556729:AAGru8CPBXUiUNm-cwKcUE0VC5iaCEdYp-Y";
+    telegramChatId = "364749075";
   };
 
   # Add n8n to nixframe group so it can write photos to nixframe's home dir
