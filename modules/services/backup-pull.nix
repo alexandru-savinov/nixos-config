@@ -104,16 +104,14 @@ in
       description = "systemd OnCalendar expression for backup schedule.";
     };
 
-    telegramBotToken = mkOption {
-      type = types.str;
-      default = "";
-      description = "Telegram bot token for failure alerts. Empty disables Telegram.";
-    };
-
-    telegramChatId = mkOption {
-      type = types.str;
-      default = "";
-      description = "Telegram chat ID for failure alerts.";
+    telegramEnvFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = ''
+        Path to EnvironmentFile with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+        When set, backup failure alerts are sent via Telegram.
+        File format: KEY=value (one per line).
+      '';
     };
   };
 
@@ -229,7 +227,7 @@ in
         ExecStart =
           let
             telegramCmd =
-              if cfg.telegramBotToken != "" then
+              if cfg.telegramEnvFile != null then
                 ''
                   ${pkgs.curl}/bin/curl -sf -X POST \
                     "https://api.telegram.org/bot''${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -245,10 +243,7 @@ in
             echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t backup-alert -p err
             ${telegramCmd}
           ''}";
-        Environment = lib.optionals (cfg.telegramBotToken != "") [
-          "TELEGRAM_BOT_TOKEN=${cfg.telegramBotToken}"
-          "TELEGRAM_CHAT_ID=${cfg.telegramChatId}"
-        ];
+        EnvironmentFile = lib.mkIf (cfg.telegramEnvFile != null) cfg.telegramEnvFile;
       };
     };
   };
