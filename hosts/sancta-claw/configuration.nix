@@ -553,6 +553,9 @@ in
       selfImprovingHook = copyDir "self-improvement-hook" ./kuzea/hooks/self-improvement;
     in
     [
+      # Home dir must be group-readable (0750) so backup-pull user
+      # (member of openclaw group) can rsync via rrsync.
+      "d /var/lib/openclaw 0750 openclaw openclaw -"
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
       # Ensure parent directories exist before creating the skills symlink.
