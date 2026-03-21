@@ -181,6 +181,12 @@ let
     models.setdefault("anthropic/claude-sonnet-4-6", {})
     models.setdefault("anthropic/claude-opus-4-6", {})
 
+    # Compaction: preserve 4 recent turns so Kuzea keeps conversational
+    # context after auto-compaction instead of losing the thread.
+    compaction = defaults.setdefault("compaction", {})
+    compaction["mode"] = "safeguard"
+    compaction["recentTurnsPreserve"] = 4
+
     # Enable self-improvement hook (agent:bootstrap reminder to log learnings).
     # Declarative equivalent of: openclaw hooks enable self-improvement
     hooks = config.setdefault("hooks", {})
