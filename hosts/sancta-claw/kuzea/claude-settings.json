@@ -1,4 +1,7 @@
 {
   "skipDangerousModePermissionPrompt": true,
-  "model": "claude-opus-4-6"
+  "model": "claude-opus-4-6",
+  "env": {
+    "ENABLE_LSP_TOOL": "1"
+  }
 }

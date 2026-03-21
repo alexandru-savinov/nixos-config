@@ -35,6 +35,34 @@
       },
       "source": "./screenshot",
       "category": "development"
+    },
+    {
+      "name": "nixd-lsp",
+      "description": "Nix language server integration with nixd \u2014 NixOS options, flake eval, go-to-definition",
+      "version": "1.0.0",
+      "author": {
+        "name": "Kuzea"
+      },
+      "source": "./nixd-lsp",
+      "category": "development",
+      "tags": [
+        "nix",
+        "nixos",
+        "lsp"
+      ],
+      "lspServers": {
+        "nix": {
+          "command": "nixd",
+          "args": [],
+          "transport": "stdio",
+          "extensionToLanguage": {
+            ".nix": "nix"
+          },
+          "initializationOptions": {},
+          "settings": {},
+          "maxRestarts": 3
+        }
+      }
     }
   ]
 }
