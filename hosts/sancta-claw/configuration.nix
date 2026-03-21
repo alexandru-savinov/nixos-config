@@ -299,6 +299,7 @@ in
       kuzea-github-token = kuzeaSecret "kuzea-github-token";
       kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
       kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
+      kuzea-tavily-api-key = kuzeaSecret "kuzea-tavily-api-key";
     };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
@@ -355,6 +356,7 @@ in
       EnvironmentFile = [
         config.age.secrets.kuzea-todoist-credentials.path
         config.age.secrets.kuzea-airtable-credentials.path
+        config.age.secrets.kuzea-tavily-api-key.path
       ];
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
