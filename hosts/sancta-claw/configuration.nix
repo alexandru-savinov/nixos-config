@@ -301,6 +301,8 @@ in
       kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
       kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
       kuzea-tavily-api-key = kuzeaSecret "kuzea-tavily-api-key";
+      # OpenAI API key for memory embeddings (semantic recall)
+      openai-api-key = kuzeaSecret "openai-api-key";
     };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
@@ -341,6 +343,9 @@ in
       PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser nixd ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
+      # Doctor recommendations: skip self-respawn and cache Node.js bytecode
+      OPENCLAW_NO_RESPAWN = "1";
+      NODE_COMPILE_CACHE = "/var/lib/openclaw/.node-compile-cache";
     };
 
     # ConditionPathExists prevents noisy restart loops if binary is missing
@@ -358,13 +363,24 @@ in
         config.age.secrets.kuzea-todoist-credentials.path
         config.age.secrets.kuzea-airtable-credentials.path
         config.age.secrets.kuzea-tavily-api-key.path
+        "/run/openclaw/openai-env"
       ];
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
-      # Inject declarative browser config into openclaw.json before start.
-      # Idempotent: merges browser section, preserves other keys.
-      ExecStartPre = openclawBrowserConfigScript;
+      RuntimeDirectory = "openclaw";
+      RuntimeDirectoryMode = "0700";
+      # Create OPENAI_API_KEY env file from raw agenix secret (openclaw owns
+      # the secret via kuzeaSecret, no root escalation needed), then inject
+      # browser config.
+      ExecStartPre = [
+        (pkgs.writeShellScript "openclaw-setup-openai-env" ''
+          set -euo pipefail
+          printf 'OPENAI_API_KEY=%s\n' "$(cat ${config.age.secrets.openai-api-key.path})" > /run/openclaw/openai-env
+          chmod 400 /run/openclaw/openai-env
+        '')
+        openclawBrowserConfigScript
+      ];
       ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
@@ -585,6 +601,8 @@ in
       "a+ /var/lib/openclaw - - - - group:openclaw:r-x"
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
+      # Node.js bytecode cache — doctor recommendation for faster CLI on VPS
+      "d /var/lib/openclaw/.node-compile-cache 0700 openclaw openclaw -"
       # Ensure parent directories exist before creating the skills symlink.
       # systemd-tmpfiles does not auto-create missing intermediate parents.
       "d /var/lib/openclaw/.openclaw 0755 openclaw openclaw -"
