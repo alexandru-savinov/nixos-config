@@ -340,7 +340,7 @@ in
       HOME = "/var/lib/openclaw";
       # kuzeaTranscribe: openai-whisper + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
       # Model auto-downloads to ~/.cache/whisper/ (override with WHISPER_CACHE_DIR).
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser nixd ])}:/run/current-system/sw/bin";
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser nixd vdirsyncer khal ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
       # Doctor recommendations: skip self-respawn and cache Node.js bytecode
@@ -381,6 +381,58 @@ in
           ${pkgs.jq}/bin/jq --arg key "$KEY" \
             '.profiles["openai:manual"] = {"type": "token", "provider": "openai", "token": $key}' \
             "$AUTH_FILE" > "$AUTH_FILE.tmp" && mv "$AUTH_FILE.tmp" "$AUTH_FILE"
+        '')
+        (pkgs.writeShellScript "openclaw-setup-vdirsyncer" ''
+                    set -euo pipefail
+                    # Read CalDAV credentials from agenix secret (CALDAV_USER + CALDAV_PASSWORD)
+                    CREDS="${config.age.secrets.kuzea-caldav-credentials.path}"
+                    CALDAV_USER="$(grep '^CALDAV_USER=' "$CREDS" | cut -d= -f2-)"
+                    CALDAV_PASSWORD="$(grep '^CALDAV_PASSWORD=' "$CREDS" | cut -d= -f2-)"
+
+                    mkdir -p "$HOME/.config/vdirsyncer" "$HOME/.config/khal"
+                    mkdir -p "$HOME/.local/share/vdirsyncer/calendar" "$HOME/.local/share/vdirsyncer/status"
+
+                    # vdirsyncer config — syncs iCloud Family calendar to local .ics files
+                    cat > "$HOME/.config/vdirsyncer/config" <<EOF
+          [general]
+          status_path = "~/.local/share/vdirsyncer/status/"
+
+          [pair family_calendar]
+          a = "family_calendar_remote"
+          b = "family_calendar_local"
+          collections = ["from a"]
+
+          [storage family_calendar_remote]
+          type = "caldav"
+          url = "https://caldav.icloud.com/"
+          username = "$CALDAV_USER"
+          password = "$CALDAV_PASSWORD"
+
+          [storage family_calendar_local]
+          type = "filesystem"
+          path = "~/.local/share/vdirsyncer/calendar/"
+          fileext = ".ics"
+          EOF
+                    chmod 0600 "$HOME/.config/vdirsyncer/config"
+
+                    # khal config — reads synced .ics files (type=discover auto-finds all calendars)
+                    cat > "$HOME/.config/khal/config" <<EOF
+          [calendars]
+          [[all]]
+          path = ~/.local/share/vdirsyncer/calendar/*
+          type = discover
+
+          [locale]
+          timeformat = %H:%M
+          dateformat = %Y-%m-%d
+          longdateformat = %Y-%m-%d
+          datetimeformat = %Y-%m-%d %H:%M
+          longdatetimeformat = %Y-%m-%d %H:%M
+          EOF
+
+                    # Initial sync (discover + sync) — non-fatal if network unavailable
+                    yes | ${pkgs.vdirsyncer}/bin/vdirsyncer discover || true
+                    ${pkgs.vdirsyncer}/bin/vdirsyncer sync || true
         '')
         openclawBrowserConfigScript
       ];
@@ -604,6 +656,10 @@ in
       "a+ /var/lib/openclaw - - - - group:openclaw:r-x"
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
+      # vdirsyncer + khal data dirs (ExecStartPre creates config files at runtime)
+      "d /var/lib/openclaw/.local 0700 openclaw openclaw -"
+      "d /var/lib/openclaw/.local/share 0700 openclaw openclaw -"
+      "d /var/lib/openclaw/.local/share/vdirsyncer 0700 openclaw openclaw -"
       # Node.js bytecode cache — doctor recommendation for faster CLI on VPS
       "d /var/lib/openclaw/.node-compile-cache 0700 openclaw openclaw -"
       # Ensure parent directories exist before creating the skills symlink.
