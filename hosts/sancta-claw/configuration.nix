@@ -413,6 +413,7 @@ type = "filesystem"
 path = "~/.local/share/vdirsyncer/calendar/"
 fileext = ".ics"
 EOF
+          chmod 0600 "$HOME/.config/vdirsyncer/config"
 
           # khal config — reads synced .ics files (type=discover auto-finds all calendars)
           cat > "$HOME/.config/khal/config" <<EOF
@@ -430,8 +431,8 @@ longdatetimeformat = %Y-%m-%d %H:%M
 EOF
 
           # Initial sync (discover + sync) — non-fatal if network unavailable
-          ${pkgs.vdirsyncer}/bin/vdirsyncer discover 2>/dev/null || true
-          ${pkgs.vdirsyncer}/bin/vdirsyncer sync 2>/dev/null || true
+          yes | ${pkgs.vdirsyncer}/bin/vdirsyncer discover || true
+          ${pkgs.vdirsyncer}/bin/vdirsyncer sync || true
         '')
         openclawBrowserConfigScript
       ];
