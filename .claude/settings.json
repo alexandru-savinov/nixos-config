@@ -8,6 +8,7 @@
     "explanatory-output-style@claude-plugins-official": true,
     "local-review@nixos-config-local": true,
     "nix-commit@nixos-config-local": true,
-    "screenshot@nixos-config-local": true
+    "screenshot@nixos-config-local": true,
+    "nixd-lsp@nixos-config-local": true
   }
 }

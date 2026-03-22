@@ -1,0 +1,13 @@
+{
+    "nix": {
+        "command": "nixd",
+        "args": [],
+        "extensionToLanguage": {
+            ".nix": "nix"
+        },
+        "transport": "stdio",
+        "initializationOptions": {},
+        "settings": {},
+        "maxRestarts": 3
+    }
+}
