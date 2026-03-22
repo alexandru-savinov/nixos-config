@@ -128,7 +128,7 @@
 
   services.claude-settings = {
     enable = true;
-    users = [ "nixos" "root" ];
+    users = [ "nixos" ]; # root excluded: skipDangerousModePermissionPrompt too risky for root
   };
 
   services.n8n-mcp-claude = {
