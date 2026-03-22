@@ -610,13 +610,11 @@ in
       # skipDangerousModePermissionPrompt is intentional: the openclaw user runs
       # under NoNewPrivileges=true with no sudo access, so Claude Code cannot
       # escalate privileges even with prompts disabled.
-      # The symlink is intentionally read-only (nix store). Claude Code reads
-      # settings.json at startup but does not write to it during normal operation;
-      # any attempt to persist config changes via /config will fail at the OS
-      # level, keeping the declarative value intact.
-      # C+ (copy) instead of L+ (symlink) so Claude Code plugins can write to settings.json.
-      # Base settings are seeded from kuzea/claude-settings.json; CC appends enabledPlugins etc.
-      "C+ /var/lib/openclaw/.claude/settings.json 0644 openclaw openclaw - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
+      # C (copy-if-missing) instead of L+ (symlink) so Claude Code plugins can
+      # write to settings.json at runtime. Seeds base settings on first deploy;
+      # subsequent rebuilds preserve runtime modifications (enabledPlugins etc.).
+      # To force-reset: delete the file and run `systemd-tmpfiles --create`.
+      "C /var/lib/openclaw/.claude/settings.json 0644 openclaw openclaw - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
       # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
       # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
       "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${skills.todoist-natural-language}"
