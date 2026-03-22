@@ -343,6 +343,9 @@ in
       PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser nixd ])}:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
+      # Doctor recommendations: skip self-respawn and cache Node.js bytecode
+      OPENCLAW_NO_RESPAWN = "1";
+      NODE_COMPILE_CACHE = "/var/lib/openclaw/.node-compile-cache";
     };
 
     # ConditionPathExists prevents noisy restart loops if binary is missing
@@ -598,6 +601,8 @@ in
       "a+ /var/lib/openclaw - - - - group:openclaw:r-x"
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
+      # Node.js bytecode cache — doctor recommendation for faster CLI on VPS
+      "d /var/lib/openclaw/.node-compile-cache 0700 openclaw openclaw -"
       # Ensure parent directories exist before creating the skills symlink.
       # systemd-tmpfiles does not auto-create missing intermediate parents.
       "d /var/lib/openclaw/.openclaw 0755 openclaw openclaw -"
