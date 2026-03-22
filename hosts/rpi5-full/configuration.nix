@@ -235,10 +235,9 @@ in
       # rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
       rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 
-      # sancta-choir services (remote host via Tailscale)
-      sancta-choir-open-webui = remoteHttpEndpoint "sancta-choir" "Open-WebUI" "https://sancta-choir.tail4249a9.ts.net/health";
-      sancta-choir-n8n = remoteHttpEndpoint "sancta-choir" "n8n" "https://sancta-choir.tail4249a9.ts.net:5678/healthz";
-      sancta-choir-tailscale = icmpEndpoint "sancta-choir" "Tailscale" "icmp://sancta-choir.tail4249a9.ts.net";
+      # sancta-claw services (remote VPS via Tailscale)
+      sancta-claw-openclaw = remoteHttpEndpoint "sancta-claw" "OpenClaw Gateway" "https://sancta-claw.tail4249a9.ts.net:18789/healthz";
+      sancta-claw-tailscale = icmpEndpoint "sancta-claw" "Tailscale" "icmp://sancta-claw.tail4249a9.ts.net";
 
       # External services
       external-openrouter = {
