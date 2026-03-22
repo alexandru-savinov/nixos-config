@@ -367,12 +367,13 @@ in
       #   sudo -u openclaw openclaw configure
       RuntimeDirectory = "openclaw";
       RuntimeDirectoryMode = "0700";
-      # Create OPENAI_API_KEY env file from raw agenix secret, then inject browser config.
+      # Create OPENAI_API_KEY env file from raw agenix secret (openclaw owns
+      # the secret via kuzeaSecret, no root escalation needed), then inject
+      # browser config.
       ExecStartPre = [
-        ("+" + pkgs.writeShellScript "openclaw-setup-openai-env" ''
+        (pkgs.writeShellScript "openclaw-setup-openai-env" ''
           set -euo pipefail
           printf 'OPENAI_API_KEY=%s\n' "$(cat ${config.age.secrets.openai-api-key.path})" > /run/openclaw/openai-env
-          chown openclaw:openclaw /run/openclaw/openai-env
           chmod 400 /run/openclaw/openai-env
         '')
         openclawBrowserConfigScript
