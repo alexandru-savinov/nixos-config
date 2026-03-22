@@ -363,21 +363,24 @@ in
         config.age.secrets.kuzea-todoist-credentials.path
         config.age.secrets.kuzea-airtable-credentials.path
         config.age.secrets.kuzea-tavily-api-key.path
-        "/run/openclaw/openai-env"
       ];
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
-      RuntimeDirectory = "openclaw";
-      RuntimeDirectoryMode = "0700";
-      # Create OPENAI_API_KEY env file from raw agenix secret (openclaw owns
-      # the secret via kuzeaSecret, no root escalation needed), then inject
-      # browser config.
+      # Inject browser config + OpenAI auth for memory embeddings before start.
       ExecStartPre = [
-        (pkgs.writeShellScript "openclaw-setup-openai-env" ''
+        (pkgs.writeShellScript "openclaw-inject-openai-auth" ''
           set -euo pipefail
-          printf 'OPENAI_API_KEY=%s\n' "$(cat ${config.age.secrets.openai-api-key.path})" > /run/openclaw/openai-env
-          chmod 400 /run/openclaw/openai-env
+          AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"
+          KEY="$(cat ${config.age.secrets.openai-api-key.path})"
+          # Idempotent: add or update openai:manual profile in agent auth store.
+          # Memory search uses this, not the OPENAI_API_KEY env var.
+          # Note: key persists in auth-profiles.json (same as all openclaw auth).
+          mkdir -p "$(dirname "$AUTH_FILE")"
+          [ -f "$AUTH_FILE" ] || echo '{"profiles":{},"version":1}' > "$AUTH_FILE"
+          ${pkgs.jq}/bin/jq --arg key "$KEY" \
+            '.profiles["openai:manual"] = {"type": "token", "provider": "openai", "token": $key}' \
+            "$AUTH_FILE" > "$AUTH_FILE.tmp" && mv "$AUTH_FILE.tmp" "$AUTH_FILE"
         '')
         openclawBrowserConfigScript
       ];
