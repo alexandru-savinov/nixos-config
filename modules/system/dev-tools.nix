@@ -38,7 +38,7 @@
 
       # Nix development tools
       nixpkgs-fmt
-      nil # Nix language server
+      nixd # Nix language server
 
       # Profiling and debugging
       strace # Syscall tracer (proven useful, tiny)

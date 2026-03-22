@@ -48,13 +48,13 @@ in
     # Import the base rpi5 configuration
     ../rpi5/configuration.nix
 
-    # ARM compatibility fix for Open-WebUI (removes chromadb on aarch64-linux)
-    ../../modules/system/open-webui-arm-fix.nix
+    # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
+    # ../../modules/system/open-webui-arm-fix.nix
+    # ../../modules/services/open-webui.nix
+    # ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
 
     # Additional services for full deployment
-    ../../modules/services/open-webui.nix
     ../../modules/services/n8n.nix
-    ../../modules/services/qdrant.nix # External vector DB for RAG on ARM
     ../../modules/services/gatus.nix # Declarative status monitoring
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
@@ -88,12 +88,12 @@ in
       simpleSecret = name: { file = "${self}/secrets/${name}.age"; };
     in
     {
-      # Open-WebUI
-      open-webui-secret-key = simpleSecret "open-webui-secret-key";
-      openrouter-api-key = simpleSecret "openrouter-api-key";
-      tavily-api-key = simpleSecret "tavily-api-key";
-      openai-api-key = simpleSecret "openai-api-key";
-      e2e-test-api-key = simpleSecret "e2e-test-api-key";
+      # Open-WebUI (disabled)
+      # open-webui-secret-key = simpleSecret "open-webui-secret-key";
+      openrouter-api-key = simpleSecret "openrouter-api-key"; # also used by n8n
+      # tavily-api-key = simpleSecret "tavily-api-key";
+      openai-api-key = simpleSecret "openai-api-key"; # also used by n8n
+      # e2e-test-api-key = simpleSecret "e2e-test-api-key";
 
       # n8n workflow automation
       n8n-encryption-key = simpleSecret "n8n-encryption-key";
@@ -128,115 +128,9 @@ in
       };
     };
 
-  # Open-WebUI with OpenRouter backend
-  # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net
-  #
-  # ARM Fix (Issue #64): jemalloc page size + onnxruntime crashes
-  # - Polars has jemalloc compiled for 4KB pages; RPi5 kernel 6.12+ uses 16KB
-  # - chromadb/onnxruntime crashes on aarch64-linux during import
-  # - See: modules/system/open-webui-arm-fix.nix
-  services.open-webui-tailscale = {
-    enable = true;
-    enableSignup = false;
-    secretKeyFile = secret "open-webui-secret-key";
-    openai.apiKeyFile = secret "openrouter-api-key";
-    webuiUrl = "https://rpi5.tail4249a9.ts.net";
-
-    # Only show ZDR (Zero Data Retention) models from OpenRouter
-    zdrModelsOnly.enable = true;
-
-    # Tavily Search API for web search (works without chromadb; document embedding requires it)
-    tavilySearch = {
-      enable = true;
-      apiKeyFile = secret "tavily-api-key";
-    };
-
-    # Vector Database: Use Qdrant instead of chromadb (which crashes on ARM)
-    # This enables RAG document embedding on ARM/aarch64
-    vectorDb = {
-      type = "qdrant";
-      qdrant = {
-        uri = "http://127.0.0.1:6333";
-        onDisk = true; # Use mmap storage for low memory footprint
-        multitenancy = true; # Reduces RAM usage
-      };
-    };
-
-    # Memory feature - required for autoMemory
-    memory.enable = true;
-
-    # Auto Memory: Automatically extract and store memories from conversations
-    # Uses the configured LLM model to identify memorable facts from user messages
-    autoMemory = {
-      enable = true;
-      model = "openai/gpt-4o-mini"; # Fast and cheap for memory extraction
-    };
-
-    # Extra environment variables for ARM compatibility
-    extraEnvironment = {
-      # ============================================================
-      # ARM precautions: Limit threading for resource-constrained RPi5
-      # Note: These do NOT fix the SIGBUS issue (see open-webui-arm-fix.nix)
-      # They reduce resource contention on the quad-core ARM device
-      # ============================================================
-      OMP_NUM_THREADS = "1"; # OpenMP (used by PyTorch, NumPy)
-      OPENBLAS_NUM_THREADS = "1"; # OpenBLAS threading
-      MKL_NUM_THREADS = "1"; # Intel MKL (if present)
-      NUMEXPR_NUM_THREADS = "1"; # NumExpr threading
-      TOKENIZERS_PARALLELISM = "false"; # HuggingFace tokenizers
-
-      # Disable CUDA detection (not available on ARM, but prevents probing)
-      CUDA_VISIBLE_DEVICES = "";
-
-      # RAG features now enabled via Qdrant external vector DB
-      # Document embedding works! Web search continues to work via Tavily.
-    };
-
-    # Voice Support - use OpenAI APIs for better performance on RPi5
-    # Local Whisper would be too slow on ARM
-    voice = {
-      enable = true;
-
-      stt = {
-        engine = "openai";
-        openai.apiKeyFile = openaiApiKeyPath;
-      };
-
-      tts = {
-        engine = "openai";
-        openai = {
-          apiKeyFile = openaiApiKeyPath;
-          model = "tts-1";
-          voice = "nova";
-        };
-      };
-
-      voiceModePrompt = ''
-        You are a helpful, patient, and friendly assistant speaking with children.
-        Use simple language appropriate for children.
-        Be encouraging and supportive.
-        Keep responses concise (1-2 sentences) for voice conversations.
-        If speaking Russian, use child-friendly Russian.
-        If speaking Romanian, use child-friendly Romanian.
-        Always be kind and positive.
-      '';
-    };
-
-    # Tailscale Serve for HTTPS (default port 443)
-    tailscaleServe = {
-      enable = true;
-      httpsPort = 443;
-    };
-
-    # E2E Testing - declarative test user provisioning
-    # Run tests with:
-    #   export OPENWEBUI_TEST_API_KEY=$(sudo cat /run/open-webui/e2e-test-api-key)
-    #   nix-shell --run "pytest tests/e2e/ -v"
-    testing = {
-      enable = true;
-      apiKeyFile = secret "e2e-test-api-key";
-    };
-  };
+  # Open-WebUI DISABLED — too heavy for RPi5 (triton-llvm, torch, etc.)
+  # To re-enable: uncomment imports above, secrets, and this block
+  # services.open-webui-tailscale = { ... };
 
   # n8n Workflow Automation
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net:5678
@@ -300,50 +194,10 @@ in
     apiKeyFile = secret "n8n-api-key";
   };
 
-  # Qdrant Vector Database - External vector DB for RAG on ARM
-  # Required because chromadb crashes on aarch64-linux (onnxruntime SIGBUS)
-  # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net:6333
-  services.qdrant-tailscale = {
-    enable = true;
-    port = 6333;
-    grpcPort = 6334;
-
-    # On-disk storage for low memory footprint (critical for 4GB RPi5)
-    # Uses mmap - trades some query speed for significantly lower RAM
-    storage.onDisk = true;
-
-    # Limit workers to reduce resource contention
-    performance.maxWorkers = 2;
-
-    # Expose via Tailscale HTTPS
-    tailscaleServe = {
-      enable = true;
-      httpsPort = 6333;
-    };
-  };
-
-  # Qdrant resource limits
-  systemd.services.qdrant.serviceConfig = {
-    MemoryMax = "512M";
-    MemoryHigh = "384M";
-    CPUQuota = "100%"; # 1 core max
-    Nice = 10; # Lower priority than Open-WebUI
-  };
-
-  # RPi5 resource limits for Open-WebUI
-  # These override any defaults to ensure stability on limited hardware
-  systemd.services.open-webui.serviceConfig = {
-    MemoryMax = "2G";
-    MemoryHigh = "1536M";
-    CPUQuota = "300%"; # 3 cores max
-    Nice = 5;
-    IOSchedulingClass = "best-effort";
-    IOSchedulingPriority = 4;
-
-    # Allow fchown syscalls - SQLite WAL mode needs these for database operations
-    # Open-WebUI's systemd hardening blocks @chown group; re-allow fchown here
-    SystemCallFilter = [ "fchown" "fchown32" ];
-  };
+  # Qdrant and Open-WebUI DISABLED — see comment above
+  # services.qdrant-tailscale = { ... };
+  # systemd.services.qdrant.serviceConfig = { ... };
+  # systemd.services.open-webui.serviceConfig = { ... };
 
   # Gatus - Declarative status monitoring with HTTPS
   # Access via Tailscale HTTPS: https://rpi5.tail4249a9.ts.net:3001
@@ -367,20 +221,18 @@ in
       httpsPort = 3001;
     };
 
-    # API key for suite authentication (used as ${GATUS_API_KEY} in suite endpoints)
-    # Uses the provisioned API key from Open-WebUI (not the raw agenix secret)
-    apiKeyFile = "/run/open-webui/e2e-test-api-key";
-    # Wait for the test user provisioning service to create the API key
-    apiKeyServiceDependency = "open-webui-e2e-test-user.service";
+    # API key for suite authentication — disabled with Open-WebUI
+    # apiKeyFile = "/run/open-webui/e2e-test-api-key";
+    # apiKeyServiceDependency = "open-webui-e2e-test-user.service";
 
     # Monitored Endpoints
     endpoints = {
       # rpi5 local services (this host)
-      rpi5-open-webui = httpEndpoint "rpi5" "Open-WebUI" "http://127.0.0.1:8080/health";
+      # rpi5-open-webui = httpEndpoint "rpi5" "Open-WebUI" "http://127.0.0.1:8080/health";
       rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";
       rpi5-anki-workflow = httpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui";
       rpi5-nixframe = httpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui";
-      rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
+      # rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
       rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 
       # sancta-choir services (remote host via Tailscale)
@@ -401,60 +253,8 @@ in
       };
     };
 
-    # ==========================================================================
-    # Functional Test Suites (Gatus ALPHA feature - API may change upstream)
-    # ==========================================================================
-    # Suites run endpoints sequentially with shared context.
-    # Unlike health endpoints, these verify actual functionality works end-to-end.
-    suites = {
-      # LLM Chat Chain Test - Verifies Open-WebUI can actually process chat requests
-      # This goes beyond health checks to ensure the full LLM pipeline works:
-      # 1. Backend can list models (OpenRouter connection works)
-      # 2. Chat completion returns valid response (LLM actually responds)
-      chat-chain-test = {
-        name = "LLM Chat Chain";
-        group = "functional";
-        interval = "1h"; # Run hourly - more expensive than health checks
-
-        endpoints = [
-          # Step 1: Verify OpenRouter backend is connected and models are available
-          {
-            name = "verify-models";
-            url = "http://127.0.0.1:8080/api/models";
-            headers = {
-              Authorization = "Bearer \${GATUS_API_KEY}";
-            };
-            conditions = [
-              "[STATUS] == 200"
-              "len([BODY].data) > 0" # At least one model available
-            ];
-          }
-
-          # Step 2: Send actual chat completion and verify LLM responds
-          {
-            name = "chat-completion";
-            url = "http://127.0.0.1:8080/api/chat/completions";
-            method = "POST";
-            headers = {
-              Authorization = "Bearer \${GATUS_API_KEY}";
-              Content-Type = "application/json";
-            };
-            # Use cheap/fast model with minimal tokens for monitoring
-            # Note: Model ID must match the full Open-WebUI model path (format: provider.model/name)
-            body = builtins.toJSON {
-              model = "openrouter_zdr_only_models.openai/gpt-4o-mini";
-              messages = [{ role = "user"; content = "Reply with exactly one word: PONG"; }];
-              max_tokens = 5;
-              temperature = 0;
-            };
-            conditions = [
-              "[STATUS] == 200"
-              "[RESPONSE_TIME] < 30000" # 30s timeout for LLM response
-            ];
-          }
-        ];
-      };
-    };
+    # Functional test suites disabled with Open-WebUI
+    # suites = { chat-chain-test = { ... }; };
   };
 
   # Gatus resource limits for RPi5
