@@ -301,6 +301,8 @@ in
       kuzea-todoist-credentials = kuzeaSecret "kuzea-todoist-credentials";
       kuzea-airtable-credentials = kuzeaSecret "kuzea-airtable-credentials";
       kuzea-tavily-api-key = kuzeaSecret "kuzea-tavily-api-key";
+      # OpenAI API key for memory embeddings (semantic recall)
+      openai-api-key = kuzeaSecret "openai-api-key";
     };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
@@ -358,13 +360,23 @@ in
         config.age.secrets.kuzea-todoist-credentials.path
         config.age.secrets.kuzea-airtable-credentials.path
         config.age.secrets.kuzea-tavily-api-key.path
+        "/run/openclaw/openai-env"
       ];
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
-      # Inject declarative browser config into openclaw.json before start.
-      # Idempotent: merges browser section, preserves other keys.
-      ExecStartPre = openclawBrowserConfigScript;
+      RuntimeDirectory = "openclaw";
+      RuntimeDirectoryMode = "0700";
+      # Create OPENAI_API_KEY env file from raw agenix secret, then inject browser config.
+      ExecStartPre = [
+        ("+" + pkgs.writeShellScript "openclaw-setup-openai-env" ''
+          set -euo pipefail
+          printf 'OPENAI_API_KEY=%s\n' "$(cat ${config.age.secrets.openai-api-key.path})" > /run/openclaw/openai-env
+          chown openclaw:openclaw /run/openclaw/openai-env
+          chmod 400 /run/openclaw/openai-env
+        '')
+        openclawBrowserConfigScript
+      ];
       ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;

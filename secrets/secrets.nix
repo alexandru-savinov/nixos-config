@@ -63,8 +63,8 @@ in
   # Generate in n8n: Settings > API > Create API Key
   "n8n-api-key.age".publicKeys = allKeys;
 
-  # OpenAI API key (for TTS/STT - separate from OpenRouter)
-  "openai-api-key.age".publicKeys = allKeys;
+  # OpenAI API key (for TTS/STT + OpenClaw memory embeddings on sancta-claw)
+  "openai-api-key.age".publicKeys = allPlusClaw;
 
   # Telegram bot token for n8n workflow notifications (tender monitor, etc.)
   "telegram-bot-token.age".publicKeys = allKeys;
