@@ -16,16 +16,10 @@ let
   inherit (lib) mkEnableOption mkOption mkIf mkDefault types genAttrs;
   cfg = config.services.claude-settings;
 
+  # User-level settings only — plugin enables go in project .claude/settings.json
+  # to avoid merge conflicts (Claude Code does shallow merge per key).
   settingsJson = builtins.toJSON {
     skipDangerousModePermissionPrompt = true;
-    enabledPlugins = {
-      "nix-commit@nixos-config-local" = true;
-      "local-review@nixos-config-local" = true;
-      "screenshot@nixos-config-local" = true;
-      "nixd-lsp@nixos-config-local" = true;
-      "frontend-design@claude-plugins-official" = true;
-      "claude-code-setup@claude-plugins-official" = true;
-    };
     env = {
       ENABLE_LSP_TOOL = "1";
     };
