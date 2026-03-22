@@ -36,6 +36,7 @@
     ../../modules/services/n8n-skills.nix
     ../../modules/services/claude-skills.nix
     ../../modules/services/claude-agents.nix
+    ../../modules/services/claude-settings.nix
     ../../modules/services/n8n-mcp-claude.nix
     # Additional services (open-webui, n8n, gatus) are in rpi5-full
   ];
@@ -123,6 +124,11 @@
   services.claude-agents = {
     enable = true;
     users = [ "nixos" "root" ];
+  };
+
+  services.claude-settings = {
+    enable = true;
+    users = [ "nixos" ]; # root excluded: skipDangerousModePermissionPrompt too risky for root
   };
 
   services.n8n-mcp-claude = {
