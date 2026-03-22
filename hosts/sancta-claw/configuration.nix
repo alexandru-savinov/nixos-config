@@ -389,48 +389,49 @@ in
           CALDAV_USER="$(grep '^CALDAV_USER=' "$CREDS" | cut -d= -f2-)"
           CALDAV_PASSWORD="$(grep '^CALDAV_PASSWORD=' "$CREDS" | cut -d= -f2-)"
 
+          mkdir -p "$HOME/.config/vdirsyncer" "$HOME/.config/khal"
+          mkdir -p "$HOME/.local/share/vdirsyncer/calendar" "$HOME/.local/share/vdirsyncer/status"
+
           # vdirsyncer config — syncs iCloud Family calendar to local .ics files
-          mkdir -p "$HOME/.config/vdirsyncer" "$HOME/.local/share/vdirsyncer/calendar"
-          cat > "$HOME/.config/vdirsyncer/config" <<VDIRCFG
-          [general]
-          status_path = "~/.local/share/vdirsyncer/status/"
+          cat > "$HOME/.config/vdirsyncer/config" <<EOF
+[general]
+status_path = "~/.local/share/vdirsyncer/status/"
 
-          [pair family_calendar]
-          a = "family_calendar_remote"
-          b = "family_calendar_local"
-          collections = null
+[pair family_calendar]
+a = "family_calendar_remote"
+b = "family_calendar_local"
+collections = null
 
-          [storage family_calendar_remote]
-          type = "caldav"
-          url = "https://caldav.icloud.com/"
-          username = "$CALDAV_USER"
-          password = "$CALDAV_PASSWORD"
+[storage family_calendar_remote]
+type = "caldav"
+url = "https://caldav.icloud.com/"
+username = "$CALDAV_USER"
+password = "$CALDAV_PASSWORD"
 
-          [storage family_calendar_local]
-          type = "filesystem"
-          path = "~/.local/share/vdirsyncer/calendar/"
-          fileext = ".ics"
-          VDIRCFG
+[storage family_calendar_local]
+type = "filesystem"
+path = "~/.local/share/vdirsyncer/calendar/"
+fileext = ".ics"
+EOF
 
           # khal config — reads synced .ics files
-          mkdir -p "$HOME/.config/khal"
-          cat > "$HOME/.config/khal/config" <<KHALCFG
-          [calendars]
-          [[family]]
-          path = ~/.local/share/vdirsyncer/calendar/
-          color = dark cyan
-          type = discover
+          cat > "$HOME/.config/khal/config" <<EOF
+[calendars]
+[[family]]
+path = ~/.local/share/vdirsyncer/calendar/
+color = dark cyan
+type = discover
 
-          [locale]
-          timeformat = %H:%M
-          dateformat = %Y-%m-%d
-          longdateformat = %Y-%m-%d
-          datetimeformat = %Y-%m-%d %H:%M
-          longdatetimeformat = %Y-%m-%d %H:%M
+[locale]
+timeformat = %H:%M
+dateformat = %Y-%m-%d
+longdateformat = %Y-%m-%d
+datetimeformat = %Y-%m-%d %H:%M
+longdatetimeformat = %Y-%m-%d %H:%M
 
-          [default]
-          default_calendar = family
-          KHALCFG
+[default]
+default_calendar = family
+EOF
 
           # Initial sync (discover + sync) — non-fatal if network unavailable
           ${pkgs.vdirsyncer}/bin/vdirsyncer discover 2>/dev/null || true
