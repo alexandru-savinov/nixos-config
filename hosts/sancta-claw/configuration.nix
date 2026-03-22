@@ -363,25 +363,19 @@ in
         config.age.secrets.kuzea-todoist-credentials.path
         config.age.secrets.kuzea-airtable-credentials.path
         config.age.secrets.kuzea-tavily-api-key.path
-        "/run/openclaw/openai-env"
       ];
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
-      RuntimeDirectory = "openclaw";
-      RuntimeDirectoryMode = "0700";
-      # Create OPENAI_API_KEY env file from raw agenix secret (openclaw owns
-      # the secret via kuzeaSecret, no root escalation needed), then inject
-      # browser config.
-      ExecStartPre = [
-        (pkgs.writeShellScript "openclaw-setup-openai-env" ''
-          set -euo pipefail
-          printf 'OPENAI_API_KEY=%s\n' "$(cat ${config.age.secrets.openai-api-key.path})" > /run/openclaw/openai-env
-          chmod 400 /run/openclaw/openai-env
-        '')
-        openclawBrowserConfigScript
-      ];
-      ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
+      # Inject browser config before start.
+      ExecStartPre = openclawBrowserConfigScript;
+      # Source OPENAI_API_KEY from agenix secret (kuzeaSecret sets owner=openclaw)
+      # then exec the gateway. This avoids EnvironmentFile ordering issues with
+      # ExecStartPre (systemd reads EnvironmentFile before ExecStartPre runs).
+      ExecStart = pkgs.writeShellScript "openclaw-start" ''
+        export OPENAI_API_KEY="$(cat ${config.age.secrets.openai-api-key.path})"
+        exec /var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789
+      '';
       Restart = "on-failure";
       RestartSec = 10;
 
