@@ -367,15 +367,21 @@ in
       # Post-deploy setup (run once):
       #   sudo -u openclaw npm install -g openclaw
       #   sudo -u openclaw openclaw configure
-      # Inject browser config before start.
-      ExecStartPre = openclawBrowserConfigScript;
-      # Source OPENAI_API_KEY from agenix secret (kuzeaSecret sets owner=openclaw)
-      # then exec the gateway. This avoids EnvironmentFile ordering issues with
-      # ExecStartPre (systemd reads EnvironmentFile before ExecStartPre runs).
-      ExecStart = pkgs.writeShellScript "openclaw-start" ''
-        export OPENAI_API_KEY="$(cat ${config.age.secrets.openai-api-key.path})"
-        exec /var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789
-      '';
+      # Inject browser config + OpenAI auth for memory embeddings before start.
+      ExecStartPre = [
+        (pkgs.writeShellScript "openclaw-inject-openai-auth" ''
+          set -euo pipefail
+          AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"
+          KEY="$(cat ${config.age.secrets.openai-api-key.path})"
+          # Idempotent: add or update openai:manual profile in agent auth store.
+          # Memory search uses this, not the OPENAI_API_KEY env var.
+          ${pkgs.jq}/bin/jq --arg key "$KEY" \
+            '.profiles["openai:manual"] = {"type": "token", "provider": "openai", "token": $key}' \
+            "$AUTH_FILE" > "$AUTH_FILE.tmp" && mv "$AUTH_FILE.tmp" "$AUTH_FILE"
+        '')
+        openclawBrowserConfigScript
+      ];
+      ExecStart = "/var/lib/openclaw/.npm-global/bin/openclaw gateway --port 18789";
       Restart = "on-failure";
       RestartSec = 10;
 
