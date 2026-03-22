@@ -383,56 +383,56 @@ in
             "$AUTH_FILE" > "$AUTH_FILE.tmp" && mv "$AUTH_FILE.tmp" "$AUTH_FILE"
         '')
         (pkgs.writeShellScript "openclaw-setup-vdirsyncer" ''
-          set -euo pipefail
-          # Read CalDAV credentials from agenix secret (CALDAV_USER + CALDAV_PASSWORD)
-          CREDS="${config.age.secrets.kuzea-caldav-credentials.path}"
-          CALDAV_USER="$(grep '^CALDAV_USER=' "$CREDS" | cut -d= -f2-)"
-          CALDAV_PASSWORD="$(grep '^CALDAV_PASSWORD=' "$CREDS" | cut -d= -f2-)"
+                    set -euo pipefail
+                    # Read CalDAV credentials from agenix secret (CALDAV_USER + CALDAV_PASSWORD)
+                    CREDS="${config.age.secrets.kuzea-caldav-credentials.path}"
+                    CALDAV_USER="$(grep '^CALDAV_USER=' "$CREDS" | cut -d= -f2-)"
+                    CALDAV_PASSWORD="$(grep '^CALDAV_PASSWORD=' "$CREDS" | cut -d= -f2-)"
 
-          mkdir -p "$HOME/.config/vdirsyncer" "$HOME/.config/khal"
-          mkdir -p "$HOME/.local/share/vdirsyncer/calendar" "$HOME/.local/share/vdirsyncer/status"
+                    mkdir -p "$HOME/.config/vdirsyncer" "$HOME/.config/khal"
+                    mkdir -p "$HOME/.local/share/vdirsyncer/calendar" "$HOME/.local/share/vdirsyncer/status"
 
-          # vdirsyncer config — syncs iCloud Family calendar to local .ics files
-          cat > "$HOME/.config/vdirsyncer/config" <<EOF
-[general]
-status_path = "~/.local/share/vdirsyncer/status/"
+                    # vdirsyncer config — syncs iCloud Family calendar to local .ics files
+                    cat > "$HOME/.config/vdirsyncer/config" <<EOF
+          [general]
+          status_path = "~/.local/share/vdirsyncer/status/"
 
-[pair family_calendar]
-a = "family_calendar_remote"
-b = "family_calendar_local"
-collections = ["from a"]
+          [pair family_calendar]
+          a = "family_calendar_remote"
+          b = "family_calendar_local"
+          collections = ["from a"]
 
-[storage family_calendar_remote]
-type = "caldav"
-url = "https://caldav.icloud.com/"
-username = "$CALDAV_USER"
-password = "$CALDAV_PASSWORD"
+          [storage family_calendar_remote]
+          type = "caldav"
+          url = "https://caldav.icloud.com/"
+          username = "$CALDAV_USER"
+          password = "$CALDAV_PASSWORD"
 
-[storage family_calendar_local]
-type = "filesystem"
-path = "~/.local/share/vdirsyncer/calendar/"
-fileext = ".ics"
-EOF
-          chmod 0600 "$HOME/.config/vdirsyncer/config"
+          [storage family_calendar_local]
+          type = "filesystem"
+          path = "~/.local/share/vdirsyncer/calendar/"
+          fileext = ".ics"
+          EOF
+                    chmod 0600 "$HOME/.config/vdirsyncer/config"
 
-          # khal config — reads synced .ics files (type=discover auto-finds all calendars)
-          cat > "$HOME/.config/khal/config" <<EOF
-[calendars]
-[[all]]
-path = ~/.local/share/vdirsyncer/calendar/*
-type = discover
+                    # khal config — reads synced .ics files (type=discover auto-finds all calendars)
+                    cat > "$HOME/.config/khal/config" <<EOF
+          [calendars]
+          [[all]]
+          path = ~/.local/share/vdirsyncer/calendar/*
+          type = discover
 
-[locale]
-timeformat = %H:%M
-dateformat = %Y-%m-%d
-longdateformat = %Y-%m-%d
-datetimeformat = %Y-%m-%d %H:%M
-longdatetimeformat = %Y-%m-%d %H:%M
-EOF
+          [locale]
+          timeformat = %H:%M
+          dateformat = %Y-%m-%d
+          longdateformat = %Y-%m-%d
+          datetimeformat = %Y-%m-%d %H:%M
+          longdatetimeformat = %Y-%m-%d %H:%M
+          EOF
 
-          # Initial sync (discover + sync) — non-fatal if network unavailable
-          yes | ${pkgs.vdirsyncer}/bin/vdirsyncer discover || true
-          ${pkgs.vdirsyncer}/bin/vdirsyncer sync || true
+                    # Initial sync (discover + sync) — non-fatal if network unavailable
+                    yes | ${pkgs.vdirsyncer}/bin/vdirsyncer discover || true
+                    ${pkgs.vdirsyncer}/bin/vdirsyncer sync || true
         '')
         openclawBrowserConfigScript
       ];
