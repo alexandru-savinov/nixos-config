@@ -7,45 +7,36 @@ let
 
   # Shared optional HTTP fields used by both endpoints and suite endpoints
   optionalHttpAttrs = ep:
-    optionalAttrs (ep.method != null) { method = ep.method; }
-    // optionalAttrs (ep.body != null) { body = ep.body; }
-    // optionalAttrs (ep.headers != { }) { headers = ep.headers; };
+    optionalAttrs (ep.method != null) { inherit (ep) method; }
+    // optionalAttrs (ep.body != null) { inherit (ep) body; }
+    // optionalAttrs (ep.headers != { }) { inherit (ep) headers; };
 
   # Convert Nix endpoint definitions to Gatus attrset format
   # Note: 'enabled' is a Nix-only option for filtering, not a Gatus config field
   endpointToYaml = ep: {
-    name = ep.name;
-    group = ep.group;
-    url = ep.url;
-    interval = ep.interval;
-    conditions = ep.conditions;
+    inherit (ep) name group url interval conditions;
   } // optionalHttpAttrs ep
-  // optionalAttrs (ep.dns != null) { dns = ep.dns; }
-  // optionalAttrs (ep.ssh != null) { ssh = ep.ssh; };
+  // optionalAttrs (ep.dns != null) { inherit (ep) dns; }
+  // optionalAttrs (ep.ssh != null) { inherit (ep) ssh; };
 
   # Convert suite endpoint to Gatus attrset format (includes store and always-run)
   suiteEndpointToYaml = ep: {
-    name = ep.name;
-    url = ep.url;
-    conditions = ep.conditions;
+    inherit (ep) name url conditions;
   } // optionalHttpAttrs ep
-  // optionalAttrs (ep.store != { }) { store = ep.store; }
+  // optionalAttrs (ep.store != { }) { inherit (ep) store; }
   // optionalAttrs ep.always-run { always-run = true; };
 
   # Convert suite to Gatus attrset format
   suiteToYaml = suite: {
-    name = suite.name;
-    group = suite.group;
-    interval = suite.interval;
+    inherit (suite) name group interval;
     endpoints = map suiteEndpointToYaml suite.endpoints;
-  } // optionalAttrs (suite.context != { }) { context = suite.context; };
+  } // optionalAttrs (suite.context != { }) { inherit (suite) context; };
 
   # Transform storage config - filter null values and set SQLite default path
   storageConfig =
     if cfg.storage == null then null
     else {
-      type = cfg.storage.type;
-      caching = cfg.storage.caching;
+      inherit (cfg.storage) type caching;
     } // optionalAttrs (cfg.storage.path != null || cfg.storage.type == "sqlite") {
       path = if cfg.storage.path != null then cfg.storage.path else "/var/lib/gatus/data.db";
     };
@@ -53,7 +44,7 @@ let
   # Transform UI config - filter null values
   uiConfig =
     if cfg.ui == null then null
-    else filterAttrs (n: v: v != null) cfg.ui;
+    else filterAttrs (_: v: v != null) cfg.ui;
 
   # Filter enabled suites
   enabledSuites = filter (s: s.enabled) (attrValues cfg.suites);
