@@ -400,7 +400,7 @@ status_path = "~/.local/share/vdirsyncer/status/"
 [pair family_calendar]
 a = "family_calendar_remote"
 b = "family_calendar_local"
-collections = null
+collections = ["from a"]
 
 [storage family_calendar_remote]
 type = "caldav"
@@ -414,12 +414,11 @@ path = "~/.local/share/vdirsyncer/calendar/"
 fileext = ".ics"
 EOF
 
-          # khal config — reads synced .ics files
+          # khal config — reads synced .ics files (type=discover auto-finds all calendars)
           cat > "$HOME/.config/khal/config" <<EOF
 [calendars]
-[[family]]
-path = ~/.local/share/vdirsyncer/calendar/
-color = dark cyan
+[[all]]
+path = ~/.local/share/vdirsyncer/calendar/*
 type = discover
 
 [locale]
@@ -428,9 +427,6 @@ dateformat = %Y-%m-%d
 longdateformat = %Y-%m-%d
 datetimeformat = %Y-%m-%d %H:%M
 longdatetimeformat = %Y-%m-%d %H:%M
-
-[default]
-default_calendar = family
 EOF
 
           # Initial sync (discover + sync) — non-fatal if network unavailable
@@ -659,12 +655,10 @@ EOF
       "a+ /var/lib/openclaw - - - - group:openclaw:r-x"
       "d /var/lib/openclaw/bin 0755 openclaw openclaw -"
       "d /var/lib/openclaw/.claude 0700 openclaw openclaw -"
-      # vdirsyncer + khal config and data dirs for CalDAV calendar skill
-      "d /var/lib/openclaw/.config/vdirsyncer 0700 openclaw openclaw -"
-      "d /var/lib/openclaw/.config/khal 0700 openclaw openclaw -"
+      # vdirsyncer + khal data dirs (ExecStartPre creates config files at runtime)
+      "d /var/lib/openclaw/.local 0700 openclaw openclaw -"
+      "d /var/lib/openclaw/.local/share 0700 openclaw openclaw -"
       "d /var/lib/openclaw/.local/share/vdirsyncer 0700 openclaw openclaw -"
-      "d /var/lib/openclaw/.local/share/vdirsyncer/calendar 0700 openclaw openclaw -"
-      "d /var/lib/openclaw/.local/share/vdirsyncer/status 0700 openclaw openclaw -"
       # Node.js bytecode cache — doctor recommendation for faster CLI on VPS
       "d /var/lib/openclaw/.node-compile-cache 0700 openclaw openclaw -"
       # Ensure parent directories exist before creating the skills symlink.
