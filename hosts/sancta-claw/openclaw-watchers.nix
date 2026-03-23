@@ -1,0 +1,66 @@
+{ pkgs, ... }:
+
+{
+  # ── Restart trigger (no sudo, no NoNewPrivileges change) ────────────────
+  # Kuzea self-restart via file-based trigger:
+  #   touch /var/lib/openclaw/restart-trigger
+  # The path unit fires, the watcher service (root) deletes the file and
+  # restarts openclaw. NoNewPrivileges=true on openclaw.service is preserved.
+  systemd.paths.openclaw-restart-watcher = {
+    description = "Watch for Kuzea self-restart trigger";
+    wantedBy = [ "multi-user.target" ];
+    pathConfig = {
+      PathExists = "/var/lib/openclaw/restart-trigger";
+      Unit = "openclaw-restart-watcher.service";
+    };
+  };
+
+  systemd.services.openclaw-restart-watcher = {
+    description = "Restart openclaw service on agent request";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "openclaw-do-restart" ''
+        rm -f /var/lib/openclaw/restart-trigger
+        systemctl restart openclaw
+      '';
+    };
+  };
+
+  # ── NixOS rebuild trigger (no sudo needed) ──────────────────────────────
+  # Kuzea can trigger a full nixos-rebuild switch by:
+  #   touch /var/lib/openclaw/rebuild-trigger
+  # The path unit fires, the service (root) pulls latest config and rebuilds.
+  # This allows Kuzea to apply merged PRs without waiting for autoUpgrade.
+  systemd.paths.nixos-rebuild-watcher = {
+    description = "Watch for NixOS rebuild trigger";
+    wantedBy = [ "multi-user.target" ];
+    pathConfig = {
+      PathExists = "/var/lib/openclaw/rebuild-trigger";
+      Unit = "nixos-rebuild-watcher.service";
+    };
+  };
+
+  systemd.services.nixos-rebuild-watcher = {
+    description = "Rebuild NixOS on agent request";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "nixos-do-rebuild" ''
+        set -euo pipefail
+        rm -f /var/lib/openclaw/rebuild-trigger
+
+        # Pull latest config
+        cd /var/lib/openclaw/nixos-config
+        ${pkgs.git}/bin/git fetch origin main
+        ${pkgs.git}/bin/git checkout main
+        ${pkgs.git}/bin/git reset --hard origin/main
+
+        # Rebuild (full path required — systemd services have minimal PATH)
+        /run/current-system/sw/bin/nixos-rebuild switch --flake /var/lib/openclaw/nixos-config#sancta-claw 2>&1 | tee /var/lib/openclaw/rebuild.log
+
+        # Notify Kuzea
+        echo "$(date -Iseconds) rebuild completed" >> /var/lib/openclaw/rebuild.log
+      '';
+      TimeoutStartSec = "10min";
+    };
+  };
+}
