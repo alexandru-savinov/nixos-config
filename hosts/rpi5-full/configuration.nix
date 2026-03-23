@@ -295,6 +295,8 @@ in
       ".npm/"
       ".npm-global/lib/"
       "models/" # whisper models (~607M), re-downloadable
+      ".config/vdirsyncer/" # contains plaintext CalDAV credentials (in agenix)
+      ".node-compile-cache/" # transient Node.js bytecode cache
     ];
     telegramEnvFile = secret "backup-telegram-env";
   };
