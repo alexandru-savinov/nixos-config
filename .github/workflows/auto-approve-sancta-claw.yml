@@ -40,7 +40,7 @@ permissions:
 #   1. Actor gating: only kuzea-bot PRs are considered.
 #   2. Fork rejection: head.repo.full_name must match this repository.
 #   3. Path scoping: only hosts/sancta-claw/**, modules/services/openclaw.nix,
-#      and modules/services/openclaw-container.nix (exact filenames, not glob).
+#      and modules/services/openclaw.nix (exact filenames, not glob).
 #   4. Nix validation: nix flake check + nix eval must pass (hard gate).
 #   5. Required CI checks: check.yml job "Build x86_64 Configs" (job ID:
 #      build-x86) must pass before merge (branch protection). This catches
@@ -63,13 +63,13 @@ permissions:
 #     gates. This is an inherent limitation of static eval and is accepted
 #     given the limited blast radius (sancta-claw only).
 #
-# ACCEPTED RISK — Privileged shared module scope (openclaw.nix, openclaw-container.nix):
+# ACCEPTED RISK — Privileged shared module scope (openclaw.nix):
 #   These modules define a system user (openclaw, uid=995), a systemd service
 #   with ExecStart/ReadWritePaths, and Tailscale Serve configuration. They are
 #   shared NixOS modules (currently imported by sancta-claw and sancta-choir),
 #   not host-specific config. Auto-approving changes to shared modules extends
 #   blast radius beyond a single host. This risk is accepted because:
-#   - sancta-choir does not currently use openclaw-container.nix (commented out).
+#   - Only sancta-claw imports openclaw.nix (sancta-choir is deprecated).
 #   - Changes still require check.yml full builds to pass before merge.
 #   - Only sancta-claw actively deploys via autoUpgrade; sancta-choir
 #     deploys manually.
@@ -103,13 +103,8 @@ permissions:
 #   it auto-invalidates all approvals on every push, regardless of actor.
 #
 # Scope maintenance:
-# - openclaw.nix/openclaw-container.nix are currently only used by sancta-claw
-#   and sancta-choir. If other hosts import them, revisit this scope.
-# TODO(scope-review): When sancta-choir re-enables openclaw-container.nix,
-#   revisit whether these shared modules should remain in the auto-approve
-#   scope. Currently mitigated: sancta-choir eval is included above, and
-#   sancta-choir deploys manually (not via autoUpgrade). The autoUpgrade
-#   guard in the validation step will fail-closed if this changes.
+# - openclaw.nix is only used by sancta-claw (sancta-choir deprecated).
+#   If other hosts import it, revisit this scope.
 #
 # Incident runbook — kuzea-bot account compromise:
 #   The security model's single point of failure is kuzea-bot's GitHub
@@ -151,7 +146,6 @@ jobs:
             allowed:
               - 'hosts/sancta-claw/**'
               - 'modules/services/openclaw.nix'
-              - 'modules/services/openclaw-container.nix'
 
       # Check if ALL changed files are within allowed scope.
       # dorny/paths-filter negation patterns don't work as expected (each
@@ -390,5 +384,5 @@ jobs:
         with:
           header: manual-review-required
           message: |
-            ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw.nix`, `modules/services/openclaw-container.nix`) — **manual review required** before merge. @alexandru-savinov
+            ⚠️ This PR touches files outside the auto-approve scope (`hosts/sancta-claw/**`, `modules/services/openclaw.nix`) — **manual review required** before merge. @alexandru-savinov
 
