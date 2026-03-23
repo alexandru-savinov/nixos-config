@@ -92,6 +92,20 @@ When filtering tasks (via natural language or CLI):
 
 The script outputs JSON for programmatic use. See `references/api.md` for full API documentation.
 
+## Post-Action Verification (MANDATORY)
+
+After every mutation (add, complete, update, delete), ALWAYS verify the action succeeded:
+
+1. **After `add`:** Run `python3 todoist/scripts/todoist.py get <task_id>` using the ID from the create response. Confirm the task exists and content matches.
+2. **After `complete`:** Run `python3 todoist/scripts/todoist.py get <task_id>` and confirm `is_completed: true`.
+3. **After `update`:** Run `python3 todoist/scripts/todoist.py get <task_id>` and confirm the updated fields match.
+4. **After `delete`:** Run `python3 todoist/scripts/todoist.py get <task_id>` — expect a 404/error confirming deletion.
+
+If verification fails:
+- Retry the operation once
+- If still fails, report the failure honestly: "I tried to add X but couldn't confirm it was created. Please check Todoist manually."
+- Never report success without verification
+
 ## Notes
 
 - The skill automatically filters out completed tasks
