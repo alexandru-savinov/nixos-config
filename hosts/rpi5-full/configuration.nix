@@ -58,6 +58,7 @@ in
     ../../modules/services/gatus.nix # Declarative status monitoring
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
+    ../../modules/system/ssh-hardened.nix
   ];
 
   # Package overrides for memory-constrained ARM builds
@@ -319,13 +320,12 @@ in
 
   # ── Security hardening (overrides base rpi5 bootstrap defaults) ─────────
   # Base rpi5 allows password auth + passwordless sudo for SD-card first boot.
-  # In production (rpi5-full), lock these down.
+  # In production (rpi5-full), lock these down via ssh-hardened.nix import.
   #
   # Passwordless sudo for nixos user is safe here because:
   # - SSH password auth is disabled (key-only)
   # - The nixos user is accessed via `su` from root (who is also key-only)
   # security.sudo.wheelNeedsPassword left at base default (false)
-  services.openssh.settings.PasswordAuthentication = lib.mkForce false;
 
   # Fresh install — NixOS 25.05
   # mkOverride 49 beats rpi5's mkForce (priority 50) which fights nixos-raspberrypi upstream

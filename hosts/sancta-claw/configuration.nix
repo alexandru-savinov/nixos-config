@@ -20,6 +20,7 @@
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
+    ../../modules/system/ssh-hardened.nix
   ];
 
   # Enable development tools and Claude Code
@@ -39,15 +40,6 @@
     firewall = {
       enable = true;
       allowedTCPPorts = [ 22 ];
-    };
-  };
-
-  # SSH
-  services.openssh = {
-    enable = true;
-    settings = {
-      PermitRootLogin = "prohibit-password";
-      PasswordAuthentication = false;
     };
   };
 

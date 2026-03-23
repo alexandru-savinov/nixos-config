@@ -15,15 +15,12 @@
     ./disk-config.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/nullclaw.nix
+    ../../modules/system/ssh-hardened.nix
   ];
 
   # ── System ───────────────────────────────────────────────────────────
   networking.hostName = "zero-kuzea";
   system.stateVersion = "25.05";
-
-  # ── SSH hardening ──────────────────────────────────────────────────
-  # VPS on public internet — key-only auth, no password login.
-  services.openssh.settings.PasswordAuthentication = false;
 
   # ── SSH authorized keys ─────────────────────────────────────────────
   users.users.root.openssh.authorizedKeys.keys = [
