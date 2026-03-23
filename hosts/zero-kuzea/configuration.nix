@@ -19,7 +19,7 @@
 
   # ── System ───────────────────────────────────────────────────────────
   networking.hostName = "zero-kuzea";
-  system.stateVersion = lib.mkForce "25.05";
+  system.stateVersion = "25.05";
 
   # ── SSH hardening ──────────────────────────────────────────────────
   # VPS on public internet — key-only auth, no password login.
