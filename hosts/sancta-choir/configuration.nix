@@ -42,9 +42,11 @@
   customModules.claude.enable = true;
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
-  age.secrets = {
-    tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-  };
+  age.secrets =
+    let inherit (import ../../lib/secrets.nix { inherit self; }) secret; in
+    {
+      tailscale-auth-key = secret "tailscale-auth-key";
+    };
 
   # Home Manager (root user config provided by modules/users/root.nix)
   home-manager = {

@@ -33,21 +33,16 @@
   # Stored on rpi5:/root/dr/recovery-sancta-claw.key + Bitwarden.
   age.identityPaths = [ "/root/.age/recovery.key" ];
 
-  age.secrets = {
-    tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
-
-    anthropic-api-key = {
-      file = "${self}/secrets/anthropic-api-key.age";
-      owner = "nullclaw";
-      group = "nullclaw";
+  age.secrets =
+    let
+      inherit (import ../../lib/secrets.nix { inherit self; }) secret ownedSecret;
+      nullclawSecret = ownedSecret "nullclaw";
+    in
+    {
+      tailscale-auth-key = secret "tailscale-auth-key";
+      anthropic-api-key = nullclawSecret "anthropic-api-key";
+      zero-kuzea-telegram-bot-token = nullclawSecret "zero-kuzea-telegram-bot-token";
     };
-
-    zero-kuzea-telegram-bot-token = {
-      file = "${self}/secrets/zero-kuzea-telegram-bot-token.age";
-      owner = "nullclaw";
-      group = "nullclaw";
-    };
-  };
 
   # ── NullClaw (Zero_kuzea bot) ───────────────────────────────────────
   services.nullclaw = {
