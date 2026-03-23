@@ -43,6 +43,4 @@
     };
   };
 
-  # Default state version (override per host if needed)
-  system.stateVersion = "23.11";
 }

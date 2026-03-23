@@ -20,6 +20,7 @@
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
+    ../../modules/system/ssh-hardened.nix
   ];
 
   # Enable development tools and Claude Code
@@ -42,15 +43,6 @@
     };
   };
 
-  # SSH
-  services.openssh = {
-    enable = true;
-    settings = {
-      PermitRootLogin = "prohibit-password";
-      PasswordAuthentication = false;
-    };
-  };
-
   # Time zone
   time.timeZone = "Europe/Chisinau";
   i18n.defaultLocale = "en_US.UTF-8";
@@ -61,14 +53,11 @@
   age.identityPaths = [ "/root/.age/recovery.key" ];
   age.secrets =
     let
-      kuzeaSecret = name: {
-        file = "${self}/secrets/${name}.age";
-        owner = "openclaw";
-        group = "openclaw";
-      };
+      inherit (import ../../lib/secrets.nix { inherit self; }) secret ownedSecret;
+      kuzeaSecret = ownedSecret "openclaw";
     in
     {
-      tailscale-auth-key.file = "${self}/secrets/tailscale-auth-key.age";
+      tailscale-auth-key = secret "tailscale-auth-key";
       # Kuzea-specific secrets — decriptabile doar pe sancta-claw
       kuzea-caldav-credentials = kuzeaSecret "kuzea-caldav-credentials";
       kuzea-github-token = kuzeaSecret "kuzea-github-token";
@@ -117,5 +106,5 @@
   };
 
   # Fresh install — NixOS 25.05
-  system.stateVersion = lib.mkForce "25.05";
+  system.stateVersion = "25.05";
 }

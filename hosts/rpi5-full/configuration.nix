@@ -58,6 +58,7 @@ in
     ../../modules/services/gatus.nix # Declarative status monitoring
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
+    ../../modules/system/ssh-hardened.nix
   ];
 
   # Package overrides for memory-constrained ARM builds
@@ -85,20 +86,20 @@ in
   # Agenix secrets for additional services
   age.secrets =
     let
-      simpleSecret = name: { file = "${self}/secrets/${name}.age"; };
+      inherit (import ../../lib/secrets.nix { inherit self; }) secret ownedSecret;
     in
     {
       # Open-WebUI (disabled)
-      # open-webui-secret-key = simpleSecret "open-webui-secret-key";
-      openrouter-api-key = simpleSecret "openrouter-api-key"; # also used by n8n
-      # tavily-api-key = simpleSecret "tavily-api-key";
-      openai-api-key = simpleSecret "openai-api-key"; # also used by n8n
-      # e2e-test-api-key = simpleSecret "e2e-test-api-key";
+      # open-webui-secret-key = secret "open-webui-secret-key";
+      openrouter-api-key = secret "openrouter-api-key"; # also used by n8n
+      # tavily-api-key = secret "tavily-api-key";
+      openai-api-key = secret "openai-api-key"; # also used by n8n
+      # e2e-test-api-key = secret "e2e-test-api-key";
 
       # n8n workflow automation
-      n8n-encryption-key = simpleSecret "n8n-encryption-key";
-      n8n-admin-password = simpleSecret "n8n-admin-password";
-      telegram-bot-token = simpleSecret "telegram-bot-token";
+      n8n-encryption-key = secret "n8n-encryption-key";
+      n8n-admin-password = secret "n8n-admin-password";
+      telegram-bot-token = secret "telegram-bot-token";
 
       # n8n API key for Claude Code MCP (workflow management)
       # Generate in n8n: Settings > API > Create API Key
@@ -108,10 +109,7 @@ in
       };
 
       # CalDAV credentials for NixFrame calendar sidebar
-      caldav-credentials = {
-        file = "${self}/secrets/caldav-credentials.age";
-        owner = "nixframe";
-      };
+      caldav-credentials = ownedSecret "nixframe" "caldav-credentials";
 
       # Backup pull secrets
       rpi5-backup-ssh-key = {
@@ -319,15 +317,15 @@ in
 
   # ── Security hardening (overrides base rpi5 bootstrap defaults) ─────────
   # Base rpi5 allows password auth + passwordless sudo for SD-card first boot.
-  # In production (rpi5-full), lock these down.
+  # In production (rpi5-full), lock these down via ssh-hardened.nix import.
   #
   # Passwordless sudo for nixos user is safe here because:
   # - SSH password auth is disabled (key-only)
   # - The nixos user is accessed via `su` from root (who is also key-only)
   # security.sudo.wheelNeedsPassword left at base default (false)
-  services.openssh.settings.PasswordAuthentication = lib.mkForce false;
 
   # Fresh install — NixOS 25.05
   # mkOverride 49 beats rpi5's mkForce (priority 50) which fights nixos-raspberrypi upstream
-  system.stateVersion = lib.mkOverride 49 "25.05";
+  # mkForce needed: rpi5-full imports rpi5/configuration.nix which sets "24.05"
+  system.stateVersion = lib.mkForce "25.05";
 }
