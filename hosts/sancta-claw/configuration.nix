@@ -235,6 +235,8 @@ in
     gcc
     python3
     nixd # Nix LSP for Claude Code (go-to-definition, NixOS options, diagnostics)
+    vdirsyncer # CalDAV sync (used by caldav-calendar skill + briefing cron)
+    khal # CLI calendar (reads vdirsyncer-synced .ics files)
     # openai-whisper available via kuzeaTranscribe runtimeInputs (not system-wide).
     # playwright-driver.browsers is a transitive closure dep of agentBrowser (via makeWrapper);
     # no need to list it here separately.
