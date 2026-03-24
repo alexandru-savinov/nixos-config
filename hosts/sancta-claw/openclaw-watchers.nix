@@ -63,4 +63,71 @@
       TimeoutStartSec = "10min";
     };
   };
+
+  # ── Gateway health check (auto-restart on degradation) ─────────────────
+  systemd.timers.openclaw-health-check = {
+    description = "OpenClaw gateway health probe timer";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitActiveSec = "1min";
+    };
+  };
+
+  systemd.services.openclaw-health-check = {
+    description = "OpenClaw gateway health probe";
+    after = [ "openclaw.service" ];
+    path = [
+      pkgs.curl
+      pkgs.jq
+      pkgs.coreutils
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "openclaw-health-probe" ''
+        set -uo pipefail
+        STATE_FILE="/var/lib/openclaw/.health-failures"
+        COOLDOWN_FILE="/var/lib/openclaw/.health-last-restart"
+        MAX_FAILURES=3
+        COOLDOWN_SECS=300
+        OC_CONFIG="/var/lib/openclaw/.openclaw/openclaw.json"
+
+        if curl -sf -o /dev/null --max-time 10 http://127.0.0.1:18789/healthz; then
+          echo 0 > "$STATE_FILE"
+          exit 0
+        fi
+
+        FAILURES=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
+        FAILURES=$((FAILURES + 1))
+        echo "$FAILURES" > "$STATE_FILE"
+
+        if [ "$FAILURES" -ge "$MAX_FAILURES" ]; then
+          # Cooldown: don't restart if we restarted less than 5 minutes ago.
+          # Prevents restart loop when gateway is persistently broken.
+          LAST_RESTART=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
+          NOW=$(date +%s)
+          if [ $((NOW - LAST_RESTART)) -lt "$COOLDOWN_SECS" ]; then
+            echo "Gateway still unhealthy but cooldown active (restarted $((NOW - LAST_RESTART))s ago). Skipping." >&2
+            exit 0
+          fi
+
+          echo "Gateway unhealthy after $FAILURES consecutive checks, restarting..." >&2
+          echo 0 > "$STATE_FILE"
+          echo "$NOW" > "$COOLDOWN_FILE"
+          systemctl restart openclaw
+
+          # Notify via Telegram — read bot token from openclaw.json (always present).
+          TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
+          CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
+          if [ -n "$TOKEN" ]; then
+            curl -sf -X POST \
+              "https://api.telegram.org/bot$TOKEN/sendMessage" \
+              -d "chat_id=$CHAT_ID" \
+              -d "text=⚠️ OpenClaw gateway was unhealthy ($FAILURES consecutive failures). Auto-restarted." \
+              --max-time 10 || true
+          fi
+        fi
+      '';
+    };
+  };
 }
