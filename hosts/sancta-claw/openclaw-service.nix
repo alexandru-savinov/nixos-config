@@ -185,7 +185,7 @@ let
     # context after auto-compaction instead of losing the thread.
     compaction = defaults.setdefault("compaction", {})
     compaction["mode"] = "safeguard"
-    compaction["recentTurnsPreserve"] = 4
+    compaction["recentTurnsPreserve"] = 8
 
     # Enable self-improvement hook (agent:bootstrap reminder to log learnings).
     # Declarative equivalent of: openclaw hooks enable self-improvement
