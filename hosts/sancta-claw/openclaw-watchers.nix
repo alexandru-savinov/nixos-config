@@ -63,4 +63,49 @@
       TimeoutStartSec = "10min";
     };
   };
+
+  # ── Gateway health check (auto-restart on degradation) ─────────────────
+  systemd.timers.openclaw-health-check = {
+    description = "OpenClaw gateway health probe timer";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitActiveSec = "1min";
+    };
+  };
+
+  systemd.services.openclaw-health-check = {
+    description = "OpenClaw gateway health probe";
+    after = [ "openclaw.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "openclaw-health-probe" ''
+        STATE_FILE="/var/lib/openclaw/.health-failures"
+        MAX_FAILURES=3
+
+        if ${pkgs.curl}/bin/curl -sf -o /dev/null \
+             --max-time 10 http://127.0.0.1:18789/healthz; then
+          echo 0 > "$STATE_FILE"
+          exit 0
+        fi
+
+        FAILURES=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
+        FAILURES=$((FAILURES + 1))
+        echo "$FAILURES" > "$STATE_FILE"
+
+        if [ "$FAILURES" -ge "$MAX_FAILURES" ]; then
+          echo "Gateway unhealthy after $FAILURES consecutive checks, restarting..." >&2
+          echo 0 > "$STATE_FILE"
+          systemctl restart openclaw
+
+          # Notify Alexandru via Telegram
+          ${pkgs.curl}/bin/curl -sf -X POST \
+            "https://api.telegram.org/bot$(cat /run/agenix/kuzea-telegram-token 2>/dev/null || echo NOTOKEN)/sendMessage" \
+            -d chat_id=364749075 \
+            -d text="⚠️ OpenClaw gateway was unhealthy (3 consecutive failures). Auto-restarted." \
+            --max-time 10 || true
+        fi
+      '';
+    };
+  };
 }

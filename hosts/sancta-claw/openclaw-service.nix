@@ -200,6 +200,11 @@ let
     tg = channels.setdefault("telegram", {})
     tg["streaming"] = "partial"
 
+    # Tool error handling — strict mode prevents fabricating results on failure
+    tools = config.setdefault("tools", {})
+    tools["errorHandling"] = "strict"
+    tools["reportFailures"] = True
+
     tmp = config_path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(config, f, indent=2)
