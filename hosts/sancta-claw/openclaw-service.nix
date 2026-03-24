@@ -1,6 +1,7 @@
 { pkgs
 , lib
 , config
+, kuzea-ws
 , ...
 }:
 
@@ -380,21 +381,7 @@ in
   # These files were previously created imperatively and would be lost on
   # rebuild. tmpfiles L+ creates forced symlinks into the nix store.
   # Todoist skill directory is built as a derivation and symlinked whole.
-  systemd.tmpfiles.rules =
-    let
-      copyDir = name: src:
-        pkgs.runCommand name { } ''cp -r ${src} $out'';
-
-      skills = builtins.mapAttrs (name: _: copyDir name ./kuzea/skills/${name}) {
-        todoist-natural-language = null;
-        self-improving-agent = null;
-        agent-browser = null;
-        claude-code-agents = null;
-        coding-agent-local = null;
-      };
-      selfImprovingHook = copyDir "self-improvement-hook" ./kuzea/hooks/self-improvement;
-    in
-    [
+  systemd.tmpfiles.rules = [
       # Home dir must be group-readable (0750) so backup-pull user
       # (member of openclaw group) can rsync via rrsync.
       "d /var/lib/openclaw 0750 openclaw openclaw -"
@@ -422,16 +409,10 @@ in
       "d /var/lib/openclaw/.openclaw/hooks 0755 openclaw openclaw -"
       # writeTextFile with executable=true sets 0555 on the nix store file so the
       # resulting symlink is directly executable (node cron-manage.mjs).
-      "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${
-        pkgs.writeTextFile {
-          name = "cron-manage.mjs";
-          text = builtins.readFile ./kuzea/cron-manage.mjs;
-          executable = true;
-        }
-      }"
+      "L+ /var/lib/openclaw/bin/cron-manage.mjs - - - - ${kuzea-ws.cron-manage}"
       # Source file is claude-CLAUDE.md to avoid the dot-prefix in the repo;
       # deployed as .claude/CLAUDE.md (the path Claude Code reads on startup).
-      "L+ /var/lib/openclaw/.claude/CLAUDE.md - - - - ${pkgs.writeText "claude-global.md" (builtins.readFile ./kuzea/claude-CLAUDE.md)}"
+      "L+ /var/lib/openclaw/.claude/CLAUDE.md - - - - ${kuzea-ws.claude-md}"
       # skipDangerousModePermissionPrompt is intentional: the openclaw user runs
       # under NoNewPrivileges=true with no sudo access, so Claude Code cannot
       # escalate privileges even with prompts disabled.
@@ -439,23 +420,23 @@ in
       # write to settings.json at runtime. Seeds base settings on first deploy;
       # subsequent rebuilds preserve runtime modifications (enabledPlugins etc.).
       # To force-reset: delete the file and run `systemd-tmpfiles --create`.
-      "C /var/lib/openclaw/.claude/settings.json 0644 openclaw openclaw - ${pkgs.writeText "claude-settings.json" (builtins.readFile ./kuzea/claude-settings.json)}"
+      "C /var/lib/openclaw/.claude/settings.json 0644 openclaw openclaw - ${kuzea-ws.claude-settings}"
       # TODOIST_API_KEY is injected via EnvironmentFile from the agenix secret
       # kuzea-todoist-credentials (PR #297). Skill is fully operational post-rebuild.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${skills.todoist-natural-language}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/todoist-natural-language - - - - ${kuzea-ws.skills-todoist-natural-language}"
       # Self-Improving Agent skill (pskoett/self-improving-agent v1.0.11).
       # Logs errors, corrections, and feature requests to .learnings/ for continuous
       # improvement. Hook injects a reminder at agent:bootstrap to capture learnings.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/self-improving-agent - - - - ${skills.self-improving-agent}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/self-improving-agent - - - - ${kuzea-ws.skills-self-improving-agent}"
       # Agent Browser CLI reference (vercel-labs/agent-browser) — complete command docs
       # so Kuzea always has the full snapshot/click/fill/record reference available.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/agent-browser - - - - ${skills.agent-browser}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/agent-browser - - - - ${kuzea-ws.skills-agent-browser}"
       # Claude Code agent-teams & subagents reference — documents custom subagent
       # creation, agent file locations, and experimental agent teams for parallel work.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/claude-code-agents - - - - ${skills.claude-code-agents}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/claude-code-agents - - - - ${kuzea-ws.skills-claude-code-agents}"
       # Local overrides for coding-agent skill — documents --output-format text fix
       # so Claude Code -p output is captured by OpenClaw's PTY process manager.
-      "L+ /var/lib/openclaw/.openclaw/workspace/skills/coding-agent-local - - - - ${skills.coding-agent-local}"
+      "L+ /var/lib/openclaw/.openclaw/workspace/skills/coding-agent-local - - - - ${kuzea-ws.skills-coding-agent-local}"
       # Hook goes into the managed dir (.openclaw/hooks/), NOT workspace/hooks/.
       # Reason: openclaw scans hooks via Node.js readdirSync + Dirent.isDirectory(),
       # which returns false for symlinks-to-directories. Using C+ creates real files
@@ -463,7 +444,7 @@ in
       # workspace/hooks/ symlink is intentionally omitted: it was non-functional and
       # only created confusion. .openclaw/hooks/ is the canonical location used by
       # `openclaw hooks install` and loadHookEntries(managedHooksDir).
-      "C+ /var/lib/openclaw/.openclaw/hooks/self-improvement - openclaw openclaw - ${selfImprovingHook}"
+      "C+ /var/lib/openclaw/.openclaw/hooks/self-improvement - openclaw openclaw - ${kuzea-ws.hooks-self-improvement}"
       # .learnings/ is mutable state (grows over time) — created writable, never
       # symlinked to the Nix store. `f` creates the file only if it doesn't exist,
       # preserving accumulated learnings across rebuilds.
@@ -479,13 +460,11 @@ in
       # runtime so the token is never stored in plaintext on disk.
       # Replaces the former ~/.git-credentials store helper approach.
       # writeShellScript patches the shebang to the nix store bash automatically.
-      "L+ /var/lib/openclaw/bin/git-credential-agenix - - - - ${
-        pkgs.writeShellScript "git-credential-agenix" (builtins.readFile ./kuzea/git-credential-agenix)
-      }"
+      "L+ /var/lib/openclaw/bin/git-credential-agenix - - - - ${kuzea-ws.git-credential-agenix}"
       # .gitconfig is managed declaratively so the credential helper path always
       # points to the nix-store copy. The file is read-only by intent; use
       # nixos-config to make config changes rather than git config --global.
-      "L+ /var/lib/openclaw/.gitconfig - - - - ${pkgs.writeText "gitconfig" (builtins.readFile ./kuzea/gitconfig)}"
+      "L+ /var/lib/openclaw/.gitconfig - - - - ${kuzea-ws.gitconfig}"
       # Remove legacy plaintext credential files left over from the pre-agenix
       # setup. 'r' removes the file if it exists; safe to leave in perpetually.
       "r /var/lib/openclaw/.git-credentials - - - -"
