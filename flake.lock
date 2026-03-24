@@ -196,6 +196,26 @@
         "type": "github"
       }
     },
+    "kuzea-workspace": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1774346787,
+        "narHash": "sha256-7Q+F+3gb25BWtPINAbtHB04WNFLi9/5l0JsjCAYcDQc=",
+        "owner": "alexandru-savinov",
+        "repo": "kuzea-workspace",
+        "rev": "55711b28fce4848ea670fee4ab41a13944c3750b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "alexandru-savinov",
+        "repo": "kuzea-workspace",
+        "type": "github"
+      }
+    },
     "nixos-images": {
       "inputs": {
         "nixos-stable": [
@@ -297,6 +317,7 @@
         "claude-code": "claude-code",
         "disko": "disko",
         "home-manager": "home-manager_2",
+        "kuzea-workspace": "kuzea-workspace",
         "nixos-raspberrypi": "nixos-raspberrypi",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-unstable": "nixpkgs-unstable",
