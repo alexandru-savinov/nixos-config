@@ -40,9 +40,13 @@
       url = "github:sadjow/claude-code-nix";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
+    kuzea-workspace = {
+      url = "github:alexandru-savinov/kuzea-workspace";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, ... }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, kuzea-workspace, ... }:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -125,6 +129,7 @@
           system = "x86_64-linux";
           specialArgs = {
             pkgs-unstable = pkgs-unstable-x86;
+            kuzea-ws = kuzea-workspace.packages.x86_64-linux;
             inherit self claude-code;
           };
           modules = [
