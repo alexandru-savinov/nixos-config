@@ -77,14 +77,20 @@
   systemd.services.openclaw-health-check = {
     description = "OpenClaw gateway health probe";
     after = [ "openclaw.service" ];
+    path = [
+      pkgs.curl
+      pkgs.jq
+      pkgs.coreutils
+    ];
     serviceConfig = {
       Type = "oneshot";
       ExecStart = pkgs.writeShellScript "openclaw-health-probe" ''
+        set -uo pipefail
         STATE_FILE="/var/lib/openclaw/.health-failures"
         MAX_FAILURES=3
+        OC_CONFIG="/var/lib/openclaw/.openclaw/openclaw.json"
 
-        if ${pkgs.curl}/bin/curl -sf -o /dev/null \
-             --max-time 10 http://127.0.0.1:18789/healthz; then
+        if curl -sf -o /dev/null --max-time 10 http://127.0.0.1:18789/healthz; then
           echo 0 > "$STATE_FILE"
           exit 0
         fi
@@ -98,12 +104,16 @@
           echo 0 > "$STATE_FILE"
           systemctl restart openclaw
 
-          # Notify Alexandru via Telegram
-          ${pkgs.curl}/bin/curl -sf -X POST \
-            "https://api.telegram.org/bot$(cat /run/agenix/kuzea-telegram-token 2>/dev/null || echo NOTOKEN)/sendMessage" \
-            -d chat_id=364749075 \
-            -d text="⚠️ OpenClaw gateway was unhealthy (3 consecutive failures). Auto-restarted." \
-            --max-time 10 || true
+          # Notify via Telegram — read bot token from openclaw.json (always present).
+          TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
+          CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
+          if [ -n "$TOKEN" ]; then
+            curl -sf -X POST \
+              "https://api.telegram.org/bot$TOKEN/sendMessage" \
+              -d "chat_id=$CHAT_ID" \
+              -d "text=⚠️ OpenClaw gateway was unhealthy ($FAILURES consecutive failures). Auto-restarted." \
+              --max-time 10 || true
+          fi
         fi
       '';
     };
