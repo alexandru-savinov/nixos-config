@@ -87,9 +87,7 @@
       ExecStart = pkgs.writeShellScript "openclaw-health-probe" ''
         set -uo pipefail
         STATE_FILE="/var/lib/openclaw/.health-failures"
-        COOLDOWN_FILE="/var/lib/openclaw/.health-last-restart"
         MAX_FAILURES=3
-        COOLDOWN_SECS=300
         OC_CONFIG="/var/lib/openclaw/.openclaw/openclaw.json"
 
         if curl -sf -o /dev/null --max-time 10 http://127.0.0.1:18789/healthz; then
@@ -102,28 +100,48 @@
         echo "$FAILURES" > "$STATE_FILE"
 
         if [ "$FAILURES" -ge "$MAX_FAILURES" ]; then
-          # Cooldown: don't restart if we restarted less than 5 minutes ago.
-          # Prevents restart loop when gateway is persistently broken.
-          LAST_RESTART=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
+          # Crash-loop detection: if we've restarted 3+ times in 30 minutes,
+          # stop restarting and alert instead. Prevents infinite restart loops
+          # when gateway crashes due to bad config (learned from PR #398 incident).
+          RESTART_LOG_DIR="/var/lib/openclaw/.health-restarts"
+          CRASH_LOOP_MAX=3
+          CRASH_LOOP_WINDOW_MIN=30
+          mkdir -p "$RESTART_LOG_DIR"
+
+          # Count restarts within the window
+          RECENT_RESTARTS=$(find "$RESTART_LOG_DIR" -maxdepth 1 -type f -mmin "-$CRASH_LOOP_WINDOW_MIN" 2>/dev/null | wc -l)
+
           NOW=$(date +%s)
-          if [ $((NOW - LAST_RESTART)) -lt "$COOLDOWN_SECS" ]; then
-            echo "Gateway still unhealthy but cooldown active (restarted $((NOW - LAST_RESTART))s ago). Skipping." >&2
-            exit 0
+          TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
+          CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
+
+          if [ "$RECENT_RESTARTS" -ge "$CRASH_LOOP_MAX" ]; then
+            echo "Crash loop detected ($RECENT_RESTARTS restarts in $CRASH_LOOP_WINDOW_MIN min). NOT restarting." >&2
+            # Alert: manual intervention needed
+            if [ -n "$TOKEN" ]; then
+              curl -sf -X POST \
+                "https://api.telegram.org/bot$TOKEN/sendMessage" \
+                -d "chat_id=$CHAT_ID" \
+                -d "text=🔴 OpenClaw crash loop detected ($RECENT_RESTARTS restarts in ''${CRASH_LOOP_WINDOW_MIN}min). Auto-restart STOPPED. Manual intervention needed." \
+                --max-time 10 || true
+            fi
+            exit 1
           fi
 
           echo "Gateway unhealthy after $FAILURES consecutive checks, restarting..." >&2
           echo 0 > "$STATE_FILE"
-          echo "$NOW" > "$COOLDOWN_FILE"
+          touch "$RESTART_LOG_DIR/$NOW"
           systemctl restart openclaw
 
-          # Notify via Telegram — read bot token from openclaw.json (always present).
-          TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
-          CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
+          # Clean up old restart log entries (older than window)
+          find "$RESTART_LOG_DIR" -maxdepth 1 -type f -mmin "+$CRASH_LOOP_WINDOW_MIN" -delete 2>/dev/null || true
+
+          # Notify via Telegram
           if [ -n "$TOKEN" ]; then
             curl -sf -X POST \
               "https://api.telegram.org/bot$TOKEN/sendMessage" \
               -d "chat_id=$CHAT_ID" \
-              -d "text=⚠️ OpenClaw gateway was unhealthy ($FAILURES consecutive failures). Auto-restarted." \
+              -d "text=⚠️ OpenClaw gateway was unhealthy ($FAILURES consecutive failures). Auto-restarted. ($((RECENT_RESTARTS + 1))/$CRASH_LOOP_MAX before crash-loop lockout)" \
               --max-time 10 || true
           fi
         fi
