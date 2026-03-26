@@ -45,14 +45,14 @@ let
   # Python package for unifi-network-mcp
   unifiMcpPkg = pkgs.python313Packages.buildPythonApplication rec {
     pname = "unifi-network-mcp";
-    version = "1.5.0";
+    version = "0.6.4";
     pyproject = true;
 
     src = pkgs.fetchFromGitHub {
       owner = "sirkirby";
       repo = "unifi-network-mcp";
       rev = "v${version}";
-      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Will need to update
+      hash = "sha256-BdcAw9r6JO0Gn4VWOTQmna5HUKoLWfgYEznQkP9E+3E=";
     };
 
     build-system = [ pkgs.python313Packages.hatchling ];
@@ -308,7 +308,7 @@ in
     # Service mode: Run as persistent HTTP SSE server
     systemd.services.unifi-mcp = mkIf cfg.service.enable {
       description = "UniFi Network MCP Server (HTTP SSE mode)";
-      after = [ "network-online.target" "docker.service" ];
+      after = [ "network-online.target" ] ++ lib.optionals cfg.useDocker [ "docker.service" ];
       wants = [ "network-online.target" ];
       requires = mkIf cfg.useDocker [ "docker.service" ];
       wantedBy = [ "multi-user.target" ];
