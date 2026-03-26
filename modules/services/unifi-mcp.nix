@@ -348,8 +348,11 @@ in
           '')
         ];
 
-        ExecStart = mkIf cfg.useDocker
-          "${pkgs.docker}/bin/docker run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${ssePortStr}:${ssePortStr} ${dockerImage}";
+        ExecStart =
+          if cfg.useDocker then
+            "${pkgs.docker}/bin/docker run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${ssePortStr}:${ssePortStr} ${dockerImage}"
+          else
+            "${cfg.package}/bin/unifi-network-mcp";
 
         ExecStop = mkIf cfg.useDocker "${pkgs.docker}/bin/docker stop unifi-mcp";
       };
