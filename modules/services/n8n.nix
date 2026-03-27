@@ -612,11 +612,11 @@ in
         ''}
 
         if [ "$import_failed" -eq 1 ]; then
-          echo "ERROR: One or more workflow imports failed" >&2
-          exit 1
+          echo "WARNING: One or more workflow imports failed (see errors above)" >&2
+          echo "  Continuing with remaining workflows..."
+        else
+          echo "Workflow import complete: all workflows imported successfully"
         fi
-
-        echo "Workflow import complete: all workflows imported successfully"
 
         # Sync active state from JSON files to database
         # n8n import doesn't update active state of existing workflows
