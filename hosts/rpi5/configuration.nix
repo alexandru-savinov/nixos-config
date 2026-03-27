@@ -249,8 +249,8 @@
 
   # Kernel tweaks for better memory management under pressure
   boot.kernel.sysctl = {
-    # Be more aggressive about swapping to avoid OOM
-    "vm.swappiness" = 60;
+    # Prefer zram swap (4.5x compression ratio) over keeping cold pages in RAM
+    "vm.swappiness" = 80;
     # Reduce disk write frequency (good for SD cards)
     "vm.dirty_ratio" = 40;
     "vm.dirty_background_ratio" = 10;
