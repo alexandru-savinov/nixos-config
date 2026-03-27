@@ -587,14 +587,19 @@ in
 
         echo "Importing declarative workflows..."
         import_failed=0
+        import_ok=0
+        import_err=0
 
         # Import individual workflow files
         ${concatMapStringsSep "\n" (wf: ''
-          echo "Importing: ${wf}"
+          echo "  Importing: $(basename "${wf}")"
           if ! import_output=$(runuser -u n8n -- n8n import:workflow --input="${wf}" 2>&1); then
-            echo "ERROR: Failed to import ${wf}" >&2
-            echo "  n8n output: $import_output" >&2
+            echo "  ERROR: Failed to import ${wf}" >&2
+            echo "    n8n output: $import_output" >&2
             import_failed=1
+            import_err=$((import_err + 1))
+          else
+            import_ok=$((import_ok + 1))
           fi
         '') cfg.workflows}
 
@@ -602,27 +607,31 @@ in
         ${optionalString (cfg.workflowsDir != null) ''
           for wf in ${cfg.workflowsDir}/*.json; do
             if [ -f "$wf" ]; then
-              echo "Importing: $wf"
+              echo "  Importing: $(basename "$wf")"
               if ! import_output=$(runuser -u n8n -- n8n import:workflow --input="$wf" 2>&1); then
-                echo "ERROR: Failed to import $wf" >&2
-                echo "  n8n output: $import_output" >&2
+                echo "  ERROR: Failed to import $wf" >&2
+                echo "    n8n output: $import_output" >&2
                 import_failed=1
+                import_err=$((import_err + 1))
+              else
+                import_ok=$((import_ok + 1))
               fi
             fi
           done
         ''}
 
         if [ "$import_failed" -eq 1 ]; then
-          echo "WARNING: One or more workflow imports failed (see errors above)" >&2
+          echo "WARNING: $import_err workflow(s) failed to import, $import_ok succeeded" >&2
           echo "  Continuing with remaining workflows..."
         else
-          echo "Workflow import complete: all workflows imported successfully"
+          echo "Workflow import complete: $import_ok workflow(s) imported successfully"
         fi
 
         # Sync active state from JSON files to database
         # n8n import doesn't update active state of existing workflows
         echo "Syncing workflow active states..."
         DB_PATH="/var/lib/n8n/.n8n/database.sqlite"
+        sync_count=0
 
         sync_active_state() {
           local wf_file="$1"
@@ -651,6 +660,7 @@ in
               "UPDATE workflow_entity SET active=0, activeVersionId=NULL WHERE id='$wf_id';"
           fi
           echo "  Set $wf_id active=$wf_active"
+          sync_count=$((sync_count + 1))
         }
 
         # Sync individual workflow files
@@ -667,7 +677,7 @@ in
           done
         ''}
 
-        echo "Workflow active state sync complete"
+        echo "Workflow active state sync complete: $sync_count workflow(s) synced"
 
         # Restart n8n to register webhooks for imported workflows.
         # The n8n CLI import writes to the database but does NOT register webhooks
