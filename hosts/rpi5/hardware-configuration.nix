@@ -55,8 +55,9 @@
   # Enable redistributable firmware for WiFi, Bluetooth, etc.
   hardware.enableRedistributableFirmware = true;
 
-  # CPU frequency scaling
-  powerManagement.cpuFreqGovernor = lib.mkDefault "ondemand";
+  # CPU frequency scaling — schedutil uses scheduler utilization signals directly,
+  # more efficient than legacy ondemand governor on ARM Cortex-A76 + kernel 6.12+
+  powerManagement.cpuFreqGovernor = lib.mkDefault "schedutil";
 
   # DHCP enabled by default
   networking.useDHCP = lib.mkDefault true;
