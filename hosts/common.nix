@@ -22,6 +22,7 @@
   '';
 
   environment.systemPackages = with pkgs; [
+    age # Manual secret decryption with recovery key (DR)
     vim
     git
     curl
