@@ -238,7 +238,21 @@ let
         {
           services.n8n-tailscale = {
             enable = true;
+            encryptionKeyFile = "/run/secrets/n8n-encryption-key";
             tailscaleServe.enable = false;
+          };
+        }
+      ];
+    };
+
+    n8n-missing-encryption-key-rejected = shouldFail "n8n: missing encryption key rejected" {
+      modules = [
+        ../modules/services/n8n.nix
+        {
+          services.n8n-tailscale = {
+            enable = true;
+            tailscaleServe.enable = false;
+            # encryptionKeyFile intentionally omitted — assertion should fire
           };
         }
       ];
@@ -284,7 +298,22 @@ let
         {
           services.open-webui-tailscale = {
             enable = true;
+            secretKeyFile = "/run/secrets/webui-secret";
             tailscaleServe.enable = false;
+          };
+        }
+      ];
+      specialArgs = { pkgs-unstable = pkgs; };
+    };
+
+    open-webui-missing-secret-key-rejected = shouldFail "open-webui: missing secret key rejected" {
+      modules = [
+        ../modules/services/open-webui.nix
+        {
+          services.open-webui-tailscale = {
+            enable = true;
+            tailscaleServe.enable = false;
+            # secretKeyFile intentionally omitted — assertion should fire
           };
         }
       ];
