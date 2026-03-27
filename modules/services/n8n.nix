@@ -345,17 +345,18 @@ in
 
     users.groups.n8n = { };
 
-    # Security assertions: prevent secrets in Nix store (world-readable!)
-    assertions = map mkStoreAssertion secretFileOptions;
-
-    # Warn if no encryption key file is provided
-    warnings = optional (cfg.encryptionKeyFile == null) ''
-      services.n8n-tailscale.encryptionKeyFile is not set!
-      All credentials stored in n8n will NOT be encrypted.
-      This is INSECURE for production use.
-      Generate a key: openssl rand -hex 32
-      Store it with agenix.
-    '';
+    # Security assertions: prevent secrets in Nix store and require encryption key
+    assertions = map mkStoreAssertion secretFileOptions ++ [
+      {
+        assertion = cfg.encryptionKeyFile != null;
+        message = ''
+          services.n8n-tailscale.encryptionKeyFile must be set.
+          Without it, n8n credentials are stored unencrypted in the database.
+          Generate a key: openssl rand -hex 32
+          Set it to an agenix secret path: config.age.secrets.n8n-encryption-key.path
+        '';
+      }
+    ];
 
     # Enable native n8n service
     services.n8n = {

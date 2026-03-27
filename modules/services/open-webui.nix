@@ -474,16 +474,16 @@ in
 
     users.groups.open-webui = { };
 
-    # Warn if no secret key file is provided
-    warnings = optional (cfg.secretKeyFile == null) ''
-      services.open-webui-tailscale.secretKeyFile is not set!
-      Using default WEBUI_SECRET_KEY is INSECURE for production.
-      Generate a secret: openssl rand -hex 32
-      Store it with agenix or sops-nix.
-    '';
-
-    # Assertions for configuration dependencies
+    # Assertions for security and configuration dependencies
     assertions = [
+      {
+        assertion = cfg.secretKeyFile != null;
+        message = ''
+          services.open-webui-tailscale.secretKeyFile must be set.
+          Using the default WEBUI_SECRET_KEY is insecure — JWT tokens can be forged.
+          Set it to an agenix secret path: config.age.secrets.open-webui-secret-key.path
+        '';
+      }
       {
         assertion = cfg.testing.enable -> cfg.secretKeyFile != null;
         message = "services.open-webui-tailscale.secretKeyFile must be set when testing.enable is true (required for JWT API key generation)";
