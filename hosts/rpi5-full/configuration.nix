@@ -325,7 +325,5 @@ in
   # security.sudo.wheelNeedsPassword left at base default (false)
 
   # Fresh install — NixOS 25.05
-  # mkOverride 49 beats rpi5's mkForce (priority 50) which fights nixos-raspberrypi upstream
-  # mkForce needed: rpi5-full imports rpi5/configuration.nix which sets "24.05"
-  system.stateVersion = lib.mkForce "25.05";
+  system.stateVersion = "25.05";
 }

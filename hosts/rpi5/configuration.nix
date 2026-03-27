@@ -294,6 +294,7 @@
 
   time.timeZone = "Europe/Chisinau";
 
-  # System state version - do NOT change on existing systems
-  system.stateVersion = "24.05";
+  # System state version — SD image builds are fresh installs, safe to update.
+  # Must match rpi5-full to avoid mkForce priority conflicts.
+  system.stateVersion = "25.05";
 }
