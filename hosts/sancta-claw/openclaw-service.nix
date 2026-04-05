@@ -171,15 +171,19 @@ let
         "noSandbox": True,
     }
 
-    # Ensure both sonnet and opus are in the allowed-models list so Kuzea
-    # can switch to opus via /model or session_status without a manual edit.
+    # Use claude-cli/ prefix for Anthropic models — routes through Claude CLI's
+    # native auth (Max subscription) instead of standalone API tokens, per
+    # Anthropic's April 2026 third-party harness policy.
+    # Old anthropic/ entries kept for fallback.
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     models = defaults.setdefault("models", {})
     model = defaults.setdefault("model", {})
-    model["primary"] = "anthropic/claude-opus-4-6"
+    model["primary"] = "claude-cli/claude-opus-4-6"
     models.setdefault("anthropic/claude-sonnet-4-6", {})
     models.setdefault("anthropic/claude-opus-4-6", {})
+    models.setdefault("claude-cli/claude-sonnet-4-6", {"alias": "sonnet"})
+    models.setdefault("claude-cli/claude-opus-4-6", {"alias": "opus"})
 
     # Compaction: preserve 4 recent turns so Kuzea keeps conversational
     # context after auto-compaction instead of losing the thread.
