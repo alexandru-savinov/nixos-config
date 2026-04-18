@@ -6,6 +6,9 @@ let
   # Raspberry Pi 5 host key
   rpi5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjZXKDY8Ve/wfMHpjsJGR7guDQFndGoNxDZKXegEfjr root@rpi5";
 
+  # sancta-choir VPS host key (Hetzner cx33, x86_64)
+  sancta-choir = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMhS/MNrRr4FLmfWv2jNWz7WTr/AnD9fD3keXltRWXe root@sancta-choir";
+
   # sancta-claw stable age identity for DR — NOT tied to SSH host key.
   # Decoupled from host identity so nixos-anywhere + --extra-files enables
   # secret decryption on first boot without re-keying.
@@ -16,7 +19,10 @@ let
   users = [ root-sancta-choir ];
 
   # Systems that can decrypt shared secrets
-  systems = [ rpi5 ];
+  systems = [
+    rpi5
+    sancta-choir
+  ];
 
   # All keys (for secrets shared across all hosts)
   allKeys = users ++ systems;
@@ -26,7 +32,10 @@ let
 
   # Keys for Kuzea-specific secrets (sancta-claw + owner machines)
   # rpi5 included so Alexandru can edit/re-encrypt from rpi5-full
-  clawKeys = users ++ [ sancta-claw rpi5 ];
+  clawKeys = users ++ [
+    sancta-claw
+    rpi5
+  ];
 in
 {
   # Tailscale - shared across all hosts (including sancta-claw)
