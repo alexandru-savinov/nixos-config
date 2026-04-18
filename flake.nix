@@ -44,9 +44,16 @@
       url = "github:alexandru-savinov/kuzea-workspace";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Open-WebUI OpenRouter cost tracking filter function.
+    # Displays per-request cost (from OpenRouter's generation endpoint),
+    # tokens, speed, and remaining credits in the message status area.
+    owui-openrouter-stats = {
+      url = "github:karamanliev/open-webui-openrouter-stats";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, kuzea-workspace, ... }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, kuzea-workspace, owui-openrouter-stats, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -113,7 +120,7 @@
           system = "x86_64-linux";
           specialArgs = {
             pkgs-unstable = pkgs-unstable-x86;
-            inherit self claude-code;
+            inherit self claude-code owui-openrouter-stats;
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix

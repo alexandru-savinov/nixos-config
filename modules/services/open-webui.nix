@@ -2,6 +2,7 @@
 , pkgs
 , pkgs-unstable
 , lib
+, owui-openrouter-stats ? null
 , ...
 }:
 
@@ -262,6 +263,29 @@ in
       };
     };
 
+    # OpenRouter Cost Tracker Filter
+    # Displays per-request cost (from OpenRouter's generation endpoint),
+    # tokens, speed, and remaining credits in the chat status area.
+    # Source: github:karamanliev/open-webui-openrouter-stats (flake input)
+    costTracker = {
+      enable = mkEnableOption "OpenRouter cost tracking filter";
+
+      showBaseCredits = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Display remaining OpenRouter credits in the status message.
+          Requires openai.apiKeyFile to be set (uses the same OpenRouter API key).
+        '';
+      };
+
+      showEmojis = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Show emojis in the cost/stats status message.";
+      };
+    };
+
     enableSignup = mkOption {
       type = types.bool;
       default = false;
@@ -495,6 +519,14 @@ in
       {
         assertion = cfg.autoMemory.enable -> cfg.openai.apiKeyFile != null;
         message = "services.open-webui-tailscale.openai.apiKeyFile must be set when autoMemory.enable is true (required for memory extraction LLM)";
+      }
+      {
+        assertion = cfg.costTracker.enable -> owui-openrouter-stats != null;
+        message = ''
+          services.open-webui-tailscale.costTracker.enable requires the
+          owui-openrouter-stats flake input to be passed via specialArgs.
+          Add `inherit owui-openrouter-stats` to the host's nixosSystem specialArgs.
+        '';
       }
     ];
 
@@ -1427,6 +1459,153 @@ in
         conn.commit()
         conn.close()
         print("Auto memory filter provisioning complete")
+        PYTHON
+      '';
+    };
+
+    # OpenRouter Cost Tracker Filter Provisioning
+    # Installs karamanliev/open-webui-openrouter-stats as a filter function.
+    # Shows per-request cost, tokens, speed, and remaining credits.
+    systemd.services.open-webui-cost-tracker-function = mkIf cfg.costTracker.enable {
+      description = "Provision OpenRouter Cost Tracker Filter for Open-WebUI";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "open-webui.service" ];
+      requires = [ "open-webui.service" ];
+
+      path = [
+        pkgs.sqlite
+        pkgs.python3
+      ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        User = "open-webui";
+        Group = "open-webui";
+      };
+
+      script = ''
+                set -euo pipefail
+
+                DB_FILE="${cfg.stateDir}/data/webui.db"
+                FUNCTION_ID="openrouter_stats"
+                FUNCTION_FILE="${owui-openrouter-stats}/function.py"
+
+                # Read OpenRouter API key from secrets.env (for showing remaining credits)
+                API_KEY=""
+                if [ -f /run/open-webui/secrets.env ]; then
+                  source /run/open-webui/secrets.env || {
+                    echo "WARNING: Failed to parse /run/open-webui/secrets.env" >&2
+                  }
+                  API_KEY="''${OPENAI_API_KEY:-}"
+                fi
+
+                # Wait for database to exist
+                echo "Waiting for Open-WebUI database..."
+                for i in $(seq 1 60); do
+                  if [ -f "$DB_FILE" ]; then
+                    break
+                  fi
+                  echo "Waiting for database... ($i/60)"
+                  sleep 1
+                done
+
+                if [ ! -f "$DB_FILE" ]; then
+                  echo "ERROR: Database not found at $DB_FILE"
+                  exit 1
+                fi
+
+                # Wait for schema to be ready
+                echo "Waiting for database schema..."
+                SCHEMA_READY=false
+                for i in $(seq 1 30); do
+                  if sqlite3 "$DB_FILE" "SELECT 1 FROM function LIMIT 1" >/dev/null 2>&1; then
+                    SCHEMA_READY=true
+                    break
+                  fi
+                  echo "Waiting for schema... ($i/30)"
+                  sleep 1
+                done
+
+                if [ "$SCHEMA_READY" != "true" ]; then
+                  echo "ERROR: Database schema not ready after 30 seconds"
+                  exit 1
+                fi
+
+                export DB_FILE FUNCTION_FILE FUNCTION_ID API_KEY
+                export SHOW_BASE_CREDITS="${if cfg.costTracker.showBaseCredits then "true" else "false"}"
+                export SHOW_EMOJIS="${if cfg.costTracker.showEmojis then "true" else "false"}"
+
+                python3 << 'PYTHON'
+        import sqlite3
+        import json
+        import os
+        import time
+
+        db_file = os.environ["DB_FILE"]
+        function_file = os.environ["FUNCTION_FILE"]
+        function_id = os.environ["FUNCTION_ID"]
+        api_key = os.environ.get("API_KEY", "")
+        show_base_credits = os.environ["SHOW_BASE_CREDITS"] == "true"
+        show_emojis = os.environ["SHOW_EMOJIS"] == "true"
+
+        with open(function_file) as f:
+            content = f.read()
+
+        valves = {
+            "openrouter_api_key": api_key,
+            "total_tokens": True,
+            "elapsed_time": True,
+            "tokens_per_sec": True,
+            "base_credits": show_base_credits,
+            "show_emojis": show_emojis,
+        }
+
+        meta = {
+            "description": "Displays per-request cost, tokens, speed, and OpenRouter credits"
+        }
+
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id FROM function WHERE id = ?", (function_id,))
+        exists = cursor.fetchone()
+
+        now = int(time.time())
+
+        if exists:
+            cursor.execute("""
+                UPDATE function
+                SET content = ?, valves = ?, meta = ?, updated_at = ?, is_active = 1, is_global = 1
+                WHERE id = ?
+            """, (content, json.dumps(valves), json.dumps(meta), now, function_id))
+            print("Updated OpenRouter cost tracker filter")
+        else:
+            cursor.execute("SELECT id FROM user WHERE role='admin' LIMIT 1")
+            row = cursor.fetchone()
+            admin_id = row[0] if row else ""
+
+            cursor.execute("""
+                INSERT INTO function (id, user_id, name, type, content, meta, created_at, updated_at, valves, is_active, is_global)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                function_id,
+                admin_id,
+                "OpenRouter Cost Tracker",
+                "filter",
+                content,
+                json.dumps(meta),
+                now,
+                now,
+                json.dumps(valves),
+                1,
+                1,
+            ))
+            print("Installed OpenRouter cost tracker filter")
+
+        conn.commit()
+        conn.close()
+        print("Cost tracker provisioning complete")
         PYTHON
       '';
     };

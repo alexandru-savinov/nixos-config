@@ -22,6 +22,26 @@ A manifold-type pipe function that filters OpenRouter models to only show Zero D
 - `ZDR_CACHE_TTL`: Cache TTL in seconds (default: 3600)
 - `ENABLE_ZDR_ENFORCEMENT`: Enforce ZDR on requests (default: true)
 
+### OpenRouter Cost Tracker
+
+A filter function that displays per-request cost, token counts, speed, and remaining OpenRouter credits in the chat message status area. Source is fetched via flake input from [karamanliev/open-webui-openrouter-stats](https://github.com/karamanliev/open-webui-openrouter-stats) — not vendored.
+
+**Features:**
+- Real costs from OpenRouter's `/api/v1/generation` endpoint (not calculated estimates)
+- Shows remaining credits (if `showBaseCredits` is enabled and API key is set)
+- Lightweight: only `requests` + `pydantic` dependencies (already in Open-WebUI)
+
+**Configuration:**
+```nix
+services.open-webui-tailscale = {
+  enable = true;
+  costTracker.enable = true;
+  costTracker.showBaseCredits = true;  # optional, default true
+  costTracker.showEmojis = true;        # optional, default true
+  openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
+};
+```
+
 ## Provisioning
 
 Functions are automatically provisioned via NixOS configuration using the `provision.py` script. The provisioning process:
