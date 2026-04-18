@@ -311,6 +311,22 @@
         "type": "github"
       }
     },
+    "owui-openrouter-stats": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1748522705,
+        "narHash": "sha256-pMBXN47E403pOGFVccMAKAxi0ojiwUkymyNxAH0t9Cs=",
+        "owner": "karamanliev",
+        "repo": "open-webui-openrouter-stats",
+        "rev": "e79266f25a9a54530950dfe73943b228acad4db9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "karamanliev",
+        "repo": "open-webui-openrouter-stats",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "agenix": "agenix",
@@ -321,6 +337,7 @@
         "nixos-raspberrypi": "nixos-raspberrypi",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-unstable": "nixpkgs-unstable",
+        "owui-openrouter-stats": "owui-openrouter-stats",
         "vscode-server": "vscode-server"
       }
     },
