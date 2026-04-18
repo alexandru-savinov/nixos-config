@@ -1,4 +1,5 @@
-{ pkgs
+{ config
+, pkgs
 , lib
 , self
 , ...
@@ -35,6 +36,7 @@
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
+    ../../modules/services/open-webui.nix
   ];
 
   # Enable development tools and Claude Code
@@ -43,10 +45,55 @@
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets =
-    let inherit (import ../../lib/secrets.nix { inherit self; }) secret; in
+    let
+      inherit (import ../../lib/secrets.nix { inherit self; }) secret;
+    in
     {
       tailscale-auth-key = secret "tailscale-auth-key";
+      # Open-WebUI secrets
+      open-webui-secret-key = secret "open-webui-secret-key";
+      openrouter-api-key = secret "openrouter-api-key";
+      tavily-api-key = secret "tavily-api-key";
+      e2e-test-api-key = secret "e2e-test-api-key";
     };
+
+  # ==========================================================================
+  # Open-WebUI — AI chat gateway via OpenRouter
+  # ==========================================================================
+  # Access: https://sancta-choir-1.tail4249a9.ts.net (via Tailscale Serve)
+  services.open-webui-tailscale = {
+    enable = true;
+    webuiUrl = "https://sancta-choir-1.tail4249a9.ts.net";
+    secretKeyFile = config.age.secrets.open-webui-secret-key.path;
+
+    # OpenRouter as LLM backend
+    openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
+
+    # OIDC via Tailscale tsidp
+    oidc.enable = true;
+
+    # Tavily web search
+    tavilySearch = {
+      enable = true;
+      apiKeyFile = config.age.secrets.tavily-api-key.path;
+    };
+
+    # Memory features
+    memory.enable = true;
+    autoMemory.enable = true;
+
+    # ZDR-only models (OpenRouter Zero Data Retention)
+    zdrModelsOnly.enable = true;
+
+    # E2E testing
+    testing = {
+      enable = true;
+      apiKeyFile = config.age.secrets.e2e-test-api-key.path;
+    };
+
+    # Tailscale Serve HTTPS (default: enabled on port 443)
+    tailscaleServe.enable = true;
+  };
 
   # Home Manager (root user config provided by modules/users/root.nix)
   home-manager = {
@@ -54,11 +101,11 @@
     useUserPackages = true;
   };
 
-  # Swap space (prevents OOM during builds on 4GB VPS)
+  # Swap space (4GB for Open-WebUI + builds on 8GB VPS)
   swapDevices = [
     {
       device = "/swapfile";
-      size = 2048; # 2GB
+      size = 4096; # 4GB
     }
   ];
 
