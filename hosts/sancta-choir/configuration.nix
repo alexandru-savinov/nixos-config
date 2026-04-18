@@ -85,6 +85,9 @@
     # ZDR-only models (OpenRouter Zero Data Retention)
     zdrModelsOnly.enable = true;
 
+    # OpenRouter cost tracking (per-request cost + credits remaining)
+    costTracker.enable = true;
+
     # E2E testing
     testing = {
       enable = true;
