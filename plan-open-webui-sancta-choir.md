@@ -41,9 +41,9 @@ allPlusClaw = allKeys ++ [ sancta-claw ];
 ## Tasks
 
 ### Task 1: Update secrets.nix to include sancta-choir host key
-- [ ] Add `sancta-choir` host key variable to `secrets/secrets.nix`: `sancta-choir = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMhS/MNrRr4FLmfWv2jNWz7WTr/AnD9fD3keXltRWXe root@sancta-choir";`
-- [ ] Add `sancta-choir` to the `systems` list: `systems = [ rpi5 sancta-choir ];` — this automatically adds it to `allKeys` and `allPlusClaw`
-- [ ] Run `nix fmt` on the changed file
+- [x] Add `sancta-choir` host key variable to `secrets/secrets.nix`: `sancta-choir = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMhS/MNrRr4FLmfWv2jNWz7WTr/AnD9fD3keXltRWXe root@sancta-choir";`
+- [x] Add `sancta-choir` to the `systems` list: `systems = [ rpi5 sancta-choir ];` — this automatically adds it to `allKeys` and `allPlusClaw`
+- [x] Run `nix fmt` on the changed file
 
 ### Task 2: Configure Open-WebUI in sancta-choir configuration.nix
 - [ ] Add `config` to the function arguments: `{ config, pkgs, lib, self, ... }:`
