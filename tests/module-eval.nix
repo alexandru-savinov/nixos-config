@@ -571,6 +571,25 @@ let
         builtins.throw
           "FAIL: openclawBrowserConfigBody missing substrings: ${builtins.toJSON missing}";
 
+    # Verify the rendered openclaw health-check probe contains the
+    # one-shot first-success Telegram alert sentinel and includes the
+    # active primary model in failure messages. Reads the body string
+    # from system.build.openclawHealthProbeBody — pure eval, no IFD.
+    sancta-claw-openclaw-health-probe-zdr-alert =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.openclawHealthProbeBody;
+        required = [
+          ".zdr-migration-announced"
+          "free+ZDR ladder"
+          "primary=$PRIMARY"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then true
+      else
+        builtins.throw
+          "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
+
     # Verify the rendered sancta-claw smoke-test script asserts on the
     # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
     # string from system.build (exposed by smoke-test.nix) — pure eval,
