@@ -242,7 +242,11 @@ def create_app(
         upstream = app.config["UPSTREAM_URL"].rstrip("/")
         chat_url = f"{upstream}/chat/completions"
 
-        provider = {**body.get("provider", {}), "zdr": True, "allow": sorted(allow)}
+        # `body.get("provider", {})` returns None — not the default — when the
+        # client explicitly sends `"provider": null`. `{**None}` raises
+        # TypeError, so coalesce explicitly.
+        provider_in = body.get("provider") or {}
+        provider = {**provider_in, "zdr": True, "allow": sorted(allow)}
         payload = {**body, "provider": provider}
 
         headers = {

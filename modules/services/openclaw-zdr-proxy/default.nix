@@ -30,14 +30,15 @@ pkgs.writeShellApplication {
     set -euo pipefail
     : "''${OPENCLAW_ZDR_PROXY_PORT:=5780}"
     cd ${proxySource}
-    # --workers 1: the AllowListCache is per-process. Multiple workers each
-    # maintain an independent cache (independent refresh timers, independent
-    # fail-closed windows), which makes the fail-closed contract per-worker
-    # rather than per-service. Workload is one local OpenClaw client; a
-    # single sync worker is sufficient.
+    # --workers 1 + --threads 4: keep the AllowListCache shared (per-process,
+    # protected by threading.Lock) while still serving concurrent requests.
+    # A sync worker blocks on streaming completions for the lifetime of the
+    # response; threads avoid head-of-line blocking. Setting --threads >1
+    # auto-selects the gthread worker class.
     exec gunicorn \
       --bind "127.0.0.1:''${OPENCLAW_ZDR_PROXY_PORT}" \
       --workers 1 \
+      --threads 4 \
       --access-logfile - \
       --error-logfile - \
       --log-level info \

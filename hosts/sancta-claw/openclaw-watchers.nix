@@ -23,14 +23,17 @@ let
         TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
         CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
         PRIMARY=$(jq -r '.agents.defaults.model.primary // "unknown"' "$OC_CONFIG" 2>/dev/null || echo unknown)
+        # Only mark "announced" after a real send. If the Telegram token is
+        # missing (config not yet imperative-injected), retry on the next
+        # green probe rather than silencing forever.
         if [ -n "$TOKEN" ]; then
           curl -sf -X POST \
             "https://api.telegram.org/bot$TOKEN/sendMessage" \
             -d "chat_id=$CHAT_ID" \
             -d "text=✅ [sancta-claw] OpenClaw is healthy on free+ZDR ladder: primary=$PRIMARY" \
             --max-time 10 || true
+          touch "$ANNOUNCED_FILE"
         fi
-        touch "$ANNOUNCED_FILE"
       fi
       exit 0
     fi

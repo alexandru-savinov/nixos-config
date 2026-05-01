@@ -292,15 +292,40 @@ in
 
   systemd.services.openclaw = {
     description = "OpenClaw AI Agent";
-    after = [ "network-online.target" "tailscaled.service" ];
-    wants = [ "network-online.target" ];
+    # `wants` on the proxy is a soft dependency: a proxy crash shouldn't
+    # block openclaw, but ordering avoids ECONNREFUSED on first chat
+    # completion when both units come up at boot.
+    after = [
+      "network-online.target"
+      "tailscaled.service"
+      "openclaw-zdr-proxy.service"
+    ];
+    wants = [
+      "network-online.target"
+      "openclaw-zdr-proxy.service"
+    ];
     wantedBy = [ "multi-user.target" ];
 
     environment = {
       HOME = "/var/lib/openclaw";
       # kuzeaTranscribe: openai-whisper + ffmpeg (OGG/Opus -> WAV) via runtimeInputs.
       # Model auto-downloads to ~/.cache/whisper/ (override with WHISPER_CACHE_DIR).
-      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${lib.makeBinPath (with pkgs; [ nodejs_22 git coreutils bash kuzeaTranscribe agentBrowser nixd vdirsyncer khal ])}:/run/current-system/sw/bin";
+      PATH = lib.mkForce "/var/lib/openclaw/.npm-global/bin:${
+        lib.makeBinPath (
+          with pkgs;
+          [
+            nodejs_22
+            git
+            coreutils
+            bash
+            kuzeaTranscribe
+            agentBrowser
+            nixd
+            vdirsyncer
+            khal
+          ]
+        )
+      }:/run/current-system/sw/bin";
       # npm global prefix
       NPM_CONFIG_PREFIX = "/var/lib/openclaw/.npm-global";
       # Doctor recommendations: skip self-respawn and cache Node.js bytecode

@@ -57,13 +57,15 @@ let
       bash -c 'jq -e ".agents.defaults.model.primary | test(\"^(qwen|z-ai|meta-llama|nousresearch|inclusionai|tencent|cognitivecomputations)/\")" /var/lib/openclaw/.openclaw/openclaw.json'
     check "openclaw: zdr proxy healthz" \
       curl -sf --max-time 5 http://127.0.0.1:5780/healthz
-    # Read the agenix key into a shell variable BEFORE invoking curl so the
-    # bearer token is not exposed in argv (visible via ps auxww). The single
-    # quotes keep `$(cat ...)` and `$KEY` unexpanded by the outer nix-store
-    # shell — they're evaluated by the inner `bash -c` at runtime.
+    # The proxy ignores the client `Authorization` header and uses its own
+    # configured OPENROUTER_API_KEY (from agenix via EnvironmentFile), so a
+    # placeholder bearer is sufficient here. This avoids leaking the real key
+    # via argv (`ps auxww` / /proc/<pid>/cmdline) — bash's `$VAR` expansion
+    # would inline a real secret into curl's command line before `execve`.
+    # `bash -c` is used so the curl|jq pipeline runs as one shell command.
     # shellcheck disable=SC2016
     check "openclaw: end-to-end completion" \
-      bash -c 'KEY=$(cat /run/agenix/openrouter-api-key); curl -sf --max-time 30 -X POST http://127.0.0.1:5780/v1/chat/completions -H "authorization: Bearer $KEY" -H "content-type: application/json" -d "{\"model\":\"qwen/qwen3-coder:free\",\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word OK\"}]}" | jq -e ".choices[0].message.content | test(\"OK\"; \"i\")"'
+      bash -c 'curl -sf --max-time 30 -X POST http://127.0.0.1:5780/v1/chat/completions -H "authorization: Bearer placeholder" -H "content-type: application/json" -d "{\"model\":\"qwen/qwen3-coder:free\",\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word OK\"}]}" | jq -e ".choices[0].message.content | test(\"OK\"; \"i\")"'
 
     echo
     echo "Results: $PASS passed, $FAIL failed"
@@ -74,7 +76,13 @@ let
   '';
   smokeTestScript = pkgs.writeShellApplication {
     name = "sancta-claw-smoke-test";
-    runtimeInputs = with pkgs; [ coreutils systemd tailscale curl jq ];
+    runtimeInputs = with pkgs; [
+      coreutils
+      systemd
+      tailscale
+      curl
+      jq
+    ];
     text = smokeTestBody;
   };
 in
