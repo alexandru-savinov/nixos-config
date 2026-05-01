@@ -9,60 +9,17 @@ import time
 from pathlib import Path
 
 import pytest
-from flask import Flask, jsonify, request
 from werkzeug.serving import make_server
 
+sys.path.insert(0, str(Path(__file__).parent))
+from stubs.openrouter_stub import create_stub_openrouter  # noqa: E402
 
-# ----------------------------------------------------------------------
-# Stub OpenRouter server
-# ----------------------------------------------------------------------
+
 def _find_free_port() -> int:
     """Return a free TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-def create_stub_openrouter():
-    """Create a Flask app that mimics the two OpenRouter endpoints we need."""
-    app = Flask(__name__)
-
-    # In‑memory data for the stub
-    # ZDR endpoint returns {"name": "Provider | model-id", ...} format
-    ZDR_MODELS = [
-        {"name": "OpenAI | openrouter/gpt-4o-mini"},
-        {"name": "OpenAI | openrouter/gpt-4o"},
-    ]
-
-    ALL_MODELS = [
-        {"id": "openrouter/gpt-4o-mini", "name": "GPT‑4o Mini"},
-        {"id": "openrouter/gpt-4o", "name": "GPT‑4o"},
-        {"id": "openrouter/gpt-4o-32k", "name": "GPT‑4o 32k"},
-    ]
-
-    @app.route("/v1/endpoints/zdr")
-    def zdr_endpoints():
-        return jsonify({"data": ZDR_MODELS})
-
-    @app.route("/v1/models")
-    def models():
-        return jsonify({"data": ALL_MODELS})
-
-    @app.route("/v1/chat/completions", methods=["POST"])
-    def chat():
-        payload = request.get_json(silent=True) or {}
-        # Echo back the prompt to make verification easy
-        content = payload.get("prompt", "no-prompt")
-        # Also include request metadata so tests can verify provider.zdr was set
-        response = {
-            "choices": [{"message": {"content": f"stub-response: {content}"}}],
-            "_request_metadata": {
-                "provider": payload.get("provider", {}),
-            },
-        }
-        return jsonify(response)
-
-    return app
 
 
 class FlaskThread(threading.Thread):
@@ -106,7 +63,17 @@ def provision_pipe(db_path: Path, function_path: Path):
 def stub_openrouter():
     """Start the stub OpenRouter server for the duration of the module."""
     port = _find_free_port()
-    app = create_stub_openrouter()
+    app = create_stub_openrouter(
+        zdr_models=[
+            {"name": "OpenAI | openrouter/gpt-4o-mini"},
+            {"name": "OpenAI | openrouter/gpt-4o"},
+        ],
+        all_models=[
+            {"id": "openrouter/gpt-4o-mini", "name": "GPT-4o Mini"},
+            {"id": "openrouter/gpt-4o", "name": "GPT-4o"},
+            {"id": "openrouter/gpt-4o-32k", "name": "GPT-4o 32k"},
+        ],
+    )
     server = FlaskThread(app, port)
     server.start()
     # Give the server a moment to start
