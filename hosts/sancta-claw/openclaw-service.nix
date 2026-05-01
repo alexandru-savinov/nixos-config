@@ -142,9 +142,13 @@ let
       '';
     };
 
-  # Declarative browser config for OpenClaw: inject Chromium path (shared
-  # chromiumBin binding above) into openclaw.json at service start.
-  openclawBrowserConfigScript = pkgs.writeShellScript "openclaw-browser-config" ''
+  # Declarative browser + model config for OpenClaw, idempotent on every
+  # `systemctl start openclaw`. Reads the on-disk openclaw.json (or starts
+  # empty), merges the templated fields, atomic-replaces.
+  #
+  # Body is extracted to a let-binding so the module-eval test can grep
+  # for required substrings without IFD (see system.build.* below).
+  openclawBrowserConfigBody = ''
         ${pkgs.python3}/bin/python3 - <<'PYEOF'
     import json, os
 
@@ -171,19 +175,53 @@ let
         "noSandbox": True,
     }
 
-    # Ensure both sonnet and opus are in the allowed-models list so Kuzea
-    # can switch to opus via /model or session_status without a manual edit.
-    # Uses anthropic/ prefix with API key auth (claude-cli/ backend was removed
-    # in OpenClaw 2026.4.x — Anthropic requires standard API keys now).
+    # Provider-level override: route every openrouter/* model through the
+    # local ZDR proxy on 127.0.0.1:5780. The proxy injects provider.zdr=true
+    # and rejects any model not on the OpenRouter ZDR allow-list. Auth is
+    # supplied by the openrouter:zdr-proxy entry in auth-profiles.json
+    # (separate ExecStartPre), not by an env-var marker here.
+    models_root = config.setdefault("models", {})
+    providers = models_root.setdefault("providers", {})
+    openrouter_provider = providers.setdefault("openrouter", {})
+    openrouter_provider["baseUrl"] = "http://127.0.0.1:5780/v1"
+
+    # Free + ZDR ladder, all picked from /api/v1/endpoints/zdr.
+    # Primary: qwen3-coder (Venice, 262K, coder-tuned).
+    # Fallbacks isolate provider outages: glm-4.5-air (Z.AI, 131K)
+    # then qwen3-next-80b (Venice, 262K, general).
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     models = defaults.setdefault("models", {})
     model = defaults.setdefault("model", {})
-    model["primary"] = "anthropic/claude-opus-4-6"
-    models.setdefault("anthropic/claude-sonnet-4-6", {})
-    models.setdefault("anthropic/claude-opus-4-6", {})
+    model["primary"] = "qwen/qwen3-coder:free"
+    model["fallbacks"] = [
+        "z-ai/glm-4.5-air:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+    ]
 
-    # Compaction: preserve 4 recent turns so Kuzea keeps conversational
+    # Drop legacy anthropic/* and claude-cli/* entries left behind by
+    # pre-migration runs. The pre-migration Anthropic-via-Pro state is
+    # itself broken (third-party Pro auth rejection — the reason for
+    # this migration), so there is no rollback canary value.
+    for legacy in (
+        "anthropic/claude-opus-4-6",
+        "anthropic/claude-sonnet-4-6",
+    ):
+        models.pop(legacy, None)
+    for key in list(models):
+        if key.startswith("claude-cli/"):
+            models.pop(key, None)
+
+    # Register the three rungs as empty entries — baseUrl is provider-level
+    # above; auth flows from auth-profiles.json keyed by provider.
+    for rung in (
+        "qwen/qwen3-coder:free",
+        "z-ai/glm-4.5-air:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+    ):
+        models.setdefault(rung, {})
+
+    # Compaction: preserve 8 recent turns so Kuzea keeps conversational
     # context after auto-compaction instead of losing the thread.
     compaction = defaults.setdefault("compaction", {})
     compaction["mode"] = "safeguard"
@@ -209,8 +247,15 @@ let
     os.replace(tmp, config_path)
     PYEOF
   '';
+  openclawBrowserConfigScript = pkgs.writeShellScript "openclaw-browser-config" openclawBrowserConfigBody;
 in
 {
+  # Expose the rendered config-injection script body so the module-eval
+  # test can grep for required substrings (model ladder + proxy URL)
+  # without IFD. system.build accepts arbitrary values (lazyAttrsOf
+  # types.unspecified), so a plain string lives here cleanly.
+  system.build.openclawBrowserConfigBody = openclawBrowserConfigBody;
+
   # Build tools for OpenClaw npm native compilation (llama.cpp, etc.)
   # Kept permanently for npm update -g openclaw recompilation
   environment.systemPackages = with pkgs; [
@@ -300,6 +345,27 @@ in
           ${pkgs.jq}/bin/jq --arg key "$KEY" \
             '.profiles["openai:manual"] = {"type": "token", "provider": "openai", "token": $key}' \
             "$AUTH_FILE" > "$AUTH_FILE.tmp" && mv "$AUTH_FILE.tmp" "$AUTH_FILE"
+        '')
+        (pkgs.writeShellScript "openclaw-inject-openrouter-auth" ''
+          set -euo pipefail
+          AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"
+          KEY="$(cat ${config.age.secrets.openrouter-api-key.path})"
+          # Idempotent: register openrouter:zdr-proxy and strip the broken
+          # anthropic:default profile (third-party Pro auth, the cause of
+          # this migration). lastGood.anthropic is also cleared so OpenClaw
+          # does not retry the dead profile.
+          mkdir -p "$(dirname "$AUTH_FILE")"
+          [ -f "$AUTH_FILE" ] || echo '{"profiles":{},"version":1}' > "$AUTH_FILE"
+          ${pkgs.jq}/bin/jq --arg key "$KEY" '
+              .profiles["openrouter:zdr-proxy"] = {
+                "type": "token",
+                "provider": "openrouter",
+                "token": $key
+              }
+              | del(.profiles["anthropic:default"])
+              | del(.lastGood.anthropic)
+            ' "$AUTH_FILE" > "$AUTH_FILE.tmp" && mv "$AUTH_FILE.tmp" "$AUTH_FILE"
+          chmod 0600 "$AUTH_FILE"
         '')
         (pkgs.writeShellScript "openclaw-setup-vdirsyncer" ''
                     set -euo pipefail

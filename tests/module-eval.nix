@@ -551,6 +551,26 @@ let
         builtins.throw
           "FAIL: sancta-claw openclaw-zdr-proxy wiring — port=${toString proxy.port} (expected 5780), apiKeyFile=${agenixPath} (expected /run/agenix/openrouter-api-key)";
 
+    # Verify the rendered openclaw browser-config script registers the
+    # free+ZDR ladder and routes through the local proxy. Reads the body
+    # string from system.build (exposed by openclaw-service.nix) — pure
+    # eval, no IFD, no derivation realization.
+    openclaw-free-zdr-ladder-rendered =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.openclawBrowserConfigBody;
+        required = [
+          "qwen/qwen3-coder:free"
+          "z-ai/glm-4.5-air:free"
+          "qwen/qwen3-next-80b-a3b-instruct:free"
+          "127.0.0.1:5780"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then true
+      else
+        builtins.throw
+          "FAIL: openclawBrowserConfigBody missing substrings: ${builtins.toJSON missing}";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
