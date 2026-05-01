@@ -1,4 +1,5 @@
-{ lib
+{ config
+, lib
 , self
 , ...
 }:
@@ -67,7 +68,16 @@
       kuzea-tavily-api-key = kuzeaSecret "kuzea-tavily-api-key";
       # OpenAI API key for memory embeddings (semantic recall)
       openai-api-key = kuzeaSecret "openai-api-key";
+      # OpenRouter API key — drives the ZDR proxy (sancta-claw only consumer
+      # on this host); also used by n8n on rpi5 (raw key format, kept that way).
+      openrouter-api-key = kuzeaSecret "openrouter-api-key";
     };
+
+  # ── OpenClaw ZDR proxy (local OpenRouter sidecar) ──────────────────────
+  services.openclaw-zdr-proxy = {
+    enable = true;
+    apiKeyFile = config.age.secrets.openrouter-api-key.path;
+  };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
   home-manager = {

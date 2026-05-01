@@ -510,6 +510,47 @@ let
       specialArgs = { claude-code = null; };
     };
 
+    # ── OpenClaw ZDR Proxy ────────────────────────────────────────
+    openclaw-zdr-proxy-minimal = shouldEval "openclaw-zdr-proxy: minimal config" {
+      modules = [
+        ../modules/services/openclaw-zdr-proxy.nix
+        {
+          services.openclaw-zdr-proxy = {
+            enable = true;
+            apiKeyFile = "/run/agenix/openrouter-api-key";
+          };
+          # The proxy unit runs as user `openclaw`, normally created by
+          # the host-level openclaw service. Declare it here so the
+          # isolated module eval doesn't fail user-validation.
+          users.users.openclaw = { isSystemUser = true; group = "openclaw"; };
+          users.groups.openclaw = { };
+        }
+      ];
+    };
+
+    openclaw-zdr-proxy-disabled = shouldEval "openclaw-zdr-proxy: disabled" {
+      modules = [
+        ../modules/services/openclaw-zdr-proxy.nix
+        { services.openclaw-zdr-proxy.enable = false; }
+      ];
+    };
+
+    # Verify wiring on the actual sancta-claw host config: the proxy is
+    # enabled with the default port and reads the OpenRouter API key
+    # from agenix. This catches misconfigurations in the host module
+    # (wrong path, missing secret, port drift) without a full build.
+    openclaw-zdr-proxy-sancta-claw-wiring =
+      let
+        proxy = self.nixosConfigurations.sancta-claw.config.services.openclaw-zdr-proxy;
+        agenixPath = toString proxy.apiKeyFile;
+        portOk = proxy.port == 5780;
+        pathOk = agenixPath == "/run/agenix/openrouter-api-key";
+      in
+      if portOk && pathOk then true
+      else
+        builtins.throw
+          "FAIL: sancta-claw openclaw-zdr-proxy wiring — port=${toString proxy.port} (expected 5780), apiKeyFile=${agenixPath} (expected /run/agenix/openrouter-api-key)";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
