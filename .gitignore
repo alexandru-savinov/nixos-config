@@ -32,3 +32,6 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# ralphex scratch state (per-plan reconnaissance, progress logs, worktrees)
+.ralphex/
