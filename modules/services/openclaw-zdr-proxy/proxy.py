@@ -60,20 +60,27 @@ class AllowListCache:
 
     @property
     def last_success(self) -> float | None:
-        return self._last_success
+        with self._lock:
+            return self._last_success
 
     def is_fresh(self, now: float) -> bool:
         """True if cache was successfully refreshed within ttl."""
-        return self._last_success is not None and (now - self._last_success) < self.ttl
+        with self._lock:
+            return (
+                self._last_success is not None
+                and (now - self._last_success) < self.ttl
+            )
 
     def is_usable(self, now: float) -> bool:
         """True if cache exists and is within 2*ttl of last success.
 
         Outside this window we fail closed.
         """
-        return self._last_success is not None and (now - self._last_success) < (
-            2 * self.ttl
-        )
+        with self._lock:
+            return (
+                self._last_success is not None
+                and (now - self._last_success) < (2 * self.ttl)
+            )
 
     def update(self, models: Iterable[str], now: float) -> None:
         with self._lock:
@@ -259,19 +266,21 @@ def create_app(
             return jsonify({"error": f"upstream error: {exc}"}), 502
 
         if stream:
+            # Pass raw bytes through unchanged so SSE event delimiters
+            # (blank lines per spec) and `: keep-alive` comments survive.
+            # `iter_lines()` strips terminators and merges events.
             def generate():
-                for line in upstream_resp.iter_lines():
-                    if not line:
-                        continue
-                    decoded = line.decode("utf-8", errors="replace")
-                    if decoded.startswith(":"):
-                        continue
-                    yield decoded + "\n"
+                try:
+                    for chunk in upstream_resp.iter_content(chunk_size=None):
+                        if chunk:
+                            yield chunk
+                finally:
+                    upstream_resp.close()
 
             return Response(
                 stream_with_context(generate()),
                 status=upstream_resp.status_code,
-                mimetype="text/event-stream",
+                mimetype=upstream_resp.headers.get("content-type", "text/event-stream"),
             )
 
         return Response(

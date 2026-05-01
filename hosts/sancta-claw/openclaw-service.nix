@@ -202,14 +202,10 @@ let
     # Drop legacy anthropic/* and claude-cli/* entries left behind by
     # pre-migration runs. The pre-migration Anthropic-via-Pro state is
     # itself broken (third-party Pro auth rejection — the reason for
-    # this migration), so there is no rollback canary value.
-    for legacy in (
-        "anthropic/claude-opus-4-6",
-        "anthropic/claude-sonnet-4-6",
-    ):
-        models.pop(legacy, None)
+    # this migration), so there is no rollback canary value. Prefix
+    # sweep covers any future model variants under either namespace.
     for key in list(models):
-        if key.startswith("claude-cli/"):
+        if key.startswith(("anthropic/", "claude-cli/")):
             models.pop(key, None)
 
     # Register the three rungs as empty entries — baseUrl is provider-level

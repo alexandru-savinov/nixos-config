@@ -22,7 +22,7 @@ let
       if [ "$PREV_FAILURES" -gt 0 ] && [ ! -f "$ANNOUNCED_FILE" ]; then
         TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
         CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
-        PRIMARY=$(jq -r '.model.primary // "unknown"' "$OC_CONFIG" 2>/dev/null || echo unknown)
+        PRIMARY=$(jq -r '.agents.defaults.model.primary // "unknown"' "$OC_CONFIG" 2>/dev/null || echo unknown)
         if [ -n "$TOKEN" ]; then
           curl -sf -X POST \
             "https://api.telegram.org/bot$TOKEN/sendMessage" \
@@ -54,7 +54,7 @@ let
       NOW=$(date +%s)
       TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
       CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
-      PRIMARY=$(jq -r '.model.primary // "unknown"' "$OC_CONFIG" 2>/dev/null || echo unknown)
+      PRIMARY=$(jq -r '.agents.defaults.model.primary // "unknown"' "$OC_CONFIG" 2>/dev/null || echo unknown)
 
       if [ "$RECENT_RESTARTS" -ge "$CRASH_LOOP_MAX" ]; then
         echo "Crash loop detected ($RECENT_RESTARTS restarts in $CRASH_LOOP_WINDOW_MIN min). NOT restarting." >&2

@@ -54,15 +54,16 @@ let
     # OpenClaw ZDR proxy + free+ZDR ladder verification
     check "openclaw: zdr proxy active" systemctl is-active --quiet openclaw-zdr-proxy
     check "openclaw: primary model is free+zdr" \
-      bash -c 'jq -e ".model.primary | test(\"^(qwen|z-ai|meta-llama|nousresearch|inclusionai|tencent|cognitivecomputations)/\")" /var/lib/openclaw/.openclaw/openclaw.json'
+      bash -c 'jq -e ".agents.defaults.model.primary | test(\"^(qwen|z-ai|meta-llama|nousresearch|inclusionai|tencent|cognitivecomputations)/\")" /var/lib/openclaw/.openclaw/openclaw.json'
     check "openclaw: zdr proxy healthz" \
       curl -sf --max-time 5 http://127.0.0.1:5780/healthz
-    # `$(cat ...)` is meant for the inner `bash -c` shell at runtime, not
-    # the outer one. Reading the agenix key at invocation keeps it out of
-    # the rendered nix-store script.
+    # Read the agenix key into a shell variable BEFORE invoking curl so the
+    # bearer token is not exposed in argv (visible via ps auxww). The single
+    # quotes keep `$(cat ...)` and `$KEY` unexpanded by the outer nix-store
+    # shell — they're evaluated by the inner `bash -c` at runtime.
     # shellcheck disable=SC2016
     check "openclaw: end-to-end completion" \
-      bash -c 'curl -sf --max-time 30 -X POST http://127.0.0.1:5780/v1/chat/completions -H "authorization: Bearer $(cat /run/agenix/openrouter-api-key)" -H "content-type: application/json" -d "{\"model\":\"qwen/qwen3-coder:free\",\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word OK\"}]}" | jq -e ".choices[0].message.content | test(\"OK\"; \"i\")"'
+      bash -c 'KEY=$(cat /run/agenix/openrouter-api-key); curl -sf --max-time 30 -X POST http://127.0.0.1:5780/v1/chat/completions -H "authorization: Bearer $KEY" -H "content-type: application/json" -d "{\"model\":\"qwen/qwen3-coder:free\",\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word OK\"}]}" | jq -e ".choices[0].message.content | test(\"OK\"; \"i\")"'
 
     echo
     echo "Results: $PASS passed, $FAIL failed"
