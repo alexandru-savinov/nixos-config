@@ -571,6 +571,26 @@ let
         builtins.throw
           "FAIL: openclawBrowserConfigBody missing substrings: ${builtins.toJSON missing}";
 
+    # Verify the rendered sancta-claw smoke-test script asserts on the
+    # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
+    # string from system.build (exposed by smoke-test.nix) — pure eval,
+    # same approach as openclaw-free-zdr-ladder-rendered.
+    sancta-claw-smoke-test-zdr-checks =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.smokeTestBody;
+        required = [
+          "openclaw: zdr proxy active"
+          "openclaw: primary model is free+zdr"
+          "openclaw: zdr proxy healthz"
+          "openclaw: end-to-end completion"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then true
+      else
+        builtins.throw
+          "FAIL: sancta-claw smokeTestBody missing check titles: ${builtins.toJSON missing}";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
