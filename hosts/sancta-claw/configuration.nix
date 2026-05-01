@@ -20,6 +20,7 @@
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
     ../../modules/services/tailscale.nix
+    ../../modules/services/openclaw-zdr-proxy.nix
     ../../modules/system/ssh-hardened.nix
   ];
 
