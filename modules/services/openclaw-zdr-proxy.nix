@@ -8,7 +8,11 @@
 # Binds to 127.0.0.1 only — accessed by the local OpenClaw service. No
 # Tailscale Serve, no firewall changes.
 
-{ config, pkgs, lib, ... }:
+{ config
+, pkgs
+, lib
+, ...
+}:
 
 with lib;
 
@@ -93,7 +97,12 @@ in
         Group = "openclaw";
         RuntimeDirectory = "openclaw-zdr-proxy";
         RuntimeDirectoryMode = "0700";
-        EnvironmentFile = "/run/openclaw-zdr-proxy/env";
+        # `-` prefix marks the file optional for the unit's environment
+        # initialization, which systemd performs once per ExecStartPre/ExecStart.
+        # Without it, systemd tries to read /run/openclaw-zdr-proxy/env before
+        # ExecStartPre (`setupEnvScript`) has had a chance to create it, the
+        # read fails, and the unit enters `failed` state in a restart loop.
+        EnvironmentFile = "-/run/openclaw-zdr-proxy/env";
 
         ExecStartPre = [ setupEnvScript ];
         ExecStart = "${proxyPkg}/bin/openclaw-zdr-proxy";
@@ -111,7 +120,11 @@ in
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
         ReadWritePaths = [ ];
       };
     };
