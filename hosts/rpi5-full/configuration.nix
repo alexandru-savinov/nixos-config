@@ -126,6 +126,16 @@ in
       };
     };
 
+  # Advertise rpi5 as a Tailscale exit node for the tailnet.
+  # Scoped here (not in modules/services/tailscale.nix) because that module is
+  # shared with sancta-choir, sancta-claw, and zero-kuzea — none of which
+  # should advertise exit-node. useRoutingFeatures = "both" enables IPv4/IPv6
+  # forwarding via the NixOS module (sets net.ipv4.ip_forward etc).
+  services.tailscale = {
+    useRoutingFeatures = lib.mkForce "both";
+    extraUpFlags = [ "--advertise-exit-node" ];
+  };
+
   # Open-WebUI DISABLED — too heavy for RPi5 (triton-llvm, torch, etc.)
   # To re-enable: uncomment imports above, secrets, and this block
   # services.open-webui-tailscale = { ... };
