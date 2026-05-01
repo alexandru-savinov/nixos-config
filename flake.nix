@@ -270,6 +270,11 @@
           module-eval = import ./tests/module-eval.nix {
             inherit pkgs nixpkgs self;
           };
+
+          # End-to-end ZDR proxy test: boots a VM with the proxy + a stub
+          # OpenRouter, verifies provider.zdr=true is injected on the wire
+          # and non-ZDR models are rejected before reaching the upstream.
+          openclaw-zdr-proxy = pkgs.testers.nixosTest (import ./tests/openclaw-zdr-proxy.nix { inherit pkgs; });
         };
 
       # Apps - makes packages runnable with `nix run`
