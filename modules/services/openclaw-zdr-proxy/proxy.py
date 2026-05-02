@@ -94,20 +94,35 @@ def _parse_zdr_response(payload: dict[str, Any]) -> set[str]:
     if not isinstance(data, list):
         return set()
 
+    # `/api/v1/endpoints/zdr` returns one entry per provider+model+quant combo;
+    # the canonical model identifier is `model_id` ("qwen/qwen3-coder:free"),
+    # which is what OpenClaw / OpenRouter clients send in the request body.
+    # The previous parser tried to derive the id from `name` (e.g. "Together
+    # | deepseek/...") via rsplit on " | ", which only works when the right
+    # half happens to be the model_id. For Venice, Z.AI and several others
+    # the right half is the human-readable `model_name` ("Qwen3 Coder"), so
+    # the cache silently filled with names that no inbound request would
+    # ever match — the proxy then 403'd every legitimate ZDR-allowed model.
+    # Fix: read `model_id` directly. Keep `id` (some shapes use it) and the
+    # `name`-rsplit path as last-resort fallbacks for forward compatibility.
     out: set[str] = set()
     for item in data:
         if not isinstance(item, dict):
             continue
-        name = item.get("name") or ""
-        if name:
-            parts = name.rsplit(" | ", 1)
-            model_id = parts[1] if len(parts) > 1 else name
-            if model_id:
-                out.add(model_id)
-        # Some shapes also carry a top-level `id`.
+        model_id = item.get("model_id")
+        if isinstance(model_id, str) and model_id:
+            out.add(model_id)
+            continue
         item_id = item.get("id")
         if isinstance(item_id, str) and item_id:
             out.add(item_id)
+            continue
+        name = item.get("name") or ""
+        if name:
+            parts = name.rsplit(" | ", 1)
+            fallback = parts[1] if len(parts) > 1 else name
+            if fallback:
+                out.add(fallback)
     return out
 
 

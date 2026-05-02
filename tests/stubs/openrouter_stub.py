@@ -23,15 +23,38 @@ from typing import Any
 from flask import Flask, jsonify, request
 
 
+# Real OpenRouter `/api/v1/endpoints/zdr` items use a human-readable
+# `name` ("Venice | Qwen3 Coder") and a separate `model_id` carrying the
+# canonical "qwen/qwen3-coder:free" identifier. Older stub data put the
+# canonical id in the `name` rsplit-tail by accident, which let the
+# proxy's name-rsplit parser pass against happy-path stub data while
+# silently failing against real upstream. Stub now mirrors real shape.
 DEFAULT_ZDR_MODELS: list[dict[str, Any]] = [
-    {"name": "Venice | qwen/qwen3-coder:free", "model_name": "Qwen3 Coder (free)"},
-    {"name": "Z.AI | z-ai/glm-4.5-air:free", "model_name": "GLM 4.5 Air (free)"},
     {
-        "name": "Venice | qwen/qwen3-next-80b-a3b-instruct:free",
+        "name": "Venice | Qwen3 Coder",
+        "model_id": "qwen/qwen3-coder:free",
+        "model_name": "Qwen3 Coder (free)",
+    },
+    {
+        "name": "Z.AI | GLM 4.5 Air",
+        "model_id": "z-ai/glm-4.5-air:free",
+        "model_name": "GLM 4.5 Air (free)",
+    },
+    {
+        "name": "Venice | Qwen3 Next 80B",
+        "model_id": "qwen/qwen3-next-80b-a3b-instruct:free",
         "model_name": "Qwen3 Next 80B (free)",
     },
-    {"name": "OpenAI | openrouter/gpt-4o-mini", "model_name": "GPT-4o Mini"},
-    {"name": "OpenAI | openrouter/gpt-4o", "model_name": "GPT-4o"},
+    {
+        "name": "OpenAI | GPT-4o Mini",
+        "model_id": "openrouter/gpt-4o-mini",
+        "model_name": "GPT-4o Mini",
+    },
+    {
+        "name": "OpenAI | GPT-4o",
+        "model_id": "openrouter/gpt-4o",
+        "model_name": "GPT-4o",
+    },
 ]
 
 
