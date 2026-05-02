@@ -6,9 +6,10 @@ A Flask sidecar that sits between OpenClaw and OpenRouter. Every request:
 1. Has its `model` field validated against a fail-closed allow-list fetched
    from `${UPSTREAM}/endpoints/zdr` (cached, lazy refresh).
 2. Has `provider.zdr = true` injected (matches the open-webui pipe pattern).
-3. Has `provider.allow = [<cached_allow_list>]` injected so OpenRouter only
-   routes to ZDR endpoints even if a future upstream change made the global
-   ZDR flag insufficient.
+   This is the only field needed for upstream ZDR enforcement; OpenRouter's
+   request schema rejects unknown keys, so the proxy does NOT inject
+   `provider.allow` — the model allow-list is enforced client-side via the
+   403 path above, not by stuffing it into the upstream payload.
 
 Fail-closed semantics: if the upstream allow-list refresh fails AND the
 existing cache is older than `2 * cacheTtl` seconds, the proxy returns 503
@@ -261,7 +262,14 @@ def create_app(
         # client explicitly sends `"provider": null`. `{**None}` raises
         # TypeError, so coalesce explicitly.
         provider_in = body.get("provider") or {}
-        provider = {**provider_in, "zdr": True, "allow": sorted(allow)}
+        # ZDR enforcement on the upstream side is a single boolean: `zdr: true`
+        # tells OpenRouter to route only to ZDR endpoints. The defense-in-depth
+        # layer is the proxy's own client-side rejection above (the `model not
+        # in allow_list -> 403` branch). Earlier versions also stuffed the full
+        # allow-list into `provider.allow`, but OpenRouter's request schema
+        # rejects unknown keys with HTTP 400 (`Unrecognized key: "allow"`),
+        # which broke every chat completion. Keep the injection minimal.
+        provider = {**provider_in, "zdr": True}
         payload = {**body, "provider": provider}
 
         headers = {

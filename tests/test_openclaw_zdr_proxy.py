@@ -117,7 +117,15 @@ def proxy_app(stub_server):
 
 
 def test_injects_zdr_true(proxy_app, stub_server):
-    """Forwarded payload must carry provider.zdr=True and an allow-list."""
+    """Forwarded payload must carry provider.zdr=True and nothing extra.
+
+    Earlier versions also injected `provider.allow = [...]` (the cached
+    ZDR allow-list) as defense-in-depth. OpenRouter's request schema
+    rejects unknown keys, so that injection broke every real chat
+    completion with HTTP 400 (`Unrecognized key: "allow"`). The proxy
+    enforces the allow-list client-side via the 403 branch instead;
+    upstream injection is the boolean `zdr` flag only.
+    """
     client = proxy_app.test_client()
 
     resp = client.post(
@@ -131,9 +139,9 @@ def test_injects_zdr_true(proxy_app, stub_server):
 
     last = stub_server["app"].config["LAST_PAYLOAD"]
     assert last is not None, "stub did not record any upstream POST"
-    assert last["provider"]["zdr"] is True
-    assert "allow" in last["provider"]
-    assert "qwen/qwen3-coder:free" in last["provider"]["allow"]
+    assert last["provider"] == {"zdr": True}, (
+        f"upstream provider must be exactly {{'zdr': True}}, got {last['provider']!r}"
+    )
 
 
 def test_rejects_non_zdr_model(proxy_app, stub_server):
