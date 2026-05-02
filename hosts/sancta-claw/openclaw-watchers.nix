@@ -20,7 +20,7 @@ let
       # one-shot announcement marker does not yet exist. Subsequent green
       # probes are silent. Marker is plain `touch` — survives reboots.
       if [ "$PREV_FAILURES" -gt 0 ] && [ ! -f "$ANNOUNCED_FILE" ]; then
-        TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
+        TOKEN=$(jq -r '.channels.telegram.botToken // empty' "$OC_CONFIG" 2>/dev/null || true)
         CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
         PRIMARY=$(jq -r '.agents.defaults.model.primary // "unknown"' "$OC_CONFIG" 2>/dev/null || echo unknown)
         # Only mark "announced" after a real send. If the Telegram token is
@@ -55,7 +55,7 @@ let
       RECENT_RESTARTS=$(find "$RESTART_LOG_DIR" -maxdepth 1 -type f -mmin "-$CRASH_LOOP_WINDOW_MIN" 2>/dev/null | wc -l)
 
       NOW=$(date +%s)
-      TOKEN=$(jq -r '.channels.telegram.token // empty' "$OC_CONFIG" 2>/dev/null || true)
+      TOKEN=$(jq -r '.channels.telegram.botToken // empty' "$OC_CONFIG" 2>/dev/null || true)
       CHAT_ID=$(jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
       PRIMARY=$(jq -r '.agents.defaults.model.primary // "unknown"' "$OC_CONFIG" 2>/dev/null || echo unknown)
 
