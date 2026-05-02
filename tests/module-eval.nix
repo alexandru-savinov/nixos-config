@@ -510,6 +510,106 @@ let
       specialArgs = { claude-code = null; };
     };
 
+    # ── OpenClaw ZDR Proxy ────────────────────────────────────────
+    openclaw-zdr-proxy-minimal = shouldEval "openclaw-zdr-proxy: minimal config" {
+      modules = [
+        ../modules/services/openclaw-zdr-proxy.nix
+        {
+          services.openclaw-zdr-proxy = {
+            enable = true;
+            apiKeyFile = "/run/agenix/openrouter-api-key";
+          };
+          # The proxy unit runs as user `openclaw`, normally created by
+          # the host-level openclaw service. Declare it here so the
+          # isolated module eval doesn't fail user-validation.
+          users.users.openclaw = { isSystemUser = true; group = "openclaw"; };
+          users.groups.openclaw = { };
+        }
+      ];
+    };
+
+    openclaw-zdr-proxy-disabled = shouldEval "openclaw-zdr-proxy: disabled" {
+      modules = [
+        ../modules/services/openclaw-zdr-proxy.nix
+        { services.openclaw-zdr-proxy.enable = false; }
+      ];
+    };
+
+    # Verify wiring on the actual sancta-claw host config: the proxy is
+    # enabled with the default port and reads the OpenRouter API key
+    # from agenix. This catches misconfigurations in the host module
+    # (wrong path, missing secret, port drift) without a full build.
+    openclaw-zdr-proxy-sancta-claw-wiring =
+      let
+        proxy = self.nixosConfigurations.sancta-claw.config.services.openclaw-zdr-proxy;
+        agenixPath = toString proxy.apiKeyFile;
+        portOk = proxy.port == 5780;
+        pathOk = agenixPath == "/run/agenix/openrouter-api-key";
+      in
+      if portOk && pathOk then true
+      else
+        builtins.throw
+          "FAIL: sancta-claw openclaw-zdr-proxy wiring — port=${toString proxy.port} (expected 5780), apiKeyFile=${agenixPath} (expected /run/agenix/openrouter-api-key)";
+
+    # Verify the rendered openclaw browser-config script registers the
+    # free+ZDR ladder and routes through the local proxy. Reads the body
+    # string from system.build (exposed by openclaw-service.nix) — pure
+    # eval, no IFD, no derivation realization.
+    openclaw-free-zdr-ladder-rendered =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.openclawBrowserConfigBody;
+        required = [
+          "qwen/qwen3-coder:free"
+          "z-ai/glm-4.5-air:free"
+          "qwen/qwen3-next-80b-a3b-instruct:free"
+          "127.0.0.1:5780"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then true
+      else
+        builtins.throw
+          "FAIL: openclawBrowserConfigBody missing substrings: ${builtins.toJSON missing}";
+
+    # Verify the rendered openclaw health-check probe contains the
+    # one-shot first-success Telegram alert sentinel and includes the
+    # active primary model in failure messages. Reads the body string
+    # from system.build.openclawHealthProbeBody — pure eval, no IFD.
+    sancta-claw-openclaw-health-probe-zdr-alert =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.openclawHealthProbeBody;
+        required = [
+          ".zdr-migration-announced"
+          "free+ZDR ladder"
+          "primary=$PRIMARY"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then true
+      else
+        builtins.throw
+          "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
+
+    # Verify the rendered sancta-claw smoke-test script asserts on the
+    # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
+    # string from system.build (exposed by smoke-test.nix) — pure eval,
+    # same approach as openclaw-free-zdr-ladder-rendered.
+    sancta-claw-smoke-test-zdr-checks =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.smokeTestBody;
+        required = [
+          "openclaw: zdr proxy active"
+          "openclaw: primary model is free+zdr"
+          "openclaw: zdr proxy healthz"
+          "openclaw: end-to-end completion"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then true
+      else
+        builtins.throw
+          "FAIL: sancta-claw smokeTestBody missing check titles: ${builtins.toJSON missing}";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
