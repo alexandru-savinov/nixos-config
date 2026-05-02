@@ -563,14 +563,22 @@ let
           "z-ai/glm-4.5-air:free"
           "qwen/qwen3-next-80b-a3b-instruct:free"
           "127.0.0.1:5780"
-          # OpenClaw 2026.4.x zod schema requires `models: [{id, name}]`
-          # per provider — without this, the gateway exits 1 on startup
-          # with "models.providers.openrouter.models: expected array".
-          # Assert both the assignment site and a representative {id, name}
-          # entry rendered into the script.
-          ''openrouter_provider["models"]''
-          ''"id": rung_id''
+          # Provider config + ladder entries (OpenClaw 2026.4.x zod schema
+          # requires the rich model metadata for runtime resolution to
+          # succeed; empty {id,name} entries parse but fail at runtime with
+          # `model_not_found`).
+          ''openrouter_provider["models"] = [_make_model_entry(r) for r in LADDER]''
           "Qwen3 Coder (free, ZDR)"
+          # Selectors carry the literal `openrouter/` prefix; without it,
+          # OpenClaw's parseModelRef splits on the first `/` and tries to
+          # find a provider named "qwen" / "z-ai" instead of "openrouter".
+          ''f"openrouter/{LADDER[0]['id']}"''
+          # Per-model api + canonical-shape sentinels — without per-entry
+          # api, `resolveExplicitModelWithRegistry`'s `if (inlineMatch?.api)`
+          # check fails and resolution falls through to the registry, which
+          # doesn't know our custom IDs.
+          ''"api":           "openai-completions"''
+          ''"contextWindow": rung["ctx"]''
         ];
         missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
       in

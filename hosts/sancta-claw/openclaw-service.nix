@@ -176,35 +176,60 @@ let
     }
 
     # Free + ZDR ladder, single source of truth. Primary is rung 0; fallbacks
-    # are the rest. Used to populate three openclaw.json paths so a future PR
-    # adding/removing a rung touches only this list.
+    # are the rest. Used to populate two openclaw.json paths (provider.models[]
+    # and agents.defaults.model.{primary,fallbacks}) so a future PR adding or
+    # removing a rung touches one place.
     LADDER = [
-        ("qwen/qwen3-coder:free",                 "Qwen3 Coder (free, ZDR)"),
-        ("z-ai/glm-4.5-air:free",                 "GLM 4.5 Air (free, ZDR)"),
-        ("qwen/qwen3-next-80b-a3b-instruct:free", "Qwen3 Next 80B (free, ZDR)"),
+        {"id": "qwen/qwen3-coder:free",                 "name": "Qwen3 Coder (free, ZDR)",   "ctx": 262144},
+        {"id": "z-ai/glm-4.5-air:free",                 "name": "GLM 4.5 Air (free, ZDR)",   "ctx": 131072},
+        {"id": "qwen/qwen3-next-80b-a3b-instruct:free", "name": "Qwen3 Next 80B (free, ZDR)","ctx": 262144},
     ]
+
+    def _make_model_entry(rung):
+        # OpenClaw 2026.4.x's runtime resolution requires every field below
+        # for a custom-provider model to be picked up — empty {id,name} entries
+        # parse fine but fail at runtime with `model_not_found`. Specifically:
+        #   `findInlineModelMatch` in dist/anthropic-vertex-stream-*.js returns
+        #   the matched entry, then `resolveExplicitModelWithRegistry` checks
+        #   `if (inlineMatch?.api)` — the api flag is read from the entry, not
+        #   propagated from provider-level. The other metadata (reasoning,
+        #   input, cost, contextWindow, maxTokens) mirrors the canonical built-in
+        #   `buildOpenrouterProvider()` shape in dist/provider-catalog-*.js.
+        return {
+            "id":            rung["id"],
+            "name":          rung["name"],
+            "api":           "openai-completions",
+            "reasoning":     False,
+            "input":         ["text"],
+            "cost":          {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": rung["ctx"],
+            "maxTokens":     8192,
+        }
 
     # Provider-level override: route every openrouter/* model through the
     # local ZDR proxy on 127.0.0.1:5780. The proxy injects provider.zdr=true
     # and rejects any model not on the OpenRouter ZDR allow-list. Auth flows
     # from auth-profiles.json keyed by `openrouter:*` (separate ExecStartPre).
-    # OpenClaw 2026.4.x zod schema (additionalProperties: false) requires
-    # `models: [{id, name}]` per provider — without it the gateway exits 1 on
-    # startup with "models.providers.openrouter.models: expected array".
     models_root = config.setdefault("models", {})
     providers = models_root.setdefault("providers", {})
     openrouter_provider = providers.setdefault("openrouter", {})
     openrouter_provider["baseUrl"] = "http://127.0.0.1:5780/v1"
-    openrouter_provider["models"] = [
-        {"id": rung_id, "name": rung_name} for rung_id, rung_name in LADDER
-    ]
+    openrouter_provider["api"] = "openai-completions"
+    openrouter_provider["models"] = [_make_model_entry(r) for r in LADDER]
 
+    # Selectors carry the literal `openrouter/` prefix because OpenClaw's
+    # `parseModelRef` (dist/model-selection-*.js) splits on the FIRST slash to
+    # derive (provider, modelId). Without the prefix, "qwen/qwen3-coder:free"
+    # parses as provider="qwen" — no such provider configured — and resolution
+    # fails before any HTTP call. With the prefix it parses as provider=
+    # "openrouter", modelId="qwen/qwen3-coder:free", which then matches the
+    # entry above by (provider, id).
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     models = defaults.setdefault("models", {})
     model = defaults.setdefault("model", {})
-    model["primary"] = LADDER[0][0]
-    model["fallbacks"] = [rung_id for rung_id, _ in LADDER[1:]]
+    model["primary"] = f"openrouter/{LADDER[0]['id']}"
+    model["fallbacks"] = [f"openrouter/{r['id']}" for r in LADDER[1:]]
 
     # Drop legacy anthropic/* and claude-cli/* entries left behind by
     # pre-migration runs. The pre-migration Anthropic-via-Pro state is
@@ -215,11 +240,10 @@ let
         if key.startswith(("anthropic/", "claude-cli/")):
             models.pop(key, None)
 
-    # Register each ladder rung as an empty entry under agents.defaults.models —
-    # this map is keyed by model id, separate from the provider.models[] array
-    # above; baseUrl is provider-level, auth flows from auth-profiles.json.
-    for rung_id, _ in LADDER:
-        models.setdefault(rung_id, {})
+    # NOTE: agents.defaults.models{} is NOT used for resolution — it's only
+    # consulted for display aliases. Resolution goes through models.providers
+    # only. Don't add ladder entries here; they'd just be dead weight and
+    # would have to be hand-removed when a rung gets retired.
 
     # Compaction: preserve 8 recent turns so Kuzea keeps conversational
     # context after auto-compaction instead of losing the thread.
