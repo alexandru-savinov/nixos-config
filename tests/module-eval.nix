@@ -563,6 +563,14 @@ let
           "z-ai/glm-4.5-air:free"
           "qwen/qwen3-next-80b-a3b-instruct:free"
           "127.0.0.1:5780"
+          # OpenClaw 2026.4.x zod schema requires `models: [{id, name}]`
+          # per provider — without this, the gateway exits 1 on startup
+          # with "models.providers.openrouter.models: expected array".
+          # Assert both the assignment site and a representative {id, name}
+          # entry rendered into the script.
+          ''openrouter_provider["models"]''
+          ''"id": rung_id''
+          "Qwen3 Coder (free, ZDR)"
         ];
         missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
       in

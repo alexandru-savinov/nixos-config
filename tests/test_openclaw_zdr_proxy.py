@@ -57,10 +57,13 @@ class _ServerThread(threading.Thread):
 @pytest.fixture
 def stub_server():
     port = _free_port()
+    # Real OpenRouter `name` is "<provider> | <human-readable-model-name>";
+    # the canonical id lives in `model_id`. Tests must mirror real shape so
+    # the parser is exercised against the field it has to read in production.
     app = create_stub_openrouter(
         zdr_models=[
-            {"name": "Venice | qwen/qwen3-coder:free"},
-            {"name": "Z.AI | z-ai/glm-4.5-air:free"},
+            {"name": "Venice | Qwen3 Coder", "model_id": "qwen/qwen3-coder:free"},
+            {"name": "Z.AI | GLM 4.5 Air", "model_id": "z-ai/glm-4.5-air:free"},
         ],
     )
     server = _ServerThread(app, port)
@@ -70,6 +73,35 @@ def stub_server():
         yield {"app": app, "url": f"http://127.0.0.1:{port}/v1"}
     finally:
         server.shutdown()
+
+
+def test_parses_model_id_field():
+    """Regression: the parser must read `model_id`, not derive it from `name`.
+
+    Real OpenRouter `name` is "Venice | Qwen3 Coder" (provider | display
+    name), so the older rsplit-on-' | ' parser cached the human-readable
+    name and rejected every legitimate model. Production hit this on
+    sancta-claw post-deploy: every chat completion 403'd with
+    'model 'qwen/qwen3-coder:free' is not in the ZDR allow-list'.
+    """
+    payload = {
+        "data": [
+            {"name": "Venice | Qwen3 Coder", "model_id": "qwen/qwen3-coder:free"},
+            {"name": "Z.AI | GLM 4.5 Air", "model_id": "z-ai/glm-4.5-air:free"},
+            # Missing model_id, falls back to `id` (some shapes use this).
+            {"name": "Other | Something", "id": "openrouter/something:free"},
+            # Last-resort: only `name` available; rsplit on " | ".
+            {"name": "Inline | inline/legacy:free"},
+        ]
+    }
+    parsed = proxy_mod._parse_zdr_response(payload)
+    assert "qwen/qwen3-coder:free" in parsed
+    assert "z-ai/glm-4.5-air:free" in parsed
+    assert "openrouter/something:free" in parsed
+    assert "inline/legacy:free" in parsed
+    # Human-readable display names must NOT leak into the allow-list.
+    assert "Qwen3 Coder" not in parsed
+    assert "GLM 4.5 Air" not in parsed
 
 
 @pytest.fixture

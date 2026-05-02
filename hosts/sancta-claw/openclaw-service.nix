@@ -175,29 +175,36 @@ let
         "noSandbox": True,
     }
 
+    # Free + ZDR ladder, single source of truth. Primary is rung 0; fallbacks
+    # are the rest. Used to populate three openclaw.json paths so a future PR
+    # adding/removing a rung touches only this list.
+    LADDER = [
+        ("qwen/qwen3-coder:free",                 "Qwen3 Coder (free, ZDR)"),
+        ("z-ai/glm-4.5-air:free",                 "GLM 4.5 Air (free, ZDR)"),
+        ("qwen/qwen3-next-80b-a3b-instruct:free", "Qwen3 Next 80B (free, ZDR)"),
+    ]
+
     # Provider-level override: route every openrouter/* model through the
     # local ZDR proxy on 127.0.0.1:5780. The proxy injects provider.zdr=true
-    # and rejects any model not on the OpenRouter ZDR allow-list. Auth is
-    # supplied by the openrouter:zdr-proxy entry in auth-profiles.json
-    # (separate ExecStartPre), not by an env-var marker here.
+    # and rejects any model not on the OpenRouter ZDR allow-list. Auth flows
+    # from auth-profiles.json keyed by `openrouter:*` (separate ExecStartPre).
+    # OpenClaw 2026.4.x zod schema (additionalProperties: false) requires
+    # `models: [{id, name}]` per provider — without it the gateway exits 1 on
+    # startup with "models.providers.openrouter.models: expected array".
     models_root = config.setdefault("models", {})
     providers = models_root.setdefault("providers", {})
     openrouter_provider = providers.setdefault("openrouter", {})
     openrouter_provider["baseUrl"] = "http://127.0.0.1:5780/v1"
+    openrouter_provider["models"] = [
+        {"id": rung_id, "name": rung_name} for rung_id, rung_name in LADDER
+    ]
 
-    # Free + ZDR ladder, all picked from /api/v1/endpoints/zdr.
-    # Primary: qwen3-coder (Venice, 262K, coder-tuned).
-    # Fallbacks isolate provider outages: glm-4.5-air (Z.AI, 131K)
-    # then qwen3-next-80b (Venice, 262K, general).
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     models = defaults.setdefault("models", {})
     model = defaults.setdefault("model", {})
-    model["primary"] = "qwen/qwen3-coder:free"
-    model["fallbacks"] = [
-        "z-ai/glm-4.5-air:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-    ]
+    model["primary"] = LADDER[0][0]
+    model["fallbacks"] = [rung_id for rung_id, _ in LADDER[1:]]
 
     # Drop legacy anthropic/* and claude-cli/* entries left behind by
     # pre-migration runs. The pre-migration Anthropic-via-Pro state is
@@ -208,14 +215,11 @@ let
         if key.startswith(("anthropic/", "claude-cli/")):
             models.pop(key, None)
 
-    # Register the three rungs as empty entries — baseUrl is provider-level
-    # above; auth flows from auth-profiles.json keyed by provider.
-    for rung in (
-        "qwen/qwen3-coder:free",
-        "z-ai/glm-4.5-air:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-    ):
-        models.setdefault(rung, {})
+    # Register each ladder rung as an empty entry under agents.defaults.models —
+    # this map is keyed by model id, separate from the provider.models[] array
+    # above; baseUrl is provider-level, auth flows from auth-profiles.json.
+    for rung_id, _ in LADDER:
+        models.setdefault(rung_id, {})
 
     # Compaction: preserve 8 recent turns so Kuzea keeps conversational
     # context after auto-compaction instead of losing the thread.
