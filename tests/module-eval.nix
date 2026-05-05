@@ -560,8 +560,10 @@ let
         body = self.nixosConfigurations.sancta-claw.config.system.build.openclawBrowserConfigBody;
         required = [
           "qwen/qwen3-coder:free"
-          "z-ai/glm-4.5-air:free"
+          "tencent/hy3-preview:free"
+          "inclusionai/ling-2.6-1t:free"
           "qwen/qwen3-next-80b-a3b-instruct:free"
+          "z-ai/glm-4.5-air:free"
           "127.0.0.1:5780"
           # Provider config + ladder entries (OpenClaw 2026.4.x zod schema
           # requires the rich model metadata for runtime resolution to
