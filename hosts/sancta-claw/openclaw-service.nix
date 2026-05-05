@@ -179,10 +179,25 @@ let
     # are the rest. Used to populate two openclaw.json paths (provider.models[]
     # and agents.defaults.model.{primary,fallbacks}) so a future PR adding or
     # removing a rung touches one place.
+    #
+    # Ordering rationale (observed empirically on sancta-claw — see #420 thread):
+    # - 262K rungs first; the agent's working session has accumulated >131K tokens,
+    #   so smaller-context rungs hit "Context overflow" before they ever serve a
+    #   token and only add latency to the failover path.
+    # - Providers are spread across Venice, SiliconFlow, Novita, Z.AI so an
+    #   outage on any single upstream doesn't drain the whole ladder. OpenRouter's
+    #   free tier caps each model at ~8 rpm, so 5 rungs ≈ 40 rpm of burst budget.
+    # - Coder-tuned primary because OpenClaw's main role is an "AI programming
+    #   partner".
+    # - GLM-Air is kept as the LAST rung (smaller 131K context) — only reachable
+    #   after every higher-context rung has been tried, so its context-overflow
+    #   failure mode is harmless on short sessions and never blocks a long one.
     LADDER = [
         {"id": "qwen/qwen3-coder:free",                 "name": "Qwen3 Coder (free, ZDR)",   "ctx": 262144},
-        {"id": "z-ai/glm-4.5-air:free",                 "name": "GLM 4.5 Air (free, ZDR)",   "ctx": 131072},
+        {"id": "tencent/hy3-preview:free",              "name": "Hunyuan 3 Preview (free, ZDR)", "ctx": 262144},
+        {"id": "inclusionai/ling-2.6-1t:free",          "name": "Ling 2.6 1T (free, ZDR)",   "ctx": 262144},
         {"id": "qwen/qwen3-next-80b-a3b-instruct:free", "name": "Qwen3 Next 80B (free, ZDR)","ctx": 262144},
+        {"id": "z-ai/glm-4.5-air:free",                 "name": "GLM 4.5 Air (free, ZDR)",   "ctx": 131072},
     ]
 
     def _make_model_entry(rung):
