@@ -17,10 +17,10 @@
 #
 # Called from flake.nix with: { pkgs, nixpkgs, self }
 
-{
-  pkgs,
-  nixpkgs,
-  self,
+{ pkgs
+, nixpkgs
+, self
+,
 }:
 
 let
@@ -29,9 +29,9 @@ let
   # Evaluate a NixOS config with the given modules and specialArgs.
   # Returns the fully-merged config attrset.
   evalConfig =
-    {
-      modules,
-      specialArgs ? { },
+    { modules
+    , specialArgs ? { }
+    ,
     }:
     (nixpkgs.lib.nixosSystem {
       inherit system;
@@ -746,9 +746,9 @@ let
 
 in
 pkgs.runCommand "module-eval-tests"
-  {
-    passthru = { inherit tests; };
-  }
+{
+  passthru = { inherit tests; };
+}
   # deepSeq ensures all test thunks are forced before the builder runs.
   (
     builtins.deepSeq allResults ''

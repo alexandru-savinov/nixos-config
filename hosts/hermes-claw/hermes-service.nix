@@ -1,8 +1,7 @@
-{
-  config,
-  pkgs,
-  lib,
-  ...
+{ config
+, pkgs
+, lib
+, ...
 }:
 let
   # Image pinned by tag AND digest. The tag scheme is date-based (v2026.X.Y),
