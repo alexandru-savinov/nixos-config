@@ -612,6 +612,35 @@ let
     # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
     # string from system.build (exposed by smoke-test.nix) — pure eval,
     # same approach as openclaw-free-zdr-ladder-rendered.
+    # Verify the rendered hermes-claw host config contains the agent image
+    # pin, persistent data path, and env-injection sentinels (bot token var,
+    # allowed-users chat ID, runtime env file path). Reads body strings from
+    # system.build.hermesAgentEnvBody (exposed by hermes-service.nix) plus
+    # the OCI container's image/volumes — pure eval, no IFD.
+    hermes-claw-rendered =
+      let
+        cfg = self.nixosConfigurations.hermes-claw.config;
+        container = cfg.virtualisation.oci-containers.containers.hermes-agent;
+        body =
+          cfg.system.build.hermesAgentEnvBody
+          + builtins.toJSON container.image
+          + builtins.toJSON container.volumes
+          + builtins.toJSON container.ports
+          + builtins.toJSON container.environmentFiles;
+        required = [
+          "nousresearch/hermes-agent"
+          "/var/lib/hermes/data"
+          "TELEGRAM_BOT_TOKEN"
+          "TELEGRAM_ALLOWED_USERS=364749075"
+          "/run/hermes-agent/env"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then true
+      else
+        builtins.throw
+          "FAIL: hermes-claw rendered config missing substrings: ${builtins.toJSON missing}";
+
     sancta-claw-smoke-test-zdr-checks =
       let
         body = self.nixosConfigurations.sancta-claw.config.system.build.smokeTestBody;
