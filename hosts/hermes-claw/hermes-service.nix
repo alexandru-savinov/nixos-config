@@ -89,7 +89,19 @@ in
     environmentFiles = [ "/run/hermes-agent/env" ];
     extraOptions = [
       "--security-opt=no-new-privileges"
+      # Drop everything, then add back the bare minimum the upstream image's
+      # entrypoint needs to do its init: chown /opt/data to its internal
+      # hermes user (UID 10000) and setuid to that UID. After the setuid,
+      # the process is unprivileged AND --security-opt=no-new-privileges
+      # prevents re-escalation, so these caps are only briefly held by PID 1.
+      # Without them, the entrypoint hits "operation not permitted" on the
+      # setuid call and the container exits status=1 in <100ms.
       "--cap-drop=ALL"
+      "--cap-add=CHOWN"
+      "--cap-add=SETUID"
+      "--cap-add=SETGID"
+      "--cap-add=FOWNER"
+      "--cap-add=DAC_OVERRIDE"
       # `--read-only` removed: triggers `crun: write: No space left on device`
       # at OCI spec prep time on this image (verified empirically — even an
       # empty bind-mount + tmpfs /tmp config fails before the entrypoint runs,
