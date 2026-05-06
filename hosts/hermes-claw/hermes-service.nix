@@ -4,7 +4,11 @@
 , ...
 }:
 let
-  hermesImage = "docker.io/nousresearch/hermes-agent:v0.12.0";
+  # Image pinned by tag AND digest. The tag scheme is date-based (v2026.X.Y),
+  # not semver — verified via `curl https://hub.docker.com/v2/repositories/
+  # nousresearch/hermes-agent/tags/`. Pinning by digest defends against
+  # silent retag / supply-chain swap. Bump both pieces together when upgrading.
+  hermesImage = "docker.io/nousresearch/hermes-agent:v2026.4.30@sha256:900e1f8076662a20a685142321808085cc0b2935bb904b234c6828b4d7fb0f77";
   dataDir = "/var/lib/hermes/data";
   # User's personal Telegram chat ID — same value used in nullclaw and openclaw
   # watchers. Not a secret (it's just a numeric ID).
@@ -70,8 +74,13 @@ in
   # ExecStartPre + systemd hardening directives.
   systemd.services.podman-hermes-agent = {
     serviceConfig = {
-      # `-` prefix: tolerate missing file at unit-load time; ExecStartPre creates it.
-      EnvironmentFile = lib.mkForce "-/run/hermes-agent/env";
+      # NOTE: secrets reach the container via `oci-containers.containers.
+      # hermes-agent.environmentFiles` (which podman parses with `--env-file`
+      # — file is read by podman, not exported into its own host process env).
+      # We deliberately do NOT set `EnvironmentFile=` on this systemd unit —
+      # doing so would also export TELEGRAM_BOT_TOKEN + OPENROUTER_API_KEY
+      # into /proc/$pid/environ of the podman wrapper process, broadening the
+      # exposure beyond the container boundary unnecessarily.
       RuntimeDirectory = "hermes-agent";
       RuntimeDirectoryMode = "0700";
       ExecStartPre = [

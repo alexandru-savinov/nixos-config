@@ -18,7 +18,13 @@ let
   # hermes-claw stable recovery key for DR — NOT tied to SSH host key.
   # Same decoupling rationale as sancta-claw: shipped via nixos-anywhere
   # --extra-files to /root/.age/recovery.key on first boot.
-  # Private key stored on: Mac:/tmp/hermes-claw-recovery (move to rpi5:/root/dr/ + Bitwarden after deploy)
+  # Private key currently at Mac:/tmp/hermes-claw-recovery — EPHEMERAL.
+  # MUST be relocated before any Mac reboot, otherwise the three re-keyed
+  # secrets (tailscale-auth-key, openrouter-api-key, zero-kuzea-telegram-bot-token)
+  # become permanently undecryptable on hermes-claw (no fallback identity).
+  # Permanent location (matches sancta-claw's pattern):
+  # rpi5:/root/dr/recovery-hermes-claw.key + Bitwarden vault entry.
+  # Update this comment once the move is done.
   hermes-claw = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFtsTISx+ZrSicSwy54zo/ZBd7DG8vemMQxOMZzJyFOY hermes-claw recovery key";
 
   # Combine users who can edit

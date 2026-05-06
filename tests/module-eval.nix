@@ -625,12 +625,11 @@ let
           + builtins.toJSON container.volumes
           + builtins.toJSON container.ports
           + builtins.toJSON container.environmentFiles
-          + builtins.toJSON svc.EnvironmentFile
           + builtins.toJSON (map toString svc.ExecStartPre);
         required = [
-          # Pin: full image:tag, not just the repo name. Catches drift to :latest
-          # or a downgrade.
-          "nousresearch/hermes-agent:v0.12.0"
+          # Pin: full image:tag@digest, not just the repo name. Catches drift
+          # to :latest, a tag swap, or a registry-side digest change.
+          "nousresearch/hermes-agent:v2026.4.30@sha256:900e1f8076662a20a685142321808085cc0b2935bb904b234c6828b4d7fb0f77"
           # Mount direction: host:container, not container:host.
           "/var/lib/hermes/data:/opt/data"
           # Port binding must be loopback-only — never publish 0.0.0.0:8642.
