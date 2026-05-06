@@ -15,6 +15,12 @@ let
   # Private key stored on: rpi5:/root/dr/recovery-sancta-claw.key + Bitwarden
   sancta-claw = "age1zex0chkw9swv62khuw73lftpcagu6t7d8vqa2h9mmnm23249hpuqx8f2kt";
 
+  # hermes-claw stable recovery key for DR — NOT tied to SSH host key.
+  # Same decoupling rationale as sancta-claw: shipped via nixos-anywhere
+  # --extra-files to /root/.age/recovery.key on first boot.
+  # Private key stored on: Mac:/tmp/hermes-claw-recovery (move to rpi5:/root/dr/ + Bitwarden after deploy)
+  hermes-claw = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFtsTISx+ZrSicSwy54zo/ZBd7DG8vemMQxOMZzJyFOY hermes-claw recovery key";
+
   # Combine users who can edit
   users = [ root-sancta-choir ];
 
@@ -30,6 +36,9 @@ let
   # allKeys + sancta-claw (for secrets shared across all hosts including the VPS)
   allPlusClaw = allKeys ++ [ sancta-claw ];
 
+  # allKeys + sancta-claw + hermes-claw (for secrets shared with both claw VPSes)
+  allPlusBoth = allPlusClaw ++ [ hermes-claw ];
+
   # Keys for Kuzea-specific secrets (sancta-claw + owner machines)
   # rpi5 included so Alexandru can edit/re-encrypt from rpi5-full
   clawKeys = users ++ [
@@ -38,8 +47,8 @@ let
   ];
 in
 {
-  # Tailscale - shared across all hosts (including sancta-claw)
-  "tailscale-auth-key.age".publicKeys = allPlusClaw;
+  # Tailscale - shared across all hosts (including sancta-claw + hermes-claw)
+  "tailscale-auth-key.age".publicKeys = allPlusBoth;
 
   # ── Kuzea secrets (sancta-claw only, least privilege) ──────────────────
   # Encrypt on sancta-choir: agenix -e secrets/kuzea-caldav-credentials.age
@@ -59,7 +68,7 @@ in
 
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;
-  "openrouter-api-key.age".publicKeys = allPlusClaw;
+  "openrouter-api-key.age".publicKeys = allPlusBoth;
   "tavily-api-key.age".publicKeys = allKeys;
 
   # Tavily API key for Kuzea web search (separate from open-webui)
@@ -108,8 +117,9 @@ in
 
   # ── Zero_kuzea secrets (NullClaw bot on dedicated VPS) ─────────────────
   # Uses sancta-claw recovery key (same trust level, both are throwaway VPS)
-  # Telegram bot token for Zero_kuzea bot
-  "zero-kuzea-telegram-bot-token.age".publicKeys = clawKeys;
+  # Telegram bot token for Zero_kuzea bot — also re-keyed for hermes-claw
+  # so the Hermes Agent on hermes-claw can decrypt the same plaintext.
+  "zero-kuzea-telegram-bot-token.age".publicKeys = clawKeys ++ [ hermes-claw ];
 
   # Anthropic API key (setup key from OpenClaw Pro subscription)
   "anthropic-api-key.age".publicKeys = clawKeys;
