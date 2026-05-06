@@ -148,6 +148,22 @@
           ];
         };
 
+        # x86_64 VPS server - Dedicated Hermes Agent host (Nous Research, container mode)
+        hermes-claw = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = {
+            pkgs-unstable = pkgs-unstable-x86;
+            inherit self;
+          };
+          modules = [
+            ./hosts/hermes-claw/configuration.nix
+            disko.nixosModules.disko
+            home-manager.nixosModules.home-manager
+            agenix.nixosModules.default
+            agenixModule
+          ];
+        };
+
         # x86_64 VPS server - Dedicated NullClaw bot (Zero_kuzea)
         zero-kuzea = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
