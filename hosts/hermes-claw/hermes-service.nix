@@ -97,7 +97,12 @@ in
       # boundary remains: namespace isolation + dropped caps + no-new-privs;
       # rootfs writes are ephemeral (vanish on container remove). Reintroduce
       # once the upstream crun/image interaction is understood.
-      "--tmpfs=/tmp:size=64m"
+      # tmpfs size MUST be >=1g for this image — crun fails at OCI spec prep
+      # with a misleading "No space left on device" if smaller (verified
+      # empirically: 64m/256m/512m all fail; 1g works). The container's actual
+      # /tmp usage at startup is modest, so 1g is comfortable headroom; the
+      # tmpfs counts against the container's --memory budget.
+      "--tmpfs=/tmp:size=1g"
       "--shm-size=256m"
       "--memory=2g"
       "--cpus=2.0"
