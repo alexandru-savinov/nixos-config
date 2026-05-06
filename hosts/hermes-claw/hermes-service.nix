@@ -23,10 +23,47 @@ let
   hermesConfigYamlBody = ''
     # Managed by NixOS (hosts/hermes-claw/hermes-service.nix). Edits will be
     # overwritten on the next deploy. Pin keeps the agent on free+ZDR rails.
+    #
+    # Why tencent/hy3-preview:free as primary:
+    #   - 262K context (same as qwen rungs)
+    #   - Hosted by SiliconFlow, not Venice — Venice's free-tier 8 rpm cap on
+    #     qwen/qwen3-coder:free was being saturated within seconds of any
+    #     burst, leaving the agent unusable. Different upstream provider gives
+    #     us a separate rate-limit bucket.
+    #   - Still on the OpenRouter ZDR allow-list (verified via
+    #     /api/v1/endpoints/zdr).
+    # If SiliconFlow gets contested too, swap to inclusionai/ling-2.6-1t:free
+    # (Novita) — different provider again. Hermes Agent does NOT support a
+    # multi-rung failover ladder like sancta-claw's openclaw, so the choice
+    # of one primary matters more than configuring fallbacks.
     model:
-      default: "qwen/qwen3-coder:free"
+      default: "tencent/hy3-preview:free"
       provider: "openrouter"
       base_url: "https://openrouter.ai/api/v1"
+
+    # Auxiliary tasks (title_generation, compression, session_search, etc.)
+    # default to provider=auto, which probes for credentials and can fail
+    # with "No LLM provider configured for task=title_generation provider=
+    # auto. Run: hermes setup". Pin them to OpenRouter explicitly so every
+    # side-task uses the same free+ZDR pipeline as the main chat.
+    auxiliary:
+      title_generation:
+        provider: "openrouter"
+        model: "tencent/hy3-preview:free"
+      compression:
+        provider: "openrouter"
+        model: "tencent/hy3-preview:free"
+      session_search:
+        provider: "openrouter"
+        model: "tencent/hy3-preview:free"
+      web_extract:
+        provider: "openrouter"
+        model: "tencent/hy3-preview:free"
+      # vision: leave at provider=auto. Most free+ZDR text models don't
+      # accept image input; if vision tools fire and we don't have a
+      # multimodal free+ZDR option, the right behavior is graceful failure
+      # (the upstream "auto" path handles this), not silently sending images
+      # to a paid model.
   '';
   hermesConfigYaml = pkgs.writeText "hermes-config.yaml" hermesConfigYamlBody;
 
