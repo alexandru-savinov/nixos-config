@@ -90,7 +90,13 @@ in
     extraOptions = [
       "--security-opt=no-new-privileges"
       "--cap-drop=ALL"
-      "--read-only"
+      # `--read-only` removed: triggers `crun: write: No space left on device`
+      # at OCI spec prep time on this image (verified empirically — even an
+      # empty bind-mount + tmpfs /tmp config fails before the entrypoint runs,
+      # so it's not an upstream Python bytecode write). Container security
+      # boundary remains: namespace isolation + dropped caps + no-new-privs;
+      # rootfs writes are ephemeral (vanish on container remove). Reintroduce
+      # once the upstream crun/image interaction is understood.
       "--tmpfs=/tmp:size=64m"
       "--shm-size=256m"
       "--memory=2g"
@@ -106,7 +112,7 @@ in
   # storage, container state to /run/containers, and manages cgroups. Applying
   # ProtectSystem=strict / ProtectControlGroups / PrivateDevices to *this*
   # unit would block podman from doing its job. Workload hardening lives on
-  # the container itself via `extraOptions` (--cap-drop=ALL, --read-only,
+  # the container itself via `extraOptions` (--cap-drop=ALL,
   # --security-opt=no-new-privileges, tmpfs, memory/cpu caps), which the
   # kernel actually applies inside the container's namespace.
   systemd.services.podman-hermes-agent = {
