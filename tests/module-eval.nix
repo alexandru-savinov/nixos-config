@@ -17,7 +17,11 @@
 #
 # Called from flake.nix with: { pkgs, nixpkgs, self }
 
-{ pkgs, nixpkgs, self }:
+{ pkgs
+, nixpkgs
+, self
+,
+}:
 
 let
   system = pkgs.system;
@@ -27,45 +31,59 @@ let
   evalConfig =
     { modules
     , specialArgs ? { }
+    ,
     }:
     (nixpkgs.lib.nixosSystem {
       inherit system;
-      specialArgs = { inherit self; } // specialArgs;
+      specialArgs = {
+        inherit self;
+      }
+      // specialArgs;
       modules = [
         # Minimal base so the module system doesn't complain about
         # missing boot.loader / fileSystems / etc.
-        ({ lib, ... }: {
-          boot.loader.grub.enable = lib.mkDefault false;
-          fileSystems."/" = lib.mkDefault { device = "/dev/sda1"; fsType = "ext4"; };
-          system.stateVersion = lib.mkDefault "25.11";
-          nixpkgs.hostPlatform = lib.mkDefault system;
-          nixpkgs.config.allowUnfree = true;
-        })
-      ] ++ modules;
+        (
+          { lib, ... }:
+          {
+            boot.loader.grub.enable = lib.mkDefault false;
+            fileSystems."/" = lib.mkDefault {
+              device = "/dev/sda1";
+              fsType = "ext4";
+            };
+            system.stateVersion = lib.mkDefault "25.11";
+            nixpkgs.hostPlatform = lib.mkDefault system;
+            nixpkgs.config.allowUnfree = true;
+          }
+        )
+      ]
+      ++ modules;
     }).config;
 
   # Force-evaluate a config down to its toplevel derivation path.
   # This triggers all assertions and option merging.
-  forceEval = config:
-    builtins.seq config.system.build.toplevel.drvPath true;
+  forceEval = config: builtins.seq config.system.build.toplevel.drvPath true;
 
   # Check that evaluation succeeds (module is valid with given config).
   # Does NOT wrap with tryEval — if evaluation fails, the raw Nix error
   # propagates with full context (option path, assertion message, etc.).
-  shouldEval = name: args:
+  shouldEval =
+    name: args:
     let
       config = evalConfig args;
     in
     builtins.addErrorContext "in test '${name}'" (forceEval config);
 
   # Check that evaluation fails (assertion should fire for bad config).
-  shouldFail = name: args:
+  shouldFail =
+    name: args:
     let
       config = evalConfig args;
       result = builtins.tryEval (forceEval config);
     in
-    if !result.success then true
-    else builtins.throw "FAIL: ${name} — expected assertion failure but evaluation succeeded";
+    if !result.success then
+      true
+    else
+      builtins.throw "FAIL: ${name} — expected assertion failure but evaluation succeeded";
 
   # ── Test definitions ──────────────────────────────────────────────
 
@@ -146,7 +164,9 @@ let
                     name = "step-1";
                     url = "http://127.0.0.1:8080/api/test";
                     conditions = [ "[STATUS] == 200" ];
-                    store = { response_id = "[BODY].id"; };
+                    store = {
+                      response_id = "[BODY].id";
+                    };
                   }
                   {
                     name = "step-2";
@@ -303,7 +323,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     open-webui-missing-secret-key-rejected = shouldFail "open-webui: missing secret key rejected" {
@@ -317,7 +339,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     open-webui-with-testing = shouldEval "open-webui: with testing enabled" {
@@ -333,7 +357,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     open-webui-testing-requires-secret-key = shouldFail "open-webui: testing without secretKeyFile" {
@@ -349,7 +375,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     open-webui-auto-memory-requires-memory = shouldFail "open-webui: autoMemory without memory" {
@@ -364,7 +392,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     open-webui-disabled = shouldEval "open-webui: disabled" {
@@ -372,7 +402,9 @@ let
         ../modules/services/open-webui.nix
         { services.open-webui-tailscale.enable = false; }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     # ── OpenClaw ──────────────────────────────────────────────────
@@ -388,7 +420,9 @@ let
         }
       ];
       # claude-code intentionally omitted — assertion should fire
-      specialArgs = { claude-code = null; };
+      specialArgs = {
+        claude-code = null;
+      };
     };
 
     openclaw-nix-store-secret-rejected = shouldFail "openclaw: nix-store secret rejected" {
@@ -404,7 +438,11 @@ let
       ];
       # Provide a mock claude-code so the null-input assertion doesn't fire;
       # we're testing ONLY the /nix/store secret assertion here.
-      specialArgs = { claude-code = { packages.${system}.default = pkgs.hello; }; };
+      specialArgs = {
+        claude-code = {
+          packages.${system}.default = pkgs.hello;
+        };
+      };
     };
 
     openclaw-disabled = shouldEval "openclaw: disabled" {
@@ -412,7 +450,9 @@ let
         ../modules/services/openclaw.nix
         { services.openclaw.enable = false; }
       ];
-      specialArgs = { claude-code = null; };
+      specialArgs = {
+        claude-code = null;
+      };
     };
 
     # ── NullClaw ──────────────────────────────────────────────────
@@ -429,7 +469,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     nullclaw-nix-store-secret-rejected = shouldFail "nullclaw: nix-store api key rejected" {
@@ -445,7 +487,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     nullclaw-telegram-nix-store-rejected = shouldFail "nullclaw: nix-store telegram token rejected" {
@@ -461,7 +505,9 @@ let
           };
         }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     nullclaw-disabled = shouldEval "nullclaw: disabled" {
@@ -469,7 +515,9 @@ let
         ../modules/services/nullclaw.nix
         { services.nullclaw.enable = false; }
       ];
-      specialArgs = { pkgs-unstable = pkgs; };
+      specialArgs = {
+        pkgs-unstable = pkgs;
+      };
     };
 
     # ── UniFi MCP ─────────────────────────────────────────────────
@@ -499,7 +547,9 @@ let
         ../modules/services/claude.nix
         { customModules.claude.enable = true; }
       ];
-      specialArgs = { claude-code = null; };
+      specialArgs = {
+        claude-code = null;
+      };
     };
 
     claude-disabled = shouldEval "claude: disabled" {
@@ -507,7 +557,9 @@ let
         ../modules/services/claude.nix
         { customModules.claude.enable = false; }
       ];
-      specialArgs = { claude-code = null; };
+      specialArgs = {
+        claude-code = null;
+      };
     };
 
     # ── OpenClaw ZDR Proxy ────────────────────────────────────────
@@ -522,7 +574,10 @@ let
           # The proxy unit runs as user `openclaw`, normally created by
           # the host-level openclaw service. Declare it here so the
           # isolated module eval doesn't fail user-validation.
-          users.users.openclaw = { isSystemUser = true; group = "openclaw"; };
+          users.users.openclaw = {
+            isSystemUser = true;
+            group = "openclaw";
+          };
           users.groups.openclaw = { };
         }
       ];
@@ -546,10 +601,10 @@ let
         portOk = proxy.port == 5780;
         pathOk = agenixPath == "/run/agenix/openrouter-api-key";
       in
-      if portOk && pathOk then true
+      if portOk && pathOk then
+        true
       else
-        builtins.throw
-          "FAIL: sancta-claw openclaw-zdr-proxy wiring — port=${toString proxy.port} (expected 5780), apiKeyFile=${agenixPath} (expected /run/agenix/openrouter-api-key)";
+        builtins.throw "FAIL: sancta-claw openclaw-zdr-proxy wiring — port=${toString proxy.port} (expected 5780), apiKeyFile=${agenixPath} (expected /run/agenix/openrouter-api-key)";
 
     # Verify the rendered openclaw browser-config script registers the
     # free+ZDR ladder and routes through the local proxy. Reads the body
@@ -584,10 +639,10 @@ let
         ];
         missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
       in
-      if missing == [ ] then true
+      if missing == [ ] then
+        true
       else
-        builtins.throw
-          "FAIL: openclawBrowserConfigBody missing substrings: ${builtins.toJSON missing}";
+        builtins.throw "FAIL: openclawBrowserConfigBody missing substrings: ${builtins.toJSON missing}";
 
     # Verify the rendered openclaw health-check probe contains the
     # one-shot first-success Telegram alert sentinel and includes the
@@ -603,10 +658,61 @@ let
         ];
         missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
       in
-      if missing == [ ] then true
+      if missing == [ ] then
+        true
       else
-        builtins.throw
-          "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
+        builtins.throw "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
+
+    # Verify the rendered hermes-claw host config contains the agent image
+    # pin, persistent data path, and env-injection sentinels (bot token var,
+    # allowed-users chat ID, runtime env file path, loopback port binding,
+    # mount-direction sanity, ExecStartPre wiring). Reads body strings from
+    # system.build.hermesAgentEnvBody (exposed by hermes-service.nix) plus
+    # the OCI container's image/volumes — pure eval, no IFD.
+    hermes-claw-rendered =
+      let
+        cfg = self.nixosConfigurations.hermes-claw.config;
+        container = cfg.virtualisation.oci-containers.containers.hermes-agent;
+        svc = cfg.systemd.services.podman-hermes-agent.serviceConfig;
+        body =
+          cfg.system.build.hermesAgentEnvBody
+          + cfg.system.build.hermesConfigYamlBody
+          + builtins.toJSON container.image
+          + builtins.toJSON container.volumes
+          + builtins.toJSON container.ports
+          + builtins.toJSON container.environmentFiles
+          + builtins.toJSON (map toString svc.ExecStartPre);
+        required = [
+          # Pin: full image:tag@digest, not just the repo name. Catches drift
+          # to :latest, a tag swap, or a registry-side digest change.
+          "nousresearch/hermes-agent:v2026.4.30@sha256:900e1f8076662a20a685142321808085cc0b2935bb904b234c6828b4d7fb0f77"
+          # Mount direction: host:container, not container:host.
+          "/var/lib/hermes/data:/opt/data"
+          # Port binding must be loopback-only — never publish 0.0.0.0:8642.
+          "127.0.0.1:8642:8642"
+          "TELEGRAM_BOT_TOKEN"
+          "TELEGRAM_ALLOWED_USERS=364749075"
+          "/run/hermes-agent/env"
+          # ExecStartPre wired to the env-setup script (not just hermesAgentEnvBody
+          # left as dead code).
+          "hermes-agent-setup-env"
+          # Model pin: free+ZDR rails. If config.yaml stops being mounted into
+          # /opt/data/config.yaml, the upstream entrypoint copies the example
+          # whose default is anthropic/claude-opus-4.6 (paid) — guard against
+          # that regression by asserting the free model selector is present
+          # AND that the bind-mount entry itself is in container.volumes
+          # (the body string is rendered regardless of whether the volume is
+          # wired up, so model substrings alone don't catch a removed mount).
+          "qwen/qwen3-coder:free"
+          ''provider: "openrouter"''
+          ":/opt/data/config.yaml:ro"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then
+        true
+      else
+        builtins.throw "FAIL: hermes-claw rendered config missing substrings: ${builtins.toJSON missing}";
 
     # Verify the rendered sancta-claw smoke-test script asserts on the
     # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
@@ -623,10 +729,10 @@ let
         ];
         missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
       in
-      if missing == [ ] then true
+      if missing == [ ] then
+        true
       else
-        builtins.throw
-          "FAIL: sancta-claw smokeTestBody missing check titles: ${builtins.toJSON missing}";
+        builtins.throw "FAIL: sancta-claw smokeTestBody missing check titles: ${builtins.toJSON missing}";
 
   };
 
@@ -644,8 +750,10 @@ pkgs.runCommand "module-eval-tests"
   passthru = { inherit tests; };
 }
   # deepSeq ensures all test thunks are forced before the builder runs.
-  (builtins.deepSeq allResults ''
-    echo "All ${toString testCount} module evaluation tests passed:"
-    ${builtins.concatStringsSep "\n" (map (name: "echo '  ✓ ${name}'") testNames)}
-    echo "${toString testNames}" > $out
-  '')
+  (
+    builtins.deepSeq allResults ''
+      echo "All ${toString testCount} module evaluation tests passed:"
+      ${builtins.concatStringsSep "\n" (map (name: "echo '  ✓ ${name}'") testNames)}
+      echo "${toString testNames}" > $out
+    ''
+  )

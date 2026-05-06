@@ -29,6 +29,7 @@ Flake-based NixOS configuration:
 - **rpi5** (aarch64-linux): Minimal config for SD image builds only
 - **sancta-choir** (x86_64-linux): Hetzner VPS — OpenClaw AI gateway
 - **sancta-claw** (x86_64-linux): Hetzner VPS — Dedicated OpenClaw host (Official npm package, Pro subscription)
+- **hermes-claw** (x86_64-linux): Hetzner VPS — Dedicated Hermes Agent (Nous Research) in Podman container
 
 ## Commands
 
