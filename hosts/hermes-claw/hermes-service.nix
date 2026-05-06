@@ -1,7 +1,8 @@
-{ config
-, pkgs
-, lib
-, ...
+{
+  config,
+  pkgs,
+  lib,
+  ...
 }:
 let
   # Image pinned by tag AND digest. The tag scheme is date-based (v2026.X.Y),
@@ -13,6 +14,22 @@ let
   # User's personal Telegram chat ID — same value used in nullclaw and openclaw
   # watchers. Not a secret (it's just a numeric ID).
   telegramAllowedUsers = "364749075";
+
+  # Pin the model + provider in code. The upstream Docker entrypoint copies
+  # cli-config.yaml.example to /opt/data/config.yaml ONLY IF the path is
+  # missing — and that example defaults to anthropic/claude-opus-4.6 (paid).
+  # Per upstream .env.example "LLM_MODEL is no longer read from .env", so the
+  # only way to enforce free+ZDR routing is to pre-place config.yaml.
+  # Bind-mounted read-only from /nix/store so the file can't drift on the host.
+  hermesConfigYamlBody = ''
+    # Managed by NixOS (hosts/hermes-claw/hermes-service.nix). Edits will be
+    # overwritten on the next deploy. Pin keeps the agent on free+ZDR rails.
+    model:
+      default: "qwen/qwen3-coder:free"
+      provider: "openrouter"
+      base_url: "https://openrouter.ai/api/v1"
+  '';
+  hermesConfigYaml = pkgs.writeText "hermes-config.yaml" hermesConfigYamlBody;
 
   hermesAgentEnvBody = ''
     set -euo pipefail
@@ -32,9 +49,11 @@ let
   '';
 in
 {
-  # Expose env-injection script body for module-eval tests (Task 6).
-  # Mirrors the openclawBrowserConfigBody pattern in sancta-claw.
+  # Expose env-injection script body + config.yaml body for module-eval tests
+  # (Task 6). Mirrors the openclawBrowserConfigBody pattern in sancta-claw.
+  # Pure-evaluable (no readFile of /nix/store paths).
   system.build.hermesAgentEnvBody = hermesAgentEnvBody;
+  system.build.hermesConfigYamlBody = hermesConfigYamlBody;
 
   virtualisation.podman.enable = true;
   virtualisation.oci-containers.backend = "podman";
@@ -54,10 +73,20 @@ in
   virtualisation.oci-containers.containers.hermes-agent = {
     image = hermesImage;
     autoStart = true;
-    cmd = [ "gateway" "run" ];
+    cmd = [
+      "gateway"
+      "run"
+    ];
     # API only on loopback. No public port. Dashboard (9119) intentionally not exposed.
     ports = [ "127.0.0.1:8642:8642" ];
-    volumes = [ "${dataDir}:/opt/data" ];
+    volumes = [
+      "${dataDir}:/opt/data"
+      # Read-only bind-mount over the persistent volume's config.yaml. The
+      # entrypoint's `[ ! -f config.yaml ] && cp example` branch is bypassed
+      # because the file already exists (from this mount), so the upstream
+      # default model (anthropic/claude-opus-4.6 — paid) never lands.
+      "${hermesConfigYaml}:/opt/data/config.yaml:ro"
+    ];
     environmentFiles = [ "/run/hermes-agent/env" ];
     extraOptions = [
       "--security-opt=no-new-privileges"
@@ -71,30 +100,28 @@ in
   };
 
   # Override auto-generated podman-hermes-agent.service: add secret-injection
-  # ExecStartPre + systemd hardening directives.
+  # ExecStartPre + restart policy.
+  #
+  # NOTE on hardening: this unit is the container *manager* — it shells out
+  # to `podman run --pull missing` which writes images to /var/lib/containers/
+  # storage, container state to /run/containers, and manages cgroups. Applying
+  # ProtectSystem=strict / ProtectControlGroups / PrivateDevices to *this*
+  # unit would block podman from doing its job. Workload hardening lives on
+  # the container itself via `extraOptions` (--cap-drop=ALL, --read-only,
+  # --security-opt=no-new-privileges, tmpfs, memory/cpu caps), which the
+  # kernel actually applies inside the container's namespace.
   systemd.services.podman-hermes-agent = {
     serviceConfig = {
-      # NOTE: secrets reach the container via `oci-containers.containers.
-      # hermes-agent.environmentFiles` (which podman parses with `--env-file`
-      # — file is read by podman, not exported into its own host process env).
-      # We deliberately do NOT set `EnvironmentFile=` on this systemd unit —
-      # doing so would also export TELEGRAM_BOT_TOKEN + OPENROUTER_API_KEY
-      # into /proc/$pid/environ of the podman wrapper process, broadening the
-      # exposure beyond the container boundary unnecessarily.
+      # Secrets reach the container via `oci-containers.containers.hermes-agent
+      # .environmentFiles` (podman parses it with `--env-file` — read by podman,
+      # not exported into its host-process env). Deliberately NOT setting
+      # `EnvironmentFile=` here — that would also export TELEGRAM_BOT_TOKEN +
+      # OPENROUTER_API_KEY into /proc/$pid/environ of the podman wrapper.
       RuntimeDirectory = "hermes-agent";
       RuntimeDirectoryMode = "0700";
       ExecStartPre = [
         (pkgs.writeShellScript "hermes-agent-setup-env" hermesAgentEnvBody)
       ];
-      NoNewPrivileges = true;
-      ProtectSystem = "strict";
-      ProtectHome = true;
-      PrivateDevices = true;
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectControlGroups = true;
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
-      ReadWritePaths = [ dataDir ];
       Restart = lib.mkForce "on-failure";
       RestartSec = lib.mkForce "10s";
     };
