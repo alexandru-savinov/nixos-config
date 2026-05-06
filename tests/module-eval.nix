@@ -608,31 +608,39 @@ let
         builtins.throw
           "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
 
-    # Verify the rendered sancta-claw smoke-test script asserts on the
-    # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
-    # string from system.build (exposed by smoke-test.nix) — pure eval,
-    # same approach as openclaw-free-zdr-ladder-rendered.
     # Verify the rendered hermes-claw host config contains the agent image
     # pin, persistent data path, and env-injection sentinels (bot token var,
-    # allowed-users chat ID, runtime env file path). Reads body strings from
+    # allowed-users chat ID, runtime env file path, loopback port binding,
+    # mount-direction sanity, ExecStartPre wiring). Reads body strings from
     # system.build.hermesAgentEnvBody (exposed by hermes-service.nix) plus
     # the OCI container's image/volumes — pure eval, no IFD.
     hermes-claw-rendered =
       let
         cfg = self.nixosConfigurations.hermes-claw.config;
         container = cfg.virtualisation.oci-containers.containers.hermes-agent;
+        svc = cfg.systemd.services.podman-hermes-agent.serviceConfig;
         body =
           cfg.system.build.hermesAgentEnvBody
           + builtins.toJSON container.image
           + builtins.toJSON container.volumes
           + builtins.toJSON container.ports
-          + builtins.toJSON container.environmentFiles;
+          + builtins.toJSON container.environmentFiles
+          + builtins.toJSON svc.EnvironmentFile
+          + builtins.toJSON (map toString svc.ExecStartPre);
         required = [
-          "nousresearch/hermes-agent"
-          "/var/lib/hermes/data"
+          # Pin: full image:tag, not just the repo name. Catches drift to :latest
+          # or a downgrade.
+          "nousresearch/hermes-agent:v0.12.0"
+          # Mount direction: host:container, not container:host.
+          "/var/lib/hermes/data:/opt/data"
+          # Port binding must be loopback-only — never publish 0.0.0.0:8642.
+          "127.0.0.1:8642:8642"
           "TELEGRAM_BOT_TOKEN"
           "TELEGRAM_ALLOWED_USERS=364749075"
           "/run/hermes-agent/env"
+          # ExecStartPre wired to the env-setup script (not just hermesAgentEnvBody
+          # left as dead code).
+          "hermes-agent-setup-env"
         ];
         missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
       in
@@ -641,6 +649,10 @@ let
         builtins.throw
           "FAIL: hermes-claw rendered config missing substrings: ${builtins.toJSON missing}";
 
+    # Verify the rendered sancta-claw smoke-test script asserts on the
+    # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
+    # string from system.build (exposed by smoke-test.nix) — pure eval,
+    # same approach as openclaw-free-zdr-ladder-rendered.
     sancta-claw-smoke-test-zdr-checks =
       let
         body = self.nixosConfigurations.sancta-claw.config.system.build.smokeTestBody;

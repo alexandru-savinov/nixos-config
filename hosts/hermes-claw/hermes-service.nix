@@ -14,6 +14,9 @@ let
     set -euo pipefail
     BOT_TOKEN=$(${pkgs.coreutils}/bin/tr -d "\n" < "${config.age.secrets.zero-kuzea-telegram-bot-token.path}")
     OR_KEY=$(${pkgs.coreutils}/bin/tr -d "\n" < "${config.age.secrets.openrouter-api-key.path}")
+    # Fail fast on silently-empty agenix material (matches nullclaw pattern).
+    [ -n "$BOT_TOKEN" ] || { echo "ERROR: telegram bot token is empty" >&2; exit 1; }
+    [ -n "$OR_KEY" ] || { echo "ERROR: openrouter api key is empty" >&2; exit 1; }
     umask 077
     ${pkgs.coreutils}/bin/cat > /run/hermes-agent/env <<EOF
     TELEGRAM_BOT_TOKEN=$BOT_TOKEN
@@ -89,9 +92,12 @@ in
   };
 
   # Alias unit so `systemctl is-active hermes-agent` works without the podman- prefix.
+  # BindsTo (not just Requires) so the alias goes inactive when the underlying
+  # container service stops or fails — without this, the oneshot would remain
+  # active after a container crash and lie about agent health.
   systemd.services.hermes-agent = {
     description = "Hermes Agent (alias for podman-hermes-agent)";
-    requires = [ "podman-hermes-agent.service" ];
+    bindsTo = [ "podman-hermes-agent.service" ];
     after = [ "podman-hermes-agent.service" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
