@@ -8,7 +8,6 @@
   # backend == "docker". We use podman, so explicitly disable docker.
   virtualisation.docker.enable = false;
   virtualisation.podman.enable = true;
-  virtualisation.oci-containers.backend = "podman";
 
   # ── Agenix secret: combined env file with API keys ───────────────────
   age.secrets.hermes-env = {
@@ -31,6 +30,7 @@
       hostUsers = [ "root" ];
       extraOptions = [
         "--security-opt=no-new-privileges"
+        # 4g: headroom for writable layer (apt cache, pip, npm) + agent tools
         "--memory=4g"
         "--cpus=2.0"
       ];
@@ -44,10 +44,10 @@
         base_url = "https://openrouter.ai/api/v1";
       };
       auxiliary = {
-        title_generation = { provider = "openrouter"; };
-        compression = { provider = "openrouter"; };
-        session_search = { provider = "openrouter"; };
-        web_extract = { provider = "openrouter"; };
+        title_generation = { provider = "openrouter"; model = "tencent/hy3-preview:free"; };
+        compression = { provider = "openrouter"; model = "tencent/hy3-preview:free"; };
+        session_search = { provider = "openrouter"; model = "tencent/hy3-preview:free"; };
+        web_extract = { provider = "openrouter"; model = "tencent/hy3-preview:free"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };
