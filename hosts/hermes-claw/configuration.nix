@@ -45,8 +45,6 @@
     in
     {
       tailscale-auth-key = secret "tailscale-auth-key";
-      zero-kuzea-telegram-bot-token = secret "zero-kuzea-telegram-bot-token";
-      openrouter-api-key = secret "openrouter-api-key";
     };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──

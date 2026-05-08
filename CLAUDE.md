@@ -88,6 +88,7 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 | `openclaw` (sancta-claw) | 18789 | Official OpenClaw npm package on dedicated VPS |
+| `services.hermes-agent` (hermes-claw) | - | Hermes AI agent in Podman container (upstream module, container mode) |
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. OpenClaw uses a different model: file-based inbox with per-UID nftables network restriction (no listener).
 
@@ -109,11 +110,11 @@ age.secrets.my-secret.file = "${self}/secrets/my-secret.age";
 someService.secretFile = config.age.secrets.my-secret.path;
 ```
 
-Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `n8n-admin-password`, `n8n-api-key`, `tailscale-auth-key`, `open-webui-secret-key`, `e2e-test-api-key`, `unifi-password`, `caldav-credentials`, `kuzea-caldav-credentials`, `kuzea-github-token`, `kuzea-todoist-credentials`, `kuzea-airtable-credentials`
+Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-encryption-key`, `n8n-admin-password`, `n8n-api-key`, `tailscale-auth-key`, `open-webui-secret-key`, `e2e-test-api-key`, `unifi-password`, `caldav-credentials`, `kuzea-caldav-credentials`, `kuzea-github-token`, `kuzea-todoist-credentials`, `kuzea-airtable-credentials`, `hermes-env`
 
 ## CI/CD
 
-GitHub Actions on push/PR: `nix flake check`, build sancta-choir + sancta-claw (x86_64), evaluate rpi5 + rpi5-full (aarch64), format check. Main branch protected - use PRs.
+GitHub Actions on push/PR: `nix flake check`, build sancta-choir + sancta-claw + hermes-claw (x86_64), evaluate rpi5 + rpi5-full (aarch64), format check. Main branch protected - use PRs.
 
 ## Git Workflow
 

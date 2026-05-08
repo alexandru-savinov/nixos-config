@@ -87,94 +87,94 @@ This is a migration of an existing host, not a fresh deploy. Only the applicatio
 
 ### Task 2: Add combined agenix secret
 
-- [ ] Add `"secrets/hermes-env.age".publicKeys = allPlusBoth;` to `secrets/secrets.nix` (uses same recipient set that includes hermes-claw)
-- [ ] Decrypt existing values: `cd secrets && sudo agenix -d openrouter-api-key.age -i /root/dr/recovery-sancta-claw.key` and `sudo agenix -d zero-kuzea-telegram-bot-token.age -i /root/dr/recovery-sancta-claw.key`
-- [ ] Create `secrets/hermes-env.age` with `OPENROUTER_API_KEY=<value>` and `TELEGRAM_BOT_TOKEN=<value>` (pipe through stdin to `agenix -e` since non-interactive)
-- [ ] Verify existing .age files are byte-identical (`git diff` shows only new `hermes-env.age` + `secrets.nix` change)
-- [ ] run project tests - must pass before next task
+- [x] Add `"secrets/hermes-env.age".publicKeys = allPlusBoth;` to `secrets/secrets.nix` (uses same recipient set that includes hermes-claw)
+- [x] Decrypt existing values: `cd secrets && sudo agenix -d openrouter-api-key.age -i /root/dr/recovery-sancta-claw.key` and `sudo agenix -d zero-kuzea-telegram-bot-token.age -i /root/dr/recovery-sancta-claw.key`
+- [x] Create `secrets/hermes-env.age` with `OPENROUTER_API_KEY=<value>` and `TELEGRAM_BOT_TOKEN=<value>` (pipe through stdin to `agenix -e` since non-interactive)
+- [x] Verify existing .age files are byte-identical (`git diff` shows only new `hermes-env.age` + `secrets.nix` change)
+- [x] run project tests - must pass before next task
 
 ### Task 3: Add hermes-agent flake input
 
-- [ ] Add `hermes-agent` input to `flake.nix`: `url = "github:NousResearch/hermes-agent"` with `inputs.nixpkgs.follows = "nixpkgs"`
-- [ ] Add `hermes-agent` to the `outputs` function argument list (after `owui-openrouter-stats`)
-- [ ] Add `inputs.hermes-agent.nixosModules.default` to `nixosConfigurations.hermes-claw` modules list
-- [ ] Run `nix flake update hermes-agent` to fetch and lock
-- [ ] Verify `nix flake metadata` shows hermes-agent locked revision
-- [ ] run project tests - must pass before next task
+- [x] Add `hermes-agent` input to `flake.nix`: `url = "github:NousResearch/hermes-agent"` with `inputs.nixpkgs.follows = "nixpkgs"`
+- [x] Add `hermes-agent` to the `outputs` function argument list (after `owui-openrouter-stats`)
+- [x] Add `inputs.hermes-agent.nixosModules.default` to `nixosConfigurations.hermes-claw` modules list
+- [x] Run `nix flake update hermes-agent` to fetch and lock
+- [x] Verify `nix flake metadata` shows hermes-agent locked revision
+- [x] run project tests - must pass before next task
 
 ### Task 4: Replace hermes-service.nix with upstream module config
 
-- [ ] Delete existing contents of `hosts/hermes-claw/hermes-service.nix`
-- [ ] Write new module: `virtualisation.docker.enable = false`, `virtualisation.podman.enable = true`, `virtualisation.oci-containers.backend = "podman"`
-- [ ] Add `age.secrets.hermes-env` declaration (file = `../../secrets/hermes-env.age`, owner = "hermes", group = "hermes", mode = "0400")
-- [ ] Configure `services.hermes-agent.enable = true` with `addToSystemPackages = true`
-- [ ] Configure `container` block: `enable = true`, `backend = "podman"`, `image = "ubuntu:24.04"`, `hostUsers = ["root"]`
-- [ ] Set `container.extraOptions`: `--security-opt=no-new-privileges`, `--memory=4g`, `--cpus=2.0`
-- [ ] Configure `settings` attrset: model (`tencent/hy3-preview:free`, provider openrouter, base_url), auxiliary tasks (title_generation, compression, session_search, web_extract all on openrouter), toolsets, memory, terminal
-- [ ] Set `environmentFiles = [ config.age.secrets.hermes-env.path ]`
-- [ ] Set `environment` with `TELEGRAM_ALLOWED_USERS = "364749075"` and `HERMES_DASHBOARD = "0"`
-- [ ] Set `extraPackages` with git, ripgrep, jq, curl
-- [ ] Remove old `system.build.hermesAgentEnvBody` and `system.build.hermesConfigYamlBody` exports
-- [ ] Remove old `users.users.hermes` / `users.groups.hermes` / `systemd.tmpfiles.rules` (upstream module creates these)
-- [ ] Remove old `virtualisation.oci-containers.containers.hermes-agent` block
-- [ ] Remove old `systemd.services.podman-hermes-agent` override and `systemd.services.hermes-agent` alias
-- [ ] run project tests - must pass before next task
+- [x] Delete existing contents of `hosts/hermes-claw/hermes-service.nix`
+- [x] Write new module: `virtualisation.docker.enable = false`, `virtualisation.podman.enable = true`, `virtualisation.oci-containers.backend = "podman"`
+- [x] Add `age.secrets.hermes-env` declaration (file = `../../secrets/hermes-env.age`, owner = "hermes", group = "hermes", mode = "0400")
+- [x] Configure `services.hermes-agent.enable = true` with `addToSystemPackages = true`
+- [x] Configure `container` block: `enable = true`, `backend = "podman"`, `image = "ubuntu:24.04"`, `hostUsers = ["root"]`
+- [x] Set `container.extraOptions`: `--security-opt=no-new-privileges`, `--memory=4g`, `--cpus=2.0`
+- [x] Configure `settings` attrset: model (`tencent/hy3-preview:free`, provider openrouter, base_url), auxiliary tasks (title_generation, compression, session_search, web_extract all on openrouter), toolsets, memory, terminal
+- [x] Set `environmentFiles = [ config.age.secrets.hermes-env.path ]`
+- [x] Set `environment` with `TELEGRAM_ALLOWED_USERS = "364749075"` and `HERMES_DASHBOARD = "0"`
+- [x] Set `extraPackages` with git, ripgrep, jq, curl
+- [x] Remove old `system.build.hermesAgentEnvBody` and `system.build.hermesConfigYamlBody` exports
+- [x] Remove old `users.users.hermes` / `users.groups.hermes` / `systemd.tmpfiles.rules` (upstream module creates these)
+- [x] Remove old `virtualisation.oci-containers.containers.hermes-agent` block
+- [x] Remove old `systemd.services.podman-hermes-agent` override and `systemd.services.hermes-agent` alias
+- [x] run project tests - must pass before next task
 
 ### Task 5: Update module-eval tests
 
-- [ ] Read `tests/module-eval.nix` fully to understand test structure and hermes-claw assertions
-- [ ] Remove old `hermes-claw-rendered` test block that asserts on oci-containers config, image digest, env body strings
-- [ ] Add new test asserting on `services.hermes-agent.settings.model.default == "tencent/hy3-preview:free"` and `services.hermes-agent.container.enable == true`
-- [ ] Ensure test evaluation has access to hermes-agent flake input (the nixosConfiguration already includes the module; test just needs to eval the config)
-- [ ] Run `nix flake check` to verify all tests pass (module-eval is arch-independent, runs on aarch64)
-- [ ] Run `nix eval .#nixosConfigurations.hermes-claw.config.services.hermes-agent.settings` to verify settings resolve
-- [ ] If eval fails due to uv2nix IFD on aarch64, test only on-target (document why)
-- [ ] run project tests - must pass before next task
+- [x] Read `tests/module-eval.nix` fully to understand test structure and hermes-claw assertions
+- [x] Remove old `hermes-claw-rendered` test block that asserts on oci-containers config, image digest, env body strings
+- [x] Add new test asserting on `services.hermes-agent.settings.model.default == "tencent/hy3-preview:free"` and `services.hermes-agent.container.enable == true`
+- [x] Ensure test evaluation has access to hermes-agent flake input (the nixosConfiguration already includes the module; test just needs to eval the config)
+- [x] Run `nix flake check` to verify all tests pass (module-eval is arch-independent, runs on aarch64)
+- [x] Run `nix eval .#nixosConfigurations.hermes-claw.config.services.hermes-agent.settings` to verify settings resolve
+- [x] If eval fails due to uv2nix IFD on aarch64, test only on-target (document why)
+- [x] run project tests - must pass before next task
 
 ### Task 6: Wipe stale state on host
 
-- [ ] SSH to hermes-claw (`ssh root@100.106.126.114`) and record `df -h /` before
-- [ ] Stop old service: `systemctl stop podman-hermes-agent`
-- [ ] Remove old container: `podman rm -f hermes-agent`
-- [ ] Remove stale data: `rm -rf /var/lib/hermes/data`
-- [ ] run project tests - must pass before next task
+- [x] SSH to hermes-claw (`ssh root@100.106.126.114`) and record `df -h /` before
+- [x] Stop old service: `systemctl stop podman-hermes-agent`
+- [x] Remove old container: `podman rm -f hermes-agent`
+- [x] Remove stale data: `rm -rf /var/lib/hermes/data`
+- [x] run project tests - must pass before next task
 
 ### Task 7: Deploy
 
-- [ ] Commit all changes with message: `hermes-claw: switch to upstream module, container mode`
-- [ ] Push branch to origin
-- [ ] Deploy using build-on-target: `nixos-rebuild switch --flake .#hermes-claw --target-host root@100.106.126.114 --build-host root@100.106.126.114`
-- [ ] If `--build-host` fails (flake not accessible from target), alternative: SSH to target and run `nixos-rebuild switch --flake github:alexandru-savinov/nixos-config/hermes-claw-flexible-mode#hermes-claw`
-- [ ] Monitor build output — expect 5-15 min for first uv2nix build, first boot entrypoint provisions apt/uv/venv (additional 2-5 min)
-- [ ] Confirm activation completes without errors
-- [ ] run project tests - must pass before next task
+- [x] Commit all changes with message: `hermes-claw: switch to upstream module, container mode`
+- [x] Push branch to origin
+- [x] Deploy using build-on-target: `nixos-rebuild switch --flake .#hermes-claw --target-host root@100.106.126.114 --build-host root@100.106.126.114`
+- [x] If `--build-host` fails (flake not accessible from target), alternative: SSH to target and run `nixos-rebuild switch --flake github:alexandru-savinov/nixos-config/hermes-claw-flexible-mode#hermes-claw`
+- [x] Monitor build output — expect 5-15 min for first uv2nix build, first boot entrypoint provisions apt/uv/venv (additional 2-5 min)
+- [x] Confirm activation completes without errors
+- [x] run project tests - must pass before next task
 
 ### Task 8: Verify deployment
 
-- [ ] Run `systemctl is-active hermes-agent` — must report `active`
-- [ ] Check `journalctl -u hermes-agent -n 80` for errors
-- [ ] Verify module-mode markers exist: `ls -la /var/lib/hermes/.hermes/{config.yaml,.env,.managed,.container-mode}`
-- [ ] Inspect `cat /var/lib/hermes/.hermes/config.yaml | head -40` — model must be `tencent/hy3-preview:free`
-- [ ] Verify `hermes version` works from host shell
-- [ ] Verify `hermes config` shows `provider: openrouter` and model `tencent/hy3-preview:free` (NOT anthropic/claude)
-- [ ] Test self-modification: `podman exec hermes-agent apt-get update -qq && podman exec hermes-agent apt-get install -y -qq fortune-mod`
-- [ ] Test persistence: `systemctl restart hermes-agent && sleep 10 && podman exec hermes-agent /usr/games/fortune` (extra wait for entrypoint)
-- [ ] Send `/start` to Telegram bot from chat ID 364749075 and confirm reply
-- [ ] Record hermes-agent flake input revision: `nix flake metadata --json | jq '.locks.nodes."hermes-agent".locked'`
-- [ ] Record disk usage delta: `df -h /` after vs before (from Task 6)
-- [ ] Verify no unexpected listening ports: `ss -tlnp | grep -v 127.0.0.1 | grep -v ::1`
-- [ ] run project tests - must pass before next task
+- [x] Run `systemctl is-active hermes-agent` — must report `active`
+- [x] Check `journalctl -u hermes-agent -n 80` for errors
+- [x] Verify module-mode markers exist: `ls -la /var/lib/hermes/.hermes/{config.yaml,.env,.managed,.container-mode}`
+- [x] Inspect `cat /var/lib/hermes/.hermes/config.yaml | head -40` — model must be `tencent/hy3-preview:free`
+- [x] Verify `hermes version` works from host shell
+- [x] Verify `hermes config` shows `provider: openrouter` and model `tencent/hy3-preview:free` (NOT anthropic/claude)
+- [x] Test self-modification: `podman exec hermes-agent apt-get update -qq && podman exec hermes-agent apt-get install -y -qq fortune-mod`
+- [x] Test persistence: `systemctl restart hermes-agent && sleep 10 && podman exec hermes-agent /usr/games/fortune` (extra wait for entrypoint)
+- [x] Send `/start` to Telegram bot from chat ID 364749075 and confirm reply
+- [x] Record hermes-agent flake input revision: `nix flake metadata --json | jq '.locks.nodes."hermes-agent".locked'`
+- [x] Record disk usage delta: `df -h /` after vs before (from Task 6)
+- [x] Verify no unexpected listening ports: `ss -tlnp | grep -v 127.0.0.1 | grep -v ::1`
+- [x] run project tests - must pass before next task
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] verify all requirements from Overview are implemented
-- [ ] confirm self-modification persists across restarts
-- [ ] confirm model config is declarative and correct (not overwritten by upstream defaults)
-- [ ] confirm no new inbound firewall ports were added
-- [ ] confirm existing agenix secrets are byte-identical (check on rpi5: `cd nixos-config && git diff -- secrets/*.age`)
-- [ ] confirm `--network=host` doesn't expose anything new (only loopback listeners, firewall blocks rest)
-- [ ] run full project test suite
-- [ ] run project linter - all issues must be fixed
+- [x] verify all requirements from Overview are implemented
+- [x] confirm self-modification persists across restarts
+- [x] confirm model config is declarative and correct (not overwritten by upstream defaults)
+- [x] confirm no new inbound firewall ports were added
+- [x] confirm existing agenix secrets are byte-identical (check on rpi5: `cd nixos-config && git diff -- secrets/*.age`)
+- [x] confirm `--network=host` doesn't expose anything new (only loopback listeners, firewall blocks rest)
+- [x] run full project test suite
+- [x] run project linter - all issues must be fixed
 
 ## Post-Completion
 
