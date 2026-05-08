@@ -678,7 +678,7 @@ let
           securityOpt = builtins.elem "--security-opt=no-new-privileges" ha.container.extraOptions;
           modelPin = ha.settings.model.default == "tencent/hy3-preview:free";
           modelProvider = ha.settings.model.provider == "openrouter";
-          telegramAllowed = ha.environment.TELEGRAM_ALLOWED_USERS == "364749075";
+          telegramAllowed = ha.environment.TELEGRAM_ALLOWED_USERS == "364749075,7957556729";
           dashboardOff = ha.environment.HERMES_DASHBOARD == "0";
           hasEnvFiles = builtins.any (f: builtins.match ".*/hermes-env" f != null) ha.environmentFiles;
         };

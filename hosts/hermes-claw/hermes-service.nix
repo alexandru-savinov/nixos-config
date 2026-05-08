@@ -1,4 +1,5 @@
 { config
+, lib
 , pkgs
 , ...
 }:
@@ -62,7 +63,7 @@
 
     # Non-secret environment
     environment = {
-      TELEGRAM_ALLOWED_USERS = "364749075";
+      TELEGRAM_ALLOWED_USERS = "364749075,7957556729";
       HERMES_DASHBOARD = "0";
     };
 
@@ -74,4 +75,15 @@
       curl
     ];
   };
+
+  # ── Fix skills directory permissions ────────────────────────────────
+  # Default skills are copied from the Nix store (read-only, 444/555).
+  # The upstream entrypoint chown's HERMES_HOME but doesn't chmod u+w,
+  # so the hermes user owns the files but can't write to them.
+  # Run after the upstream activation script to ensure skills are writable.
+  system.activationScripts."hermes-skills-permissions" = lib.stringAfter [ "hermes-agent-setup" ] ''
+    if [ -d /var/lib/hermes/.hermes/skills ]; then
+      find /var/lib/hermes/.hermes/skills -not -perm -u+w -exec chmod u+w {} +
+    fi
+  '';
 }
