@@ -663,56 +663,31 @@ let
       else
         builtins.throw "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
 
-    # Verify the rendered hermes-claw host config contains the agent image
-    # pin, persistent data path, and env-injection sentinels (bot token var,
-    # allowed-users chat ID, runtime env file path, loopback port binding,
-    # mount-direction sanity, ExecStartPre wiring). Reads body strings from
-    # system.build.hermesAgentEnvBody (exposed by hermes-service.nix) plus
-    # the OCI container's image/volumes — pure eval, no IFD.
-    hermes-claw-rendered =
+    # Verify the hermes-claw host config uses the upstream hermes-agent
+    # module in container mode with the correct model pin and settings.
+    # Pure eval — reads config options directly, no IFD or derivation build.
+    hermes-claw-upstream-module =
       let
         cfg = self.nixosConfigurations.hermes-claw.config;
-        container = cfg.virtualisation.oci-containers.containers.hermes-agent;
-        svc = cfg.systemd.services.podman-hermes-agent.serviceConfig;
-        body =
-          cfg.system.build.hermesAgentEnvBody
-          + cfg.system.build.hermesConfigYamlBody
-          + builtins.toJSON container.image
-          + builtins.toJSON container.volumes
-          + builtins.toJSON container.ports
-          + builtins.toJSON container.environmentFiles
-          + builtins.toJSON (map toString svc.ExecStartPre);
-        required = [
-          # Pin: full image:tag@digest, not just the repo name. Catches drift
-          # to :latest, a tag swap, or a registry-side digest change.
-          "nousresearch/hermes-agent:v2026.4.30@sha256:900e1f8076662a20a685142321808085cc0b2935bb904b234c6828b4d7fb0f77"
-          # Mount direction: host:container, not container:host.
-          "/var/lib/hermes/data:/opt/data"
-          # Port binding must be loopback-only — never publish 0.0.0.0:8642.
-          "127.0.0.1:8642:8642"
-          "TELEGRAM_BOT_TOKEN"
-          "TELEGRAM_ALLOWED_USERS=364749075"
-          "/run/hermes-agent/env"
-          # ExecStartPre wired to the env-setup script (not just hermesAgentEnvBody
-          # left as dead code).
-          "hermes-agent-setup-env"
-          # Model pin: free+ZDR rails. If config.yaml stops being mounted into
-          # /opt/data/config.yaml, the upstream entrypoint copies the example
-          # whose default is anthropic/claude-opus-4.6 (paid) — guard against
-          # that regression by asserting the free model selector is present
-          # AND that the bind-mount entry itself is in container.volumes
-          # (the body string is rendered regardless of whether the volume is
-          # wired up, so model substrings alone don't catch a removed mount).
-          "qwen/qwen3-coder:free"
-          ''provider: "openrouter"''
-          ":/opt/data/config.yaml:ro"
-        ];
-        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+        ha = cfg.services.hermes-agent;
+        checks = {
+          enabled = ha.enable;
+          containerMode = ha.container.enable;
+          containerBackend = ha.container.backend == "podman";
+          containerImage = ha.container.image == "ubuntu:24.04";
+          securityOpt = builtins.elem "--security-opt=no-new-privileges" ha.container.extraOptions;
+          modelPin = ha.settings.model.default == "tencent/hy3-preview:free";
+          modelProvider = ha.settings.model.provider == "openrouter";
+          telegramAllowed = ha.environment.TELEGRAM_ALLOWED_USERS == "364749075";
+          dashboardOff = ha.environment.HERMES_DASHBOARD == "0";
+          hasEnvFiles = builtins.any (f: builtins.match ".*/hermes-env" f != null) ha.environmentFiles;
+        };
+        failed = builtins.filter (name: !checks.${name}) (builtins.attrNames checks);
       in
-      if missing == [ ] then
+      if failed == [ ] then
         true
       else
-        builtins.throw "FAIL: hermes-claw rendered config missing substrings: ${builtins.toJSON missing}";
+        builtins.throw "FAIL: hermes-claw upstream module checks failed: ${builtins.toJSON failed}";
 
     # Verify the rendered sancta-claw smoke-test script asserts on the
     # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body

@@ -125,4 +125,10 @@ in
 
   # Anthropic API key (setup key from OpenClaw Pro subscription)
   "anthropic-api-key.age".publicKeys = clawKeys;
+
+  # ── Hermes Agent combined env file (hermes-claw) ─────────────────────
+  # KEY=VALUE format for the upstream NixOS module's environmentFiles.
+  # Contains OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN (same plaintext as
+  # the per-value secrets above, combined into one env file).
+  "hermes-env.age".publicKeys = users ++ [ rpi5 hermes-claw ];
 }

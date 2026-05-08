@@ -51,9 +51,15 @@
       url = "github:karamanliev/open-webui-openrouter-stats";
       flake = false;
     };
+    # Hermes Agent (Nous Research) — AI agent framework with NixOS module.
+    # Container mode: uv2nix-built binary bind-mounted into Ubuntu, writable layer.
+    hermes-agent = {
+      url = "github:NousResearch/hermes-agent";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, kuzea-workspace, owui-openrouter-stats, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, kuzea-workspace, owui-openrouter-stats, hermes-agent, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -161,6 +167,7 @@
             home-manager.nixosModules.home-manager
             agenix.nixosModules.default
             agenixModule
+            hermes-agent.nixosModules.default
           ];
         };
 
