@@ -51,7 +51,10 @@
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };
-      terminal = { backend = "local"; };
+      terminal = {
+        backend = "local";
+        cwd = "/data/workspace";
+      };
     };
 
     # Secrets via combined agenix env file
