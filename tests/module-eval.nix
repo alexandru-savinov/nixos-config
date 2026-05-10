@@ -676,7 +676,7 @@ let
           containerBackend = ha.container.backend == "podman";
           containerImage = ha.container.image == "ubuntu:24.04";
           securityOpt = builtins.elem "--security-opt=no-new-privileges" ha.container.extraOptions;
-          modelPin = ha.settings.model.default == "meta-llama/llama-3.3-70b-instruct:free";
+          modelPin = ha.settings.model.default == "qwen/qwen3-coder:free";
           modelProvider = ha.settings.model.provider == "openrouter";
           telegramAllowed = ha.environment.TELEGRAM_ALLOWED_USERS == "364749075,7957556729";
           dashboardOff = ha.environment.HERMES_DASHBOARD == "0";
