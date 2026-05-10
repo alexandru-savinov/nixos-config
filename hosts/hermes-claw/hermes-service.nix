@@ -40,15 +40,15 @@
     # Declarative config — deep-merged into $HERMES_HOME/config.yaml
     settings = {
       model = {
-        default = "nousresearch/hermes-3-llama-3.1-405b:free";
+        default = "meta-llama/llama-3.3-70b-instruct:free";
         provider = "openrouter";
         base_url = "https://openrouter.ai/api/v1";
       };
       auxiliary = {
-        title_generation = { provider = "openrouter"; model = "nousresearch/hermes-3-llama-3.1-405b:free"; };
-        compression = { provider = "openrouter"; model = "nousresearch/hermes-3-llama-3.1-405b:free"; };
-        session_search = { provider = "openrouter"; model = "nousresearch/hermes-3-llama-3.1-405b:free"; };
-        web_extract = { provider = "openrouter"; model = "nousresearch/hermes-3-llama-3.1-405b:free"; };
+        title_generation = { provider = "openrouter"; model = "meta-llama/llama-3.3-70b-instruct:free"; };
+        compression = { provider = "openrouter"; model = "meta-llama/llama-3.3-70b-instruct:free"; };
+        session_search = { provider = "openrouter"; model = "meta-llama/llama-3.3-70b-instruct:free"; };
+        web_extract = { provider = "openrouter"; model = "meta-llama/llama-3.3-70b-instruct:free"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };
