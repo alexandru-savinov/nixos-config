@@ -40,15 +40,15 @@
     # Declarative config — deep-merged into $HERMES_HOME/config.yaml
     settings = {
       model = {
-        default = "qwen/qwen3-coder:free";
+        default = "nvidia/nemotron-3-super-120b-a12b:free";
         provider = "openrouter";
         base_url = "https://openrouter.ai/api/v1";
       };
       auxiliary = {
-        title_generation = { provider = "openrouter"; model = "qwen/qwen3-coder:free"; };
-        compression = { provider = "openrouter"; model = "qwen/qwen3-coder:free"; };
-        session_search = { provider = "openrouter"; model = "qwen/qwen3-coder:free"; };
-        web_extract = { provider = "openrouter"; model = "qwen/qwen3-coder:free"; };
+        title_generation = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
+        compression = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
+        session_search = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
+        web_extract = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };
