@@ -45,8 +45,8 @@ Currently returns `{ index, word, description, error: errorMsg, imageBase64: nul
 Add `imageFile: null` to the return object for consistency with the new Extract Image Data output.
 
 #### Verify
-- Read back the node's jsCode
-- Confirm the return includes `imageFile: null`
+- [x] Read back the node's jsCode
+- [x] Confirm the return includes `imageFile: null`
 
 ### Task 3: Extract Audio Data — write to disk
 
