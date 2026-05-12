@@ -432,7 +432,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "// Pass through items without audio data\nconst aggregatedData = $input.first().json;\nconst items = aggregatedData.data || [];\n\nconst itemsWithNullAudio = items.map(item => ({\n  ...item,\n  audioBase64: null,\n  audioMimeType: null,\n  audioError: null\n}));\n\nreturn [{ json: { data: itemsWithNullAudio } }];\n"
+        "jsCode": "// Pass through items without audio data\nconst aggregatedData = $input.first().json;\nconst items = aggregatedData.data || [];\n\nconst itemsWithNullAudio = items.map(item => ({\n  ...item,\n  audioBase64: null,\n  audioFile: null,\n  audioMimeType: null,\n  audioError: null\n}));\n\nreturn [{ json: { data: itemsWithNullAudio } }];\n"
       }
     },
     {

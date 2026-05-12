@@ -76,8 +76,8 @@ Modify the "No Audio Passthrough" Code node in `n8n-workflows/image-to-anki-work
 Currently sets `audioBase64: null`. Change to also set `audioFile: null` (for consistency with the new Extract Audio Data output shape).
 
 #### Verify
-- Read back the node's jsCode
-- Confirm `audioFile: null` is present in the mapped items
+- [x] Read back the node's jsCode
+- [x] Confirm `audioFile: null` is present in the mapped items
 
 ### Task 5: Prepare APKG Input — read files from disk
 
