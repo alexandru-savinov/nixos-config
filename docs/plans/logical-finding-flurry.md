@@ -1,5 +1,9 @@
 # Plan: Write images/audio to disk during loop to prevent OOM
 
+## Status: Complete
+
+All tasks implemented and verified. Known follow-up: n8n still OOMs ~2s post-completion from execution data retention in memory (separate from the loop accumulation issue fixed here).
+
 ## Context
 
 The `image-to-anki-worker` n8n workflow crashes with OOM (1GB peak + 338MB swap) when generating 40-card decks on the RPi5 (4GB RAM, `MemoryMax=1536M`). Root cause: base64 image and audio data (~200KB each × 40 cards) accumulates in memory through the loop iterations and n8n's aggregate nodes, overwhelming the n8n task runner.
