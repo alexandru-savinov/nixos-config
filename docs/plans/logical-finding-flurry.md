@@ -84,20 +84,22 @@ Currently sets `audioBase64: null`. Change to also set `audioFile: null` (for co
 Modify the "Prepare APKG Input" Code node in `n8n-workflows/image-to-anki-worker.json`.
 
 Currently reads `item.imageBase64` and `item.audioBase64` directly from the aggregated items. Change to:
-- Read image from `item.imageFile` path using `fs.readFileSync(item.imageFile).toString('base64')`
-- Read audio from `item.audioFile` path using `fs.readFileSync(item.audioFile).toString('base64')`
-- Wrap each in try/catch so a missing file doesn't crash the whole deck
-- The output JSON structure for `generate-apkg.py` must remain identical (same field names: `imageBase64`, `audioBase64`, etc.)
+- [x] Read image from `item.imageFile` path using `fs.readFileSync(item.imageFile).toString('base64')`
+- [x] Read audio from `item.audioFile` path using `fs.readFileSync(item.audioFile).toString('base64')`
+- [x] Wrap each in try/catch so a missing file doesn't crash the whole deck
+- [x] The output JSON structure for `generate-apkg.py` must remain identical (same field names: `imageBase64`, `audioBase64`, etc.)
 
 Also update the `failedImages` filter: currently checks `i.error && !i.imageBase64`, change to `i.error && !i.imageFile`.
+- [x] Updated `failedImages` filter to check `!i.imageFile`
 
 The `imageCardCount` filter: currently checks `i.imageBase64`, change to `i.imageFile`.
+- [x] Updated `imageCardCount` filter to check `i.imageFile`
 
 #### Verify
-- Read back the node's jsCode
-- Confirm it reads from `item.imageFile` and `item.audioFile` paths
-- Confirm the output JSON still has `imageBase64` and `audioBase64` fields (read from disk)
-- Confirm `failedImages` checks `!i.imageFile` instead of `!i.imageBase64`
+- [x] Read back the node's jsCode
+- [x] Confirm it reads from `item.imageFile` and `item.audioFile` paths
+- [x] Confirm the output JSON still has `imageBase64` and `audioBase64` fields (read from disk)
+- [x] Confirm `failedImages` checks `!i.imageFile` instead of `!i.imageBase64`
 
 ### Task 6: Deploy and E2E test
 
