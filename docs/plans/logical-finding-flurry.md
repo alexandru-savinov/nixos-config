@@ -53,21 +53,21 @@ Add `imageFile: null` to the return object for consistency with the new Extract 
 Modify the "Extract Audio Data" Code node in `n8n-workflows/image-to-anki-worker.json`.
 
 Currently keeps `audioBase64` in the returned item JSON. Change to:
-- After extracting `audioBase64` from `item.binary`, decode it and write raw bytes to `{jobDir}/audio_{index}.bin`
-- Get `jobDir` from `$('Initialize Job').first().json.jobDir`
-- Get `index` from `inputData.index` (already available in the spread)
-- Return `audioFile` (the path) instead of `audioBase64`
-- Set `audioBase64: null` in the return
+- [x] After extracting `audioBase64` from `item.binary`, decode it and write raw bytes to `{jobDir}/audio_{index}.bin`
+- [x] Get `jobDir` from `$('Initialize Job').first().json.jobDir`
+- [x] Get `index` from `inputData.index` (already available in the spread)
+- [x] Return `audioFile` (the path) instead of `audioBase64`
+- [x] Set `audioBase64: null` in the return
 
 The return should include `audioFile: audioPath` and `audioBase64: null`.
 
 When no audio data is received (the error branch), set `audioFile: null`.
 
 #### Verify
-- Read back the node's jsCode
-- Confirm `audioBase64` is null in all return paths
-- Confirm `audioFile` is set to the path (or null on error)
-- Confirm `fs.writeFileSync` writes to `audio_{index}.bin`
+- [x] Read back the node's jsCode
+- [x] Confirm `audioBase64` is null in all return paths
+- [x] Confirm `audioFile` is set to the path (or null on error)
+- [x] Confirm `fs.writeFileSync` writes to `audio_{index}.bin`
 
 ### Task 4: No Audio Passthrough — set audioFile: null
 
