@@ -8,138 +8,124 @@ The `image-to-anki-worker` n8n workflow crashes with OOM (1GB peak + 338MB swap)
 
 Write image/audio files to disk immediately in the Extract nodes. Pass only file paths through the loop. In Prepare APKG Input, read files back from disk when building the final JSON for `generate-apkg`.
 
-This eliminates ~16MB of base64 data sitting in n8n's node memory across 40 loop iterations.
-
 ## Files to modify
 
 - `n8n-workflows/image-to-anki-worker.json` — 5 Code nodes modified
 
-## Step 1: Extract Image Data — write to disk
+### Task 1: Extract Image Data — write to disk
 
-Currently keeps `imageBase64` in the item JSON. Change to:
-- Write base64-decoded image bytes to `{jobDir}/img_{index}.bin`
-- Store mimeType in `{jobDir}/img_{index}.meta`
-- Return `imageFile` path instead of `imageBase64`
-- Keep `imageHash` (small, needed for dedup)
-- Set `imageBase64: null`
+Modify the "Extract Image Data" Code node in `n8n-workflows/image-to-anki-worker.json`.
 
-Key code change:
+Currently it keeps `imageBase64` (the full base64 string) in the returned item JSON. Change to:
+- [x] After decoding base64 to `bytes` and computing `hash`, write the raw bytes to `{jobDir}/img_{index}.bin` using `fs.writeFileSync`
+- [x] Write the `mimeType` string to `{jobDir}/img_{index}.meta`
+- [x] Get `jobDir` from `$('Initialize Job').first().json.jobDir`
+- [x] Return `imageFile` (the path) instead of `imageBase64`
+- [x] Keep `imageHash`, `mimeType`, `imageSizeBytes` (small metadata)
+- [x] Do NOT return `imageBase64` in the output item
+
+The return should be:
 ```js
-const imgPath = require('path').join($('Initialize Job').first().json.jobDir, `img_${index}.bin`);
-fs.writeFileSync(imgPath, bytes);
-fs.writeFileSync(imgPath.replace('.bin', '.meta'), mimeType);
 return [{ json: { index, word, description, imageFile: imgPath, imageHash: hash, mimeType, imageSizeBytes: bytes.length } }];
 ```
 
-### Feedback: Verify Step 1
-- Query the workflow JSON to confirm `imageBase64` is no longer in the Extract Image Data output
-- Confirm `imageFile` path is present in the return value
-- Confirm `fs.writeFileSync` writes the image bytes to disk
+The error catch branch should also return `imageFile: null` (in addition to existing `imageBase64: null`).
 
-## Step 2: Handle Image Error — add imageFile: null
+#### Verify
+- Read back the node's jsCode from the JSON file
+- Confirm `imageBase64` is NOT in any return statement
+- Confirm `imageFile` IS in the return statement
+- Confirm `fs.writeFileSync` writes to `img_{index}.bin`
 
-Currently sets `imageBase64: null`. Also set `imageFile: null` for consistency.
+### Task 2: Handle Image Error — add imageFile: null
 
-### Feedback: Verify Step 2
-- Confirm Handle Image Error returns `imageFile: null` alongside `imageBase64: null`
+Modify the "Handle Image Error" Code node in `n8n-workflows/image-to-anki-worker.json`.
 
-## Step 3: Extract Audio Data — write to disk
+Currently returns `{ index, word, description, error: errorMsg, imageBase64: null, imageHash: null }`.
+Add `imageFile: null` to the return object for consistency with the new Extract Image Data output.
 
-Currently keeps `audioBase64` in the item JSON. Change to:
-- Write base64-decoded audio bytes to `{jobDir}/audio_{index}.bin`
-- Return `audioFile` path instead of `audioBase64`
-- Set `audioBase64: null`
+#### Verify
+- Read back the node's jsCode
+- Confirm the return includes `imageFile: null`
 
-Key code change:
-```js
-const initData = $('Initialize Job').first().json;
-const audioPath = require('path').join(initData.jobDir, `audio_${inputData.index}.bin`);
-fs.writeFileSync(audioPath, Buffer.from(audioBase64, 'base64'));
-return [{ json: { ...inputData, audioFile: audioPath, audioMimeType: mimeType, audioBase64: null } }];
-```
+### Task 3: Extract Audio Data — write to disk
 
-### Feedback: Verify Step 3
-- Confirm `audioBase64` is no longer in the Extract Audio Data output
-- Confirm `audioFile` path is present
-- Confirm audio bytes written to disk
+Modify the "Extract Audio Data" Code node in `n8n-workflows/image-to-anki-worker.json`.
 
-## Step 4: No Audio Passthrough — set audioFile: null
+Currently keeps `audioBase64` in the returned item JSON. Change to:
+- After extracting `audioBase64` from `item.binary`, decode it and write raw bytes to `{jobDir}/audio_{index}.bin`
+- Get `jobDir` from `$('Initialize Job').first().json.jobDir`
+- Get `index` from `inputData.index` (already available in the spread)
+- Return `audioFile` (the path) instead of `audioBase64`
+- Set `audioBase64: null` in the return
 
-Currently sets `audioBase64: null`. Change to set `audioFile: null` instead.
+The return should include `audioFile: audioPath` and `audioBase64: null`.
 
-### Feedback: Verify Step 4
-- Confirm No Audio Passthrough sets `audioFile: null`
+When no audio data is received (the error branch), set `audioFile: null`.
 
-## Step 5: Prepare APKG Input — read files from disk
+#### Verify
+- Read back the node's jsCode
+- Confirm `audioBase64` is null in all return paths
+- Confirm `audioFile` is set to the path (or null on error)
+- Confirm `fs.writeFileSync` writes to `audio_{index}.bin`
 
-Currently reads `imageBase64` and `audioBase64` from aggregated items. Change to:
-- Read image from `imageFile` path → re-encode as base64
-- Read audio from `audioFile` path → re-encode as base64
-- One card at a time, so memory is bounded
+### Task 4: No Audio Passthrough — set audioFile: null
 
-Key code change:
-```js
-cards: valid.map(item => {
-  let imageBase64 = null;
-  if (item.imageFile) {
-    try { imageBase64 = fs.readFileSync(item.imageFile).toString('base64'); }
-    catch(e) { console.error(`Failed to read image for ${item.word}:`, e.message); }
-  }
-  let audioBase64 = null;
-  if (item.audioFile) {
-    try { audioBase64 = fs.readFileSync(item.audioFile).toString('base64'); }
-    catch(e) { console.error(`Failed to read audio for ${item.word}:`, e.message); }
-  }
-  return { word: item.word, description: item.description || '', imageBase64, mimeType: item.mimeType || 'image/jpeg', audioBase64, audioMimeType: item.audioMimeType || 'audio/mpeg' };
-})
-```
+Modify the "No Audio Passthrough" Code node in `n8n-workflows/image-to-anki-worker.json`.
 
-### Feedback: Verify Step 5
-- Confirm Prepare APKG Input reads from `imageFile`/`audioFile` paths
-- Confirm it still outputs the same JSON structure for `generate-apkg.py`
+Currently sets `audioBase64: null`. Change to also set `audioFile: null` (for consistency with the new Extract Audio Data output shape).
 
-## Step 6: Deploy and E2E test
+#### Verify
+- Read back the node's jsCode
+- Confirm `audioFile: null` is present in the mapped items
 
-### 6a: Commit and deploy
-- Commit changes to `n8n-workflows/image-to-anki-worker.json`
-- Run `sudo nixos-rebuild switch --flake .#rpi5-full`
-- Verify n8n starts successfully
+### Task 5: Prepare APKG Input — read files from disk
 
-### Feedback: Verify Step 6a
-- `systemctl is-active n8n` returns `active`
-- `journalctl -u n8n --since "5 min ago" | grep -i error` shows no errors
+Modify the "Prepare APKG Input" Code node in `n8n-workflows/image-to-anki-worker.json`.
 
-### 6b: E2E test — trigger deck generation
-- Extract the original "At the Beach" base64 image from execution 260950
-- Trigger the workflow: `curl -X POST http://127.0.0.1:5678/webhook/image-to-anki -H "Content-Type: application/json" -d '...'`
-- Poll status endpoint every 30s until complete or error
+Currently reads `item.imageBase64` and `item.audioBase64` directly from the aggregated items. Change to:
+- Read image from `item.imageFile` path using `fs.readFileSync(item.imageFile).toString('base64')`
+- Read audio from `item.audioFile` path using `fs.readFileSync(item.audioFile).toString('base64')`
+- Wrap each in try/catch so a missing file doesn't crash the whole deck
+- The output JSON structure for `generate-apkg.py` must remain identical (same field names: `imageBase64`, `audioBase64`, etc.)
 
-### Feedback: Verify Step 6b
-- Status reaches `complete` or `partial` (not `error` or `crashed`)
-- Check that image files exist on disk: `ls /var/lib/n8n/jobs/<jobId>/img_*.bin | wc -l` should be > 0
-- Check that audio files exist on disk: `ls /var/lib/n8n/jobs/<jobId>/audio_*.bin | wc -l` should be > 0
+Also update the `failedImages` filter: currently checks `i.error && !i.imageBase64`, change to `i.error && !i.imageFile`.
 
-### 6c: E2E test — verify memory stayed low
-- Check n8n service memory during/after generation: `systemctl status n8n | grep Memory`
-- Confirm no OOM or crash in logs: `journalctl -u n8n --since "10 min ago" | grep -iE "dump|abort|oom|kill"`
+The `imageCardCount` filter: currently checks `i.imageBase64`, change to `i.imageFile`.
 
-### Feedback: Verify Step 6c
-- Memory usage should stay well under 1GB (target: <600MB)
-- No crash/OOM messages in logs
+#### Verify
+- Read back the node's jsCode
+- Confirm it reads from `item.imageFile` and `item.audioFile` paths
+- Confirm the output JSON still has `imageBase64` and `audioBase64` fields (read from disk)
+- Confirm `failedImages` checks `!i.imageFile` instead of `!i.imageBase64`
 
-### 6d: E2E test — verify APKG output
-- Download the deck: `curl http://127.0.0.1:5678/webhook/anki-download?id=<deckId> -o /tmp/test.apkg`
-- Verify file is non-empty and valid ZIP: `file /tmp/test.apkg`
-- Check status response has `imageCardCount > 0` and `audioCardCount > 0`
+### Task 6: Deploy and E2E test
 
-### Feedback: Verify Step 6d
-- APKG file exists and is valid
-- Both images and audio present in the deck
-- Word count matches expected 40
+Run the following commands in sequence:
 
-## What stays the same
+1. Deploy: `sudo nixos-rebuild switch --flake .#rpi5-full`
+2. Wait for n8n to be ready: poll `curl -sf http://127.0.0.1:5678/healthz` until it returns 200
+3. Extract the original base64 image from previous execution data (saved at `/tmp/original_image_data.txt`)
+4. Trigger deck generation:
+   ```
+   curl -s -X POST http://127.0.0.1:5678/webhook/image-to-anki \
+     -H "Content-Type: application/json" \
+     -d "$(node -e "const img=require('fs').readFileSync('/tmp/original_image_data.txt','utf8');console.log(JSON.stringify({deckName:'At the Beach',mode:'vocabulary',includeAudio:true,imageData:img}))")"
+   ```
+5. Save the returned jobId and statusUrl
+6. Poll status every 30 seconds until status is `complete`, `partial`, or `error`:
+   ```
+   curl -s "http://127.0.0.1:5678/webhook/anki-status?id=<jobId>"
+   ```
+7. When complete, verify:
+   - `ls /var/lib/n8n/jobs/<jobId>/img_*.bin | wc -l` — should be > 0 (images written to disk)
+   - `ls /var/lib/n8n/jobs/<jobId>/audio_*.bin | wc -l` — should be > 0 (audio written to disk)
+   - `journalctl -u n8n --since "15 min ago" | grep -iE "dump|abort|oom|kill"` — should be empty (no crashes)
+   - Status response has `imageCardCount > 0` and `audioCardCount > 0`
+   - Download APKG: `curl -s "http://127.0.0.1:5678/webhook/anki-download?id=<deckId>" -o /tmp/test.apkg && file /tmp/test.apkg` — should be a valid ZIP file
 
-- `generate-apkg.py` — unchanged, receives same JSON with base64
-- `Aggregate All Items` / `Aggregate Audio Items` — unchanged, now aggregate lightweight items
-- `Finalize Job` — unchanged
-- Job cleanup timer already removes job dirs after 7 days (including temp files)
+#### Verify
+- Deck generation completes without OOM crash
+- Image and audio files exist on disk in the job directory
+- APKG file is valid and contains images + audio
+- n8n memory stayed under 1GB (check `systemctl status n8n | grep Memory`)
