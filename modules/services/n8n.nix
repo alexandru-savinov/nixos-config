@@ -502,7 +502,8 @@ in
                         # Create data directories under StateDirectory for persistence and security
                         # anki-decks: APKG output for image-to-anki workflow
                         # jobs: async workflow status tracking (cleaned by n8n-cleanup-jobs timer)
-                        for dir in /var/lib/n8n/anki-decks /var/lib/n8n/jobs; do
+                        # cache: generated image/audio cache for Anki (cleaned by n8n-cleanup-cache timer)
+                        for dir in /var/lib/n8n/anki-decks /var/lib/n8n/jobs /var/lib/n8n/cache; do
                           mkdir -p "$dir"
                           if ! chown n8n:n8n "$dir"; then
                             echo "ERROR: Failed to set ownership of $dir to n8n:n8n" >&2
@@ -809,6 +810,34 @@ in
           echo "Cleaning up job directories older than 7 days..."
           ${pkgs.findutils}/bin/find "$JOBS_DIR" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + || true
           echo "Job cleanup complete"
+        fi
+      '';
+    };
+
+    # Cache cleanup timer - removes old cached images/audio to prevent disk exhaustion
+    # Cache files older than 30 days are automatically deleted
+    systemd.timers.n8n-cleanup-cache = {
+      description = "Clean up old n8n cache files";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "daily";
+        Persistent = true; # Run immediately if missed (e.g., system was off)
+      };
+    };
+
+    systemd.services.n8n-cleanup-cache = {
+      description = "Remove n8n cache files older than 30 days";
+      serviceConfig = {
+        Type = "oneshot";
+        User = "n8n";
+        Group = "n8n";
+      };
+      script = ''
+        CACHE_DIR="/var/lib/n8n/cache"
+        if [ -d "$CACHE_DIR" ]; then
+          echo "Cleaning up cache files older than 30 days..."
+          ${pkgs.findutils}/bin/find "$CACHE_DIR" -type f -mtime +30 -delete || true
+          echo "Cache cleanup complete"
         fi
       '';
     };

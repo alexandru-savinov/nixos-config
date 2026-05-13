@@ -283,6 +283,10 @@ extraEnvironment = {
 - Image files: `/var/lib/n8n/jobs/{jobId}/img_{index}.bin`
 - Audio files: `/var/lib/n8n/jobs/{jobId}/audio_{index}.bin`
 - Auto-cleanup: `n8n-cleanup-jobs.timer` removes jobs older than 7 days
+- Cache directory: `/var/lib/n8n/cache/{hash}.bin` (binary) + `{hash}.meta` (JSON metadata)
+- Cache keys: `SHA256("img-v1:" + word + ":" + description)` for images, `SHA256("tts-v1:" + word)` for audio
+- Cache TTL: 30 days via `n8n-cleanup-cache.timer`
+- Cache invalidation: bump version prefix (e.g., `img-v1` → `img-v2`) when prompt template or TTS model changes; old files expire naturally
 
 ### Disk Offload for Large Binary Data
 On memory-constrained hosts (RPi5, 4GB RAM), n8n loop iterations accumulate item data in memory. For workflows processing large binary blobs (images, audio) across many items:
@@ -292,6 +296,8 @@ On memory-constrained hosts (RPi5, 4GB RAM), n8n loop iterations accumulate item
 3. **Read back late** — In the final assembly node (e.g., Prepare APKG Input), read files from disk just before output
 
 This prevents OOM when processing 40+ items with ~200KB each of image + audio data.
+
+**Caching layer**: Generated images and audio are cached in `/var/lib/n8n/cache/` using SHA256 keys with version prefixes (`img-v1:`, `tts-v1:`). Cache check nodes run before API calls; on hit, the cached binary is copied to the job directory and the API call is skipped entirely. To invalidate after prompt/model changes, bump the version prefix in both the Check and Extract Code nodes.
 
 See PR #154 for reference implementation (`image-to-anki-*.json` workflows).
 
