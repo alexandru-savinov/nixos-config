@@ -280,7 +280,18 @@ extraEnvironment = {
 
 ### Job Storage
 - Status files: `/var/lib/n8n/jobs/{jobId}/status.json`
+- Image files: `/var/lib/n8n/jobs/{jobId}/img_{index}.bin`
+- Audio files: `/var/lib/n8n/jobs/{jobId}/audio_{index}.bin`
 - Auto-cleanup: `n8n-cleanup-jobs.timer` removes jobs older than 7 days
+
+### Disk Offload for Large Binary Data
+On memory-constrained hosts (RPi5, 4GB RAM), n8n loop iterations accumulate item data in memory. For workflows processing large binary blobs (images, audio) across many items:
+
+1. **Write to disk early** — In Extract nodes, write raw bytes to `{jobDir}/` and return only the file path
+2. **Pass paths, not data** — Loop items carry `imageFile`/`audioFile` paths instead of base64 strings
+3. **Read back late** — In the final assembly node (e.g., Prepare APKG Input), read files from disk just before output
+
+This prevents OOM when processing 40+ items with ~200KB each of image + audio data.
 
 See PR #154 for reference implementation (`image-to-anki-*.json` workflows).
 
