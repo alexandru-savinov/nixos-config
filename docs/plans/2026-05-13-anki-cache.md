@@ -163,20 +163,20 @@ Show how many cache hits occurred in the final status response. Count from aggre
 **File: `n8n-workflows/image-to-anki-worker.json`**
 
 **Modify: "Prepare APKG Input"**
-- [ ] Count `imageCacheHits` from `items.filter(i => i.cacheHit === true).length` (image items)
-- [ ] Pass `imageCacheHits` in the return JSON alongside existing `failedImageCount`, `words`, etc.
+- [x] Count `imageCacheHits` from `items.filter(i => i.imageCacheHit === true).length` (renamed from `cacheHit` to avoid audio overwrite)
+- [x] Pass `imageCacheHits` in the return JSON alongside existing `failedImageCount`, `words`, etc.
 
 **Modify: "Finalize Job"**
-- [ ] Read `imageCacheHits` and `audioCacheHits` from `initData` (Prepare APKG Input output)
-- [ ] Add them to the final status JSON so the API response includes cache stats
-- [ ] For `audioCacheHits`: need to count from the audio aggregated data — check if the audio items preserve `cacheHit` through Aggregate Audio Items
+- [x] Read `imageCacheHits` and `audioCacheHits` from `initData` (Prepare APKG Input output)
+- [x] Add them to the final status JSON so the API response includes cache stats
+- [x] For `audioCacheHits`: renamed to `audioCacheHit` field — survives aggregation via `aggregateAllItemData`
 
-**Note on audioCacheHits**: The audio loop items flow through Aggregate Audio Items → Prepare APKG Input. Check if `cacheHit` field survives aggregation. If the Aggregate node uses `aggregateAllItemData`, it collects all fields. Verify and count `audioCacheHits` in Prepare APKG Input from the audio items (which come via a different input path — No Audio Passthrough or Aggregate Audio Items).
+**Note on field naming**: Renamed `cacheHit` to `imageCacheHit` (image nodes) and `audioCacheHit` (audio nodes) because the audio loop's spread operator would overwrite the image loop's value. Both Aggregate nodes use `aggregateAllItemData` which preserves all fields.
 
 #### Verify
-- [ ] Read Prepare APKG Input jsCode — confirm `imageCacheHits` count
-- [ ] Read Finalize Job jsCode — confirm cache stats in output
-- [ ] JSON validation passes
+- [x] Read Prepare APKG Input jsCode — confirm `imageCacheHits` count
+- [x] Read Finalize Job jsCode — confirm cache stats in output
+- [x] JSON validation passes
 
 ### Task 5: Handle Image Error — preserve cacheHit field
 
