@@ -76,15 +76,15 @@ Each item entering Update TTS Progress:
 Add `/var/lib/n8n/cache` directory creation and a 30-day cleanup timer.
 
 **File: `modules/services/n8n.nix`**
-- [ ] Add `/var/lib/n8n/cache` to the directory creation loop in ExecStartPre (line ~505, alongside `anki-decks` and `jobs`)
-- [ ] Add `n8n-cleanup-cache` systemd timer (daily, `Persistent = true`)
-- [ ] Add `n8n-cleanup-cache` systemd service (oneshot, User=n8n, runs `find /var/lib/n8n/cache -type f -mtime +30 -delete`)
-- [ ] Model it after the existing `n8n-cleanup-jobs` timer/service (lines 790-814)
+- [x] Add `/var/lib/n8n/cache` to the directory creation loop in ExecStartPre (line ~505, alongside `anki-decks` and `jobs`)
+- [x] Add `n8n-cleanup-cache` systemd timer (daily, `Persistent = true`)
+- [x] Add `n8n-cleanup-cache` systemd service (oneshot, User=n8n, runs `find /var/lib/n8n/cache -type f -mtime +30 -delete`)
+- [x] Model it after the existing `n8n-cleanup-jobs` timer/service (lines 790-814)
 
 #### Verify
-- [ ] `nix eval .#nixosConfigurations.rpi5-full.config.systemd.services.n8n-cleanup-cache.script` contains `find` and `-mtime +30`
-- [ ] `nix flake check` passes
-- [ ] grep ExecStartPre output for `/var/lib/n8n/cache`
+- [x] `nix eval .#nixosConfigurations.rpi5-full.config.systemd.services.n8n-cleanup-cache.script` contains `find` and `-mtime +30`
+- [x] `nix flake check` passes
+- [x] grep ExecStartPre output for `/var/lib/n8n/cache`
 
 ### Task 2: Add cache check + write for image generation
 
