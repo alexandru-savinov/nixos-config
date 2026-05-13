@@ -211,8 +211,8 @@ Deploy and run the workflow twice to verify caching. **Requires OpenRouter credi
 
 ### Task 7: Update documentation
 
-- [ ] Update `CLAUDE.md` Job Storage section: add cache directory, cache key design, TTL
-- [ ] Update `CLAUDE.md` Disk Offload section: mention caching pattern and version prefix invalidation
+- [x] Update `CLAUDE.md` Job Storage section: add cache directory, cache key design, TTL
+- [x] Update `CLAUDE.md` Disk Offload section: mention caching pattern and version prefix invalidation
 
 ## Technical Details
 
