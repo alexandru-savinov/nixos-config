@@ -183,11 +183,11 @@ Show how many cache hits occurred in the final status response. Count from aggre
 The Handle Image Error node returns items for failed image generations. These items need `cacheHit: false` for accurate counting.
 
 **File: `n8n-workflows/image-to-anki-worker.json`**
-- [ ] Add `cacheHit: false` to Handle Image Error return object
+- [x] Add `imageCacheHit: false` to Handle Image Error return object
 
 #### Verify
-- [ ] Read Handle Image Error jsCode — confirm `cacheHit: false` present
-- [ ] JSON validation passes
+- [x] Read Handle Image Error jsCode — confirm `imageCacheHit: false` present
+- [x] JSON validation passes
 
 ### Task 6: Deploy and E2E test
 
