@@ -95,32 +95,32 @@ Also modify Extract Image Data to write to cache after successful generation.
 **File: `n8n-workflows/image-to-anki-worker.json`**
 
 **New node: "Check Image Cache"** (Code node, two outputs)
-- [ ] Compute cache key: `crypto.createHash('sha256').update('img-v1:' + item.word + ':' + item.description).digest('hex')`
-- [ ] Check if `/var/lib/n8n/cache/{key}.bin` exists using `fs.existsSync`
-- [ ] **Cache hit (output 0)**: copy `.bin` to `{jobDir}/img_{index}.bin`, read `.meta` for mimeType, compute imageHash from cached bytes, update status file with `"...word (cached)"`, return `{ index, word, description, imageFile, imageHash, mimeType, imageSizeBytes, cacheHit: true }`
-- [ ] **Cache miss (output 1)**: pass item through unchanged, return `{ ...item, cacheHit: false }`
-- [ ] Get `jobDir` and `statusFile` from the input item (they flow from Initialize Job through Parse Vocabulary JSON)
-- [ ] On cache hit, update status file phase to `"Generating image N/M: word (cached)"` — since Update Progress already ran, overwrite with cached indicator
+- [x] Compute cache key: `crypto.createHash('sha256').update('img-v1:' + item.word + ':' + item.description).digest('hex')`
+- [x] Check if `/var/lib/n8n/cache/{key}.bin` exists using `fs.existsSync`
+- [x] **Cache hit (output 0)**: copy `.bin` to `{jobDir}/img_{index}.bin`, read `.meta` for mimeType, compute imageHash from cached bytes, update status file with `"...word (cached)"`, return `{ index, word, description, imageFile, imageHash, mimeType, imageSizeBytes, cacheHit: true }`
+- [x] **Cache miss (output 1)**: pass item through unchanged, return `{ ...item, cacheHit: false }`
+- [x] Get `jobDir` and `statusFile` from the input item (they flow from Initialize Job through Parse Vocabulary JSON)
+- [x] On cache hit, update status file phase to `"Generating image N/M: word (cached)"` — since Update Progress already ran, overwrite with cached indicator
 
 **Modify: "Extract Image Data"** (existing Code node)
-- [ ] After writing to `{jobDir}/img_{index}.bin`, also write to `/var/lib/n8n/cache/{key}.bin`
-- [ ] Write `/var/lib/n8n/cache/{key}.meta` as JSON: `{ "word", "description", "mimeType", "createdAt" }`
-- [ ] Same cache key formula as Check Image Cache
-- [ ] Wrap cache writes in try/catch — must not break workflow
-- [ ] Add `cacheHit: false` to the return object
+- [x] After writing to `{jobDir}/img_{index}.bin`, also write to `/var/lib/n8n/cache/{key}.bin`
+- [x] Write `/var/lib/n8n/cache/{key}.meta` as JSON: `{ "word", "description", "mimeType", "createdAt" }`
+- [x] Same cache key formula as Check Image Cache
+- [x] Wrap cache writes in try/catch — must not break workflow
+- [x] Add `cacheHit: false` to the return object
 
 **Connection rewiring:**
-- [ ] Update Progress → Check Image Cache (was: Update Progress → Generate Image)
-- [ ] Check Image Cache [0: hit] → Loop Over Items (skip Generate Image + Wait entirely)
-- [ ] Check Image Cache [1: miss] → Generate Image (existing path continues)
-- [ ] Keep existing: Generate Image → Extract Image Data / Handle Image Error → Wait → Loop Over Items
+- [x] Update Progress → Check Image Cache (was: Update Progress → Generate Image)
+- [x] Check Image Cache [0: hit] → Loop Over Items (skip Generate Image + Wait entirely)
+- [x] Check Image Cache [1: miss] → Generate Image (existing path continues)
+- [x] Keep existing: Generate Image → Extract Image Data / Handle Image Error → Wait → Loop Over Items
 
 #### Verify
-- [ ] Read Check Image Cache jsCode — confirm SHA256 key, fs.existsSync, copy to jobDir, status update
-- [ ] Read Extract Image Data jsCode — confirm cache write with try/catch
-- [ ] Verify connections: Update Progress → Check Image Cache, hit → Loop Over Items, miss → Generate Image
-- [ ] `node -e 'JSON.parse(require("fs").readFileSync("n8n-workflows/image-to-anki-worker.json"))'` passes
-- [ ] `nix flake check` passes
+- [x] Read Check Image Cache jsCode — confirm SHA256 key, fs.existsSync, copy to jobDir, status update
+- [x] Read Extract Image Data jsCode — confirm cache write with try/catch
+- [x] Verify connections: Update Progress → Check Image Cache, hit → Loop Over Items, miss → Generate Image
+- [x] `node -e 'JSON.parse(require("fs").readFileSync("n8n-workflows/image-to-anki-worker.json"))'` passes
+- [x] `nix flake check` passes
 
 ### Task 3: Add cache check + write for TTS generation
 
