@@ -129,32 +129,32 @@ Same pattern as Task 2 but for the audio loop. Add "Check Audio Cache" between U
 **File: `n8n-workflows/image-to-anki-worker.json`**
 
 **New node: "Check Audio Cache"** (Code node, two outputs)
-- [ ] Cache key: `crypto.createHash('sha256').update('tts-v1:' + item.word).digest('hex')` — audio only depends on word
-- [ ] Check `/var/lib/n8n/cache/{key}.bin` exists
-- [ ] **Cache hit (output 0)**: copy to `{jobDir}/audio_{index}.bin`, read `.meta` for mimeType, update status with "(cached)", return with `audioFile`, `audioMimeType`, `cacheHit: true`, `audioBase64: null`
-- [ ] **Cache miss (output 1)**: pass through with `cacheHit: false`
-- [ ] Use `audioIndex` (not `index`) for the audio file naming: `audio_{audioIndex}.bin`
-- [ ] Get `statusFile` from the input item
+- [x] Cache key: `crypto.createHash('sha256').update('tts-v1:' + item.word).digest('hex')` — audio only depends on word
+- [x] Check `/var/lib/n8n/cache/{key}.bin` exists
+- [x] **Cache hit (output 0)**: copy to `{jobDir}/audio_{index}.bin`, read `.meta` for mimeType, update status with "(cached)", return with `audioFile`, `audioMimeType`, `cacheHit: true`, `audioBase64: null`
+- [x] **Cache miss (output 1)**: pass through with `cacheHit: false`
+- [x] Use `audioIndex` (not `index`) for the audio file naming: `audio_{audioIndex}.bin`
+- [x] Get `statusFile` from the input item
 
 **Modify: "Extract Audio Data"** (existing Code node)
-- [ ] After writing `audio_{index}.bin` to jobDir, also write to `/var/lib/n8n/cache/{key}.bin`
-- [ ] Write `.meta` file: `{ "word", "mimeType", "createdAt" }`
-- [ ] Cache key: `SHA256("tts-v1:" + word)`
-- [ ] Wrap in try/catch
-- [ ] Add `cacheHit: false` to return
+- [x] After writing `audio_{index}.bin` to jobDir, also write to `/var/lib/n8n/cache/{key}.bin`
+- [x] Write `.meta` file: `{ "word", "mimeType", "createdAt" }`
+- [x] Cache key: `SHA256("tts-v1:" + word)`
+- [x] Wrap in try/catch
+- [x] Add `cacheHit: false` to return
 
 **Connection rewiring:**
-- [ ] Update TTS Progress → Check Audio Cache (was: → Generate TTS)
-- [ ] Check Audio Cache [0: hit] → TTS Loop (skip Generate TTS entirely)
-- [ ] Check Audio Cache [1: miss] → Generate TTS (existing path continues)
-- [ ] Keep existing: Generate TTS → Extract Audio Data / Handle TTS Error → TTS Loop
+- [x] Update TTS Progress → Check Audio Cache (was: → Generate TTS)
+- [x] Check Audio Cache [0: hit] → TTS Loop (skip Generate TTS entirely)
+- [x] Check Audio Cache [1: miss] → Generate TTS (existing path continues)
+- [x] Keep existing: Generate TTS → Extract Audio Data / Handle TTS Error → TTS Loop
 
 #### Verify
-- [ ] Read Check Audio Cache jsCode — confirm key uses only word, copies to correct audioIndex path
-- [ ] Read Extract Audio Data jsCode — confirm cache write
-- [ ] Verify connections: Update TTS Progress → Check Audio Cache, hit → TTS Loop, miss → Generate TTS
-- [ ] JSON validation passes
-- [ ] `nix flake check` passes
+- [x] Read Check Audio Cache jsCode — confirm key uses only word, copies to correct audioIndex path
+- [x] Read Extract Audio Data jsCode — confirm cache write
+- [x] Verify connections: Update TTS Progress → Check Audio Cache, hit → TTS Loop, miss → Generate TTS
+- [x] JSON validation passes
+- [x] `nix flake check` passes
 
 ### Task 4: Add cache stats to final output
 

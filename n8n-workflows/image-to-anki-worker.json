@@ -406,7 +406,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst item = $input.first();\nif (!item) throw new Error('Extract Audio Data received no input items');\nconst inputData = item.json || {};\nconst jobDir = $('Initialize Job').first().json.jobDir;\nconst index = inputData.index;\n\n// Extract audio from HTTP response - n8n may use any key name for binary data\nlet audioBase64 = null;\nlet mimeType = 'audio/mpeg';\n\nif (item.binary) {\n  for (const key of Object.keys(item.binary)) {\n    const bin = item.binary[key];\n    if (bin && bin.data) {\n      audioBase64 = bin.data;\n      mimeType = bin.mimeType || 'audio/mpeg';\n      break;\n    }\n  }\n}\n\n// Write audio bytes to disk to avoid keeping base64 in memory\nlet audioFile = null;\nif (audioBase64) {\n  try {\n    const bytes = Buffer.from(audioBase64, 'base64');\n    audioFile = path.join(jobDir, `audio_${index}.bin`);\n    fs.writeFileSync(audioFile, bytes);\n  } catch (e) {\n    console.error(`Failed to write audio file: ${e.message}`);\n    audioFile = null;\n  }\n}\n\n// Update status file - non-fatal, audio extraction can still succeed\nif (inputData.statusFile) {\n  try {\n    const status = JSON.parse(fs.readFileSync(inputData.statusFile, 'utf-8'));\n    status.ttsState = audioFile ? 'done' : 'no-data';\n    fs.writeFileSync(inputData.statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { console.error('TTS status update failed:', e.message); }\n}\n\n// Return with audio result - spread preserves context needed by TTS loop\nreturn [{\n  json: {\n    ...inputData,\n    audioFile: audioFile,\n    audioMimeType: audioFile ? mimeType : null,\n    audioError: audioFile ? null : 'No audio data received'\n  }\n}];\n"
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst item = $input.first();\nif (!item) throw new Error('Extract Audio Data received no input items');\nconst inputData = item.json || {};\nconst jobDir = $('Initialize Job').first().json.jobDir;\nconst index = inputData.index;\n\n// Extract audio from HTTP response - n8n may use any key name for binary data\nlet audioBase64 = null;\nlet mimeType = 'audio/mpeg';\n\nif (item.binary) {\n  for (const key of Object.keys(item.binary)) {\n    const bin = item.binary[key];\n    if (bin && bin.data) {\n      audioBase64 = bin.data;\n      mimeType = bin.mimeType || 'audio/mpeg';\n      break;\n    }\n  }\n}\n\n// Write audio bytes to disk to avoid keeping base64 in memory\nlet audioFile = null;\nif (audioBase64) {\n  try {\n    const bytes = Buffer.from(audioBase64, 'base64');\n    audioFile = path.join(jobDir, `audio_${index}.bin`);\n    fs.writeFileSync(audioFile, bytes);\n  } catch (e) {\n    console.error(`Failed to write audio file: ${e.message}`);\n    audioFile = null;\n  }\n}\n\n// Write to cache for future reuse\nif (audioFile) {\n  try {\n    const crypto = require('crypto');\n    const cacheDir = '/var/lib/n8n/cache';\n    const cacheKey = crypto.createHash('sha256').update('tts-v1:' + inputData.word).digest('hex');\n    const cacheBin = path.join(cacheDir, cacheKey + '.bin');\n    const cacheMeta = path.join(cacheDir, cacheKey + '.meta');\n    fs.copyFileSync(audioFile, cacheBin);\n    fs.writeFileSync(cacheMeta, JSON.stringify({\n      word: inputData.word,\n      mimeType: mimeType,\n      createdAt: new Date().toISOString()\n    }, null, 2));\n  } catch (e) { console.error('Cache write failed:', e.message); }\n}\n\n// Update status file - non-fatal, audio extraction can still succeed\nif (inputData.statusFile) {\n  try {\n    const status = JSON.parse(fs.readFileSync(inputData.statusFile, 'utf-8'));\n    status.ttsState = audioFile ? 'done' : 'no-data';\n    fs.writeFileSync(inputData.statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { console.error('TTS status update failed:', e.message); }\n}\n\n// Return with audio result - spread preserves context needed by TTS loop\nreturn [{\n  json: {\n    ...inputData,\n    audioFile: audioFile,\n    audioMimeType: audioFile ? mimeType : null,\n    audioError: audioFile ? null : 'No audio data received',\n    cacheHit: false\n  }\n}];\n"
       }
     },
     {
@@ -501,6 +501,20 @@
       "parameters": {
         "jsCode": "const fs = require('fs');\nconst stdout = $input.first().json.stdout || '';\nconst initData = $('Prepare APKG Input').first().json;\n\nfunction safeWriteStatus(file, data) {\n  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }\n  catch (e) { console.error('Status write failed:', e.message); }\n}\n\ntry {\n  const output = JSON.parse(stdout);\n  \n  if (!output.success) {\n    safeWriteStatus(initData.statusFile, { status: 'error', phase: 'APKG generation failed', error: output.error || 'Unknown error', failedAt: new Date().toISOString() });\n    throw new Error(output.error);\n  }\n  \n  // Check if some images failed - show warning\n  const failedCount = initData.failedImageCount || 0;\n  const hasWarning = failedCount > 0;\n  const warningMsg = hasWarning ? `${failedCount} image(s) failed to generate` : null;\n  \n  const status = {\n    status: hasWarning ? 'partial' : 'complete',\n    phase: hasWarning ? `Complete with warnings` : 'Complete!',\n    progress: 100,\n    wordCount: initData.cardCount,\n    imageCardCount: initData.imageCardCount,\n    audioCardCount: initData.audioCardCount || 0,\n    words: initData.words || [],\n    warning: warningMsg,\n    failedImageWords: initData.failedImageWords || [],\n    deckId: output.deckId,\n    downloadUrl: `/webhook/anki-download?id=${output.deckId}`,\n    apkgSizeBytes: output.apkgSizeBytes,\n    completedAt: new Date().toISOString(),\n    deckName: initData.deckName || 'Vocabulary',\n    mode: (initData.mode === 'suffix') ? 'suffix' : 'vocabulary'\n  };\n  safeWriteStatus(initData.statusFile, status);\n  \n  return [{ json: { success: true, ...status } }];\n} catch (e) {\n  if (!e.message.includes('Unknown error')) {\n    safeWriteStatus(initData.statusFile, { status: 'error', phase: 'Parse error', error: e.message, failedAt: new Date().toISOString() });\n  }\n  throw e;\n}\n"
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require(\"crypto\");\nconst fs = require(\"fs\");\nconst path = require(\"path\");\nconst item = $input.first().json;\n\nconst cacheDir = \"/var/lib/n8n/cache\";\nconst cacheKey = crypto.createHash(\"sha256\").update(\"tts-v1:\" + item.word).digest(\"hex\");\nconst cacheBin = path.join(cacheDir, cacheKey + \".bin\");\nconst cacheMeta = path.join(cacheDir, cacheKey + \".meta\");\n\nif (fs.existsSync(cacheBin) && fs.existsSync(cacheMeta)) {\n  const meta = JSON.parse(fs.readFileSync(cacheMeta, \"utf-8\"));\n  const bytes = fs.readFileSync(cacheBin);\n  const jobDir = $(\"Initialize Job\").first().json.jobDir;\n  const audioPath = path.join(jobDir, \"audio_\" + item.audioIndex + \".bin\");\n  fs.writeFileSync(audioPath, bytes);\n\n  try {\n    const status = JSON.parse(fs.readFileSync(item.statusFile, \"utf-8\"));\n    status.phase = \"Generating audio \" + (item.audioIndex + 1) + \"/\" + item.audioTotal + \": \" + item.word + \" (cached)\";\n    fs.writeFileSync(item.statusFile, JSON.stringify(status, null, 2));\n  } catch (e) { console.error(\"Status update failed:\", e.message); }\n\n  return [[{ json: { ...item, audioFile: audioPath, audioMimeType: meta.mimeType, audioBase64: null, cacheHit: true } }], []];\n} else {\n  return [[], [{ json: { ...item, cacheHit: false } }]];\n}",
+        "numberOfOutputs": 2
+      },
+      "id": "check-audio-cache",
+      "name": "Check Audio Cache",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        0
+      ]
     }
   ],
   "connections": {
@@ -715,7 +729,7 @@
       "main": [
         [
           {
-            "node": "Generate TTS",
+            "node": "Check Audio Cache",
             "type": "main",
             "index": 0
           }
@@ -807,6 +821,24 @@
         [
           {
             "node": "Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Audio Cache": {
+      "main": [
+        [
+          {
+            "node": "TTS Loop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate TTS",
             "type": "main",
             "index": 0
           }
