@@ -190,6 +190,8 @@ in
       NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto,child_process";
       # Enable n8n Public API for Claude Code MCP integration
       N8N_PUBLIC_API_DISABLED = "false";
+      # Increase task runner heap for APKG assembly (reads all card files into one JSON blob)
+      N8N_RUNNERS_MAX_OLD_SPACE_SIZE = "1024";
     };
 
     tailscaleServe.enable = true;
@@ -319,7 +321,7 @@ in
     serviceConfig = {
       ReadWritePaths = [ "/var/lib/nixframe/photos" ];
       MemoryMax = "1536M";
-      MemoryHigh = "1G";
+      MemoryHigh = "1280M";
       CPUQuota = "200%"; # 2 cores max
       Nice = 7; # Between Open-WebUI (5) and qdrant (10)
     };
