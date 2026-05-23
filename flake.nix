@@ -242,6 +242,10 @@
           # Default package (what runs with `nix run github:user/repo`)
           default = self.packages.${system}.install;
 
+          # Ralphex — orchestrates Claude Code agents through plan files.
+          # See pkgs/ralphex.nix; install via environment.systemPackages.
+          ralphex = pkgs.callPackage ./pkgs/ralphex.nix { };
+
           # Fresh system installation script
           install = pkgs.writeShellApplication {
             name = "nixos-install";

@@ -83,6 +83,12 @@ in
     })
   ];
 
+  # Locally-packaged tools available on this host. Ralphex orchestrates
+  # Claude Code agents through multi-step plan files; lives in pkgs/ralphex.nix.
+  environment.systemPackages = [
+    self.packages.${pkgs.system}.ralphex
+  ];
+
   # Agenix secrets for additional services
   age.secrets =
     let
