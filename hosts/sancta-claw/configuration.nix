@@ -71,6 +71,7 @@
       # OpenRouter API key — drives the ZDR proxy (sancta-claw only consumer
       # on this host); also used by n8n on rpi5 (raw key format, kept that way).
       openrouter-api-key = kuzeaSecret "openrouter-api-key";
+      sancta-port-openrouter-prd = kuzeaSecret "sancta-port-openrouter-prd";
     };
 
   # ── OpenClaw ZDR proxy (local OpenRouter sidecar) ──────────────────────
