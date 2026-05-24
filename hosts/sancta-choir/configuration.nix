@@ -169,6 +169,7 @@
       # Open-WebUI secrets
       open-webui-secret-key = secret "open-webui-secret-key";
       openrouter-api-key = secret "openrouter-api-key";
+      sancta-port-openrouter-prd = secret "sancta-port-openrouter-prd";
       tavily-api-key = secret "tavily-api-key";
       e2e-test-api-key = secret "e2e-test-api-key";
       # SSH private key for the herdr user → hermes-claw (the `hermes-claw`

@@ -71,6 +71,13 @@ in
   # Open-WebUI secrets - shared across sancta-choir and rpi5
   "open-webui-secret-key.age".publicKeys = allKeys;
   "openrouter-api-key.age".publicKeys = allPlusBoth;
+
+  # OpenRouter virtual keys (Sancta Port). Two-tier prd/dev staging.
+  # prd: raw key format (owui, openclaw+zdr-proxy, n8n).
+  # dev: env-file format (hermes, OPENROUTER_API_KEY=...).
+  # Coexists with openrouter-api-key.age until cleanup task.
+  "sancta-port-openrouter-prd.age".publicKeys = users ++ [ sancta-choir sancta-claw rpi5 ];
+  "sancta-port-openrouter-dev.age".publicKeys = users ++ [ hermes-claw ];
   "tavily-api-key.age".publicKeys = allKeys;
 
   # Tavily API key for Kuzea web search (separate from open-webui)

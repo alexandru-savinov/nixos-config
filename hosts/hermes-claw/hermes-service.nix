@@ -19,6 +19,14 @@
   };
 
   # ── Hermes Agent (upstream NixOS module, container mode) ─────────────
+  # OR virtual key for hermes (Sancta Port - dev tier, env-file format).
+  age.secrets.sancta-port-openrouter-dev = {
+    file = ../../secrets/sancta-port-openrouter-dev.age;
+    owner = "hermes";
+    group = "hermes";
+    mode = "0400";
+  };
+
   services.hermes-agent = {
     enable = true;
     addToSystemPackages = true;
