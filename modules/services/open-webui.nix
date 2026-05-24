@@ -846,6 +846,9 @@ in
         cursor.execute("SELECT id FROM function WHERE id = ?", (function_id,))
         exists = cursor.fetchone()
 
+        # UPDATE path (not INSERT) upserts valves.openrouter_api_key on every
+        # service restart — agenix key rotation propagates without manual
+        # SQLite intervention. Verified during the OR vkey migration.
         if exists:
             cursor.execute("""
                 UPDATE function
