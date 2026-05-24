@@ -413,7 +413,7 @@ in
         (pkgs.writeShellScript "openclaw-inject-openrouter-auth" ''
           set -euo pipefail
           AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"
-          KEY="$(cat ${config.age.secrets.openrouter-api-key.path})"
+          KEY="$(cat ${config.age.secrets.sancta-port-openrouter-prd.path})"
           # Idempotent: register openrouter:zdr-proxy and strip the broken
           # anthropic:default profile (third-party Pro auth, the cause of
           # this migration). lastGood.anthropic is also cleared so OpenClaw
