@@ -155,7 +155,7 @@ in
 
     # OpenRouter API key - injected as OPENROUTER_API_KEY environment variable
     # Workflows can reference it using: Bearer {{ $env.OPENROUTER_API_KEY }}
-    openrouterApiKeyFile = secret "openrouter-api-key";
+    openrouterApiKeyFile = secret "sancta-port-openrouter-prd";
 
     # OpenAI API key - for TTS pronunciation audio in image-to-anki workflow
     # Workflows can reference it using: Bearer {{ $env.OPENAI_API_KEY }}

@@ -68,7 +68,7 @@
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
 
     # OpenRouter as LLM backend
-    openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
+    openai.apiKeyFile = config.age.secrets.sancta-port-openrouter-prd.path;
 
     # OIDC via Tailscale tsidp
     oidc.enable = true;
