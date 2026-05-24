@@ -77,7 +77,7 @@
   # ── OpenClaw ZDR proxy (local OpenRouter sidecar) ──────────────────────
   services.openclaw-zdr-proxy = {
     enable = true;
-    apiKeyFile = config.age.secrets.openrouter-api-key.path;
+    apiKeyFile = config.age.secrets.sancta-port-openrouter-prd.path;
   };
 
   # ── Home Manager (scaffolding — required by root.nix, no user configs yet) ──
