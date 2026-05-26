@@ -40,6 +40,13 @@
       url = "github:sadjow/claude-code-nix";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
+    # User-level Claude Code config (skills, agents, slash commands, HM module).
+    # Public repo, no auth needed.
+    claude-shared = {
+      url = "github:alexandru-savinov/claude-shared";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.home-manager.follows = "home-manager";
+    };
     kuzea-workspace = {
       url = "github:alexandru-savinov/kuzea-workspace";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -59,7 +66,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, kuzea-workspace, owui-openrouter-stats, hermes-agent, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, claude-shared, kuzea-workspace, owui-openrouter-stats, hermes-agent, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -192,7 +199,7 @@
         # Build SD image with: nix build .#images.rpi5-sd-image
         rpi5 = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
-            inherit nixos-raspberrypi self claude-code;
+            inherit nixos-raspberrypi self claude-code claude-shared;
             pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [
@@ -213,7 +220,7 @@
         #   sudo nixos-rebuild switch --flake github:user/nixos-config#rpi5-full
         rpi5-full = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
-            inherit nixos-raspberrypi self claude-code;
+            inherit nixos-raspberrypi self claude-code claude-shared;
             pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [

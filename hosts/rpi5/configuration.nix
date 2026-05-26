@@ -30,20 +30,20 @@
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
-    ../../modules/services/claude.nix
+    ../../modules/services/claude-shared.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/unifi-mcp.nix
     ../../modules/services/n8n-skills.nix
-    ../../modules/services/claude-skills.nix
-    ../../modules/services/claude-agents.nix
-    ../../modules/services/claude-settings.nix
     ../../modules/services/n8n-mcp-claude.nix
     # Additional services (open-webui, n8n, gatus) are in rpi5-full
   ];
 
-  # Enable development tools and Claude Code
+  # Enable development tools and Claude Code (via shared flake)
   customModules.dev-tools.enable = true;
-  customModules.claude.enable = true;
+  customModules.claudeShared = {
+    enable = true;
+    users = [ "nixos" ];
+  };
 
   # Home Manager: use system pkgs and suppress the version mismatch warning.
   home-manager = {
@@ -114,21 +114,6 @@
   services.n8n-skills = {
     enable = true;
     users = [ "nixos" "root" ];
-  };
-
-  services.claude-skills = {
-    enable = true;
-    users = [ "nixos" "root" ];
-  };
-
-  services.claude-agents = {
-    enable = true;
-    users = [ "nixos" "root" ];
-  };
-
-  services.claude-settings = {
-    enable = true;
-    users = [ "nixos" ]; # root excluded: skipDangerousModePermissionPrompt too risky for root
   };
 
   services.n8n-mcp-claude = {
