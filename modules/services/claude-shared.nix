@@ -44,6 +44,11 @@ in
     ];
 
     home-manager.users = genAttrs cfg.users (_: {
+      # Match the default the old claude-{settings,skills,agents}.nix modules
+      # used. Required because HM needs stateVersion when no other module
+      # provides one for this user.
+      home.stateVersion = lib.mkDefault "24.05";
+
       imports = [ claude-shared.homeManagerModules.default ];
 
       programs.claude-code = {
