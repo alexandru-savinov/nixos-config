@@ -167,28 +167,34 @@ git worktree remove ../nixos-config-<branch-name>
 
 ## Slash Commands
 
-Use these plugin commands when working on this project:
+Use these commands when working on this project. They are installed
+user-level via the [claude-shared](https://github.com/alexandru-savinov/claude-shared)
+flake (`modules/services/claude-shared.nix`).
 
 | Command | When to Use |
 |---------|-------------|
-| `/nix-commit:commit` | Commit changes (runs `nix fmt` first) |
-| `/nix-commit:commit-push-pr` | Commit, push, and create PR (runs `nix fmt` first) |
+| `/commit` | Commit changes (runs `nix fmt` first) |
+| `/commit-push-pr` | Commit, push, and create PR (runs `nix fmt` first) |
+| `/local-review` | Pre-commit code review |
+| `/screenshot` | Capture NixFrame display screenshot (args: `forecast`, `sidebar`, or empty for full) |
 | `/clean_gone` | After merging PRs to clean up stale local branches |
 | `/review-pr` | Before creating pull requests to catch issues early |
 | `/feature-dev` | For complex feature implementations requiring architecture planning |
-| `/screenshot:screenshot` | Capture NixFrame display screenshot (args: `forecast`, `sidebar`, or empty for full) |
 
-### Project-Local Plugins
+### Project-Level Skills
 
-This repo has custom Claude Code plugins in `.claude/plugins/` that override marketplace commands:
+Skills tied to this repo (paths and conventions assume nixos-config) live
+under `.claude/skills/` and are auto-discovered when CC's CWD is inside
+the repo:
 
-| Plugin | Location | Purpose |
-|--------|----------|---------|
-| `nix-commit` | `.claude/plugins/nix-commit/` | Runs `nix fmt` before commits to pass CI formatting checks |
-| `local-review` | `.claude/plugins/local-review/` | Pre-commit code review |
-| `screenshot` | `.claude/plugins/screenshot/` | Capture NixFrame display screenshots |
+| Skill | Location | Purpose |
+|-------|----------|---------|
+| `review-fix-loop` | `.claude/skills/review-fix-loop/` | Autonomous review + fix + CI poll loop, scoped to this repo's conventions (nix flake check, known pre-existing CI failures) |
+| `sweep-bugs` | `.claude/skills/sweep-bugs/` | Triage and fix multiple bugs in sequence with `/verify-first` + `/review-fix-loop` |
 
-**Important:** Use `/nix-commit:commit` instead of `/commit` to ensure Nix files are formatted before committing. This prevents CI failures from formatting mismatches.
+**Important:** `/commit` and `/commit-push-pr` both run `nix fmt` before
+committing — use them instead of plain `git commit` to avoid CI
+formatting failures.
 
 ## Verify Before Fixing
 
@@ -210,7 +216,7 @@ This repo has custom Claude Code plugins in `.claude/plugins/` that override mar
 - Fixing multiple things at once (can't tell what caused what)
 - Using `2>/dev/null` to suppress errors without understanding them
 
-See also: `~/.claude/skills/verify-first/SKILL.md` (installed via `services.claude-skills`).
+See also: `~/.claude/skills/verify-first/SKILL.md` (installed user-level via the claude-shared flake).
 
 ## Nix Code Style
 
@@ -227,7 +233,7 @@ Known pitfalls — do not repeat these:
 - **Imports must be top-level** — never place `imports = [ ... ]` inside a `lib.mkIf` block; `imports` is evaluated before conditional logic by the NixOS module system, so conditional imports cause a module system type error at evaluation time
 - **`stateVersion` conflicts** — bare assignments in host configs normally override `common.nix`, but upstream modules (e.g. `nixos-raspberrypi`) may set `system.stateVersion` at a higher priority; use `lib.mkForce` in the host config to override those
 - **`useGlobalPkgs = true` does NOT suppress Home Manager version mismatch warnings** — it changes package scope, not version pinning; if `nixos-raspberrypi` diverges from the flake's nixpkgs version, suppress with `sharedModules = [ { home.enableNixpkgsReleaseCheck = false; } ]` (currently aligned at 25.11, so no suppression needed)
-- **Always run `nix fmt` before committing** — CI runs `nix fmt -- --check .` and will fail if files are not formatted; use `/nix-commit:commit` to handle this automatically
+- **Always run `nix fmt` before committing** — CI runs `nix fmt -- --check .` and will fail if files are not formatted; use `/commit` to handle this automatically
 
 ## Adding New Services
 
