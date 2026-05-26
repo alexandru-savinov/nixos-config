@@ -111,8 +111,12 @@
   # Provides 7 skills for building production-ready n8n workflows.
   # Documentation-only mode (no API key) - for full workflow management,
   # use rpi5-full config which has local n8n running.
+  # Temporarily disabled — n8n-skills uses home.file to write individual
+  # files into ~/.claude/skills/, which conflicts with the shared module's
+  # whole-directory mkOutOfStoreSymlink. Will be re-enabled after the shared
+  # module switches to granular per-skill symlinks (see follow-up).
   services.n8n-skills = {
-    enable = true;
+    enable = false;
     users = [ "nixos" "root" ];
   };
 
