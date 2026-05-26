@@ -165,11 +165,42 @@ git worktree remove ../nixos-config-<branch-name>
 - `docs/<name>` - Documentation changes
 - `refactor/<name>` - Code refactoring
 
-## Slash Commands
+## Claude Code
 
-Use these commands when working on this project. They are installed
-user-level via the [claude-shared](https://github.com/alexandru-savinov/claude-shared)
-flake (`modules/services/claude-shared.nix`).
+User-level CC config (skills, agents, slash commands, settings.json) comes
+from the [claude-shared](https://github.com/alexandru-savinov/claude-shared)
+flake. This repo only:
+
+1. Imports the shared module via `modules/services/claude-shared.nix`
+   (exposes `customModules.claudeShared.{enable,users}`).
+2. Wires it into hosts that should get the full CC stack. Currently:
+   `rpi5` / `rpi5-full` (full). `sancta-choir`, `sancta-claw` are still on
+   the legacy `customModules.claude` (package install only — no skills/agents).
+3. Carries **project-level** skills under `.claude/skills/` — see below.
+
+### Where to edit Claude Code content
+
+**Not in this repo.** Edit in `~/.claude-shared/` — that is the canonical
+local clone of the claude-shared flake on each machine. Symlinks
+`~/.claude/{skills,agents,commands}` point into it, so edits to existing
+files are visible to CC immediately.
+
+```sh
+cd ~/.claude-shared
+$EDITOR content/skills/<name>/SKILL.md
+git add . && git commit -m "..." && git push
+
+# pick up on other hosts:
+ssh nixos@<host> 'cd ~/.claude-shared && git pull'   # content edits — no rebuild
+# OR — when you ADD/REMOVE a file or change module/default.nix:
+cd ~/nixos-config && nix flake update claude-shared && sudo nixos-rebuild switch --flake .#rpi5-full
+```
+
+See `~/.claude-shared/README.md` for the full rebuild matrix.
+
+### Slash Commands
+
+Installed user-level via claude-shared:
 
 | Command | When to Use |
 |---------|-------------|
