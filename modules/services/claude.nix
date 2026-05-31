@@ -31,8 +31,10 @@
       }
     ];
 
-    environment.systemPackages = [
-      claude-code.packages.${pkgs.system}.default
-    ];
+    # Guarded so the assertion above surfaces its friendly message: if
+    # claude-code is null, lib.optional yields [] rather than forcing
+    # null.packages.* (a cryptic "attempt to call 'null'" eval error).
+    environment.systemPackages =
+      lib.optional (claude-code != null) claude-code.packages.${pkgs.system}.default;
   };
 }
