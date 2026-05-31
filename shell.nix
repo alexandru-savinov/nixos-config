@@ -22,7 +22,11 @@ pkgs.mkShell {
         mkdir -p .git/hooks
         cat > .git/hooks/pre-commit << 'HOOK'
     #!/usr/bin/env bash
-    # Secret scan — mirrors CI (trivy.yml). Allowlist: trivy-secret.yaml.
+    # Secret scan — mirrors the CI boundary (trivy.yml): same engine, same
+    # allowlist (trivy-secret.yaml). Scans the whole tree (not just staged
+    # files) so local results match CI exactly; fast enough on this config
+    # repo. Note: a secret-like pattern in an UNSTAGED file will also block
+    # the commit — if it is a known non-secret, add it to trivy-secret.yaml.
     trivy fs --scanners secret --secret-config trivy-secret.yaml --exit-code 1 --no-progress --quiet .
     HOOK
         chmod +x .git/hooks/pre-commit
