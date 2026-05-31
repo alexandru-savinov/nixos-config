@@ -35,8 +35,13 @@ jobs:
                   format: "table"
                   exit-code: "1"
 
+            # Canonical, CI-enforced secret boundary for this repo. Honors the
+            # allowlist in trivy-secret.yaml so CI agrees with the local
+            # pre-commit hook (see shell.nix). exit-code 1 = blocking.
             - name: Run Trivy secret scanner
               uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+              env:
+                  TRIVY_SECRET_CONFIG: trivy-secret.yaml
               with:
                   scan-type: "fs"
                   scan-ref: "."
