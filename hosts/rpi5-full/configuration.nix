@@ -340,6 +340,19 @@ in
     powerOnBoot = true;
   };
 
+  # Network media integrations. samsungtv = Samsung Tizen TVs over the LAN
+  # (auto-discovered via the ssdp/dhcp discovery in default_config). Setting
+  # extraComponents REPLACES the module default, so the default set is restated.
+  # This re-derives the HA package — a DELIBERATE, build-first change: run
+  # `nixos-rebuild build` and watch earlyoom before switching (4GB Pi OOM guard).
+  services.home-assistant.extraComponents = [
+    "default_config"
+    "met"
+    "esphome"
+    "rpi_power"
+    "samsungtv"
+  ];
+
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
   # at the agenix-decrypted LLAT, so the per-user oneshot injects HA_TOKEN into
   # the MCP entry. The runtime `if [ -f tokenFile ]` guard in the oneshot reads
