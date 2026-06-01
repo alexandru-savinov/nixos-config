@@ -55,7 +55,14 @@ let
       hash = "sha256-BdcAw9r6JO0Gn4VWOTQmna5HUKoLWfgYEznQkP9E+3E=";
     };
 
-    build-system = [ pkgs.python313Packages.hatchling ];
+    build-system = with pkgs.python313Packages; [
+      hatchling
+      hatch-vcs # pyproject [build-system] requires it; was missing -> build failed
+    ];
+
+    # hatch-vcs derives the version from git tags, but src is a release tarball
+    # (no .git), so pin the version to avoid a VCS-lookup build failure.
+    env.SETUPTOOLS_SCM_PRETEND_VERSION = version;
 
     dependencies = with pkgs.python313Packages; [
       aiounifi
