@@ -132,12 +132,14 @@ in
           sleep 1
         done
 
-        # Wait for home-assistant to be listening (timeout: 60 seconds)
-        timeout=60
+        # Wait for home-assistant to be listening. HA's first cold boot on the
+        # 4GB Pi (Python + default_config integrations) can exceed a minute, so
+        # allow 180s — gatus's 60s is too tight for HA on this hardware.
+        timeout=180
         while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${toString cfg.port} 2>/dev/null; do
           timeout=$((timeout - 1))
           if [ $timeout -le 0 ]; then
-            echo "ERROR: home-assistant not listening on port ${toString cfg.port} after 60 seconds"
+            echo "ERROR: home-assistant not listening on port ${toString cfg.port} after 180 seconds"
             exit 1
           fi
           sleep 1
