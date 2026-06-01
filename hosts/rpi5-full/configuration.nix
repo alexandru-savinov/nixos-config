@@ -58,6 +58,7 @@ in
     ../../modules/services/gatus.nix # Declarative status monitoring
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
+    ../../modules/services/home-assistant.nix # Home Assistant with Tailscale Serve
     ../../modules/system/ssh-hardened.nix
   ];
 
@@ -292,6 +293,22 @@ in
       enable = true;
       credentialsFile = secret "caldav-credentials";
     };
+  };
+
+  # ──────────────────────────────────────────────────────────────
+  # Home Assistant — declarative install via native services.home-assistant
+  # ──────────────────────────────────────────────────────────────
+  # Bound to 127.0.0.1:8123, fronted by Tailscale Serve HTTPS.
+  # Access: https://rpi5.tail4249a9.ts.net:8123
+  #
+  # Phase A (autonomous): secretsFile is unset (null); HA serves the
+  # onboarding page without an LLAT. All token wiring is deferred until
+  # after the human completes onboarding and provisions the secret file —
+  # see plan-home-assistant.md Tasks 5/6.
+  services.home-assistant-tailscale = {
+    enable = true;
+    timeZone = "Europe/Bucharest";
+    tailscaleServe.enable = true;
   };
 
   # ── Backup: pull from sancta-claw ──────────────────────────────────────
