@@ -58,6 +58,9 @@ in
     ../../modules/services/gatus.nix # Declarative status monitoring
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
+    ../../modules/services/home-assistant.nix # Home Assistant with Tailscale Serve
+    ../../modules/services/home-assistant-mcp-claude.nix # hass-mcp for Claude Code
+    ../../modules/system/nix-ld.nix # runtime loader so uvx-spawned hass-mcp interpreter can run
     ../../modules/system/ssh-hardened.nix
   ];
 
@@ -87,6 +90,11 @@ in
   # Claude Code agents through multi-step plan files; lives in pkgs/ralphex.nix.
   environment.systemPackages = [
     self.packages.${pkgs.system}.ralphex
+    # hass-cli — CLI agent-control level for Home Assistant
+    pkgs.home-assistant-cli
+    # websocat — first-class WebSocket client for HA WS-API diagnostics
+    # (so checks don't depend on an off-PATH store python + hand-rolled framing)
+    pkgs.websocat
   ];
 
   # Agenix secrets for additional services
@@ -116,6 +124,13 @@ in
 
       # CalDAV credentials for NixFrame calendar sidebar
       caldav-credentials = ownedSecret "nixframe" "caldav-credentials";
+
+      # Home Assistant Long-Lived Access Token (LLAT) for agent-control tooling
+      # (hass-cli + voska/hass-mcp). Minted in the HA UI after owner onboarding;
+      # consumed by the home-assistant-mcp-claude oneshot and by hass-cli at use
+      # time. Root-owned (default) — systemd HA and the MCP config oneshot both
+      # run as root.
+      home-assistant-token = secret "home-assistant-token";
 
       # Backup pull secrets
       rpi5-backup-ssh-key = {
@@ -237,9 +252,10 @@ in
       httpsPort = 3001;
     };
 
-    # API key for suite authentication — disabled with Open-WebUI
-    # apiKeyFile = "/run/open-webui/e2e-test-api-key";
-    # apiKeyServiceDependency = "open-webui-e2e-test-user.service";
+    # Home Assistant LLAT injected into Gatus's env as GATUS_API_KEY (written to
+    # /run/gatus/env, kept out of the nix store), referenced as ${GATUS_API_KEY}
+    # in the Home Assistant endpoint header below for an authenticated health check.
+    apiKeyFile = config.age.secrets.home-assistant-token.path;
 
     # Monitored Endpoints
     endpoints = {
@@ -248,6 +264,11 @@ in
       rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";
       rpi5-anki-workflow = httpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui";
       rpi5-nixframe = httpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui";
+      # Authenticated HA health check — Bearer token is the LLAT, expanded by
+      # Gatus from GATUS_API_KEY at runtime (never rendered into the nix store).
+      rpi5-home-assistant = (httpEndpoint "rpi5" "Home Assistant" "http://127.0.0.1:8123/api/") // {
+        headers = { Authorization = "Bearer \${GATUS_API_KEY}"; };
+      };
       # rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
       rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 
@@ -292,6 +313,58 @@ in
       enable = true;
       credentialsFile = secret "caldav-credentials";
     };
+  };
+
+  # ──────────────────────────────────────────────────────────────
+  # Home Assistant — declarative install via native services.home-assistant
+  # ──────────────────────────────────────────────────────────────
+  # Bound to 127.0.0.1:8123, fronted by Tailscale Serve HTTPS.
+  # Access: https://rpi5.tail4249a9.ts.net:8123
+  #
+  # Phase A (autonomous): secretsFile is unset (null); HA serves the
+  # onboarding page without an LLAT. All token wiring is deferred until
+  # after the human completes onboarding and provisions the secret file —
+  # see plan-home-assistant.md Tasks 5/6.
+  services.home-assistant-tailscale = {
+    enable = true;
+    timeZone = "Europe/Bucharest";
+    tailscaleServe.enable = true;
+  };
+
+  # Bluetooth: the RPi5 has an integrated BT adapter (hci0, UART serial0). Enable
+  # the BlueZ stack so Home Assistant's bluetooth integration (pulled in by
+  # default_config) can manage the adapter over D-Bus and move from setup_retry
+  # to loaded. Without this, bluetoothd never runs and HA's BLE scanner fails.
+  hardware.bluetooth = {
+    enable = true;
+    powerOnBoot = true;
+  };
+
+  # Network media via SmartThings (cloud). The Samsung TVs are BLE-visible but
+  # NOT IP-reachable from this subnet (separate IoT VLAN / AP isolation), so the
+  # local `samsungtv` integration can't connect. SmartThings reaches all Samsung
+  # devices (both TVs + the S801B soundbar) via Samsung's cloud, so the subnet
+  # boundary is irrelevant. Setup is a one-time Samsung-account OAuth in the HA UI.
+  # Setting extraComponents REPLACES the module default, so the default set is
+  # restated. This re-derives the HA package — a DELIBERATE, build-first change:
+  # run `nixos-rebuild build` and watch earlyoom before switching (4GB Pi guard).
+  services.home-assistant.extraComponents = [
+    "default_config"
+    "met"
+    "esphome"
+    "rpi_power"
+    "smartthings"
+  ];
+
+  # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
+  # at the agenix-decrypted LLAT, so the per-user oneshot injects HA_TOKEN into
+  # the MCP entry. The runtime `if [ -f tokenFile ]` guard in the oneshot reads
+  # the decrypted file at /run/agenix/home-assistant-token.
+  services.home-assistant-mcp-claude = {
+    enable = true;
+    users = [ "nixos" ];
+    haUrl = "http://127.0.0.1:8123";
+    tokenFile = config.age.secrets.home-assistant-token.path;
   };
 
   # ── Backup: pull from sancta-claw ──────────────────────────────────────

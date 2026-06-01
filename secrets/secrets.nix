@@ -117,6 +117,24 @@ in
   # EnvironmentFile format — only rpi5 needs this (runs the backup service)
   "backup-telegram-env.age".publicKeys = users ++ [ rpi5 ];
 
+  # ── Home Assistant secrets (rpi5 only) ─────────────────────────────────
+  # WARNING: registering a key here is INERT — it does NOT create the .age
+  # file. The .age must be created with `agenix -e` BEFORE any host config
+  # declares `age.secrets.home-assistant-token` (or -secrets) pointing at it,
+  # otherwise agenix activation fails the whole nixos-rebuild switch.
+  # This is the Phase A chicken-and-egg fix: keys registered now, but
+  # host wiring (in hosts/rpi5-full/configuration.nix) is deferred until
+  # after the human onboarding checkpoint (see plan-home-assistant.md Task 5).
+  #
+  # Long-Lived Access Token for hass-cli + HA MCP — minted in HA UI after
+  # owner onboarding (Profile → Security → Long-lived access tokens)
+  "home-assistant-token.age".publicKeys = users ++ [ rpi5 ];
+  # NOTE: home-assistant-secrets.age is intentionally NOT registered — HA's own
+  # secrets.yaml is unused here, and registering a key without creating its .age
+  # is a footgun (a future host config wiring age.secrets before `agenix -e`
+  # creates the file would fail activation). Re-add the line AND create the .age
+  # in the same change if you ever need HA !secret values.
+
   # ── Zero_kuzea secrets (NullClaw bot on dedicated VPS) ─────────────────
   # Uses sancta-claw recovery key (same trust level, both are throwaway VPS)
   # Telegram bot token for Zero_kuzea bot — also re-keyed for hermes-claw

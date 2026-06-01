@@ -91,6 +91,13 @@ let
         USER_HOME=$(eval echo "~${user}")
         CONFIG_FILE="$USER_HOME/.claude.json"
 
+        # Serialize concurrent writers: this oneshot and home-assistant-mcp-config-${user}
+        # both read-modify-write ~/.claude.json and start in parallel under
+        # multi-user.target. Hold an exclusive lock for the whole RMW so a reboot
+        # can't lose-update the file (drop an MCP server) or read it truncated.
+        exec 9>"$CONFIG_FILE.lock"
+        ${pkgs.util-linux}/bin/flock 9
+
         # Read existing config or start with empty object
         # ~/.claude.json contains user settings (tips, stats) AND mcpServers
         if [ -f "$CONFIG_FILE" ]; then
@@ -118,12 +125,14 @@ let
           fi
         ''}
 
-        # Merge into existing config (preserving other MCP servers like context7, unifi)
-        echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq --argjson n8n "$N8N_MCP_CONFIG" '.mcpServers["n8n-mcp"] = $n8n' > "$CONFIG_FILE"
-
-        # Set proper ownership
-        chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$CONFIG_FILE"
-        chmod 600 "$CONFIG_FILE"
+        # Merge into existing config (preserving other MCP servers like context7,
+        # unifi), written atomically (temp + mv) so an earlyoom kill mid-write
+        # can't truncate ~/.claude.json. flock above serializes writers.
+        TMP=$(mktemp "$CONFIG_FILE.XXXXXX")
+        echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq --argjson n8n "$N8N_MCP_CONFIG" '.mcpServers["n8n-mcp"] = $n8n' > "$TMP"
+        chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$TMP"
+        chmod 600 "$TMP"
+        mv -f "$TMP" "$CONFIG_FILE"
 
         echo "n8n-mcp configured for ${user} in $CONFIG_FILE"
   '';
