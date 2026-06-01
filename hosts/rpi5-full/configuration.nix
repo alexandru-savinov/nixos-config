@@ -59,6 +59,7 @@ in
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
     ../../modules/services/home-assistant.nix # Home Assistant with Tailscale Serve
+    ../../modules/services/home-assistant-mcp-claude.nix # hass-mcp for Claude Code
     ../../modules/system/ssh-hardened.nix
   ];
 
@@ -88,6 +89,8 @@ in
   # Claude Code agents through multi-step plan files; lives in pkgs/ralphex.nix.
   environment.systemPackages = [
     self.packages.${pkgs.system}.ralphex
+    # hass-cli — CLI agent-control level for Home Assistant
+    pkgs.home-assistant-cli
   ];
 
   # Agenix secrets for additional services
@@ -309,6 +312,16 @@ in
     enable = true;
     timeZone = "Europe/Bucharest";
     tailscaleServe.enable = true;
+  };
+
+  # HA MCP server for Claude Code. Phase A: tokenFile is unset (null), so the
+  # per-user oneshot writes the MCP entry without HA_TOKEN. The token is wired
+  # in after the human onboarding checkpoint — see plan-home-assistant.md
+  # Task 6.
+  services.home-assistant-mcp-claude = {
+    enable = true;
+    users = [ "nixos" ];
+    haUrl = "http://127.0.0.1:8123";
   };
 
   # ── Backup: pull from sancta-claw ──────────────────────────────────────
