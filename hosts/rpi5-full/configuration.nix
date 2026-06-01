@@ -252,9 +252,10 @@ in
       httpsPort = 3001;
     };
 
-    # API key for suite authentication — disabled with Open-WebUI
-    # apiKeyFile = "/run/open-webui/e2e-test-api-key";
-    # apiKeyServiceDependency = "open-webui-e2e-test-user.service";
+    # Home Assistant LLAT injected into Gatus's env as GATUS_API_KEY (written to
+    # /run/gatus/env, kept out of the nix store), referenced as ${GATUS_API_KEY}
+    # in the Home Assistant endpoint header below for an authenticated health check.
+    apiKeyFile = config.age.secrets.home-assistant-token.path;
 
     # Monitored Endpoints
     endpoints = {
@@ -263,6 +264,11 @@ in
       rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";
       rpi5-anki-workflow = httpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui";
       rpi5-nixframe = httpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui";
+      # Authenticated HA health check — Bearer token is the LLAT, expanded by
+      # Gatus from GATUS_API_KEY at runtime (never rendered into the nix store).
+      rpi5-home-assistant = (httpEndpoint "rpi5" "Home Assistant" "http://127.0.0.1:8123/api/") // {
+        headers = { Authorization = "Bearer \${GATUS_API_KEY}"; };
+      };
       # rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
       rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 

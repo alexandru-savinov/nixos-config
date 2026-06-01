@@ -52,6 +52,10 @@ in
     # Only `config` is set, which is a cheap YAML render.
     services.home-assistant = {
       enable = true;
+      # Pin explicitly (defense-in-depth): never open 8123 to the network — access
+      # is exclusively via the Tailscale Serve HTTPS proxy. Don't rely on the
+      # upstream module default in case it ever changes.
+      openFirewall = false;
       config = {
         homeassistant = {
           time_zone = cfg.timeZone;
