@@ -121,6 +121,13 @@ in
       # CalDAV credentials for NixFrame calendar sidebar
       caldav-credentials = ownedSecret "nixframe" "caldav-credentials";
 
+      # Home Assistant Long-Lived Access Token (LLAT) for agent-control tooling
+      # (hass-cli + voska/hass-mcp). Minted in the HA UI after owner onboarding;
+      # consumed by the home-assistant-mcp-claude oneshot and by hass-cli at use
+      # time. Root-owned (default) — systemd HA and the MCP config oneshot both
+      # run as root.
+      home-assistant-token = secret "home-assistant-token";
+
       # Backup pull secrets
       rpi5-backup-ssh-key = {
         file = "${self}/secrets/rpi5-backup-ssh-key.age";
@@ -314,14 +321,15 @@ in
     tailscaleServe.enable = true;
   };
 
-  # HA MCP server for Claude Code. Phase A: tokenFile is unset (null), so the
-  # per-user oneshot writes the MCP entry without HA_TOKEN. The token is wired
-  # in after the human onboarding checkpoint — see plan-home-assistant.md
-  # Task 6.
+  # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
+  # at the agenix-decrypted LLAT, so the per-user oneshot injects HA_TOKEN into
+  # the MCP entry. The runtime `if [ -f tokenFile ]` guard in the oneshot reads
+  # the decrypted file at /run/agenix/home-assistant-token.
   services.home-assistant-mcp-claude = {
     enable = true;
     users = [ "nixos" ];
     haUrl = "http://127.0.0.1:8123";
+    tokenFile = config.age.secrets.home-assistant-token.path;
   };
 
   # ── Backup: pull from sancta-claw ──────────────────────────────────────
