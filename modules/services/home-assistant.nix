@@ -110,7 +110,11 @@ in
         "home-assistant.service"
       ];
       wantedBy = [ "multi-user.target" ];
-      # PartOf ensures this service restarts when home-assistant restarts.
+      # PartOf propagates home-assistant's STOP and RESTART to this oneshot, but
+      # NOT a plain START. So home-assistant.service also `wants` this unit (added
+      # below) — that restores the serve mapping on every HA start (boot, restart,
+      # or start-after-stop), closing the gap where a stop→start left HTTPS dark
+      # until a manual restart.
       partOf = [ "home-assistant.service" ];
 
       serviceConfig = {
@@ -163,6 +167,11 @@ in
         ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} off || true
       '';
     };
+
+    # Make HA's own start pull the serve oneshot (PartOf above only propagates
+    # stop/restart, not start), so HTTPS is reconfigured on every HA start.
+    systemd.services.home-assistant.wants =
+      mkIf cfg.tailscaleServe.enable [ "tailscale-serve-home-assistant.service" ];
 
     # Access Home Assistant via Tailscale HTTPS:
     #   https://<hostname>.<tailnet>.ts.net:<tailscaleServe.httpsPort>
