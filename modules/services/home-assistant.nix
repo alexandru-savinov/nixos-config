@@ -74,24 +74,6 @@ in
           purge_keep_days = 5;
           commit_interval = 30;
         };
-
-        # Quiet the flaky onboard-Bluetooth scanner spam: default_config pulls
-        # in the bluetooth integration and the Pi's hci0 repeatedly logs
-        # "Failed to force stop scanner". logger is a default integration, so
-        # this is a cheap YAML render with no effect on the cached component set.
-        #
-        # DECISION (documented): Bluetooth is left ENABLED but its config entry
-        # sits in setup_retry because no BLE devices/proxy are configured yet.
-        # We keep it (a hub may want BLE later) and silence the noise here rather
-        # than disabling the adapter. To turn Bluetooth off entirely instead, set
-        # `hardware.bluetooth.enable = false;` at the host level — one line, fully
-        # reversible. Either way the setup_retry state is an explicit, accepted one.
-        logger = {
-          default = "warning";
-          logs = {
-            "habluetooth.scanner" = "critical";
-          };
-        };
       };
     };
 

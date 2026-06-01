@@ -325,6 +325,15 @@ in
     tailscaleServe.enable = true;
   };
 
+  # Bluetooth: the RPi5 has an integrated BT adapter (hci0, UART serial0). Enable
+  # the BlueZ stack so Home Assistant's bluetooth integration (pulled in by
+  # default_config) can manage the adapter over D-Bus and move from setup_retry
+  # to loaded. Without this, bluetoothd never runs and HA's BLE scanner fails.
+  hardware.bluetooth = {
+    enable = true;
+    powerOnBoot = true;
+  };
+
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
   # at the agenix-decrypted LLAT, so the per-user oneshot injects HA_TOKEN into
   # the MCP entry. The runtime `if [ -f tokenFile ]` guard in the oneshot reads
