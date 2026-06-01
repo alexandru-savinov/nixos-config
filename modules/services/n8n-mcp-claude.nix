@@ -91,6 +91,13 @@ let
         USER_HOME=$(eval echo "~${user}")
         CONFIG_FILE="$USER_HOME/.claude.json"
 
+        # Serialize concurrent writers: this oneshot and home-assistant-mcp-config-${user}
+        # both read-modify-write ~/.claude.json and start in parallel under
+        # multi-user.target. Hold an exclusive lock for the whole RMW so a reboot
+        # can't lose-update the file (drop an MCP server) or read it truncated.
+        exec 9>"$CONFIG_FILE.lock"
+        ${pkgs.util-linux}/bin/flock 9
+
         # Read existing config or start with empty object
         # ~/.claude.json contains user settings (tips, stats) AND mcpServers
         if [ -f "$CONFIG_FILE" ]; then

@@ -146,7 +146,7 @@ in
         done
 
         # Idempotent: only configure if not already set for this port.
-        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${toString cfg.tailscaleServe.httpsPort}"; then
+        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -qE "https?://.*:${toString cfg.tailscaleServe.httpsPort}( |$)"; then
           echo "Configuring Tailscale Serve for Home Assistant..."
           if ! ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.tailscaleServe.httpsPort} http://127.0.0.1:${toString cfg.port}; then
             echo "ERROR: Failed to configure Tailscale Serve for Home Assistant"

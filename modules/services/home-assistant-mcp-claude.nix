@@ -55,6 +55,13 @@ let
         USER_HOME=$(eval echo "~${user}")
         CONFIG_FILE="$USER_HOME/.claude.json"
 
+        # Serialize concurrent writers: this oneshot and n8n-mcp-config-${user}
+        # both read-modify-write ~/.claude.json and start in parallel under
+        # multi-user.target. Hold an exclusive lock for the whole RMW so a reboot
+        # can't lose-update the file (drop an MCP server) or read it truncated.
+        exec 9>"$CONFIG_FILE.lock"
+        ${pkgs.util-linux}/bin/flock 9
+
         if [ -f "$CONFIG_FILE" ]; then
           EXISTING_CONFIG=$(cat "$CONFIG_FILE")
           EXISTING_CONFIG=$(echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq 'if .mcpServers == null then .mcpServers = {} else . end')
