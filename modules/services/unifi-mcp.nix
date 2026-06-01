@@ -78,10 +78,151 @@ let
   ssePortStr = toString cfg.service.ssePort;
   httpsPortStr = toString cfg.tailscaleServe.httpsPort;
 
+  # Base unifi MCP entry, WITHOUT the runtime-injected password.
+  # - useDocker=true : command=docker, args=[run ... -e KEY=VAL ...]; the
+  #   "-e UNIFI_PASSWORD=<pw>" pair AND the trailing image are appended at
+  #   runtime by the oneshot (image must stay last for `docker run`).
+  # - useDocker=false: command="unifi-network-mcp" (PATH; package added to
+  #   systemPackages when !useDocker), env={...}; oneshot sets
+  #   .env.UNIFI_PASSWORD at runtime.
+  # command/env/args mirror the existing `unifi-mcp-config` print command.
+  mkMcpConfigBase =
+    if cfg.useDocker then {
+      command = "${pkgs.docker}/bin/docker";
+      args = [
+        "run"
+        "--rm"
+        "-i"
+        "-e"
+        "UNIFI_HOST=${cfg.host}"
+        "-e"
+        "UNIFI_PORT=${portStr}"
+        "-e"
+        "UNIFI_USERNAME=${cfg.username}"
+        "-e"
+        "UNIFI_SITE=${cfg.site}"
+        "-e"
+        "UNIFI_VERIFY_SSL=${boolToString cfg.verifySsl}"
+        "-e"
+        "UNIFI_CONTROLLER_TYPE=${cfg.controllerType}"
+        "-e"
+        "UNIFI_TOOL_REGISTRATION=${cfg.toolRegistration}"
+        # NOTE: "-e UNIFI_PASSWORD=<pw>" and the trailing ${dockerImage} are
+        # appended at runtime by the oneshot. The -e flag order is irrelevant
+        # to `docker run`; the image stays the last positional arg, so the
+        # container env is identical to the print command (verified).
+      ];
+    } else {
+      command = "unifi-network-mcp";
+      env = {
+        UNIFI_HOST = cfg.host;
+        UNIFI_PORT = portStr;
+        UNIFI_USERNAME = cfg.username;
+        UNIFI_SITE = cfg.site;
+        UNIFI_VERIFY_SSL = boolToString cfg.verifySsl;
+        UNIFI_CONTROLLER_TYPE = cfg.controllerType;
+        UNIFI_TOOL_REGISTRATION = cfg.toolRegistration;
+        # UNIFI_PASSWORD is injected at runtime by the oneshot.
+      };
+    };
+
+  # Per-user oneshot: read or initialise ~/.claude.json, inject UNIFI_PASSWORD
+  # from cfg.passwordFile at runtime, then patch ONLY .mcpServers["unifi"]
+  # (MERGE — preserves n8n-mcp, home-assistant, context7, ...). Hardened with
+  # flock + atomic mktemp/mv, mirroring the n8n / home-assistant siblings.
+  #
+  # INDENTATION IS LOAD-BEARING: body lines are indented 8 spaces; the three
+  # heredoc lines (`${builtins.toJSON mkMcpConfigBase}`, `MCPEOF`, `)`) are
+  # indented exactly 4 spaces so that after Nix '' common-leading-whitespace
+  # stripping `MCPEOF` lands at column 0 and closes the <<'MCPEOF' (non-<<-)
+  # heredoc. Do NOT re-indent these three lines (nix fmt leaves '' bodies
+  # alone, but re-verify after running it).
+  generateMcpConfigScript = user: pkgs.writeShellScript "unifi-mcp-config-${user}" ''
+        set -euo pipefail
+
+        USER_HOME=$(eval echo "~${user}")
+        CONFIG_FILE="$USER_HOME/.claude.json"
+
+        # Serialize concurrent writers: this oneshot and the n8n /
+        # home-assistant MCP oneshots all read-modify-write ~/.claude.json and
+        # start in parallel under multi-user.target. Hold an exclusive lock for
+        # the whole RMW so a reboot can't lose-update the file (drop an MCP
+        # server) or read it truncated.
+        exec 9>"$CONFIG_FILE.lock"
+        ${pkgs.util-linux}/bin/flock 9
+
+        # Read existing config or start with empty object. ~/.claude.json holds
+        # user settings (tips, stats) AND mcpServers.
+        if [ -f "$CONFIG_FILE" ]; then
+          EXISTING_CONFIG=$(cat "$CONFIG_FILE")
+          EXISTING_CONFIG=$(echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq 'if .mcpServers == null then .mcpServers = {} else . end')
+        else
+          EXISTING_CONFIG='{"mcpServers":{}}'
+        fi
+
+        # Base unifi entry (no password yet).
+        UNIFI_MCP_CONFIG=$(cat <<'MCPEOF'
+    ${builtins.toJSON mkMcpConfigBase}
+    MCPEOF
+    )
+
+        # Inject the UniFi password at RUNTIME from the agenix secret. Never
+        # baked into the nix store. Fail loudly if missing/empty (the entry
+        # would be useless without it). passwordFile is a required types.path,
+        # so it is unconditional (no optionalString wrapper, unlike the
+        # nullable apiKeyFile/tokenFile of the siblings).
+        if [ ! -f "${cfg.passwordFile}" ]; then
+          echo "ERROR: UniFi password file not found: ${cfg.passwordFile}" >&2
+          exit 1
+        fi
+        PASSWORD=$(cat "${cfg.passwordFile}")
+        if [ -z "$PASSWORD" ]; then
+          echo "ERROR: UniFi password file is empty: ${cfg.passwordFile}" >&2
+          exit 1
+        fi
+
+        ${if cfg.useDocker then ''
+          # Docker shape: append "-e UNIFI_PASSWORD=<pw>" then the image as the
+          # final positional arg (image must stay last for `docker run`).
+          UNIFI_MCP_CONFIG=$(echo "$UNIFI_MCP_CONFIG" | ${pkgs.jq}/bin/jq \
+            --arg pw "$PASSWORD" --arg img "${dockerImage}" \
+            '.args += ["-e", ("UNIFI_PASSWORD=" + $pw), $img]')
+        '' else ''
+          # Non-Docker shape: set .env.UNIFI_PASSWORD.
+          UNIFI_MCP_CONFIG=$(echo "$UNIFI_MCP_CONFIG" | ${pkgs.jq}/bin/jq \
+            --arg pw "$PASSWORD" '.env.UNIFI_PASSWORD = $pw')
+        ''}
+
+        # Merge into existing config (preserving other MCP servers), written
+        # atomically (temp + mv) so an earlyoom kill mid-write can't truncate
+        # ~/.claude.json. flock above serializes writers; mv makes the swap atomic.
+        TMP=$(mktemp "$CONFIG_FILE.XXXXXX")
+        echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq --argjson unifi "$UNIFI_MCP_CONFIG" '.mcpServers["unifi"] = $unifi' > "$TMP"
+        chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$TMP"
+        chmod 600 "$TMP"
+        mv -f "$TMP" "$CONFIG_FILE"
+
+        echo "unifi MCP configured for ${user} in $CONFIG_FILE"
+  '';
+
 in
 {
   options.services.unifi-mcp = {
     enable = mkEnableOption "UniFi Network MCP server for AI-assisted network management";
+
+    users = mkOption {
+      type = types.listOf types.str;
+      default = [ "nixos" ];
+      example = [ "nixos" "root" ];
+      description = ''
+        List of users to configure the unifi MCP server for.
+        For each user a per-user oneshot merges the `unifi` entry into
+        ~/.claude.json (preserving other MCP servers like n8n-mcp,
+        home-assistant, context7). Runs whenever services.unifi-mcp.enable is
+        set (stdio mode for Claude Code), independent of service.enable
+        (the HTTP/SSE mode).
+      '';
+    };
 
     package = mkOption {
       type = types.package;
@@ -281,7 +422,7 @@ in
 
     # Enable Docker only when running as a service in container mode
     # stdio mode uses the binary directly and never needs Docker
-    virtualisation.docker.enable = mkIf (cfg.service.enable && cfg.useDocker) true;
+    virtualisation.docker.enable = mkIf (cfg.useDocker && (cfg.enable || cfg.service.enable)) true;
 
     # Generate environment file for both modes
     environment.etc."unifi-mcp/env.template".text = ''
@@ -305,119 +446,144 @@ in
       UNIFI_PERMISSIONS_QOS_MANAGE=${boolToString cfg.permissions.qosManage}
     '';
 
-    # Service mode: Run as persistent HTTP SSE server
-    systemd.services.unifi-mcp = mkIf cfg.service.enable {
-      description = "UniFi Network MCP Server (HTTP SSE mode)";
-      after = [ "network-online.target" ] ++ lib.optionals cfg.useDocker [ "docker.service" ];
-      wants = [ "network-online.target" ];
-      requires = mkIf cfg.useDocker [ "docker.service" ];
-      wantedBy = [ "multi-user.target" ];
+    systemd.services = mkMerge [
+      {
+        # Service mode: Run as persistent HTTP SSE server (UNCHANGED body).
+        unifi-mcp = mkIf cfg.service.enable {
+          description = "UniFi Network MCP Server (HTTP SSE mode)";
+          after = [ "network-online.target" ] ++ lib.optionals cfg.useDocker [ "docker.service" ];
+          wants = [ "network-online.target" ];
+          requires = mkIf cfg.useDocker [ "docker.service" ];
+          wantedBy = [ "multi-user.target" ];
 
-      serviceConfig = {
-        Type = "simple";
-        Restart = "on-failure";
-        RestartSec = 10;
-        RuntimeDirectory = "unifi-mcp";
-        RuntimeDirectoryMode = "0700";
-        EnvironmentFile = "-/run/unifi-mcp/env";
+          serviceConfig = {
+            Type = "simple";
+            Restart = "on-failure";
+            RestartSec = 10;
+            RuntimeDirectory = "unifi-mcp";
+            RuntimeDirectoryMode = "0700";
+            EnvironmentFile = "-/run/unifi-mcp/env";
 
-        ExecStartPre = [
-          ("+" + pkgs.writeShellScript "unifi-mcp-setup-env" ''
-            set -euo pipefail
+            ExecStartPre = [
+              ("+" + pkgs.writeShellScript "unifi-mcp-setup-env" ''
+                set -euo pipefail
 
-            ENV_FILE="/run/unifi-mcp/env"
-            cp /etc/unifi-mcp/env.template "$ENV_FILE"
+                ENV_FILE="/run/unifi-mcp/env"
+                cp /etc/unifi-mcp/env.template "$ENV_FILE"
 
-            # Add password from secret file
-            if [[ ! -f "${cfg.passwordFile}" ]]; then
-              echo "ERROR: Password file not found: ${cfg.passwordFile}" >&2
-              exit 1
+                # Add password from secret file
+                if [[ ! -f "${cfg.passwordFile}" ]]; then
+                  echo "ERROR: Password file not found: ${cfg.passwordFile}" >&2
+                  exit 1
+                fi
+                PASSWORD=$(cat "${cfg.passwordFile}")
+                if [[ -z "$PASSWORD" ]]; then
+                  echo "ERROR: Password file is empty: ${cfg.passwordFile}" >&2
+                  exit 1
+                fi
+                echo "UNIFI_PASSWORD=$PASSWORD" >> "$ENV_FILE"
+
+                # Enable SSE mode
+                echo "UNIFI_ENABLE_SSE=true" >> "$ENV_FILE"
+                echo "UNIFI_SSE_PORT=${ssePortStr}" >> "$ENV_FILE"
+
+                chmod 600 "$ENV_FILE"
+              '')
+            ];
+
+            ExecStart =
+              if cfg.useDocker then
+                "${pkgs.docker}/bin/docker run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${ssePortStr}:${ssePortStr} ${dockerImage}"
+              else
+                "${cfg.package}/bin/unifi-network-mcp";
+
+            ExecStop = mkIf cfg.useDocker "${pkgs.docker}/bin/docker stop unifi-mcp";
+          };
+        };
+
+        # Tailscale Serve for HTTPS access (UNCHANGED body).
+        tailscale-serve-unifi-mcp = mkIf (cfg.service.enable && cfg.tailscaleServe.enable) {
+          description = "Configure Tailscale Serve for UniFi MCP HTTPS access";
+          after = [
+            "network-online.target"
+            "tailscaled.service"
+            "unifi-mcp.service"
+          ];
+          wants = [ "network-online.target" ];
+          requires = [
+            "tailscaled.service"
+            "unifi-mcp.service"
+          ];
+          wantedBy = [ "multi-user.target" ];
+          partOf = [ "unifi-mcp.service" ];
+
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+          };
+
+          script = ''
+            # Wait for tailscaled to be ready
+            timeout=60
+            while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
+              timeout=$((timeout - 1))
+              if [ $timeout -le 0 ]; then
+                echo "ERROR: tailscaled not ready after 60 seconds"
+                exit 1
+              fi
+              sleep 1
+            done
+
+            # Wait for unifi-mcp to be listening
+            timeout=60
+            while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${ssePortStr} 2>/dev/null; do
+              timeout=$((timeout - 1))
+              if [ $timeout -le 0 ]; then
+                echo "ERROR: unifi-mcp not listening on port ${ssePortStr} after 60 seconds"
+                exit 1
+              fi
+              sleep 1
+            done
+
+            # Configure Tailscale Serve
+            if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${httpsPortStr}"; then
+              echo "Configuring Tailscale Serve for UniFi MCP..."
+              ${pkgs.tailscale}/bin/tailscale serve --bg --https ${httpsPortStr} http://127.0.0.1:${ssePortStr}
+            else
+              echo "Tailscale Serve already configured for UniFi MCP"
             fi
-            PASSWORD=$(cat "${cfg.passwordFile}")
-            if [[ -z "$PASSWORD" ]]; then
-              echo "ERROR: Password file is empty: ${cfg.passwordFile}" >&2
-              exit 1
-            fi
-            echo "UNIFI_PASSWORD=$PASSWORD" >> "$ENV_FILE"
+          '';
 
-            # Enable SSE mode
-            echo "UNIFI_ENABLE_SSE=true" >> "$ENV_FILE"
-            echo "UNIFI_SSE_PORT=${ssePortStr}" >> "$ENV_FILE"
+          preStop = ''
+            echo "Removing Tailscale Serve configuration for UniFi MCP..."
+            ${pkgs.tailscale}/bin/tailscale serve --bg --https ${httpsPortStr} off || true
+          '';
+        };
+      }
 
-            chmod 600 "$ENV_FILE"
-          '')
-        ];
+      # Self-healing per-user oneshot(s): re-merge the `unifi` entry into
+      # ~/.claude.json on every boot/deploy (stdio mode for Claude Code). Runs on
+      # cfg.enable, independent of cfg.service.enable (the HTTP/SSE mode).
+      (listToAttrs (map
+        (user: {
+          name = "unifi-mcp-config-${user}";
+          value = {
+            description = "Configure unifi MCP for Claude Code (${user})";
+            # agenix here is an activation script, not a real systemd unit; the
+            # after entry is harmless and kept for parity with the n8n /
+            # home-assistant MCP oneshots. Real ordering is multi-user.target.
+            after = [ "network.target" "agenix.service" ];
+            wantedBy = [ "multi-user.target" ];
 
-        ExecStart =
-          if cfg.useDocker then
-            "${pkgs.docker}/bin/docker run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${ssePortStr}:${ssePortStr} ${dockerImage}"
-          else
-            "${cfg.package}/bin/unifi-network-mcp";
-
-        ExecStop = mkIf cfg.useDocker "${pkgs.docker}/bin/docker stop unifi-mcp";
-      };
-    };
-
-    # Tailscale Serve for HTTPS access
-    systemd.services.tailscale-serve-unifi-mcp = mkIf (cfg.service.enable && cfg.tailscaleServe.enable) {
-      description = "Configure Tailscale Serve for UniFi MCP HTTPS access";
-      after = [
-        "network-online.target"
-        "tailscaled.service"
-        "unifi-mcp.service"
-      ];
-      wants = [ "network-online.target" ];
-      requires = [
-        "tailscaled.service"
-        "unifi-mcp.service"
-      ];
-      wantedBy = [ "multi-user.target" ];
-      # PartOf ensures this service restarts when unifi-mcp restarts
-      # Without this, Requires= only stops this service but doesn't restart it
-      partOf = [ "unifi-mcp.service" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-
-      script = ''
-        # Wait for tailscaled to be ready
-        timeout=60
-        while ! ${pkgs.tailscale}/bin/tailscale status &>/dev/null; do
-          timeout=$((timeout - 1))
-          if [ $timeout -le 0 ]; then
-            echo "ERROR: tailscaled not ready after 60 seconds"
-            exit 1
-          fi
-          sleep 1
-        done
-
-        # Wait for unifi-mcp to be listening
-        timeout=60
-        while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${ssePortStr} 2>/dev/null; do
-          timeout=$((timeout - 1))
-          if [ $timeout -le 0 ]; then
-            echo "ERROR: unifi-mcp not listening on port ${ssePortStr} after 60 seconds"
-            exit 1
-          fi
-          sleep 1
-        done
-
-        # Configure Tailscale Serve
-        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null | grep -q "https:${httpsPortStr}"; then
-          echo "Configuring Tailscale Serve for UniFi MCP..."
-          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${httpsPortStr} http://127.0.0.1:${ssePortStr}
-        else
-          echo "Tailscale Serve already configured for UniFi MCP"
-        fi
-      '';
-
-      preStop = ''
-        echo "Removing Tailscale Serve configuration for UniFi MCP..."
-        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${httpsPortStr} off || true
-      '';
-    };
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              ExecStart = generateMcpConfigScript user;
+            };
+          };
+        })
+        cfg.users))
+    ];
 
     # Helper script to generate Claude Code MCP config
     # Also include the package when not using Docker
