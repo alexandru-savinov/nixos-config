@@ -92,6 +92,9 @@ in
     self.packages.${pkgs.system}.ralphex
     # hass-cli — CLI agent-control level for Home Assistant
     pkgs.home-assistant-cli
+    # websocat — first-class WebSocket client for HA WS-API diagnostics
+    # (so checks don't depend on an off-PATH store python + hand-rolled framing)
+    pkgs.websocat
   ];
 
   # Agenix secrets for additional services
