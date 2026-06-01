@@ -74,6 +74,17 @@ in
           purge_keep_days = 5;
           commit_interval = 30;
         };
+
+        # Quiet the flaky onboard-Bluetooth scanner spam: default_config pulls
+        # in the bluetooth integration and the Pi's hci0 repeatedly logs
+        # "Failed to force stop scanner". logger is a default integration, so
+        # this is a cheap YAML render with no effect on the cached component set.
+        logger = {
+          default = "warning";
+          logs = {
+            "habluetooth.scanner" = "critical";
+          };
+        };
       };
     };
 

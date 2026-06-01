@@ -60,6 +60,7 @@ in
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
     ../../modules/services/home-assistant.nix # Home Assistant with Tailscale Serve
     ../../modules/services/home-assistant-mcp-claude.nix # hass-mcp for Claude Code
+    ../../modules/system/nix-ld.nix # runtime loader so uvx-spawned hass-mcp interpreter can run
     ../../modules/system/ssh-hardened.nix
   ];
 
