@@ -107,11 +107,13 @@ in
 
     version = mkOption {
       type = types.str;
-      default = "1.27.2";
+      default = "0.4.1";
       description = ''
-        Pinned hass-mcp PyPI version. The MCP server runs with the HA LLAT, so
+        Pinned hass-mcp PyPI release. The MCP server runs with the HA LLAT, so
         the version is pinned rather than running whatever uvx resolves as latest
-        (supply-chain hardening). Bump deliberately after validating a new release.
+        (supply-chain hardening). NOTE: this is the PyPI release number (0.x.y),
+        NOT the server's self-reported serverInfo version (e.g. "Hass-MCP 1.27.2").
+        Bump deliberately after validating a new release.
       '';
     };
 
