@@ -41,7 +41,10 @@ let
   # tokenFile is set; leaving it absent means the server runs unauthenticated.
   mkMcpConfigBase = {
     command = "${pkgs.uv}/bin/uvx";
-    args = [ "hass-mcp" ];
+    # Pin the hass-mcp version: this process is handed the HA LLAT, so running an
+    # unversioned PyPI package (whatever uvx resolves as latest at spawn time) is
+    # a supply-chain risk. --from pins the version; the trailing arg is the cmd.
+    args = [ "--from" "hass-mcp==${cfg.version}" "hass-mcp" ];
     env = {
       HA_URL = cfg.haUrl;
     };
@@ -86,11 +89,14 @@ let
           fi
         ''}
 
-        # Merge into existing config (preserving other MCP servers).
-        echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq --argjson ha "$HA_MCP_CONFIG" '.mcpServers["home-assistant"] = $ha' > "$CONFIG_FILE"
-
-        chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$CONFIG_FILE"
-        chmod 600 "$CONFIG_FILE"
+        # Merge into existing config (preserving other MCP servers), written
+        # atomically (temp + mv) so an earlyoom kill mid-write can't truncate
+        # ~/.claude.json. flock above serializes writers; mv makes the swap atomic.
+        TMP=$(mktemp "$CONFIG_FILE.XXXXXX")
+        echo "$EXISTING_CONFIG" | ${pkgs.jq}/bin/jq --argjson ha "$HA_MCP_CONFIG" '.mcpServers["home-assistant"] = $ha' > "$TMP"
+        chown "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "$TMP"
+        chmod 600 "$TMP"
+        mv -f "$TMP" "$CONFIG_FILE"
 
         echo "home-assistant MCP configured for ${user} in $CONFIG_FILE"
   '';
@@ -98,6 +104,16 @@ in
 {
   options.services.home-assistant-mcp-claude = {
     enable = mkEnableOption "Home Assistant MCP server for Claude Code";
+
+    version = mkOption {
+      type = types.str;
+      default = "1.27.2";
+      description = ''
+        Pinned hass-mcp PyPI version. The MCP server runs with the HA LLAT, so
+        the version is pinned rather than running whatever uvx resolves as latest
+        (supply-chain hardening). Bump deliberately after validating a new release.
+      '';
+    };
 
     users = mkOption {
       type = types.listOf types.str;

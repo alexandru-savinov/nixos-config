@@ -129,8 +129,11 @@ in
   # Long-Lived Access Token for hass-cli + HA MCP — minted in HA UI after
   # owner onboarding (Profile → Security → Long-lived access tokens)
   "home-assistant-token.age".publicKeys = users ++ [ rpi5 ];
-  # Optional: HA's own secrets.yaml (key: value YAML pairs used via !secret)
-  "home-assistant-secrets.age".publicKeys = users ++ [ rpi5 ];
+  # NOTE: home-assistant-secrets.age is intentionally NOT registered — HA's own
+  # secrets.yaml is unused here, and registering a key without creating its .age
+  # is a footgun (a future host config wiring age.secrets before `agenix -e`
+  # creates the file would fail activation). Re-add the line AND create the .age
+  # in the same change if you ever need HA !secret values.
 
   # ── Zero_kuzea secrets (NullClaw bot on dedicated VPS) ─────────────────
   # Uses sancta-claw recovery key (same trust level, both are throwaway VPS)
