@@ -42,6 +42,21 @@ with lib;
 let
   cfg = config.services.unifi-mcp;
 
+  # unifi-network-mcp requires mcp>=1.26,<2, but this nixpkgs pins mcp 1.15.
+  # Bump ONLY mcp to 1.27.2. mcp is pure-Python and all of its deps (pydantic
+  # 2.11.7, pydantic-settings 2.10.1, anyio 4.11, httpx 0.28.1, sse-starlette
+  # 3.0.3, starlette 0.47.2, uvicorn 0.35, jsonschema 4.25, ...) are already
+  # satisfied by this nixpkgs — so no cascade and no pydantic-core (Rust) rebuild.
+  mcp_1_27 = pkgs.python313Packages.mcp.overridePythonAttrs (_: rec {
+    version = "1.27.2";
+    src = pkgs.fetchFromGitHub {
+      owner = "modelcontextprotocol";
+      repo = "python-sdk";
+      rev = "v${version}";
+      hash = "sha256-sEbBJrwUKX59vwV3iSGUgAucXK0rprPrQPK11e6TNho=";
+    };
+  });
+
   # Python package for unifi-network-mcp
   unifiMcpPkg = pkgs.python313Packages.buildPythonApplication rec {
     pname = "unifi-network-mcp";
@@ -64,13 +79,14 @@ let
     # (no .git), so pin the version to avoid a VCS-lookup build failure.
     env.SETUPTOOLS_SCM_PRETEND_VERSION = version;
 
-    dependencies = with pkgs.python313Packages; [
+    dependencies = (with pkgs.python313Packages; [
       aiounifi
-      mcp
       httpx
       pydantic
       python-dotenv
-    ];
+      omegaconf # runtime dep, undeclared in nixpkgs' build inputs
+      pyyaml # runtime dep, undeclared in nixpkgs' build inputs
+    ]) ++ [ mcp_1_27 ]; # mcp bumped 1.15 -> 1.27.2 (package needs >=1.26)
 
     meta = {
       description = "MCP server for UniFi Network Controller";
