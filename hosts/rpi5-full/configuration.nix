@@ -340,20 +340,63 @@ in
     powerOnBoot = true;
   };
 
-  # Network media via SmartThings (cloud). The Samsung TVs are BLE-visible but
-  # NOT IP-reachable from this subnet (separate IoT VLAN / AP isolation), so the
-  # local `samsungtv` integration can't connect. SmartThings reaches all Samsung
-  # devices (both TVs + the S801B soundbar) via Samsung's cloud, so the subnet
-  # boundary is irrelevant. Setup is a one-time Samsung-account OAuth in the HA UI.
-  # Setting extraComponents REPLACES the module default, so the default set is
-  # restated. This re-derives the HA package — a DELIBERATE, build-first change:
-  # run `nixos-rebuild build` and watch earlyoom before switching (4GB Pi guard).
+  # Local Samsung TV control via the core `samsungtv` integration (no cloud / no
+  # SmartThings). HA (192.168.1.37/24) shares the LAN with the TVs — The Frame 75
+  # (QE75LS03AAUXUA) at 192.168.1.50, verified directly reachable (8001/8002 open,
+  # TokenAuthSupport, no AP isolation). HA pairs over wss :8002 (an "Allow" popup
+  # on the TV) and powers it on via Wake-on-LAN — the `wake_on_lan` component
+  # (loaded via config.wake_on_lan below) provides the send_magic_packet service
+  # used by the turn-on automation (samsungtv's implicit WoL is deprecated).
+  #
+  # A component toggle here is a CACHE HIT, NOT a rebuild: on nixpkgs 25.11
+  # extraComponents only feeds the systemd PYTHONPATH; the home-assistant drv is
+  # unchanged and the deps (samsungtvws/wakeonlan/getmac/async-upnp-client) are
+  # pure-python, already in the store. (A real HA rebuild — version bump or a
+  # propagatedBuildInputs overlay — is the only OOM hazard, not this.) Note:
+  # extraComponents REPLACES the module default, so the 4 base components are
+  # restated alongside samsungtv + wake_on_lan.
+  #
+  # SmartThings was removed: the Samsung soundbar (S801B) + washer are cloud-only
+  # and HA's smartthings integration needs the restricted `sse` OAuth scope, which
+  # Samsung grants only to HA Cloud's account-linking app — not obtainable by a
+  # self-hosted OAuth app, so unusable without Nabu Casa (home-assistant/core#139551).
   services.home-assistant.extraComponents = [
     "default_config"
     "met"
     "esphome"
     "rpi_power"
-    "smartthings"
+    "samsungtv"
+    "wake_on_lan"
+  ];
+
+  # Load the wake_on_lan integration (YAML-only, no config flow) so the
+  # wake_on_lan.send_magic_packet service is registered for the Samsung TV
+  # turn-on automation.
+  services.home-assistant.config.wake_on_lan = { };
+
+  # Wake-on-LAN turn-on automation for The Frame, declared in Nix because this
+  # configuration.yaml does not `!include automations.yaml` (so UI/API-created
+  # automations do not load). Fires the samsungtv `turn_on` trigger when HA is
+  # asked to power the TV on while it is in standby, and sends a magic packet to
+  # its MAC. Replaces samsungtv's deprecated implicit Wake-on-LAN.
+  services.home-assistant.config.automation = [
+    {
+      id = "frame75_wol";
+      alias = "The Frame 75 - Wake on LAN";
+      mode = "single";
+      trigger = [
+        {
+          platform = "samsungtv.turn_on";
+          entity_id = "media_player.samsung_the_frame_75_qe75ls03aauxua";
+        }
+      ];
+      action = [
+        {
+          service = "wake_on_lan.send_magic_packet";
+          data.mac = "64:07:f6:da:ca:3d";
+        }
+      ];
+    }
   ];
 
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
