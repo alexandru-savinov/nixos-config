@@ -99,6 +99,9 @@
     host = "192.168.1.1";
     username = "tLoVYfJXE0eE";
     passwordFile = config.age.secrets.unifi-password.path;
+    # Native unifi-network-mcp (python) path — this 4GB Pi should NOT run
+    # dockerd; the native package is added to systemPackages when !useDocker.
+    useDocker = false;
     # verifySsl defaults to false (UDM uses self-signed certs)
     # toolRegistration defaults to "lazy" (96% fewer tokens)
     # permissions use safe defaults (high-risk ops disabled)
