@@ -374,6 +374,31 @@ in
   # turn-on automation.
   services.home-assistant.config.wake_on_lan = { };
 
+  # Wake-on-LAN turn-on automation for The Frame, declared in Nix because this
+  # configuration.yaml does not `!include automations.yaml` (so UI/API-created
+  # automations do not load). Fires the samsungtv `turn_on` trigger when HA is
+  # asked to power the TV on while it is in standby, and sends a magic packet to
+  # its MAC. Replaces samsungtv's deprecated implicit Wake-on-LAN.
+  services.home-assistant.config.automation = [
+    {
+      id = "frame75_wol";
+      alias = "The Frame 75 - Wake on LAN";
+      mode = "single";
+      trigger = [
+        {
+          platform = "samsungtv.turn_on";
+          entity_id = "media_player.samsung_the_frame_75_qe75ls03aauxua";
+        }
+      ];
+      action = [
+        {
+          service = "wake_on_lan.send_magic_packet";
+          data.mac = "64:07:f6:da:ca:3d";
+        }
+      ];
+    }
+  ];
+
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
   # at the agenix-decrypted LLAT, so the per-user oneshot injects HA_TOKEN into
   # the MCP entry. The runtime `if [ -f tokenFile ]` guard in the oneshot reads
