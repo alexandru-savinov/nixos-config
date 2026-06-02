@@ -134,6 +134,19 @@ in
   # is a footgun (a future host config wiring age.secrets before `agenix -e`
   # creates the file would fail activation). Re-add the line AND create the .age
   # in the same change if you ever need HA !secret values.
+  #
+  # SmartThings self-hosted OAuth app credentials (client_id + client_secret),
+  # created via the SmartThings CLI / Developer Workspace for the HA `smartthings`
+  # integration ("Path B" — no Nabu Casa). Format (KEY=VALUE):
+  #   SMARTTHINGS_CLIENT_ID=...
+  #   SMARTTHINGS_CLIENT_SECRET=...
+  # BACKUP-AT-REST ONLY: nothing consumes this at runtime — HA stores the live
+  # credential + OAuth tokens in /var/lib/hass/.storage (entered via the HA UI's
+  # Application Credentials page). This .age is a DR/reference copy so the app
+  # creds survive a host wipe; it is intentionally NOT wired into any host config
+  # (no `age.secrets.smartthings-oauth-app`). Fill the real values with:
+  #   cd secrets && agenix -e smartthings-oauth-app.age
+  "smartthings-oauth-app.age".publicKeys = users ++ [ rpi5 ];
 
   # ── Zero_kuzea secrets (NullClaw bot on dedicated VPS) ─────────────────
   # Uses sancta-claw recovery key (same trust level, both are throwaway VPS)
