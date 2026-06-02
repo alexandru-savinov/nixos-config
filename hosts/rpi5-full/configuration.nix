@@ -344,15 +344,17 @@ in
   # SmartThings). HA (192.168.1.37/24) shares the LAN with the TVs — The Frame 75
   # (QE75LS03AAUXUA) at 192.168.1.50, verified directly reachable (8001/8002 open,
   # TokenAuthSupport, no AP isolation). HA pairs over wss :8002 (an "Allow" popup
-  # on the TV) and powers it on via Wake-on-LAN.
+  # on the TV) and powers it on via Wake-on-LAN — the `wake_on_lan` component
+  # (loaded via config.wake_on_lan below) provides the send_magic_packet service
+  # used by the turn-on automation (samsungtv's implicit WoL is deprecated).
   #
   # A component toggle here is a CACHE HIT, NOT a rebuild: on nixpkgs 25.11
   # extraComponents only feeds the systemd PYTHONPATH; the home-assistant drv is
-  # unchanged and samsungtv's deps (samsungtvws/wakeonlan/getmac/async-upnp-client)
-  # are pure-python, already in the store. (A real HA rebuild — version bump or a
+  # unchanged and the deps (samsungtvws/wakeonlan/getmac/async-upnp-client) are
+  # pure-python, already in the store. (A real HA rebuild — version bump or a
   # propagatedBuildInputs overlay — is the only OOM hazard, not this.) Note:
   # extraComponents REPLACES the module default, so the 4 base components are
-  # restated alongside samsungtv.
+  # restated alongside samsungtv + wake_on_lan.
   #
   # SmartThings was removed: the Samsung soundbar (S801B) + washer are cloud-only
   # and HA's smartthings integration needs the restricted `sse` OAuth scope, which
@@ -364,7 +366,13 @@ in
     "esphome"
     "rpi_power"
     "samsungtv"
+    "wake_on_lan"
   ];
+
+  # Load the wake_on_lan integration (YAML-only, no config flow) so the
+  # wake_on_lan.send_magic_packet service is registered for the Samsung TV
+  # turn-on automation.
+  services.home-assistant.config.wake_on_lan = { };
 
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
   # at the agenix-decrypted LLAT, so the per-user oneshot injects HA_TOKEN into
