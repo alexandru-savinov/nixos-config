@@ -340,22 +340,30 @@ in
     powerOnBoot = true;
   };
 
-  # extraComponents is pinned to EXACTLY the set pre-built in the aarch64 binary
-  # cache (default_config met esphome rpi_power). Keeping it at this set guarantees
-  # a cache hit and avoids a large local HA Python rebuild that can OOM the 4GB Pi.
-  # Do NOT add components casually — each addition re-derives HA (build-first only).
+  # Local Samsung TV control via the core `samsungtv` integration (no cloud / no
+  # SmartThings). HA (192.168.1.37/24) shares the LAN with the TVs — The Frame 75
+  # (QE75LS03AAUXUA) at 192.168.1.50, verified directly reachable (8001/8002 open,
+  # TokenAuthSupport, no AP isolation). HA pairs over wss :8002 (an "Allow" popup
+  # on the TV) and powers it on via Wake-on-LAN.
   #
-  # SmartThings was tried (for the Samsung S801B soundbar + washer) and removed:
-  # those are cloud-only devices whose HA integration requires the restricted `sse`
-  # OAuth scope, which Samsung grants ONLY to HA Cloud's account-linking app — not
-  # obtainable by a self-hosted OAuth app, so unusable without a Nabu Casa sub
-  # (home-assistant/core#139551). The Samsung TVs ARE on this LAN (192.168.1.x,
-  # same as HA) and can be added later via the local `samsungtv` integration.
+  # A component toggle here is a CACHE HIT, NOT a rebuild: on nixpkgs 25.11
+  # extraComponents only feeds the systemd PYTHONPATH; the home-assistant drv is
+  # unchanged and samsungtv's deps (samsungtvws/wakeonlan/getmac/async-upnp-client)
+  # are pure-python, already in the store. (A real HA rebuild — version bump or a
+  # propagatedBuildInputs overlay — is the only OOM hazard, not this.) Note:
+  # extraComponents REPLACES the module default, so the 4 base components are
+  # restated alongside samsungtv.
+  #
+  # SmartThings was removed: the Samsung soundbar (S801B) + washer are cloud-only
+  # and HA's smartthings integration needs the restricted `sse` OAuth scope, which
+  # Samsung grants only to HA Cloud's account-linking app — not obtainable by a
+  # self-hosted OAuth app, so unusable without Nabu Casa (home-assistant/core#139551).
   services.home-assistant.extraComponents = [
     "default_config"
     "met"
     "esphome"
     "rpi_power"
+    "samsungtv"
   ];
 
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
