@@ -340,20 +340,22 @@ in
     powerOnBoot = true;
   };
 
-  # Network media via SmartThings (cloud). The Samsung TVs are BLE-visible but
-  # NOT IP-reachable from this subnet (separate IoT VLAN / AP isolation), so the
-  # local `samsungtv` integration can't connect. SmartThings reaches all Samsung
-  # devices (both TVs + the S801B soundbar) via Samsung's cloud, so the subnet
-  # boundary is irrelevant. Setup is a one-time Samsung-account OAuth in the HA UI.
-  # Setting extraComponents REPLACES the module default, so the default set is
-  # restated. This re-derives the HA package — a DELIBERATE, build-first change:
-  # run `nixos-rebuild build` and watch earlyoom before switching (4GB Pi guard).
+  # extraComponents is pinned to EXACTLY the set pre-built in the aarch64 binary
+  # cache (default_config met esphome rpi_power). Keeping it at this set guarantees
+  # a cache hit and avoids a large local HA Python rebuild that can OOM the 4GB Pi.
+  # Do NOT add components casually — each addition re-derives HA (build-first only).
+  #
+  # SmartThings was tried (for the Samsung S801B soundbar + washer) and removed:
+  # those are cloud-only devices whose HA integration requires the restricted `sse`
+  # OAuth scope, which Samsung grants ONLY to HA Cloud's account-linking app — not
+  # obtainable by a self-hosted OAuth app, so unusable without a Nabu Casa sub
+  # (home-assistant/core#139551). The Samsung TVs ARE on this LAN (192.168.1.x,
+  # same as HA) and can be added later via the local `samsungtv` integration.
   services.home-assistant.extraComponents = [
     "default_config"
     "met"
     "esphome"
     "rpi_power"
-    "smartthings"
   ];
 
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
