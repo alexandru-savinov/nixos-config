@@ -376,6 +376,12 @@ in
     "samsungtv"
     "wake_on_lan"
     "tplink"
+    # Google Cast — local media control of the Samsung S801B soundbar, which has
+    # Chromecast built-in (ports 8008/8009; DLNA is NOT available on this B-series
+    # soundbar). Gives a media_player for play/pause/volume/cast-audio/TTS over the
+    # LAN (hardware power/source/EQ still require SmartThings). Auto-discovers via
+    # zeroconf (default_config) — no credentials needed.
+    "cast"
   ];
 
   # al-one/hass-xiaomi-miot ("Xiaomi Miot Auto") for the Xiaomi humidifier (and
