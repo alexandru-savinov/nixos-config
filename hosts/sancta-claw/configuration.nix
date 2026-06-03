@@ -107,10 +107,14 @@
   # --update-input is intentionally omitted: with a remote GitHub flake URL
   # there is no local path to write an updated lock file back to, so the flag
   # would be a no-op. allowReboot=false: never reboots automatically (VPS —
-  # schedule manual reboots for kernel updates).
+  # schedule manual reboots for kernel updates). operation="boot": build the new
+  # generation and set it as the boot default WITHOUT activating it — avoids the
+  # non-atomic GRUB-mutating `switch` on an unattended remote box (#451/#252); the
+  # update takes effect on the next manual reboot.
   system.autoUpgrade = {
     enable = true;
     flake = "github:alexandru-savinov/nixos-config#sancta-claw";
+    operation = "boot";
     dates = "04:30";
     randomizedDelaySec = "30min";
     allowReboot = false;
