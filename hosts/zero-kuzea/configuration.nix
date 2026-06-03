@@ -22,6 +22,14 @@
   networking.hostName = "zero-kuzea";
   system.stateVersion = "25.05";
 
+  # Swap space (2GB for OOM headroom on 4GB CX22 — no disk swap otherwise)
+  swapDevices = [
+    {
+      device = "/swapfile";
+      size = 2048; # 2GB
+    }
+  ];
+
   # ── SSH authorized keys ─────────────────────────────────────────────
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"

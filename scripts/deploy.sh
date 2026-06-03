@@ -118,7 +118,7 @@ echo ""
 
 # Build configuration
 echo "Building configuration..."
-if nixos-rebuild build --flake "$FLAKE_REF"; then
+if nixos-rebuild build --flake "$FLAKE_REF" --max-jobs 1 --cores 1; then
     echo "Build successful!"
 else
     echo "Build failed!"
@@ -149,7 +149,7 @@ else
     echo "Applying configuration..."
 fi
 
-if $SUDO nixos-rebuild switch --flake "$FLAKE_REF"; then
+if $SUDO nixos-rebuild switch --flake "$FLAKE_REF" --max-jobs 1 --cores 1; then
     echo ""
     echo "Deployment complete!"
     echo ""
