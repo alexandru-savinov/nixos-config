@@ -19,6 +19,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The `sancta-choir` configuration (x86_64 Hetzner VPS) hosts the **OpenClaw AI gateway**. It is built in CI but deployed separately. Only build or deploy `sancta-choir` when the user explicitly asks for it by name.
 
+> **⚠️ Remote VPS deploys are NOT atomic.** On the GRUB-based Hetzner hosts (`sancta-choir`, `sancta-claw`, `hermes-claw`), `nixos-rebuild switch` builds → updates GRUB → activates; an OOM-killed build on a small-RAM box can leave an unbootable system (the ~10h #252 outage). For any remote VPS deploy: gate the switch on a successful build **and throttle it** — `nixos-rebuild build --flake .#<host> --max-jobs 1 --cores 1 && nixos-rebuild switch …` — and prefer `nixos-rebuild boot` (or `system.autoUpgrade.operation = "boot"`) for risky changes, so a bad generation only needs a reboot. `scripts/deploy.sh` and `scripts/install.sh` already apply the `--max-jobs 1 --cores 1` throttle; all three VPS hosts carry a swapfile.
+
 **Tailscale hostname:**
 - `rpi5` or `rpi5.tail4249a9.ts.net`
 
