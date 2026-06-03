@@ -386,6 +386,14 @@ in
     pkgs.home-assistant-custom-components.xiaomi_miot
   ];
 
+  # The al-one xiaomi_miot package (nixpkgs 1.1.1) doesn't bundle pyhap, which its
+  # media_player platform imports at load — without it the whole integration fails
+  # to set up ("No module named 'pyhap'"). Provide it via HA's python env.
+  # hap-python is pure-python + cached, so this stays a cache hit (no HA rebuild).
+  services.home-assistant.extraPackages = ps: with ps; [
+    hap-python
+  ];
+
   # Load the wake_on_lan integration (YAML-only, no config flow) so the
   # wake_on_lan.send_magic_packet service is registered for the Samsung TV
   # turn-on automation.
