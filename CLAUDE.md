@@ -330,7 +330,9 @@ On memory-constrained hosts (RPi5, 4GB RAM), n8n loop iterations accumulate item
 
 1. **Write to disk early** — In Extract nodes, write raw bytes to `{jobDir}/` and return only the file path
 2. **Pass paths, not data** — Loop items carry `imageFile`/`audioFile` paths instead of base64 strings
-3. **Read back late** — In the final assembly node (e.g., Prepare APKG Input), read files from disk just before output
+3. **Stream output to disk, never re-materialize** — The final assembly node (e.g., Prepare APKG Input) must **stream** its output: open the target file once (`fs.openSync`), then for each item read its binary from disk, `fs.writeSync` it into the output, and immediately null the per-item base64 vars before the next iteration. Return only the output file path — never build one in-memory object that holds every item's bytes at once.
+
+⚠️ Do NOT "read all files back into memory just before output" — that re-materializes the entire payload and OOM'd the host again after PR #438. The streaming fix is `e098d06`; the task-runner heap bump in that commit was added headroom, not the mechanism — the real fix is never holding the full payload in memory.
 
 This prevents OOM when processing 40+ items with ~200KB each of image + audio data.
 
