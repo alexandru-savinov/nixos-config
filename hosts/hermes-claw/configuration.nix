@@ -53,6 +53,18 @@
     useUserPackages = true;
   };
 
+  # ── Swap (4GB — OOM headroom for builds/manual switch on this CX33 GRUB VPS) ──
+  # No disk swap otherwise (only RAM-backed zram from common.nix, useless under a
+  # build RSS spike). Mirrors sancta-choir; guards against the #451/#252 build-OOM
+  # brick on a remote GRUB host. No kernel pin — hermes-claw has no corrupted-store
+  # history, and a prophylactic pin would just be unretired maintenance debt.
+  swapDevices = [
+    {
+      device = "/swapfile";
+      size = 4096; # 4GB
+    }
+  ];
+
   # ── SSH authorized keys (cross-host management from sancta-choir + rpi5) ──
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
