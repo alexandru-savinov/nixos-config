@@ -854,6 +854,9 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
         # Run as root to read password file and restart n8n
+        # ~180s of internal wait-loops (healthz + login retries); raise above
+        # the 90s host default so it is not SIGTERM'd mid-install.
+        TimeoutStartSec = 200;
       };
 
       path = [ pkgs.curl pkgs.jq ];
