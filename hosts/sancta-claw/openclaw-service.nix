@@ -106,14 +106,24 @@ let
           cp -r node_modules $out/
         '';
       };
-      # Rust CLI: fast command dispatcher, spawns Node.js daemon on demand
+      # Rust CLI: fast command dispatcher, spawns Node.js daemon on demand.
+      # Vendor crates via cargoLock (importCargoLock) instead of cargoHash:
+      # importCargoLock fetches each crate with Nix's libcurl fetchurl, whereas
+      # rustPlatform.fetchCargoVendor (driven by cargoHash) uses Python requests,
+      # whose "python-requests/*" User-Agent crates.io now HTTP 403-blocks. The
+      # upstream fix (set a descriptive UA) is NixOS/nixpkgs#512735, backported
+      # to release-25.11 on 2026-04-26 but not yet in this flake's nixpkgs pin
+      # (2026-03-18) — revert to cargoHash once the pin carries it. The CLI
+      # lockfile has only crates.io-registry deps (no git sources), so no
+      # cargoLock.outputHashes are needed; crate hashes come from the lockfile's
+      # own checksums (one fewer hash to maintain than cargoHash).
       rustCli = pkgs.rustPlatform.buildRustPackage {
         pname = "agent-browser-cli";
         version = "0.14.0";
         inherit src;
         cargoRoot = "cli";
         buildAndTestSubdir = "cli";
-        cargoHash = "sha256-94w9V+NZiWeQ3WbQnsKxVxlvsCaOJR0Wm6XVc85Lo88=";
+        cargoLock.lockFile = src + "/cli/Cargo.lock";
       };
     in
     # AGENT_BROWSER_EXECUTABLE_PATH bypasses playwright-core's revision check,
