@@ -360,6 +360,14 @@ in
   # and HA's smartthings integration needs the restricted `sse` OAuth scope, which
   # Samsung grants only to HA Cloud's account-linking app — not obtainable by a
   # self-hosted OAuth app, so unusable without Nabu Casa (home-assistant/core#139551).
+  #
+  # Local IoT appliance integrations. `tplink` (python-kasa) controls the Tapo
+  # P110 smart plug + energy sensors over the local KLAP protocol (cache-hit,
+  # pure-python). The Xiaomi Humidifier 3 Lite does NOT use core `xiaomi_miio`:
+  # HA core's Xiaomi cloud login (the bundled micloud library) is broken by
+  # Xiaomi's now-mandatory captcha (home-assistant/core#145081, closed not-planned),
+  # and the "3 Lite" is a newer MIoT model core doesn't support. Instead we use the
+  # al-one `xiaomi_miot` community integration via customComponents below.
   services.home-assistant.extraComponents = [
     "default_config"
     "met"
@@ -367,6 +375,23 @@ in
     "rpi_power"
     "samsungtv"
     "wake_on_lan"
+    "tplink"
+  ];
+
+  # al-one/hass-xiaomi-miot ("Xiaomi Miot Auto") for the Xiaomi humidifier (and
+  # future MIoT devices). NixOS-native, packaged in nixpkgs — NO HACS. It is the
+  # one integration that implements Xiaomi's captcha/2FA login flow; the account
+  # login is done once in the HA config flow and lives in HA's state dir, not Nix.
+  services.home-assistant.customComponents = [
+    pkgs.home-assistant-custom-components.xiaomi_miot
+  ];
+
+  # The al-one xiaomi_miot package (nixpkgs 1.1.1) doesn't bundle pyhap, which its
+  # media_player platform imports at load — without it the whole integration fails
+  # to set up ("No module named 'pyhap'"). Provide it via HA's python env.
+  # hap-python is pure-python + cached, so this stays a cache hit (no HA rebuild).
+  services.home-assistant.extraPackages = ps: with ps; [
+    hap-python
   ];
 
   # Load the wake_on_lan integration (YAML-only, no config flow) so the
