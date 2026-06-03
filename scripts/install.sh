@@ -97,7 +97,7 @@ echo ""
 
 # First, try to build without applying
 echo "🔨 Testing build (dry-run)..."
-if $SUDO nixos-rebuild build --flake "$FLAKE_URL"; then
+if $SUDO nixos-rebuild build --flake "$FLAKE_URL" --max-jobs 1 --cores 1; then
     echo "✅ Build successful!"
     echo ""
 else
@@ -123,7 +123,7 @@ fi
 
 # Apply the configuration
 echo "🚀 Applying configuration..."
-if $SUDO nixos-rebuild switch --flake "$FLAKE_URL"; then
+if $SUDO nixos-rebuild switch --flake "$FLAKE_URL" --max-jobs 1 --cores 1; then
     echo ""
     echo "✅ Installation complete!"
     echo ""

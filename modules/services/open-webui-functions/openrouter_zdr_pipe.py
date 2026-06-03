@@ -89,15 +89,25 @@ class Pipe:
             zdr_models = []
 
             for item in zdr_data:
-                # Extract model ID from "Provider | model-id" format
-                # Use rsplit to handle edge cases where provider names might contain " | "
-                # Use .get() to avoid KeyError on malformed data
-                name = item.get("name", "")
-                if not name:
-                    continue  # Skip items without a name field
+                if not isinstance(item, dict):
+                    continue
 
-                name_parts = name.rsplit(" | ", 1)
-                model_id = name_parts[1] if len(name_parts) > 1 else name
+                # The canonical model identifier on each `/endpoints/zdr` entry
+                # is `model_id` ("qwen/qwen3-coder:free") — the slug inbound
+                # requests actually send. `name` is human-readable
+                # ("Venice | Qwen3 Coder"); deriving the id from a
+                # `name.rsplit(" | ", 1)` tail leaks the display fragment
+                # ("Qwen3 Coder") for providers whose right half is the
+                # model_name, so the selector filled with ids no request could
+                # match. Read the canonical field first; keep `id` and the
+                # name-rsplit path only as last-resort fallbacks.
+                model_id = item.get("model_id") or item.get("id") or ""
+                if not model_id:
+                    name = item.get("name", "")
+                    if not name:
+                        continue  # Skip items without any identifiable field
+                    name_parts = name.rsplit(" | ", 1)
+                    model_id = name_parts[1] if len(name_parts) > 1 else name
 
                 # Skip if model_id is empty or already seen
                 if not model_id or model_id in seen_ids:

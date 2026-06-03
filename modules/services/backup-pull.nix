@@ -198,6 +198,9 @@ in
         ExecStart = "${pkgs.restic}/bin/restic -r ${cfg.repository} --password-file ${cfg.resticPasswordFile} check";
         Nice = 19;
         IOSchedulingClass = "idle";
+        # A full repo check can far exceed the 90s host default; unbounded so it
+        # is not SIGTERM'd mid-check (which also fires a false backup-failure-alert).
+        TimeoutStartSec = 0;
       };
     };
 
@@ -217,6 +220,9 @@ in
         OnFailure = [ "backup-failure-alert@%N.service" ];
         RequiresMountsFor = [ cfg.stagingDir ];
       };
+      # A large backup run can exceed the 90s host default; give it generous
+      # headroom so it is not SIGTERM'd mid-run (which fires a false alert).
+      serviceConfig.TimeoutStartSec = "4h";
     };
 
 

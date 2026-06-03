@@ -39,17 +39,23 @@ def mock_requests_get(monkeypatch):
     def _mock_get(url, headers=None, timeout=None):
         # Determine which endpoint is being called
         if url.endswith("/endpoints/zdr"):
-            # Return a list of ZDR-compliant models (format: "Provider | model-id")
+            # Mirror the REAL upstream shape: `name` is human-readable
+            # ("<Provider> | <human-readable>") and the canonical slug lives in
+            # a separate `model_id` field. If the parser fell back to
+            # rsplit-on-name it would leak "GPT-4o Mini" into the id, which the
+            # canonical-field assertions below would catch.
             return mock.Mock(
                 status_code=200,
                 json=lambda: {
                     "data": [
                         {
-                            "name": "OpenAI | openrouter/gpt-4o-mini",
+                            "name": "OpenAI | GPT-4o Mini",
+                            "model_id": "openrouter/gpt-4o-mini",
                             "model_name": "GPT-4o Mini",
                         },
                         {
-                            "name": "OpenAI | openrouter/gpt-4o",
+                            "name": "OpenAI | GPT-4o",
+                            "model_id": "openrouter/gpt-4o",
                             "model_name": "GPT-4o",
                         },
                     ]
@@ -106,6 +112,24 @@ def test_pipes_returns_only_zdr_models(pipe, mock_requests_get):
     # Names should be prefixed
     for m in models:
         assert m["name"].startswith("ZDR/")
+
+
+def test_pipes_id_is_canonical_model_id_not_display_name(pipe, mock_requests_get):
+    """Regression for #457: produced ids must equal the canonical model_id,
+    never a human-readable display fragment leaked from `name.rsplit`."""
+    pipe.valves.OPENROUTER_API_KEY = "dummy-key"
+
+    models = pipe.pipes()
+
+    # The canonical model_id values from the stub upstream response.
+    expected_ids = {"openrouter/gpt-4o-mini", "openrouter/gpt-4o"}
+    produced_ids = {m["id"] for m in models}
+    assert produced_ids == expected_ids
+
+    # No display fragment (the human-readable right half of `name`) should ever
+    # appear as a model id.
+    display_fragments = {"GPT-4o Mini", "GPT-4o"}
+    assert produced_ids.isdisjoint(display_fragments)
 
 
 def test_pipes_handles_missing_api_key(pipe):

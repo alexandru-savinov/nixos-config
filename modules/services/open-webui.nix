@@ -1155,6 +1155,9 @@ in
         # Run as open-webui user for database and state directory access
         User = "open-webui";
         Group = "open-webui";
+        # ~90s of sequential wait-loops; raise above the 90s host default so it
+        # is not SIGTERM'd mid-migration.
+        TimeoutStartSec = 300;
       };
 
       script = ''
@@ -1311,6 +1314,9 @@ in
         # Run as open-webui user for database access
         User = "open-webui";
         Group = "open-webui";
+        # ~90s of sequential wait-loops; raise above the 90s host default so it
+        # is not SIGTERM'd mid-provision.
+        TimeoutStartSec = 300;
       };
 
       script = ''
@@ -1482,6 +1488,9 @@ in
         RemainAfterExit = true;
         User = "open-webui";
         Group = "open-webui";
+        # ~90s of sequential wait-loops; raise above the 90s host default so it
+        # is not SIGTERM'd mid-provision.
+        TimeoutStartSec = 300;
       };
 
       script = ''
