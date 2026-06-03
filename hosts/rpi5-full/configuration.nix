@@ -360,6 +360,13 @@ in
   # and HA's smartthings integration needs the restricted `sse` OAuth scope, which
   # Samsung grants only to HA Cloud's account-linking app — not obtainable by a
   # self-hosted OAuth app, so unusable without Nabu Casa (home-assistant/core#139551).
+  #
+  # Local IoT appliance integrations (both cache-hit, pure-python deps prebuilt for
+  # aarch64): `tplink` (python-kasa) controls the Tapo P110 smart plug + energy
+  # sensors over the local KLAP protocol; `xiaomi_miio` (python-miio) controls the
+  # Xiaomi Humidifier 3 Lite over local miIO (UDP 54321). Credentials/tokens for
+  # both are entered once in the HA config flow (TP-Link account for KLAP, Xiaomi
+  # account to fetch the device token) and live in HA's state dir — NOT in Nix.
   services.home-assistant.extraComponents = [
     "default_config"
     "met"
@@ -367,6 +374,8 @@ in
     "rpi_power"
     "samsungtv"
     "wake_on_lan"
+    "tplink"
+    "xiaomi_miio"
   ];
 
   # Load the wake_on_lan integration (YAML-only, no config flow) so the
