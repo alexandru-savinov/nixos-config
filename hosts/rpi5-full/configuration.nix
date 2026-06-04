@@ -331,6 +331,14 @@ in
     tailscaleServe.enable = true;
   };
 
+  # Explicit external/internal URLs so HA doesn't auto-detect behind the
+  # Tailscale Serve reverse proxy — auto-detection sees http://127.0.0.1:8123
+  # which breaks mobile app OAuth redirects (intermittent 400 on /auth/authorize).
+  services.home-assistant.config.homeassistant = {
+    external_url = "https://rpi5.tail4249a9.ts.net:8123";
+    internal_url = "http://127.0.0.1:8123";
+  };
+
   # Bluetooth: the RPi5 has an integrated BT adapter (hci0, UART serial0). Enable
   # the BlueZ stack so Home Assistant's bluetooth integration (pulled in by
   # default_config) can manage the adapter over D-Bus and move from setup_retry
