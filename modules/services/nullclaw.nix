@@ -113,6 +113,13 @@ let
   };
 
   configTemplate = pkgs.writeText "nullclaw-config-template.json" configJson;
+
+  # jq SET expression that injects secrets into the rendered config.
+  # Shared verbatim by the ExecStartPre filter AND the eval-time contract
+  # string (system.build.nullclawConfigInjection) so the two cannot drift.
+  jqSetExpr =
+    ".models.providers.${cfg.provider}.api_key = $key"
+    + optionalString cfg.telegram.enable " | .channels.telegram.accounts.main.bot_token = $token";
 in
 {
   options.services.nullclaw = {
@@ -222,6 +229,27 @@ in
       }
     ];
 
+    # ── Config-injection acceptance contract (eval-time guard) ───────
+    # Exposes the exact JSON key paths this module injects secrets into,
+    # plus the canonical upstream schema paths the pinned nullclaw
+    # (rev e94ffb0 / v2026.2.26) actually parses. The module-eval test
+    # pins these substrings so a future rev bump or template refactor that
+    # moves/renames a key fails CI LOUDLY instead of silently dropping a
+    # secret at runtime — nullclaw parses with ignore_unknown_fields=true
+    # and skips unparseable accounts, and its validate() does NOT check
+    # telegram, so a stale key would otherwise yield an unauthenticated
+    # Telegram bot. Pure string via system.build — no IFD, no build.
+    # MAINTAINER: when bumping `rev`, re-confirm these paths against the
+    # new config.example.json and update this string in the SAME commit.
+    system.build.nullclawConfigInjection = ''
+      schema-rev: e94ffb0
+      provider-api-key-path: models.providers.${cfg.provider}.api_key
+      primary-model-path: agents.defaults.model.primary
+      telegram-enabled: ${if cfg.telegram.enable then "yes" else "no"}
+      telegram-bot-token-path: channels.telegram.accounts.main.bot_token
+      jq-set: ${jqSetExpr}
+    '';
+
     # ── User and Group ───────────────────────────────────────────────
     users.users.nullclaw = {
       isSystemUser = true;
@@ -289,7 +317,7 @@ in
               ${pkgs.jq}/bin/jq \
                 --arg key "$PROVIDER_KEY" \
                 ${optionalString cfg.telegram.enable ''--arg token "$BOT_TOKEN"''} \
-                '.models.providers.${cfg.provider}.api_key = $key${optionalString cfg.telegram.enable " | .channels.telegram.accounts.main.bot_token = $token"}' \
+                '${jqSetExpr}' \
                 ${configTemplate} > /run/nullclaw/.nullclaw/config.json
 
               ${pkgs.coreutils}/bin/chmod 600 /run/nullclaw/.nullclaw/config.json
