@@ -163,6 +163,13 @@ git pull origin main   # sync merged changes before next bug
 
 #### Step 3e: Close issue (if not auto-closed by PR merge)
 
+For `security` / `priority:critical` issues, FIRST prove the fix shipped (guards the
+claude-yolo false-closure, #458) — do NOT close on a NOT-SHIPPED verdict:
+
+```bash
+scripts/verify-fix-shipped.sh <fix-commit>   # exit 0 = ancestor of origin/main
+```
+
 ```bash
 gh issue close <number> --comment "Fixed in PR #<pr-number>"
 ```
@@ -180,6 +187,13 @@ Status: FIXED (PR #<pr>) | DEFERRED (reason) | FAILED (reason)
 ## Phase 4: Close CLOSE Bugs
 
 For each bug triaged as CLOSE:
+
+If the bug is `security` / `priority:critical` and the close reason is "already fixed",
+prove the fix actually shipped before closing (guards #458 — do NOT close on NOT-SHIPPED):
+```bash
+scripts/verify-fix-shipped.sh <fix-commit>   # exit 0 = ancestor of origin/main
+```
+
 ```bash
 gh issue close <number> --comment "Closing: <reason>."
 ```
