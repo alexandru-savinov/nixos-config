@@ -6,7 +6,14 @@
 }:
 
 {
-  # Pin kernel to 6.6 LTS to avoid store corruption from incomplete 6.12 build
+  # Pin kernel to 6.6 LTS — workaround for the Feb-2026 #252 incident, where an
+  # OOM-killed build left corrupted 6.12.63 store paths that would not boot. The
+  # 6.12 kernel itself is not broken; the corruption was build-time only.
+  # EXIT CRITERIA (unpin only when ALL hold): (1) GC the corrupt paths on-host
+  # (`nix-collect-garbage -d`); (2) a clean `nixos-rebuild build` of a 6.12 kernel
+  # succeeds on-host; (3) validate via `nixos-rebuild boot` + manual reboot first.
+  # Do NOT unpin remotely-untested — a bad kernel on a headless VPS needs
+  # rescue-mode recovery.
   boot.kernelPackages = pkgs.linuxPackages_6_6;
 
   # Enable aarch64 emulation for cross-building RPi5 images
