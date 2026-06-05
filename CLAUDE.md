@@ -167,6 +167,22 @@ git worktree remove ../nixos-config-<branch-name>
 - `docs/<name>` - Documentation changes
 - `refactor/<name>` - Code refactoring
 
+### Security-Fix Closure Guard
+
+**Before closing any `security` / `priority:critical` issue, prove the fix shipped — not merely that a PR or branch existed.** A fix on an unmerged branch (PR closed, `mergedAt = null`) leaves the vuln deployed and the issue falsely "handled" (the claude-yolo double-removal, #458: `84fb666` was never an ancestor of `main`, so the weak-password user stayed live until `75cba9c`/#368). This guard matters most for **manual closes** and issues triaged CLOSE without a merge — the auto-fix path already guarantees ancestry via merge + `git pull`.
+
+Require the fix commit to be an ancestor of the deployed branch:
+
+```bash
+# Verdict + correct exit code; refuses to pass on unknown/unmerged commits.
+scripts/verify-fix-shipped.sh <fix-commit>          # defaults to origin/main
+# raw equivalent:
+git fetch origin main
+git merge-base --is-ancestor <fix-commit> origin/main && echo SHIPPED || echo NOT-SHIPPED
+```
+
+Close the issue only when this prints `SHIPPED` (exit 0). For auto-deploy hosts, also confirm the running generation includes it (`nixos-rebuild list-generations` / the deployed flake rev) before declaring it resolved.
+
 ## Claude Code
 
 User-level CC config (skills, agents, slash commands, settings.json) comes

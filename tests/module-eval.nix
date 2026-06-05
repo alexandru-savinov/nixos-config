@@ -520,6 +520,48 @@ let
       };
     };
 
+    # Pin the nullclaw secret-injection contract against the upstream
+    # schema the PINNED binary (rev e94ffb0) actually parses. nullclaw
+    # parses with ignore_unknown_fields=true and silently skips accounts
+    # whose required fields (e.g. telegram bot_token, which has no default)
+    # are absent — so a rev bump renaming a key would drop the secret at
+    # runtime with NO error (validate() does not check telegram; /ready is
+    # presence-based and returns ready on an empty registry). This
+    # eval-time guard forces that drift to fail CI. Pure eval, no IFD.
+    nullclaw-injection-key-paths =
+      let
+        body = self.nixosConfigurations.zero-kuzea.config.system.build.nullclawConfigInjection;
+        required = [
+          "models.providers.anthropic.api_key"
+          "agents.defaults.model.primary"
+          "channels.telegram.accounts.main.bot_token"
+          "telegram-enabled: yes"
+          # The exact jq SET expression the ExecStartPre runs (shared `let`
+          # binding in nullclaw.nix); drift in the template/jq breaks this.
+          ''jq-set: .models.providers.anthropic.api_key = $key | .channels.telegram.accounts.main.bot_token = $token''
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then
+        true
+      else
+        builtins.throw "FAIL: nullclaw injection contract drifted — missing/renamed key paths: ${builtins.toJSON missing}. Re-confirm modules/services/nullclaw.nix injection against nullclaw config.example.json at the pinned rev.";
+
+    # Negative control: prove the guard actually throws when a required key
+    # path is absent (simulates a silent-drop drift). tryEval must catch it.
+    nullclaw-injection-guard-fires =
+      let
+        body = self.nixosConfigurations.zero-kuzea.config.system.build.nullclawConfigInjection;
+        bogus = [ "channels.telegram.accounts.main.NONEXISTENT_FIELD" ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) bogus;
+        guarded = if missing == [ ] then true else builtins.throw "expected-throw";
+        result = builtins.tryEval guarded;
+      in
+      if !result.success then
+        true
+      else
+        builtins.throw "FAIL: nullclaw-injection-guard-fires — guard did NOT throw on a missing key path; the pin is not actually guarding.";
+
     # ── UniFi MCP ─────────────────────────────────────────────────
     unifi-mcp-minimal = shouldEval "unifi-mcp: minimal config" {
       modules = [
