@@ -54,7 +54,7 @@
       # Model must be one your ChatGPT plan exposes (see `hermes model`);
       # gpt-5.3-codex is API-only and is rejected by the ChatGPT-account backend.
       model = {
-        default = "gpt-5.4-mini";
+        default = "gpt-5.5";
         provider = "openai-codex";
       };
       auxiliary = {
