@@ -39,16 +39,20 @@
 
     # Declarative config — deep-merged into $HERMES_HOME/config.yaml
     settings = {
+      # ChatGPT subscription via the openai-codex provider (browser/device-code
+      # OAuth — no API key). Credentials are NOT declarative: run a one-time
+      #   podman exec -it hermes-agent hermes auth add codex-oauth
+      # which writes ~/.hermes/auth.json, persisted on the host at
+      # /var/lib/hermes/.hermes/auth.json (survives container recreation).
       model = {
-        default = "nvidia/nemotron-3-super-120b-a12b:free";
-        provider = "openrouter";
-        base_url = "https://openrouter.ai/api/v1";
+        default = "gpt-5.3-codex";
+        provider = "openai-codex";
       };
       auxiliary = {
-        title_generation = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        compression = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        session_search = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        web_extract = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
+        title_generation = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
+        compression = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
+        session_search = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
+        web_extract = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };

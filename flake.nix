@@ -60,8 +60,11 @@
     };
     # Hermes Agent (Nous Research) — AI agent framework with NixOS module.
     # Container mode: uv2nix-built binary bind-mounted into Ubuntu, writable layer.
+    # Pinned to a release tag (NOT the default branch): v2026.5.16 / 0.14.0 is the
+    # release where the `openai-codex` provider became first-class with no external
+    # Codex CLI dependency. Avoids 0.16.0's hermes-tui npm-deps FOD hash mismatch.
     hermes-agent = {
-      url = "github:NousResearch/hermes-agent";
+      url = "github:NousResearch/hermes-agent/v2026.5.16";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
