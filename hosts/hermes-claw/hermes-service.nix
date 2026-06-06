@@ -23,6 +23,12 @@
     enable = true;
     addToSystemPackages = true;
 
+    # Build the sealed venv with the `messaging` optional-dependency group so
+    # python-telegram-bot is bundled. The default `all` group excludes it, so
+    # without this the Telegram adapter fails to load ("python-telegram-bot not
+    # installed"). Resolved by uv from the existing lock — no collision risk.
+    extraDependencyGroups = [ "messaging" ];
+
     # Container configuration
     container = {
       enable = true;
