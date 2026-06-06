@@ -718,8 +718,11 @@ let
           containerBackend = ha.container.backend == "podman";
           containerImage = ha.container.image == "ubuntu:24.04";
           securityOpt = builtins.elem "--security-opt=no-new-privileges" ha.container.extraOptions;
-          modelPin = ha.settings.model.default == "nvidia/nemotron-3-super-120b-a12b:free";
-          modelProvider = ha.settings.model.provider == "openrouter";
+          modelPin = ha.settings.model.default == "gpt-5.5";
+          modelProvider = ha.settings.model.provider == "openai-codex";
+          # Guard the telegram fix: the `messaging` group must stay in the
+          # sealed venv, else python-telegram-bot drops out and the bot dies.
+          messagingGroup = builtins.elem "messaging" ha.extraDependencyGroups;
           telegramAllowed = ha.environment.TELEGRAM_ALLOWED_USERS == "364749075,7957556729";
           dashboardOff = ha.environment.HERMES_DASHBOARD == "0";
           hasEnvFiles = builtins.any (f: builtins.match ".*/hermes-env" f != null) ha.environmentFiles;

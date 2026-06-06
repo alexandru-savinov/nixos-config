@@ -23,6 +23,12 @@
     enable = true;
     addToSystemPackages = true;
 
+    # Build the sealed venv with the `messaging` optional-dependency group so
+    # python-telegram-bot is bundled. The default `all` group excludes it, so
+    # without this the Telegram adapter fails to load ("python-telegram-bot not
+    # installed"). Resolved by uv from the existing lock — no collision risk.
+    extraDependencyGroups = [ "messaging" ];
+
     # Container configuration
     container = {
       enable = true;
@@ -39,16 +45,23 @@
 
     # Declarative config — deep-merged into $HERMES_HOME/config.yaml
     settings = {
+      # ChatGPT subscription via the openai-codex provider (browser/device-code
+      # OAuth — no API key). Credentials are NOT declarative: run a one-time
+      #   podman exec -it hermes-agent /data/current-package/bin/hermes \
+      #     auth add --type oauth --no-browser openai-codex
+      # which writes ~/.hermes/auth.json, persisted on the host at
+      # /var/lib/hermes/.hermes/auth.json (survives container recreation).
+      # Model must be one your ChatGPT plan exposes (see `hermes model`);
+      # gpt-5.3-codex is API-only and is rejected by the ChatGPT-account backend.
       model = {
-        default = "nvidia/nemotron-3-super-120b-a12b:free";
-        provider = "openrouter";
-        base_url = "https://openrouter.ai/api/v1";
+        default = "gpt-5.5";
+        provider = "openai-codex";
       };
       auxiliary = {
-        title_generation = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        compression = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        session_search = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        web_extract = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
+        title_generation = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
+        compression = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
+        session_search = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
+        web_extract = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };
