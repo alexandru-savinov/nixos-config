@@ -47,18 +47,21 @@
     settings = {
       # ChatGPT subscription via the openai-codex provider (browser/device-code
       # OAuth — no API key). Credentials are NOT declarative: run a one-time
-      #   podman exec -it hermes-agent hermes auth add codex-oauth
+      #   podman exec -it hermes-agent /data/current-package/bin/hermes \
+      #     auth add --type oauth --no-browser openai-codex
       # which writes ~/.hermes/auth.json, persisted on the host at
       # /var/lib/hermes/.hermes/auth.json (survives container recreation).
+      # Model must be one your ChatGPT plan exposes (see `hermes model`);
+      # gpt-5.3-codex is API-only and is rejected by the ChatGPT-account backend.
       model = {
-        default = "gpt-5.3-codex";
+        default = "gpt-5.4-mini";
         provider = "openai-codex";
       };
       auxiliary = {
-        title_generation = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
-        compression = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
-        session_search = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
-        web_extract = { provider = "openai-codex"; model = "gpt-5.3-codex"; };
+        title_generation = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
+        compression = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
+        session_search = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
+        web_extract = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };
