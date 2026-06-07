@@ -718,8 +718,11 @@ let
           containerBackend = ha.container.backend == "podman";
           containerImage = ha.container.image == "ubuntu:24.04";
           securityOpt = builtins.elem "--security-opt=no-new-privileges" ha.container.extraOptions;
-          modelPin = ha.settings.model.default == "gpt-5.5";
-          modelProvider = ha.settings.model.provider == "openai-codex";
+          # Pin tracks the paid Nemotron via OpenRouter. The `:free` variant
+          # is blocked by OpenRouter's privacy guardrail (404); ChatGPT
+          # Codex was tried in #467 but the free plan hits 429 immediately.
+          modelPin = ha.settings.model.default == "nvidia/nemotron-3-super-120b-a12b";
+          modelProvider = ha.settings.model.provider == "openrouter";
           # Guard the telegram fix: the `messaging` group must stay in the
           # sealed venv, else python-telegram-bot drops out and the bot dies.
           messagingGroup = builtins.elem "messaging" ha.extraDependencyGroups;

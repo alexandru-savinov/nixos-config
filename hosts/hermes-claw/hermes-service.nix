@@ -23,10 +23,14 @@
     enable = true;
     addToSystemPackages = true;
 
-    # Build the sealed venv with the `messaging` optional-dependency group so
-    # python-telegram-bot is bundled. The default `all` group excludes it, so
-    # without this the Telegram adapter fails to load ("python-telegram-bot not
-    # installed"). Resolved by uv from the existing lock — no collision risk.
+    # Build the sealed venv with the `messaging` optional-dependency group
+    # so python-telegram-bot (and discord.py, slack-sdk, qrcode) are
+    # bundled. The default `all` group excludes them; without this, the
+    # Telegram adapter logs "python-telegram-bot not installed / No
+    # adapter available for telegram" and the bot stops responding
+    # silently after every container recreation (writable layer wipes
+    # any prior apt/pip install). Resolved by uv from the existing lock
+    # — no collision risk.
     extraDependencyGroups = [ "messaging" ];
 
     # Container configuration
@@ -45,23 +49,24 @@
 
     # Declarative config — deep-merged into $HERMES_HOME/config.yaml
     settings = {
-      # ChatGPT subscription via the openai-codex provider (browser/device-code
-      # OAuth — no API key). Credentials are NOT declarative: run a one-time
-      #   podman exec -it hermes-agent /data/current-package/bin/hermes \
-      #     auth add --type oauth --no-browser openai-codex
-      # which writes ~/.hermes/auth.json, persisted on the host at
-      # /var/lib/hermes/.hermes/auth.json (survives container recreation).
-      # Model must be one your ChatGPT plan exposes (see `hermes model`);
-      # gpt-5.3-codex is API-only and is rejected by the ChatGPT-account backend.
+      # OpenRouter via the `openrouter` provider. API key in agenix secret
+      # `hermes-env` (OPENROUTER_API_KEY). Previously tried ChatGPT
+      # subscription via openai-codex/gpt-5.5 (PR #467) but the user is on
+      # the free plan — every call hit HTTP 429 usage_limit_reached. The
+      # `:free` Nemotron variant is blocked by OpenRouter's privacy
+      # guardrail (404 "No endpoints available matching your guardrail
+      # restrictions"); the paid Nemotron routes via DeepInfra and runs
+      # cleanly. Cost observed: ~$0.000007 per `reply: pong` call.
       model = {
-        default = "gpt-5.5";
-        provider = "openai-codex";
+        default = "nvidia/nemotron-3-super-120b-a12b";
+        provider = "openrouter";
+        base_url = "https://openrouter.ai/api/v1";
       };
       auxiliary = {
-        title_generation = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
-        compression = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
-        session_search = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
-        web_extract = { provider = "openai-codex"; model = "gpt-5.4-mini"; };
+        title_generation = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
+        compression = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
+        session_search = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
+        web_extract = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };

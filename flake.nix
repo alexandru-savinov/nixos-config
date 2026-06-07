@@ -60,11 +60,20 @@
     };
     # Hermes Agent (Nous Research) — AI agent framework with NixOS module.
     # Container mode: uv2nix-built binary bind-mounted into Ubuntu, writable layer.
-    # Pinned to a release tag (NOT the default branch): v2026.5.16 / 0.14.0 is the
-    # release where the `openai-codex` provider became first-class with no external
-    # Codex CLI dependency. Avoids 0.16.0's hermes-tui npm-deps FOD hash mismatch.
+    # Pinned to v0.16.0 release commit (3c231eb, 2026-06-05). v0.16 ships
+    # locales/ in $out/share/hermes-agent/ and sets HERMES_BUNDLED_LOCALES
+    # in the wrapper, fixing /status etc. rendering as raw i18n keys
+    # (gateway.status.header, …). Earlier releases (incl. v0.14.0 /
+    # v2026.5.16) ship the locales as setuptools data-files, which the
+    # uv2nix venv places where agent.i18n._locales_dir() does NOT look —
+    # so /status was returning literal key strings to Telegram before
+    # this upgrade. Upstream nix/lib.nix on 3c231eb pins a stale
+    # npmDepsHash for hermes-tui; we patch it in `outputs` via
+    # runCommand+callPackage (see `hermesAgentPatched` below) so the fix
+    # stays in git, not /tmp. Drop the overlay once upstream's
+    # auto-fix-lockfiles CI catches up.
     hermes-agent = {
-      url = "github:NousResearch/hermes-agent/v2026.5.16";
+      url = "github:NousResearch/hermes-agent/3c231eb3979ab9c57d5cd6d02f1d577a3b718b43";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -97,6 +106,37 @@
           agenix.packages.${pkgs.system}.default
         ];
       };
+
+      # Patched hermes-agent package: upstream v0.16.0 nix/lib.nix pins an
+      # npmDepsHash for hermes-tui that is stale (FOD hash mismatch breaks
+      # the build). We materialize the upstream source, bump the hash in
+      # place via substituteInPlace, then call the upstream build recipe
+      # directly via callPackage (avoids getFlake — which pure-eval rejects
+      # on store paths). The recipe's inputs (uv2nix, pyproject-nix, etc.)
+      # are re-used from hermes-agent's own flake inputs.
+      # Remove this overlay once upstream's auto-fix-lockfiles CI catches up.
+      hermesAgentPatched = system:
+        let
+          pkgs = nixpkgsFor.${system};
+          # Patcher runs on target arch (x86_64 for hermes-claw): native on
+          # GitHub CI runners; on rpi5 (aarch64) the nixos-rebuild
+          # `--build-host root@hermes-claw` flag delegates the IFD build
+          # over SSH-ng. If you ever `nix eval` this output directly on
+          # rpi5 without --builders, add hermes-claw to nix.buildMachines.
+          patchedSrc = pkgs.runCommand "hermes-agent-patched-src" { } ''
+            cp -r ${hermes-agent} $out
+            chmod -R +w $out
+            substituteInPlace $out/nix/lib.nix \
+              --replace-fail \
+                'sha256-cY+gM1FnTBjmld/uqt7RsqRtW9uQGs8LGokCcxu7bjQ=' \
+                'sha256-hgnqcpKRPztHhDEpwC7HJrALuJp9wsrV4+GJ6t6HI2c='
+          '';
+        in
+        pkgs.callPackage "${patchedSrc}/nix/hermes-agent.nix" {
+          inherit (hermes-agent.inputs) uv2nix pyproject-nix pyproject-build-systems;
+          npm-lockfile-fix = hermes-agent.inputs.npm-lockfile-fix.packages.${system}.default;
+          rev = null;
+        };
     in
     {
       # Formatter for `nix fmt`
@@ -176,6 +216,8 @@
             agenix.nixosModules.default
             agenixModule
             hermes-agent.nixosModules.default
+            # Override default package with our patched hermes-tui hash.
+            { services.hermes-agent.package = hermesAgentPatched "x86_64-linux"; }
           ];
         };
 
