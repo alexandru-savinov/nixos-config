@@ -705,6 +705,46 @@ let
       else
         builtins.throw "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
 
+    # Verify the openclaw health probe carries the WINDOWED crash-loop breaker
+    # (marker-file count over a time window + give-up + alert), not merely a
+    # fixed cooldown. Guards against a future edit silently deleting the breaker
+    # that the PR #398 incident hardened (#450).
+    sancta-claw-openclaw-crash-loop-breaker =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.openclawHealthProbeBody;
+        required = [
+          "CRASH_LOOP_MAX"
+          "-mmin"
+          "NOT restarting"
+          "exit 1"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then
+        true
+      else
+        builtins.throw "FAIL: openclawHealthProbeBody missing crash-loop-breaker substrings: ${builtins.toJSON missing}";
+
+    # Verify the fleet-wide tailscale-dns-watchdog carries the SAME windowed
+    # crash-loop breaker + operator alert, so a persistent DNS fault cannot
+    # drive an unbounded tailscaled restart loop on the 6 hosts that import it
+    # (#450). Reads the rendered body via system.build.tailscaleDnsWatchdogBody.
+    tailscale-dns-watchdog-crash-loop-breaker =
+      let
+        body = self.nixosConfigurations.sancta-claw.config.system.build.tailscaleDnsWatchdogBody;
+        required = [
+          "CRASH_LOOP_MAX"
+          "-mmin"
+          "Auto-restart STOPPED"
+          "exit 1"
+        ];
+        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+      in
+      if missing == [ ] then
+        true
+      else
+        builtins.throw "FAIL: tailscaleDnsWatchdogBody missing crash-loop-breaker substrings: ${builtins.toJSON missing}";
+
     # Verify the hermes-claw host config uses the upstream hermes-agent
     # module in container mode with the correct model pin and settings.
     # Pure eval — reads config options directly, no IFD or derivation build.

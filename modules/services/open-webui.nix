@@ -655,7 +655,14 @@ in
     systemd.services.open-webui = {
       # Ensure Qdrant is running before Open-WebUI starts when using Qdrant vector DB
       after = mkIf (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ];
-      wants = mkIf (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ];
+      # `wants` merges the qdrant vector-DB dependency with the serve-sidecar
+      # start companion. The latter closes the partOf start-propagation gap
+      # (#449): partOf propagates open-webui's STOP/RESTART to the serve unit but
+      # NOT a plain START, so a stop→start would leave HTTPS dark. Mirrors the
+      # home-assistant pattern (modules/services/home-assistant.nix).
+      wants =
+        optionals (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ]
+        ++ optionals cfg.tailscaleServe.enable [ "tailscale-serve-open-webui.service" ];
 
       serviceConfig = mkMerge [
         {
@@ -1092,6 +1099,10 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Two sequential 60s wait-loops (tailscaled + open-webui port) can run
+        # ~120s. Raise above the 90s host default (DefaultTimeoutStartSec) so
+        # this sidecar is not SIGTERM'd mid-wait, leaving HTTPS dark.
+        TimeoutStartSec = 150;
       };
 
       script = ''

@@ -120,6 +120,11 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Sequential wait-loops: 60s for tailscaled + up to 180s for the HA port
+        # (see the 180s comment below) = up to 240s. Raise above the 90s host
+        # default (DefaultTimeoutStartSec) so this sidecar is not SIGTERM'd
+        # mid-wait, leaving HTTPS dark on a slow cold boot.
+        TimeoutStartSec = 300;
       };
 
       script = ''

@@ -161,17 +161,22 @@ raspberry-pi-nix.board = "bcm2712";
 |---------|-------|---------|
 | zram | 50% of RAM | Compressed swap in memory |
 | Swap file | 4GB | Disk swap for heavy workloads |
-| vm.swappiness | 60 | Balanced swap usage |
+| vm.swappiness | 80 | Favor zram swap (4.5x compression) over evicting cache |
 | vm.min_free_kbytes | 64MB | Reserve for system stability |
 
-### Open-WebUI Limits
+### Service Memory Limits
 
-| Limit | Value | Purpose |
-|-------|-------|---------|
-| MemoryMax | 2GB | Prevent runaway memory usage |
-| MemoryHigh | 1.5GB | Trigger memory pressure earlier |
-| CPUQuota | 300% | Max 3 cores |
-| Nice | 5 | Lower priority during builds |
+Per-service systemd `MemoryMax` / `MemoryHigh` actually enforced on `rpi5-full`
+(verified via `nix eval .#nixosConfigurations.rpi5-full.config.systemd.services.<svc>.serviceConfig`).
+Open-WebUI is disabled on `rpi5-full`, so its old limits no longer apply. These
+limits only bind after `cgroup_enable=memory` takes effect — i.e. after a reboot
+(see PR #202).
+
+| Service | MemoryMax | MemoryHigh |
+|---------|-----------|------------|
+| n8n | 1536M | 1280M |
+| home-assistant | 1G | 768M |
+| gatus | 256M | 192M |
 
 ### Nix Build Optimization
 

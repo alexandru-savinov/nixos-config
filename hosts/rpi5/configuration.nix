@@ -227,9 +227,21 @@
     freeMemThreshold = 5;
     freeSwapThreshold = 10;
     enableNotifications = true;
+    # earlyoom matches --prefer/--avoid against the truncated, sometimes
+    # dot-prefixed /proc/PID/comm. home-assistant is a buildPythonApplication,
+    # so its running comm is the wrapper name `.hass-wrapped` (exactly like
+    # open-webui's observed `.open-webui-wra`) — the --prefer regex MUST stay
+    # UNANCHORED (a leading ^ would never match the dot prefix). Re-pointed off
+    # the now-disabled open-webui (#453, c45cbe8/#381) to home-assistant, the
+    # heaviest service that actually runs on rpi5-full today (MemoryMax 1G).
+    # --avoid stays anchored: sshd/tailscaled/n8n comms are not wrapper-prefixed.
+    # Verify on-box that the regex matches a live process (else the preferred
+    # victim is a no-op):
+    #   comm=$(cat /proc/$(systemctl show -p MainPID --value home-assistant.service)/comm); \
+    #     echo "$comm" | grep -E '(hass)' && echo MATCH || echo NO-MATCH
     extraArgs = [
       "--prefer"
-      "(open-webui)"
+      "(hass)"
       "--avoid"
       "^(sshd|tailscaled|n8n)"
     ];

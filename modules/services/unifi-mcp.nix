@@ -482,7 +482,13 @@ in
         unifi-mcp = mkIf cfg.service.enable {
           description = "UniFi Network MCP Server (HTTP SSE mode)";
           after = [ "network-online.target" ] ++ lib.optionals cfg.useDocker [ "docker.service" ];
-          wants = [ "network-online.target" ];
+          # Closes the partOf start-propagation gap (#449): partOf propagates this
+          # service's STOP/RESTART to the serve sidecar but NOT a plain START, so a
+          # stop→start would leave HTTPS dark until a manual restart. Pulling the
+          # serve unit into wants restores the mapping on every start. Mirrors the
+          # home-assistant pattern (modules/services/home-assistant.nix).
+          wants = [ "network-online.target" ]
+            ++ lib.optionals cfg.tailscaleServe.enable [ "tailscale-serve-unifi-mcp.service" ];
           requires = mkIf cfg.useDocker [ "docker.service" ];
           wantedBy = [ "multi-user.target" ];
 
@@ -550,6 +556,10 @@ in
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
+            # Two sequential 60s wait-loops (tailscaled + unifi-mcp port) can run
+            # ~120s. Raise above the 90s host default (DefaultTimeoutStartSec) so
+            # this sidecar is not SIGTERM'd mid-wait, leaving HTTPS dark.
+            TimeoutStartSec = 150;
           };
 
           script = ''

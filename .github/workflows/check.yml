@@ -48,6 +48,12 @@ jobs:
             - name: Check formatting
               run: nix fmt -- --check .
 
+            # Catch agenix recipient drift (on-disk `-> ` stanza count vs the
+            # declared publicKeys) and the empty-plaintext fail-open signature
+            # before they ship — read-only, never decrypts (#448).
+            - name: Check agenix secret recipients
+              run: bash scripts/check-secret-recipients.sh secrets
+
     build-x86:
         name: Build x86_64 Configs
         runs-on: ubuntu-latest

@@ -725,6 +725,15 @@ in
     };
 
     # Tailscale Serve configuration for HTTPS access
+    # Closes the partOf start-propagation gap (#449): partOf propagates n8n's
+    # STOP/RESTART to the serve sidecar but NOT a plain START, so an n8n
+    # stop→start would leave HTTPS dark until a manual restart. This companion
+    # restores the serve mapping on every n8n start. Mirrors the home-assistant
+    # pattern (modules/services/home-assistant.nix).
+    systemd.services.n8n.wants = mkIf cfg.tailscaleServe.enable [
+      "tailscale-serve-n8n.service"
+    ];
+
     systemd.services.tailscale-serve-n8n = mkIf cfg.tailscaleServe.enable {
       description = "Configure Tailscale Serve for n8n HTTPS access";
       after = [
@@ -745,6 +754,10 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Two sequential 60s wait-loops (tailscaled + n8n port) can run ~120s.
+        # Raise above the 90s host default (DefaultTimeoutStartSec) so this
+        # sidecar is not SIGTERM'd mid-wait, leaving HTTPS dark.
+        TimeoutStartSec = 150;
       };
 
       script = ''

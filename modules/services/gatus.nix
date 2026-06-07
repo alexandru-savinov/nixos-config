@@ -568,6 +568,15 @@ in
     systemd.services.gatus.after = mkIf (cfg.apiKeyFile != null) [ "gatus-env-setup.service" ];
 
     # Tailscale Serve configuration for HTTPS access
+    # Closes the partOf start-propagation gap (#449): partOf propagates gatus's
+    # STOP/RESTART to the serve sidecar but NOT a plain START, so a gatus
+    # stop→start would leave HTTPS dark until a manual restart. This companion
+    # restores the serve mapping on every gatus start. Mirrors the
+    # home-assistant pattern (modules/services/home-assistant.nix).
+    systemd.services.gatus.wants = mkIf cfg.tailscaleServe.enable [
+      "tailscale-serve-gatus.service"
+    ];
+
     systemd.services.tailscale-serve-gatus = mkIf cfg.tailscaleServe.enable {
       description = "Configure Tailscale Serve for Gatus HTTPS access";
       after = [
@@ -588,6 +597,10 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Two sequential 60s wait-loops (tailscaled + gatus port) can run ~120s.
+        # Raise above the 90s host default (DefaultTimeoutStartSec) so this
+        # sidecar is not SIGTERM'd mid-wait, leaving HTTPS dark.
+        TimeoutStartSec = 150;
       };
 
       script = ''
