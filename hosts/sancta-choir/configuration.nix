@@ -41,14 +41,17 @@
     ../../modules/system/networking.nix
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
-    ../../modules/services/claude.nix
+    ../../modules/services/claude-shared.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
   ];
 
   # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
-  customModules.claude.enable = true;
+  customModules.claudeShared = {
+    enable = true;
+    users = [ "root" ];
+  };
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets =

@@ -134,7 +134,7 @@
           system = "x86_64-linux";
           specialArgs = {
             pkgs-unstable = pkgs-unstable-x86;
-            inherit self claude-code owui-openrouter-stats;
+            inherit self claude-code claude-shared owui-openrouter-stats;
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix
