@@ -228,8 +228,13 @@
     freeSwapThreshold = 10;
     enableNotifications = true;
     extraArgs = [
+      # earlyoom matches against the truncated, sometimes dot-prefixed
+      # /proc/PID/comm (Home Assistant's comm is ".hass-wrapped"), so the
+      # --prefer regex must stay UNANCHORED; the --avoid comms have no
+      # prefix, so anchoring them is correct. Was "(open-webui)" — dormant
+      # since open-webui was disabled on rpi5-full (#381/#453).
       "--prefer"
-      "(open-webui)"
+      "(hass)"
       "--avoid"
       "^(sshd|tailscaled|n8n)"
     ];
