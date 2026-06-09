@@ -26,13 +26,13 @@ let
   declaredJson = pkgs.writeText "declared-recipients.json" (builtins.toJSON declared);
 in
 pkgs.runCommand "secrets-recipient-guard"
-  {
-    nativeBuildInputs = [ pkgs.jq ];
-    secrets = lib.fileset.toSource {
-      root = ../secrets;
-      fileset = lib.fileset.fileFilter (f: lib.hasSuffix ".age" f.name) ../secrets;
-    };
-  }
+{
+  nativeBuildInputs = [ pkgs.jq ];
+  secrets = lib.fileset.toSource {
+    root = ../secrets;
+    fileset = lib.fileset.fileFilter (f: lib.hasSuffix ".age" f.name) ../secrets;
+  };
+}
   ''
     fail=0
 
