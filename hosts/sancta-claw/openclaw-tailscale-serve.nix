@@ -68,4 +68,8 @@
       ${pkgs.tailscale}/bin/tailscale serve --https 18789 off || true
     '';
   };
+
+  # PartOf above only propagates stop/restart of openclaw, not a plain start —
+  # openclaw also `wants` this unit so HTTPS returns on every openclaw start.
+  systemd.services.openclaw.wants = [ "openclaw-tailscale-serve.service" ];
 }

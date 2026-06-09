@@ -482,7 +482,12 @@ in
         unifi-mcp = mkIf cfg.service.enable {
           description = "UniFi Network MCP Server (HTTP SSE mode)";
           after = [ "network-online.target" ] ++ lib.optionals cfg.useDocker [ "docker.service" ];
-          wants = [ "network-online.target" ];
+          # The serve oneshot's PartOf only propagates stop/restart, not a
+          # plain start — also `wants` it so HTTPS returns on every start.
+          wants = [
+            "network-online.target"
+          ]
+          ++ lib.optionals cfg.tailscaleServe.enable [ "tailscale-serve-unifi-mcp.service" ];
           requires = mkIf cfg.useDocker [ "docker.service" ];
           wantedBy = [ "multi-user.target" ];
 
@@ -550,6 +555,9 @@ in
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
+            # Wait loops below total up to 120s (60s tailscaled + 60s MCP);
+            # the rpi5 host default of 90s would SIGTERM the oneshot mid-loop.
+            TimeoutStartSec = 150;
           };
 
           script = ''
