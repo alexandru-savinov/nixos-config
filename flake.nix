@@ -46,6 +46,7 @@
       url = "github:alexandru-savinov/claude-shared";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.home-manager.follows = "home-manager";
+      inputs.claude-code.follows = "claude-code";
     };
     kuzea-workspace = {
       url = "github:alexandru-savinov/kuzea-workspace";
