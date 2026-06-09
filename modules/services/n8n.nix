@@ -93,6 +93,9 @@ in
         Generate with: openssl rand -hex 32
         Use agenix for secret management.
         WARNING: If null, credentials will not be encrypted (insecure).
+        ROTATION: changing this key makes existing stored credentials
+        unreadable — follow docs/N8N-KEY-ROTATION.md (export/inventory
+        first, swap key, wipe credentials_entity, re-enter/re-import).
       '';
     };
 
