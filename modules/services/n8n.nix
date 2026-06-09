@@ -300,6 +300,22 @@ in
       '';
     };
 
+    allowBuiltinModules = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = literalExpression ''[ "fs" "path" "crypto" ]'';
+      description = ''
+        Node.js built-in modules usable inside n8n Code nodes (rendered as
+        NODE_FUNCTION_ALLOW_BUILTIN). Type-safe, mergeable alternative to
+        setting the raw variable via extraEnvironment.
+
+        SECURITY: every module listed widens what workflow authors can do.
+        "child_process" in particular allows arbitrary command execution as
+        the n8n user (equivalent to the built-in Execute Command node; the
+        n8n user is systemd-sandboxed). Keep this list minimal.
+      '';
+    };
+
     communityPackages = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -354,6 +370,14 @@ in
           Without it, n8n credentials are stored unencrypted in the database.
           Generate a key: openssl rand -hex 32
           Set it to an agenix secret path: config.age.secrets.n8n-encryption-key.path
+        '';
+      }
+      {
+        assertion = !(cfg.allowBuiltinModules != [ ] && cfg.extraEnvironment ? NODE_FUNCTION_ALLOW_BUILTIN);
+        message = ''
+          services.n8n-tailscale: NODE_FUNCTION_ALLOW_BUILTIN is set both via
+          allowBuiltinModules and extraEnvironment — the duplicate env-file
+          lines would silently shadow one another. Use allowBuiltinModules only.
         '';
       }
     ];
@@ -478,6 +502,11 @@ in
 
                         # Concurrency limit
                         echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
+
+                        # Node.js built-ins allowed in Code nodes (typed option)
+                        ${optionalString (cfg.allowBuiltinModules != [ ]) ''
+                          echo "NODE_FUNCTION_ALLOW_BUILTIN=${concatStringsSep "," cfg.allowBuiltinModules}" >> "$ENV_FILE"
+                        ''}
 
                         # Extra environment variables (values escaped to prevent shell injection)
                         ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
