@@ -472,6 +472,10 @@ in
     telegramEnvFile = secret "backup-telegram-env";
   };
 
+  # Operator alert when the DNS-watchdog crash-loop breaker opens (#450).
+  # Reuses the backup alert credentials (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID).
+  services.tailscale-dns-watchdog.telegramEnvFile = secret "backup-telegram-env";
+
   # Add n8n to nixframe group so it can write photos to nixframe's home dir
   users.users.n8n.extraGroups = [ "nixframe" ];
 
