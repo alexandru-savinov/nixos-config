@@ -1,10 +1,24 @@
-{ pkgs ? import <nixpkgs> { } }:
+{ pkgs ? import <nixpkgs> { }
+, # Repo root — the n8n module reads ''${self}/scripts/generate-apkg.py.
+  # The flake passes its real `self`; the default works for standalone runs.
+  self ? ../.
+,
+}:
 
 pkgs.testers.nixosTest {
   name = "n8n-declarative-test";
 
   nodes.machine = { config, pkgs, ... }: {
     imports = [ ../modules/services/n8n.nix ];
+
+    # The n8n module takes `self` as a module argument (this nixpkgs'
+    # makeTest has no node.specialArgs, so inject via _module.args).
+    _module.args.self = self;
+
+    # NOTE: n8n is unfree (Sustainable Use License). The pkgs instance passed
+    # in must be created with config.allowUnfree = true (flake.nix nixpkgsFor
+    # does this) — setting nixpkgs.config here would conflict with the
+    # externally created instance the test framework injects.
 
     # Mock secrets (plaintext for testing)
     environment.etc."n8n-encryption-key".text = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -57,9 +71,19 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("n8n.service")
     machine.wait_for_open_port(5678)
 
-    # Give ExecStartPost time to run (workflow import takes ~30s for health check + import)
+    # Workflow import runs in the dedicated n8n-workflow-sync.service (not
+    # n8n.service ExecStartPost as in earlier module versions). Wait for its
+    # completion message instead of sleeping a fixed interval.
     print("Waiting for workflow import to complete...")
-    machine.sleep(45)
+    machine.wait_until_succeeds(
+        "journalctl -u n8n-workflow-sync.service | grep -q 'Workflow import complete'",
+        timeout=300,
+    )
+
+    # The sync unit restarts n8n after import (webhook registration) —
+    # re-await the service before poking at its process.
+    machine.wait_for_unit("n8n.service")
+    machine.wait_for_open_port(5678)
 
     # Get n8n process PID
     pid = machine.succeed("systemctl show --property MainPID --value n8n.service").strip()
@@ -73,16 +97,15 @@ pkgs.testers.nixosTest {
     machine.succeed("test -f /run/n8n/credentials.json")
     machine.succeed("cat /run/n8n/credentials.json | grep -q 'X-Test-Auth'")
 
-    # 3. Verify workflow import ran and completed (check for completion message)
-    print("Checking workflow import log...")
-    # Show import logs for debugging
-    import_logs = machine.succeed("journalctl -u n8n.service --no-pager | grep -E '(Import|import|workflow)' || echo 'No import logs found'")
+    # 3. Show import logs for debugging
+    import_logs = machine.succeed("journalctl -u n8n-workflow-sync.service --no-pager | grep -E '(Import|import|workflow)' || echo 'No import logs found'")
     print(f"Import logs: {import_logs}")
-    machine.succeed("journalctl -u n8n.service | grep -q 'Workflow import complete'")
 
-    # 4. Verify n8n responds (basic health check)
+    # 4. Verify n8n responds (basic health check). Use /healthz — the same
+    # endpoint the module gates on; GET / can return a non-200 while the
+    # app is still warming up after the post-import restart.
     print("Checking n8n health...")
-    machine.succeed("curl -sf http://127.0.0.1:5678/ | head -c 100")
+    machine.wait_until_succeeds("curl -sf http://127.0.0.1:5678/healthz", timeout=120)
 
     # 5. CRITICAL: Verify workflow was ACTUALLY imported
     # The API requires authentication, so check via database or CLI export

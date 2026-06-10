@@ -92,6 +92,13 @@ jobs:
             - name: Build hermes-claw (x86_64-linux)
               run: nix build .#nixosConfigurations.hermes-claw.config.system.build.toplevel
 
+            # Heavy VM test (#42): builds n8n from source (unfree, never
+            # binary-cached) + boots a KVM VM. Runs here — after the
+            # free-disk step, with nothing concurrent — because adding it
+            # to `nix flake check` killed the Check job's runner.
+            - name: Run n8n declarative VM test (x86_64-linux)
+              run: nix build .#n8n-declarative-test -L
+
     build-scripts:
         name: Build Scripts
         runs-on: ubuntu-latest
