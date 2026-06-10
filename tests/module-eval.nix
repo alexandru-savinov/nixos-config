@@ -697,6 +697,13 @@ let
           ".zdr-migration-announced"
           "free+ZDR ladder"
           "primary=$PRIMARY"
+          # Crash-loop circuit breaker (#403/#450): assert the windowed
+          # breaker can't be silently deleted — marker-file window count,
+          # give-up branch, and hard failure exit.
+          "CRASH_LOOP_MAX"
+          ''find "$RESTART_LOG_DIR" -maxdepth 1 -type f -mmin "-$CRASH_LOOP_WINDOW_MIN"''
+          "NOT restarting"
+          "exit 1"
         ];
         missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
       in
@@ -704,6 +711,42 @@ let
         true
       else
         builtins.throw "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
+
+    # Verify the tailscale-dns-watchdog ships the same windowed crash-loop
+    # breaker + operator alert (#450) on every host that imports the shared
+    # tailscale module. Reads the rendered unit script — pure eval, no IFD.
+    tailscale-dns-watchdog-breaker =
+      let
+        hosts = [
+          "rpi5"
+          "rpi5-full"
+          "sancta-choir"
+          "sancta-claw"
+          "hermes-claw"
+          "zero-kuzea"
+        ];
+        required = [
+          "CRASH_LOOP_MAX"
+          ''find "$RESTART_LOG_DIR" -maxdepth 1 -type f -mmin "-$CRASH_LOOP_WINDOW_MIN"''
+          "NOT restarting"
+          "Manual intervention needed"
+          "exit 1"
+        ];
+        missingFor =
+          host:
+          let
+            body = self.nixosConfigurations.${host}.config.systemd.services.tailscale-dns-watchdog.script;
+          in
+          builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
+        failures = builtins.filter (h: missingFor h != [ ]) hosts;
+        # rpi5-full must additionally wire the Telegram alert credentials.
+        rpi5AlertWired =
+          self.nixosConfigurations.rpi5-full.config.services.tailscale-dns-watchdog.telegramEnvFile != null;
+      in
+      if failures == [ ] && rpi5AlertWired then
+        true
+      else
+        builtins.throw "FAIL: tailscale-dns-watchdog breaker — hosts missing sentinels: ${builtins.toJSON failures}; rpi5-full alert wired: ${builtins.toJSON rpi5AlertWired}";
 
     # Verify the hermes-claw host config uses the upstream hermes-agent
     # module in container mode with the correct model pin and settings.
