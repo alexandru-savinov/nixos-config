@@ -202,13 +202,19 @@ in
     # Requires adminPasswordFile to authenticate with n8n
     communityPackages = [ "n8n-nodes-zip" ];
 
-    # Enable Node.js built-in modules in Code nodes:
+    # Node.js built-in modules in Code nodes:
     # - crypto: efficient SHA256 hashing (pure JS is slow on ARM)
     # - fs, path: file-based job status tracking for async workflow patterns
     # - child_process: NixFrame HEIC→JPEG conversion (removing from Code nodes doesn't
     #   help — n8n's Execute Command node allows the same; n8n user is systemd-sandboxed)
+    allowBuiltinModules = [
+      "fs"
+      "path"
+      "crypto"
+      "child_process"
+    ];
+
     extraEnvironment = {
-      NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto,child_process";
       # Enable n8n Public API for Claude Code MCP integration
       N8N_PUBLIC_API_DISABLED = "false";
       # Increase task runner heap for APKG assembly (reads all card files into one JSON blob)
