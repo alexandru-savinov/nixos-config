@@ -120,6 +120,10 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # The wait loops below total up to 240s (60s tailscaled + 180s HA);
+        # without this the host's DefaultTimeoutStartSec=90s SIGTERMs the
+        # oneshot mid-loop and HTTPS never comes up on cold boot.
+        TimeoutStartSec = 300;
       };
 
       script = ''
