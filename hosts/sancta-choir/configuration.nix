@@ -36,9 +36,8 @@
 
   imports = [
     ./hardware-configuration.nix
+    ./networking.nix
     ../common.nix
-    ../../modules/system/host.nix
-    ../../modules/system/networking.nix
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/claude-shared.nix
