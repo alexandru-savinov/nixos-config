@@ -26,6 +26,15 @@
     # Uses nvmd/nixos-raspberrypi which has the same kernel as the pre-built SD image
     # Cache: nixos-raspberrypi.cachix.org
     # See: https://github.com/nvmd/nixos-raspberrypi
+    #
+    # INTENTIONALLY no `inputs.nixpkgs.follows = "nixpkgs"` (#182): the
+    # nixos-raspberrypi binary cache (kernel, firmware) is built against ITS
+    # pinned nixpkgs. Following our nixpkgs would change the kernel derivation
+    # hash and force multi-hour from-source kernel builds on the 4GB Pi.
+    # Consequence: rpi5/rpi5-full track nixos-raspberrypi's nixpkgs pin while
+    # the other hosts track the root `nixpkgs` input — both on the same
+    # nixos-25.11 branch since the 25.11 upgrade, but at slightly different
+    # revisions (days apart). Keep both fresh with `nix flake update`.
     nixos-raspberrypi = {
       url = "github:nvmd/nixos-raspberrypi";
     };
