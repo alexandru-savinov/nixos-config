@@ -353,6 +353,11 @@
           # OpenRouter, verifies provider.zdr=true is injected on the wire
           # and non-ZDR models are rejected before reaching the upstream.
           openclaw-zdr-proxy = pkgs.testers.nixosTest (import ./tests/openclaw-zdr-proxy.nix { inherit pkgs; });
+
+          # Agenix recipient-drift + fail-open corruption guard (#448):
+          # on-disk `-> ` stanza counts must match secrets.nix declarations,
+          # and no .age payload may carry the empty-plaintext signature.
+          secrets-recipient-guard = import ./tests/secrets-recipient-guard.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`
