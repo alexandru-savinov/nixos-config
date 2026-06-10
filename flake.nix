@@ -306,6 +306,12 @@
           # See pkgs/ralphex.nix; install via environment.systemPackages.
           ralphex = pkgs.callPackage ./pkgs/ralphex.nix { };
 
+          # Declarative n8n VM test (#42). A package (not a check) so plain
+          # `nix flake check` stays light — see the note in the checks
+          # section. CI builds it in the "Build x86_64 Configs" job; run
+          # locally with: nix build .#n8n-declarative-test
+          n8n-declarative-test = import ./tests/n8n-declarative.nix { inherit pkgs self; };
+
           # Fresh system installation script
           install = pkgs.writeShellApplication {
             name = "nixos-install";
@@ -367,6 +373,19 @@
           # on-disk `-> ` stanza counts must match secrets.nix declarations,
           # and no .age payload may carry the empty-plaintext signature.
           secrets-recipient-guard = import ./tests/secrets-recipient-guard.nix { inherit pkgs; };
+
+          # Workflow JSON sanity (#100): malformed JSON or a missing stable
+          # `id` used to fail only at runtime during ExecStartPost import.
+          n8n-workflows-valid = import ./tests/n8n-workflows-valid.nix { inherit pkgs; };
+
+          # NOTE: the declarative n8n VM test (#42) deliberately lives under
+          # packages.<system>.n8n-declarative-test, NOT here. `nix flake
+          # check` builds every check inside the resource-constrained
+          # "Check Flake & Formatting" CI job — adding the n8n source build
+          # (unfree, never binary-cached) plus a second KVM VM there killed
+          # the runner with a shutdown signal. CI runs the test as an
+          # explicit step in the "Build x86_64 Configs" job instead, which
+          # frees ~30GB disk first and runs nothing concurrently.
         };
 
       # Apps - makes packages runnable with `nix run`
