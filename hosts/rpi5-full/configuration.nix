@@ -341,6 +341,31 @@ in
     extraComponents = [ "roborock" ];
   };
 
+  # python-roborock v4 login workaround. Roborock's v4 auth endpoint
+  # (/api/v4/auth/email/login/code) returns "parameter error" (code 1002) for
+  # some accounts/regions — confirmed for this account: every country/countryCode
+  # /majorVersion variant fails, while the legacy v1 endpoints
+  # (/api/v1/sendEmailCode + /api/v1/loginWithCode) succeed end-to-end. HA's
+  # roborock config flow hard-codes request_code_v4 / code_login_v4, so it can
+  # never finish setup (and would also break later on token-reauth). The library
+  # already delegates to its working v1 methods when country/country_code are
+  # unset, so we force that fallback branch unconditionally.
+  services.home-assistant.package = pkgs.home-assistant.override {
+    packageOverrides = _self: super: {
+      python-roborock = super.python-roborock.overridePythonAttrs (old: {
+        postPatch = (old.postPatch or "") + ''
+          substituteInPlace roborock/web_api.py \
+            --replace-fail \
+              'if await self.country_code is None or await self.country is None:' \
+              'if True:  # nixos: v4 endpoint 1002s for some regions; force v1 request_code' \
+            --replace-fail \
+              'if country_code is None or country is None:' \
+              'if True:  # nixos: force v1 code_login (v4 broken)'
+        '';
+      });
+    };
+  };
+
   # Explicit external/internal URLs so HA doesn't auto-detect behind the
   # Tailscale Serve reverse proxy — auto-detection sees http://127.0.0.1:8123
   # which breaks mobile app OAuth redirects (intermittent 400 on /auth/authorize).
