@@ -335,6 +335,10 @@ in
     enable = true;
     timeZone = "Europe/Bucharest";
     tailscaleServe.enable = true;
+    # Roborock Saros 10 vacuum — bundles python-roborock so the cloud-light
+    # integration (Roborock account login once, then local LAN control) can be
+    # configured via the Add Integration UI / config flow.
+    extraComponents = [ "roborock" ];
   };
 
   # Explicit external/internal URLs so HA doesn't auto-detect behind the

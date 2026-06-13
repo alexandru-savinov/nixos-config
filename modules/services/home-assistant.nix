@@ -33,6 +33,22 @@ in
       '';
     };
 
+    extraComponents = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "roborock" ];
+      description = ''
+        Home Assistant integration components to bundle into the package,
+        together with their Python dependencies. Empty by default so the HA
+        package stays a binary-cache hit. Each entry pulls that integration's
+        requirements into the HA Python environment and forces a local
+        aarch64 rebuild (slow + memory-hungry on the 4GB Pi), so only add a
+        component when a real device needs it (e.g. "roborock" for a Roborock
+        vacuum). Once built, the integration becomes available in the
+        config-flow / Add Integration UI for setup.
+      '';
+    };
+
     tailscaleServe = {
       enable = mkEnableOption "Tailscale Serve HTTPS front for Home Assistant";
 
@@ -45,13 +61,16 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Native Home Assistant module. We deliberately do NOT set
-    # extraComponents / extraPackages / package / customComponents here:
-    # keeping them at the module default guarantees a binary-cache hit and
-    # avoids a large local aarch64 Python rebuild that can OOM the 4GB Pi.
-    # Only `config` is set, which is a cheap YAML render.
+    # Native Home Assistant module. extraComponents defaults to [] (see the
+    # option below): with an empty list the HA package keeps its upstream hash
+    # and stays a binary-cache hit. Set extraComponents per-host only when a
+    # device needs an integration — a non-empty list bundles that integration's
+    # Python deps and forces a local aarch64 rebuild, slow and memory-hungry on
+    # the 4GB Pi, so keep the list minimal. extraPackages / package /
+    # customComponents are intentionally left at their defaults.
     services.home-assistant = {
       enable = true;
+      inherit (cfg) extraComponents;
       # Pin explicitly (defense-in-depth): never open 8123 to the network — access
       # is exclusively via the Tailscale Serve HTTPS proxy. Don't rely on the
       # upstream module default in case it ever changes.
