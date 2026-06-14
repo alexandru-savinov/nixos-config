@@ -39,6 +39,17 @@ let
       sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
     };
   };
+
+  # Fixed-flake deploy wrapper — the ONLY nixos-rebuild path the herdr user can
+  # sudo. Pins the flake to the canonical (CI-checked, merged) config and takes
+  # NO user arguments, so an agent in a pane cannot run
+  # `sudo nixos-rebuild --flake github:attacker/...` to root the box; risky
+  # changes must go through PR -> CI -> merge before they can be deployed here.
+  herdr-deploy = pkgs.writeShellScriptBin "herdr-deploy" ''
+    set -euo pipefail
+    exec /run/current-system/sw/bin/nixos-rebuild switch \
+      --flake github:alexandru-savinov/nixos-config#sancta-choir
+  '';
 in
 {
   options.customModules.herdr = {
@@ -58,8 +69,12 @@ in
 
   config = lib.mkIf config.customModules.herdr.enable {
     # herdr CLI on PATH — required so `herdr --remote herdr@host` finds the binary
-    # on the remote, and so you can run `herdr` locally on the box.
-    environment.systemPackages = [ herdr ];
+    # on the remote, and so you can run `herdr` locally on the box. herdr-deploy
+    # is the sudo-allowed fixed-flake deploy wrapper (see the sudo rule below).
+    environment.systemPackages = [
+      herdr
+      herdr-deploy
+    ];
 
     # Dedicated unprivileged user the server runs as and that you SSH in as to
     # attach (`herdr --remote herdr@host`). Mirrors the openclaw/nullclaw pattern:
@@ -69,6 +84,8 @@ in
     users.users.herdr = {
       isSystemUser = true;
       group = "herdr";
+      # Read journal logs without sudo (replaces the old `sudo journalctl` rule).
+      extraGroups = [ "systemd-journal" ];
       home = "/var/lib/herdr";
       createHome = true;
       shell = pkgs.bash;
@@ -76,25 +93,23 @@ in
     };
     users.groups.herdr = { };
 
-    # Scoped, auditable escalation: agent panes run as the unprivileged herdr
-    # user but can still drive the system ops they need (deploy, service/log
-    # inspection, GC) via passwordless sudo for exactly these commands — nothing
-    # else. Paths are the stable /run/current-system/sw/bin/* that `sudo <cmd>`
-    # resolves to via PATH.
+    # Scoped, auditable escalation. Agent panes run as the unprivileged herdr
+    # user and get passwordless sudo for ONLY two things:
+    #   - herdr-deploy: the fixed-flake wrapper above (no user args), so deploys
+    #     are constrained to the canonical CI-checked config — NOT raw
+    #     `nixos-rebuild`, which would accept `--flake github:attacker/...` and
+    #     hand a pane full root.
+    #   - nixos-collect-garbage: prunes old generations; not a code-exec vector.
+    # Log access is via the systemd-journal group (no sudo). Broad `systemctl` is
+    # intentionally NOT granted — `sudo systemctl stop sshd` / `start
+    # emergency.target` would be a trivial lockout/escalation; a redeploy via
+    # herdr-deploy restarts changed units.
     security.sudo.extraRules = [
       {
         users = [ "herdr" ];
         commands = [
           {
-            command = "/run/current-system/sw/bin/nixos-rebuild";
-            options = [ "NOPASSWD" ];
-          }
-          {
-            command = "/run/current-system/sw/bin/systemctl";
-            options = [ "NOPASSWD" ];
-          }
-          {
-            command = "/run/current-system/sw/bin/journalctl";
+            command = "/run/current-system/sw/bin/herdr-deploy";
             options = [ "NOPASSWD" ];
           }
           {

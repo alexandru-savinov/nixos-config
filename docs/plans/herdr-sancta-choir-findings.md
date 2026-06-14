@@ -4,7 +4,15 @@ Evidence for running herdr as an **always-on server** on `sancta-choir` so
 long-running AI-agent sessions live on the VPS and survive the Mac sleeping.
 Attach from the Mac with:
 
-    herdr --remote root@sancta-choir-1.tail4249a9.ts.net
+    herdr --remote herdr@sancta-choir-1.tail4249a9.ts.net
+
+> **Update (security redesign, PR #499):** the server now runs as a dedicated
+> unprivileged `herdr` user, not root. The runtime evidence below was captured
+> during the original root-era deploy, so its `User=root` / `root@` / socket
+> `/root/.config/herdr/...` references describe that first deployment. The
+> current design attaches as `herdr@…`, the socket lives under
+> `/var/lib/herdr/.config/herdr/`, and herdr's only sudo is the fixed-flake
+> `herdr-deploy` wrapper + `nixos-collect-garbage` (no raw nixos-rebuild/systemctl).
 
 Branch `feat/herdr-sancta-choir`:
 - `e9b11ef` feat: herdr module (`modules/services/herdr.nix`) + enable on sancta-choir
@@ -66,9 +74,9 @@ The server runs on the VPS, so Mac sleep only drops the *client*; herdr keeps
 panes/processes running across a client disconnect (documented behavior; H2
 confirms re-attach). End-to-end check to run from the Mac:
 
-    herdr --remote root@sancta-choir-1.tail4249a9.ts.net   # open a tab, start `claude` / a long task
+    herdr --remote herdr@sancta-choir-1.tail4249a9.ts.net   # open a tab, start `claude` / a long task
     pmset sleepnow                                          # (or close the lid), then wake
-    herdr --remote root@sancta-choir-1.tail4249a9.ts.net   # reattaches — session + process still alive
+    herdr --remote herdr@sancta-choir-1.tail4249a9.ts.net   # reattaches — session + process still alive
 
 ## Pre-existing issue flagged (NOT herdr, NOT fixed here)
 
