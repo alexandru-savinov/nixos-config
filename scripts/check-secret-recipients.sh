@@ -45,14 +45,16 @@ fi
 EMPTY_PAYLOAD_THRESHOLD=32
 
 # Known-pending recipient drift — reported as a WARNING, not a hard failure, so
-# CI stays green while the fix waits on an on-host re-key (the re-encryption
-# cannot be done from a darwin box; it needs a host holding a decrypting key).
-# REMOVE an entry the moment its .age is re-keyed on-host. Issue #448:
-#   hermes-env.age — secrets.nix declares 3 recipients, disk has 5; reconcile
-#   with `cd secrets && agenix -e hermes-env.age` on rpi5 (a decrypting host).
-KNOWN_PENDING_DRIFT=(
-  "hermes-env.age"
-)
+# CI stays green while a fix waits on an on-host re-key (the re-encryption cannot
+# be done from a darwin box; it needs a host holding a decrypting key). Add an
+# entry ONLY while a real drift is pending reconciliation, and REMOVE it the
+# moment its .age is re-keyed on-host (`cd secrets && agenix -e <file>.age` on a
+# decrypting host such as rpi5). Issue #448.
+#
+# Currently empty: hermes-env.age is reconciled to its declared 3 recipients
+# (on-disk `-> ` stanzas == declared publicKeys), so the hard check is re-armed
+# for every secret.
+KNOWN_PENDING_DRIFT=()
 
 # ── Resolve DECLARED publicKeys length per .age, keyed by basename. ──────────
 # Preferred path: `nix eval` imports secrets.nix (a pure attrset — no flake
@@ -124,7 +126,9 @@ for f in "$SECRETS_DIR"/*.age; do
       fail=1
     elif [ "$ondisk" != "$declared" ]; then
       pending=0
-      for k in "${KNOWN_PENDING_DRIFT[@]}"; do
+      # `${arr[@]+...}` keeps an empty array safe under `set -u` (incl. bash 3.2
+      # on darwin), so the allowlist can be emptied without breaking the guard.
+      for k in ${KNOWN_PENDING_DRIFT[@]+"${KNOWN_PENDING_DRIFT[@]}"}; do
         [ "$k" = "$base" ] && pending=1 && break
       done
       if [ "$pending" -eq 1 ]; then
