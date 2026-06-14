@@ -41,6 +41,7 @@
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/claude-shared.nix
+    ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
   ];
@@ -51,6 +52,13 @@
     enable = true;
     users = [ "root" ];
   };
+
+  # herdr — always-on terminal workspace server for AI coding agents. The server
+  # lives here so long-running sessions survive the Mac sleeping; it runs as a
+  # dedicated unprivileged `herdr` user whose only sudo is a fixed-flake deploy
+  # wrapper (`herdr-deploy`) + GC — no raw nixos-rebuild/systemctl. Attach with
+  # `herdr --remote herdr@sancta-choir-1.tail4249a9.ts.net`.
+  customModules.herdr.enable = true;
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets =
