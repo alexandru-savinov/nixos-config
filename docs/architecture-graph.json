@@ -1,0 +1,4053 @@
+{
+  "stats": {
+    "nodes": 142,
+    "edges": 401,
+    "subsystems": 7
+  },
+  "nodes": [
+    {
+      "id": "input:nixpkgs",
+      "label": "nixpkgs",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "Primary nixpkgs flake input \u2014 nixosSystem builder for the four x86_64 VPS hosts",
+      "details": "github:NixOS/nixpkgs/nixos-25.11. Upgraded from 25.05 to fix CVE-2025-68613 (n8n RCE). allowUnfree=true (open-webui). Root of all follows.",
+      "hosts": []
+    },
+    {
+      "id": "input:nixpkgs-unstable",
+      "label": "nixpkgs-unstable",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "Flake input github:NixOS/nixpkgs/nixos-unstable, imported per-arch as pkgs-unstable and passed via specialArgs to host configs",
+      "details": "Used to source latest github-copilot-cli for both dev-tools.nix and root.nix's copilot alias. pkgs-unstable-x86 / pkgs-unstable-aarch64 built in flake.nix and threaded into nixosSystem specialArgs.",
+      "hosts": []
+    },
+    {
+      "id": "input:home-manager",
+      "label": "home-manager",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "User-environment (home) management as a NixOS module",
+      "details": "github:nix-community/home-manager/release-25.11. inputs.nixpkgs follows nixpkgs. Module home-manager.nixosModules.home-manager added to all hosts except zero-kuzea."
+    },
+    {
+      "id": "input:vscode-server",
+      "label": "vscode-server",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "Makes VS Code Remote-SSH work on NixOS",
+      "details": "github:nix-community/nixos-vscode-server. inputs.nixpkgs follows nixpkgs. Module vscode-server.nixosModules.default on sancta-choir, rpi5, rpi5-full."
+    },
+    {
+      "id": "input:agenix",
+      "label": "agenix",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "agenix flake input \u2014 age-encrypted secrets module (age.secrets) for all hosts",
+      "details": "github:ryantm/agenix (unpinned from 0.15.0 \u2014 that tag used substituteAll removed in 25.11; main uses replaceVars). inputs.nixpkgs follows nixpkgs. agenix.nixosModules.default on ALL hosts; CLI exposed via local agenixModule.",
+      "hosts": []
+    },
+    {
+      "id": "input:nixos-raspberrypi",
+      "label": "nixos-raspberrypi",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "nvmd/nixos-raspberrypi flake input \u2014 provides RPi5 kernel 6.12.34/firmware and the nixosSystem builder + raspberry-pi-5.base module",
+      "details": "github:nvmd/nixos-raspberrypi (unpinned, no follows \u2014 carries its own nixpkgs 25.11). Cache nixos-raspberrypi.cachix.org. Provides lib.nixosSystem builder + raspberry-pi-5.base module for rpi5/rpi5-full.",
+      "hosts": []
+    },
+    {
+      "id": "input:disko",
+      "label": "disko",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "disko flake input \u2014 declarative disk partitioning module injected into the VPS hosts",
+      "details": "github:nix-community/disko/latest. inputs.nixpkgs follows nixpkgs. disko.nixosModules.disko on the GRUB Hetzner hosts: sancta-claw, hermes-claw, zero-kuzea (NOT sancta-choir).",
+      "hosts": []
+    },
+    {
+      "id": "input:claude-code",
+      "label": "claude-code",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "github:sadjow/claude-code-nix \u2014 Claude Code CLI package (auto-updated hourly)",
+      "details": "github:sadjow/claude-code-nix. inputs.nixpkgs follows nixpkgs-unstable. Passed via specialArgs to sancta-choir, sancta-claw, rpi5, rpi5-full (NOT hermes-claw / zero-kuzea).",
+      "hosts": []
+    },
+    {
+      "id": "input:claude-shared",
+      "label": "claude-shared",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "github:alexandru-savinov/claude-shared \u2014 CC package + HM user config (skills/agents/commands)",
+      "details": "github:alexandru-savinov/claude-shared (public). inputs.nixpkgs follows nixpkgs, inputs.home-manager follows home-manager. Passed via specialArgs only to rpi5 and rpi5-full (the 'full CC stack' hosts).",
+      "hosts": []
+    },
+    {
+      "id": "input:kuzea-workspace",
+      "label": "kuzea-workspace",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "kuzea-workspace flake input \u2014 packaged Kuzea skills/hooks/CLAUDE.md/git-credential helper for OpenClaw",
+      "details": "github:alexandru-savinov/kuzea-workspace. inputs.nixpkgs follows nixpkgs. Used only by sancta-claw: kuzea-ws = kuzea-workspace.packages.x86_64-linux passed via specialArgs.",
+      "hosts": []
+    },
+    {
+      "id": "input:owui-openrouter-stats",
+      "label": "owui-openrouter-stats",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "flake=false input: karamanliev/open-webui-openrouter-stats cost-tracker function.py",
+      "details": "github:karamanliev/open-webui-openrouter-stats. flake = false (raw source tree). Passed via specialArgs only to sancta-choir.",
+      "hosts": []
+    },
+    {
+      "id": "input:hermes-agent",
+      "label": "hermes-agent",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "NousResearch/hermes-agent flake input \u2014 upstream Hermes agent NixOS module",
+      "details": "github:NousResearch/hermes-agent. inputs.nixpkgs follows nixpkgs. Container mode (uv2nix binary bind-mounted into Ubuntu). hermes-agent.nixosModules.default only on hermes-claw.",
+      "hosts": []
+    },
+    {
+      "id": "host:sancta-choir",
+      "label": "sancta-choir",
+      "kind": "host",
+      "file": "hosts/sancta-choir/configuration.nix",
+      "role": "Hetzner x86_64 VPS \u2014 Open-WebUI AI chat gateway (OpenRouter backend) exposed via Tailscale Serve HTTPS",
+      "details": "x86_64-linux, 8GB VPS + 4GB swapfile. Kernel pinned to 6.6 LTS (post-#252 corruption workaround). binfmt aarch64 emulation for cross-building RPi5 images. Runs Open-WebUI (OIDC, Tavily, memory, ZDR-only, cost tracker, E2E testing) on legacy customModules.claude. No autoUpgrade. Built in CI, deployed manually. stateVersion 25.05",
+      "hosts": []
+    },
+    {
+      "id": "host:sancta-claw",
+      "label": "sancta-claw",
+      "kind": "host",
+      "file": "hosts/sancta-claw/configuration.nix",
+      "role": "Hetzner CX33 x86_64 VPS \u2014 dedicated OpenClaw AI agent (Kuzea) gateway on free+ZDR OpenRouter ladder via local proxy; backed up to rpi5",
+      "details": "x86_64-linux, CX33 + 12GB swapfile, DHCP (DR-portable), age recovery key at /root/.age/recovery.key, disko-managed disk. Heavy internal structure (9 sub-files). autoUpgrade enabled (operation=boot, nightly 04:30, allowReboot=false) from github flake. Legacy customModules.claude. stateVersion 25.05",
+      "port": "18789",
+      "hosts": []
+    },
+    {
+      "id": "host:hermes-claw",
+      "label": "hermes-claw",
+      "kind": "host",
+      "file": "hosts/hermes-claw/configuration.nix",
+      "role": "Hetzner CX33 x86_64 VPS \u2014 dedicated Hermes AI agent (Nous Research) running in a Podman container via upstream NixOS module",
+      "details": "x86_64-linux, CX33 + 4GB swapfile, DHCP, age recovery key, disko-managed disk. Podman (docker disabled). hermes-agent upstream module in container mode (ubuntu:24.04, nemotron free model via OpenRouter). NO claude/dev-tools modules. autoUpgrade DISABLED (pending first verified deploy). stateVersion 25.11",
+      "hosts": []
+    },
+    {
+      "id": "host:zero-kuzea",
+      "label": "zero-kuzea",
+      "kind": "host",
+      "file": "hosts/zero-kuzea/configuration.nix",
+      "role": "Hetzner CX22 x86_64 VPS \u2014 minimal dedicated NullClaw Telegram bot (Anthropic Claude Sonnet) exposed via Tailscale Serve",
+      "details": "x86_64-linux, CX22 4GB + 2GB swapfile. Minimal host: only Tailscale + NullClaw + ssh-hardened. Reuses sancta-claw's age recovery key. disko-managed disk. No dev-tools, no claude. No autoUpgrade declared. stateVersion 25.05",
+      "hosts": []
+    },
+    {
+      "id": "host:rpi5",
+      "label": "rpi5 (minimal/SD)",
+      "kind": "host",
+      "file": "hosts/rpi5/configuration.nix",
+      "role": "Raspberry Pi 5 aarch64 \u2014 MINIMAL config used only for SD-image builds and as the import base for rpi5-full",
+      "details": "aarch64-linux via nvmd/nixos-raspberrypi (kernel 6.12.34). SSH/Tailscale/dev-tools/Claude Code (claude-shared), UniFi MCP, n8n-skills, n8n-mcp-claude (docs-only). Heavy RPi5 resource tuning: earlyoom, zram zstd, 8GB swapfile, cgroup_enable=memory, btop on tty1. Uses modern customModules.claudeShared. stateVersion 25.05",
+      "hosts": []
+    },
+    {
+      "id": "host:rpi5-full",
+      "label": "rpi5-full (primary)",
+      "kind": "host",
+      "file": "hosts/rpi5-full/configuration.nix",
+      "role": "Raspberry Pi 5 aarch64 \u2014 PRIMARY active deploy target; extends rpi5 with full home services (n8n, Gatus, NixFrame, Home Assistant, backup-pull)",
+      "details": "aarch64-linux, imports rpi5/configuration.nix wholesale then adds n8n, Gatus monitoring, NixFrame photo frame, Home Assistant (+ MCP, Samsung TV/Xiaomi/Cast), backup-pull from sancta-claw, ralphex pkg. Advertises Tailscale exit node. n8n overlay bumps Node heap for ARM build. Native local rebuild (sudo nixos-rebuild switch). stateVersion 25.05",
+      "hosts": []
+    },
+    {
+      "id": "pkg:ralphex",
+      "label": "ralphex",
+      "kind": "pkg",
+      "file": "pkgs/ralphex.nix",
+      "role": "Packages upstream umputun/ralphex v1.3.1 prebuilt Go binary (aarch64+x86_64 release tarballs) for multi-step Claude Code plan orchestration",
+      "details": "pkgs.callPackage ./pkgs/ralphex.nix {}. forAllSystems (x86_64-linux, aarch64-linux). Installed via environment.systemPackages, not an app.",
+      "hosts": []
+    },
+    {
+      "id": "pkg:install",
+      "label": "install (nixos-install)",
+      "kind": "pkg",
+      "file": "flake.nix",
+      "role": "Fresh system installation script (default package + app)",
+      "details": "writeShellApplication name=nixos-install, runtimeInputs git/nixos-rebuild/coreutils, text=readFile ./scripts/install.sh. This is packages.default AND apps.default."
+    },
+    {
+      "id": "pkg:deploy",
+      "label": "deploy (nixos-deploy)",
+      "kind": "pkg",
+      "file": "flake.nix",
+      "role": "Deployment/update script (throttled rebuild)",
+      "details": "writeShellApplication name=nixos-deploy, runtimeInputs git/nixos-rebuild/coreutils/gnugrep/gnused, text=readFile ./scripts/deploy.sh. Exposed as apps.deploy."
+    },
+    {
+      "id": "pkg:bootstrap",
+      "label": "bootstrap (nixos-bootstrap)",
+      "kind": "pkg",
+      "file": "flake.nix",
+      "role": "Remote 'infection' bootstrap script",
+      "details": "writeShellApplication name=nixos-bootstrap, runtimeInputs curl/git/coreutils, text=readFile ./scripts/bootstrap.sh. Exposed as apps.bootstrap."
+    },
+    {
+      "id": "test:module-eval",
+      "label": "module-eval (nix)",
+      "kind": "test",
+      "file": "tests/module-eval.nix",
+      "role": "Pure-eval test of every service module (no VM/build): import errors, type/assertion checks, mkIf logic; forces toplevel.drvPath",
+      "details": "Wired as checks.x86_64-linux.module-eval. Covers qdrant, gatus, nixframe, backup-pull, n8n, open-webui, openclaw, nullclaw, unifi-mcp, claude, openclaw-zdr-proxy modules",
+      "hosts": []
+    },
+    {
+      "id": "pkg:rpi5-sd-image",
+      "label": "images.rpi5-sd-image",
+      "kind": "pkg",
+      "file": "flake.nix",
+      "role": "Bootable SD image for Raspberry Pi 5",
+      "details": "images.rpi5-sd-image = self.nixosConfigurations.rpi5.config.system.build.sdImage. Built from the MINIMAL rpi5 config (not rpi5-full)."
+    },
+    {
+      "id": "host:common",
+      "label": "common.nix base",
+      "kind": "host",
+      "file": "hosts/common.nix",
+      "role": "Shared base config imported by every host: openssh hardening, zram, flakes, fail2ban, /bin/bash activation symlink, core CLI packages",
+      "details": "No imports of its own. Provides: services.openssh (ClientAlive keepalives), zramSwap.enable, boot.tmp.cleanOnBoot, nix experimental-features flakes, system.activationScripts.binbash, fail2ban (sshd aggressive jail), systemPackages age/vim/git/curl/wget/jq/zellij"
+    },
+    {
+      "id": "host:sancta-claw/openclaw-service",
+      "label": "openclaw-service.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/openclaw-service.nix",
+      "role": "Core OpenClaw systemd service + openclaw user, browser/model-ladder config injection, agentBrowser & kuzea-transcribe builds, declarative workspace tmpfiles",
+      "details": "systemd.services.openclaw (gateway --port 18789, MemoryMax 6G, hardened). ExecStartPre injects OpenAI+OpenRouter auth, vdirsyncer/khal config, and openclaw.json browser+model ladder (5-rung free+ZDR via 127.0.0.1:5780 proxy). Builds agent-browser (Rust+Playwright) and kuzea-transcribe (whisper). Symlinks kuzea-ws skills/hooks. Reads secrets: openai-api-key, openrouter-api-key, kuzea-todoist/airtable/caldav/tavily"
+    },
+    {
+      "id": "host:sancta-claw/openclaw-watchers",
+      "label": "openclaw-watchers.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/openclaw-watchers.nix",
+      "role": "Self-service watchers + health probe for OpenClaw: file-trigger restart, file-trigger nixos-rebuild, 1-min healthz probe with crash-loop guard and Telegram alerts",
+      "details": "systemd.paths openclaw-restart-watcher + nixos-rebuild-watcher (touch a trigger file \u2192 root restarts/rebuilds). openclaw-health-check timer (OnBootSec 2min, every 1min) probes http://127.0.0.1:18789/healthz, restarts after 3 fails, locks out after 3 restarts/30min, Telegram-alerts. Exposes body via system.build for module-eval test"
+    },
+    {
+      "id": "host:sancta-claw/openclaw-tailscale-serve",
+      "label": "openclaw-tailscale-serve.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/openclaw-tailscale-serve.nix",
+      "role": "Tailscale Serve HTTPS front for the OpenClaw UI on port 18789",
+      "details": "systemd.services.openclaw-tailscale-serve (oneshot, partOf openclaw.service). Waits for tailscaled + port 18789, idempotently runs `tailscale serve --bg --https 18789 http://127.0.0.1:18789`; preStop turns the port off"
+    },
+    {
+      "id": "host:sancta-claw/openclaw-zdr-proxy-host",
+      "label": "openclaw ZDR proxy (host wiring)",
+      "kind": "host",
+      "file": "hosts/sancta-claw/configuration.nix",
+      "role": "Host-level enable of the local OpenRouter ZDR sidecar proxy that fronts all OpenClaw model calls on 127.0.0.1:5780",
+      "details": "services.openclaw-zdr-proxy.enable = true with apiKeyFile = openrouter-api-key. Defined inline in configuration.nix; the module lives at modules/services/openclaw-zdr-proxy.nix"
+    },
+    {
+      "id": "host:sancta-claw/backup-user",
+      "label": "backup-user.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/backup-user.nix",
+      "role": "Restricted backup-pull system user \u2014 lets rpi5 rsync-pull /var/lib/openclaw read-only over SSH (rrsync + restrict)",
+      "details": "users.users.backup-pull (system user in openclaw group). authorizedKeys forces rrsync -ro /var/lib/openclaw with restrict (no forwarding/agent/PTY). Counterpart of rpi5-full's backup-pull service"
+    },
+    {
+      "id": "host:sancta-claw/openclaw-backup-acl",
+      "label": "openclaw-backup-acl.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/openclaw-backup-acl.nix",
+      "role": "Oneshot that recursively grants group:openclaw rX ACLs on /var/lib/openclaw so backup-pull can read existing files",
+      "details": "systemd.services.openclaw-backup-acl (oneshot after systemd-tmpfiles-setup, setfacl -R). Complements the tmpfiles 'a+' default ACL set in openclaw-service.nix for new files"
+    },
+    {
+      "id": "host:sancta-claw/restore",
+      "label": "restore.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/restore.nix",
+      "role": "DR restore script (/etc/sancta-claw/restore.sh) \u2014 SSHes to rpi5, runs restic restore of latest snapshot, rsyncs workspace back to /var/lib/openclaw",
+      "details": "environment.etc writeShellApplication. Pulls from rpi5 restic repo /backups/restic/sancta-claw, validates non-empty before rsync --delete, chowns openclaw. Inverse of rpi5-full backup-pull"
+    },
+    {
+      "id": "host:sancta-claw/smoke-test",
+      "label": "smoke-test.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/smoke-test.nix",
+      "role": "DR smoke test (/etc/sancta-claw/smoke-test.sh) \u2014 post-rebuild/restore sanity check of services, secrets, workspace, ZDR proxy and end-to-end completion",
+      "details": "environment.etc writeShellApplication. Checks openclaw/tailscaled/sshd active, agenix secrets >=5, workspace files, primary model is free+ZDR, proxy healthz on 5780, end-to-end chat completion. Exposes body via system.build for module-eval test"
+    },
+    {
+      "id": "host:sancta-claw/disk-config",
+      "label": "disk-config.nix",
+      "kind": "host",
+      "file": "hosts/sancta-claw/disk-config.nix",
+      "role": "disko declarative disk layout (GPT: EF02 boot + ESP vfat + ext4 root) for the CX33 VPS",
+      "details": "disko.devices /dev/sda. Matches existing partition table \u2014 will not reformat. Identical layout to hermes-claw & zero-kuzea disk-config"
+    },
+    {
+      "id": "host:hermes-claw/hermes-service",
+      "label": "hermes-service.nix",
+      "kind": "host",
+      "file": "hosts/hermes-claw/hermes-service.nix",
+      "role": "Hermes Agent service config \u2014 Podman container running the Nous Research agent on free OpenRouter nemotron, with Telegram and memory enabled",
+      "details": "services.hermes-agent (upstream module): container backend=podman, image ubuntu:24.04, mem 4g/cpus 2, model nvidia/nemotron-3-super-120b-a12b:free via OpenRouter, toolsets=all, memory enabled, Telegram allowlist. environmentFiles=hermes-env secret. activationScript fixes skills dir perms"
+    },
+    {
+      "id": "host:hermes-claw/disk-config",
+      "label": "disk-config.nix (hermes)",
+      "kind": "host",
+      "file": "hosts/hermes-claw/disk-config.nix",
+      "role": "disko declarative disk layout for hermes-claw CX33 \u2014 identical GPT EF02/ESP/ext4 layout to sancta-claw",
+      "details": "disko.devices /dev/sda. Byte-for-byte identical to sancta-claw/disk-config.nix"
+    },
+    {
+      "id": "host:zero-kuzea/disk-config",
+      "label": "disk-config.nix (zero-kuzea)",
+      "kind": "host",
+      "file": "hosts/zero-kuzea/disk-config.nix",
+      "role": "disko declarative disk layout for zero-kuzea CX22 \u2014 same GPT EF02/ESP/ext4 layout as sancta-claw",
+      "details": "disko.devices /dev/sda. Same layout as sancta-claw & hermes-claw disk-config"
+    },
+    {
+      "id": "svc:claude",
+      "label": "customModules.claude",
+      "kind": "service",
+      "file": "modules/services/claude.nix",
+      "role": "Legacy Claude Code module \u2014 package install only, no skills/agents (customModules.claude.enable)",
+      "details": "option ns customModules.claude.enable; environment.systemPackages = claude-code.packages.<sys>.default; hosts: sancta-choir, sancta-claw",
+      "hosts": []
+    },
+    {
+      "id": "svc:claude-shared",
+      "label": "customModules.claudeShared",
+      "kind": "service",
+      "file": "modules/services/claude-shared.nix",
+      "role": "Modern Claude Code module wrapping the claude-shared flake \u2014 full CC stack with skills/agents/commands (customModules.claudeShared)",
+      "details": "option ns customModules.claudeShared.{enable,users}; users=[nixos]; zellijIntegration.enable=false; hosts: rpi5, rpi5-full",
+      "hosts": []
+    },
+    {
+      "id": "svc:tailscale",
+      "label": "tailscale.nix",
+      "kind": "service",
+      "file": "modules/services/tailscale.nix",
+      "role": "Tailscale mesh VPN module \u2014 auth-key login; shared by all hosts. Exit-node routing scoped out (set per-host in rpi5-full)",
+      "details": "services.tailscale (client routing, --ssh, --accept-routes); authKeyFile tailscale-auth-key; ships tailscale-dns-watchdog timer (2min probe, 3-fail restart, windowed crash-loop breaker) + system.build.tailscaleDnsWatchdogBody for module-eval test; shared across rpi5/rpi5-full/sancta-choir/sancta-claw.",
+      "hosts": [
+        "host:rpi5",
+        "host:rpi5-full",
+        "host:sancta-choir",
+        "host:sancta-claw",
+        "host:hermes-claw",
+        "host:zero-kuzea"
+      ]
+    },
+    {
+      "id": "svc:openclaw-zdr-proxy",
+      "label": "services.openclaw-zdr-proxy",
+      "kind": "service",
+      "file": "modules/services/openclaw-zdr-proxy.nix",
+      "role": "Local OpenRouter ZDR sidecar proxy (127.0.0.1:5780) \u2014 injects provider.zdr=true, rejects non-ZDR models",
+      "details": "option ns services.openclaw-zdr-proxy.{enable,port,apiKeyFile,upstreamUrl,allowListCacheTtl}; runs openclaw-zdr-proxy pkg; host: sancta-claw",
+      "port": "5780",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "svc:nullclaw",
+      "label": "nullclaw (Zero_kuzea)",
+      "kind": "service",
+      "file": "modules/services/nullclaw.nix",
+      "role": "NullClaw Telegram bot module (services.nullclaw) \u2014 Anthropic provider, Tailscale Serve",
+      "details": "option ns services.nullclaw; builds nullclaw from GitHub (zig 0.15 via pkgs-unstable), config.json secret-injected via jq ExecStartPre; tailscaleServe:18790; host: zero-kuzea",
+      "port": "18790",
+      "hosts": [
+        "host:zero-kuzea"
+      ]
+    },
+    {
+      "id": "svc:hermes-agent",
+      "label": "hermes-agent (upstream)",
+      "kind": "external",
+      "file": "hosts/hermes-claw/hermes-service.nix",
+      "role": "Upstream NousResearch/hermes-agent NixOS module (services.hermes-agent) \u2014 provides the Podman-container agent",
+      "details": "upstream services.hermes-agent; backend=podman, image ubuntu:24.04, --memory=4g --cpus=2; OpenRouter nemotron-3 free models; Telegram allowed users; host: hermes-claw",
+      "hosts": [
+        "host:hermes-claw"
+      ]
+    },
+    {
+      "id": "svc:n8n",
+      "label": "n8n-tailscale",
+      "kind": "service",
+      "file": "modules/services/n8n.nix",
+      "role": "n8n workflow automation wrapper (services.n8n-tailscale) \u2014 bind 127.0.0.1:5678, Tailscale Serve, declarative workflows",
+      "details": "Imported & enabled on rpi5-full only",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:n8n-mcp-claude",
+      "label": "n8n-mcp-claude.nix",
+      "kind": "service",
+      "file": "modules/services/n8n-mcp-claude.nix",
+      "role": "n8n MCP server for Claude Code (services.n8n-mcp-claude) \u2014 docs-only on rpi5, full workflow-management mode on rpi5-full",
+      "details": "ns services.n8n-mcp-claude; not a daemon; oneshot per user merges mcpServers['n8n-mcp'] (npx n8n-mcp, stdio) into ~/.claude.json under flock; docs-only on rpi5 vs full mode (N8N_API_KEY+N8N_API_URL) on rpi5-full; duplicates home-assistant-mcp-claude RMW+flock logic.",
+      "hosts": [
+        "host:rpi5",
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:n8n-skills",
+      "label": "n8n-skills.nix",
+      "kind": "service",
+      "file": "modules/services/n8n-skills.nix",
+      "role": "Home-manager symlinks of czlonkowski/n8n-skills into ~/.claude/skills",
+      "details": "ns services.n8n-skills; fetchFromGitHub pinned rev+hash; 7 skill dirs symlinked via home.file per user; no daemon, no port, no secret; enabled on rpi5 base (inherited by rpi5-full).",
+      "hosts": [
+        "host:rpi5"
+      ]
+    },
+    {
+      "id": "svc:gatus",
+      "label": "gatus-tailscale",
+      "kind": "service",
+      "file": "modules/services/gatus.nix",
+      "role": "Gatus declarative status monitoring (services.gatus-tailscale) \u2014 port 3001, Tailscale Serve, monitors local + sancta-claw endpoints",
+      "details": "Imported & enabled on rpi5-full only",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:nixframe",
+      "label": "nixframe.nix",
+      "kind": "service",
+      "file": "modules/services/nixframe.nix",
+      "role": "NixFrame digital photo frame (services.nixframe) \u2014 HDMI slideshow, weather + CalDAV calendar sidebar",
+      "details": "ns services.nixframe; NO tailscale-serve of its own; photo intake via n8n nixframe-ui webhook; n8n (in nixframe group) writes photoDir + .trigger, watched by systemd.paths; CalDAV via caldav-credentials; ENABLED on rpi5-full.",
+      "port": "VT7/HDMI (no listener)",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:backup-pull",
+      "label": "services.backup-pull",
+      "kind": "service",
+      "file": "modules/services/backup-pull.nix",
+      "role": "Pull-backup service (services.backup-pull) \u2014 daily rsync from sancta-claw \u2192 tmpfs \u2192 restic encrypted repo",
+      "details": "option ns services.backup-pull; rsync remote -> tmpfs staging -> restic; weekly check; Telegram failure alert; host: rpi5-full (remote=sancta-claw)",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:home-assistant-mcp-claude",
+      "label": "services.home-assistant-mcp-claude",
+      "kind": "service",
+      "file": "modules/services/home-assistant-mcp-claude.nix",
+      "role": "Per-user oneshot merging hass-mcp (voska/hass-mcp via uvx) into ~/.claude.json",
+      "details": "option ns services.home-assistant-mcp-claude.{enable,version,users,haUrl,tokenFile}; pins hass-mcp==0.4.1; injects HA_TOKEN at runtime; host: rpi5-full (users=[nixos])",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:unifi-mcp",
+      "label": "services.unifi-mcp",
+      "kind": "service",
+      "file": "modules/services/unifi-mcp.nix",
+      "role": "UniFi Network MCP server (services.unifi-mcp) \u2014 AI-assisted network management, native python (no docker)",
+      "details": "option ns services.unifi-mcp; builds unifi-network-mcp 0.6.4 + mcp 1.27.2 override; per-user oneshot merges 'unifi' into ~/.claude.json; injects UNIFI_PASSWORD at runtime; host: rpi5 (useDocker=false, stdio only) [corrected: stdio MCP, no listener; controller port default 443; 8765 only in disabled SSE mode]",
+      "port": "\u2014",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:copilot",
+      "label": "copilot MCP config",
+      "kind": "service",
+      "file": "modules/services/copilot.nix",
+      "role": "Writes ~/.copilot/mcp-config.json for root (context7 MCP via npx)",
+      "details": "no options namespace, no enable flag \u2014 unconditional HM file for root; imported by rpi5 (=> rpi5-full)",
+      "hosts": []
+    },
+    {
+      "id": "svc:qdrant",
+      "label": "qdrant.nix",
+      "kind": "service",
+      "file": "modules/services/qdrant.nix",
+      "role": "Qdrant vector DB wrapper (services.qdrant-tailscale) \u2014 disabled (too heavy for RPi5)",
+      "details": "Import commented out in rpi5-full; dead/disabled on all current hosts"
+    },
+    {
+      "id": "sys:dev-tools",
+      "label": "dev-tools.nix",
+      "kind": "system",
+      "file": "modules/system/dev-tools.nix",
+      "role": "Optional dev-tools package set (editors, tmux, htop/btop, ripgrep/fd, sqlite, nodejs_22, gh, copilot, nix tooling, strace, nix-tree, playwright)",
+      "details": "Defines option customModules.dev-tools.enable (mkEnableOption). config gated by mkIf. Installs github-copilot-cli from pkgs-unstable; sets PLAYWRIGHT_BROWSERS_PATH / PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS session vars. Also exported as flake nixosModules.dev-tools.",
+      "hosts": [
+        "host:rpi5",
+        "host:rpi5-full",
+        "host:sancta-choir",
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "sys:host",
+      "label": "system/host.nix",
+      "kind": "system",
+      "file": "modules/system/host.nix",
+      "role": "sancta-choir-specific bare host config: hostName (mkForce), static eth0 networking, gateway, nameservers, openssh, root SSH key, vscode-server, firewall, timezone, locale",
+      "details": "No options; pure config. Sets networking.hostName=sancta-choir (mkForce), eth0 116.203.223.113/32, gateway 172.31.1.1, nameservers 185.12.64.x, openssh PermitRootLogin=prohibit-password + PasswordAuthentication=false, root authorizedKeys, services.vscode-server, firewall TCP 22, tz Europe/Chisinau. Only imported by sancta-choir.",
+      "hosts": [
+        "host:sancta-choir"
+      ]
+    },
+    {
+      "id": "sys:networking",
+      "label": "system/networking.nix",
+      "kind": "system",
+      "file": "modules/system/networking.nix",
+      "role": "Hetzner Cloud static networking for sancta-choir (eth0 v4+v6, gateway, nameservers, MAC->eth0 udev rule)",
+      "details": "No options; pure config. eth0 116.203.223.113/32 + ipv6 fe80::.../64, gateway 172.31.1.1, nameservers 8.8.8.8 + 185.12.64.x, usePredictableInterfaceNames=mkForce false, dhcpcd disabled, udev MAC binding 92:00:06:bb:96:03->eth0. Only imported by sancta-choir.",
+      "hosts": [
+        "host:sancta-choir"
+      ]
+    },
+    {
+      "id": "sys:nix-ld",
+      "label": "nix-ld.nix",
+      "kind": "system",
+      "file": "modules/system/nix-ld.nix",
+      "role": "Enables programs.nix-ld with a common library set so dynamically-linked non-Nix binaries run (VS Code extensions, external LSPs, uvx-spawned hass-mcp interpreter)",
+      "details": "No custom option; turns on upstream programs.nix-ld.enable + libraries (glibc, stdenv.cc.cc.lib, zlib/zstd, openssl, curl, icu, libunwind, libuuid, util-linux, xorg X11 libs). Also exported as flake nixosModules.nix-ld.",
+      "hosts": [
+        "host:rpi5-full",
+        "host:sancta-claw",
+        "host:hermes-claw"
+      ]
+    },
+    {
+      "id": "sys:ssh-hardened",
+      "label": "ssh-hardened.nix",
+      "kind": "system",
+      "file": "modules/system/ssh-hardened.nix",
+      "role": "SSH hardening fragment for VPS hosts: PermitRootLogin=prohibit-password, PasswordAuthentication=false",
+      "details": "No options; 2 settings only. Meant for hosts that should disable password auth + restrict root, leaving rpi5 base bootstrap-friendly. Imported by rpi5-full, sancta-claw, hermes-claw, zero-kuzea. NOT imported by sancta-choir (which open-codes the same two settings in host.nix).",
+      "hosts": [
+        "host:rpi5-full",
+        "host:sancta-claw",
+        "host:hermes-claw",
+        "host:zero-kuzea"
+      ]
+    },
+    {
+      "id": "sys:open-webui-arm-fix",
+      "label": "open-webui-arm-fix.nix",
+      "kind": "system",
+      "file": "modules/system/open-webui-arm-fix.nix",
+      "role": "aarch64 overlay: strip chromadb (onnxruntime crash) + disable polars/jemalloc checks",
+      "details": "nixpkgs.overlay gated on isAarch64+Linux; removes chromadb from open-webui propagatedBuildInputs; disables checks on deepdiff/chromadb; NOT imported on any active host (commented in rpi5-full alongside open-webui).",
+      "hosts": []
+    },
+    {
+      "id": "user:root",
+      "label": "users/root.nix",
+      "kind": "user",
+      "file": "modules/users/root.nix",
+      "role": "Home Manager config for root user: stateVersion 24.05, ~/.local/bin on PATH, git enabled, bash with a copilot shell alias to the pkgs-unstable github-copilot-cli",
+      "details": "Requires pkgs-unstable specialArg. home-manager.users.root: home.sessionPath += ~/.local/bin, programs.git.enable, programs.bash with shellAlias copilot=${pkgs-unstable.github-copilot-cli}/bin/copilot (override VS Code's bundled shim). Imported by rpi5, rpi5-full (via rpi5), sancta-choir, sancta-claw, hermes-claw.",
+      "hosts": [
+        "host:rpi5",
+        "host:rpi5-full",
+        "host:sancta-choir",
+        "host:sancta-claw",
+        "host:hermes-claw"
+      ]
+    },
+    {
+      "id": "lib:secrets",
+      "label": "lib/secrets.nix",
+      "kind": "lib",
+      "file": "lib/secrets.nix",
+      "role": "Helper functions for age.secrets declarations: secret (root-owned 0400) and ownedSecret (owner/group-scoped, e.g. openclaw/nullclaw)",
+      "details": "Takes { self }, returns { secret = name: {file=...}; ownedSecret = owner: name: {file; owner; group}; }. file path = ${self}/secrets/<name>.age. Imported inline (import ../../lib/secrets.nix { inherit self; }) by sancta-choir, zero-kuzea, hermes-claw, rpi5-full, sancta-claw.",
+      "hosts": [
+        "host:sancta-choir",
+        "host:zero-kuzea",
+        "host:hermes-claw",
+        "host:rpi5-full",
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:tailscale-auth-key",
+      "label": "tailscale-auth-key",
+      "kind": "secret",
+      "file": "secrets/tailscale-auth-key.age",
+      "role": "Tailscale auth key \u2014 used by every host's tailscale module",
+      "details": "secret (root-owned). Declared on sancta-choir, sancta-claw, hermes-claw, zero-kuzea, rpi5",
+      "hosts": []
+    },
+    {
+      "id": "secret:open-webui-secret-key",
+      "label": "open-webui-secret-key",
+      "kind": "secret",
+      "file": "hosts/sancta-choir/configuration.nix",
+      "role": "Open-WebUI session signing / JWT secret key",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:openrouter-api-key",
+      "label": "openrouter-api-key",
+      "kind": "secret",
+      "file": "hosts/sancta-claw/configuration.nix",
+      "role": "OpenRouter API key \u2014 Open-WebUI (choir), ZDR proxy + auth (claw), n8n (rpi5-full)",
+      "details": "publicKeys=allPlusBoth: root-sancta-choir, rpi5, sancta-choir, sancta-claw, hermes-claw",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:tavily-api-key",
+      "label": "tavily-api-key",
+      "kind": "secret",
+      "file": "hosts/sancta-choir/configuration.nix",
+      "role": "Tavily web-search API key for Open-WebUI",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:e2e-test-api-key",
+      "label": "e2e-test-api-key",
+      "kind": "secret",
+      "file": "hosts/sancta-choir/configuration.nix",
+      "role": "E2E test API key for Open-WebUI testing + Gatus monitor",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:kuzea-caldav-credentials",
+      "label": "kuzea-caldav-credentials",
+      "kind": "secret",
+      "file": "secrets/kuzea-caldav-credentials.age",
+      "role": "iCloud CalDAV creds for openclaw vdirsyncer setup",
+      "details": "publicKeys=clawKeys: root-sancta-choir, sancta-claw, rpi5",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:kuzea-github-token",
+      "label": "kuzea-github-token",
+      "kind": "secret",
+      "file": "hosts/sancta-claw/configuration.nix",
+      "role": "GitHub PAT read by openclaw git-credential-agenix helper at runtime",
+      "details": "publicKeys=clawKeys: root-sancta-choir, sancta-claw, rpi5",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:kuzea-todoist-credentials",
+      "label": "kuzea-todoist-credentials",
+      "kind": "secret",
+      "file": "secrets/kuzea-todoist-credentials.age",
+      "role": "Todoist creds \u2014 injected into openclaw via EnvironmentFile",
+      "details": "publicKeys=clawKeys: root-sancta-choir, sancta-claw, rpi5",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:kuzea-airtable-credentials",
+      "label": "kuzea-airtable-credentials",
+      "kind": "secret",
+      "file": "secrets/kuzea-airtable-credentials.age",
+      "role": "Airtable creds \u2014 injected into openclaw via EnvironmentFile",
+      "details": "publicKeys=clawKeys: root-sancta-choir, sancta-claw, rpi5",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:kuzea-tavily-api-key",
+      "label": "kuzea-tavily-api-key",
+      "kind": "secret",
+      "file": "hosts/sancta-claw/configuration.nix",
+      "role": "Tavily web-search key for Kuzea/OpenClaw (separate from open-webui tavily)",
+      "details": "publicKeys=clawKeys: root-sancta-choir, sancta-claw, rpi5",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:openai-api-key",
+      "label": "openai-api-key",
+      "kind": "secret",
+      "file": "hosts/sancta-claw/configuration.nix",
+      "role": "OpenAI API key (n8n TTS/STT on rpi5; OpenClaw memory embeddings on sancta-claw)",
+      "details": "publicKeys=allPlusClaw: root-sancta-choir, rpi5, sancta-choir, sancta-claw",
+      "hosts": [
+        "host:sancta-claw"
+      ]
+    },
+    {
+      "id": "secret:hermes-env",
+      "label": "hermes-env",
+      "kind": "secret",
+      "file": "hosts/hermes-claw/hermes-service.nix",
+      "role": "Combined env (OPENROUTER_API_KEY+TELEGRAM_BOT_TOKEN) for Hermes Agent",
+      "details": "publicKeys=users++[rpi5, hermes-claw]: root-sancta-choir, rpi5, hermes-claw. KNOWN DRIFT: encrypted on-disk to 5 recipients vs 3 declared (per SECRETS-ROTATION.md / KNOWN_PENDING_DRIFT)",
+      "hosts": [
+        "host:hermes-claw"
+      ]
+    },
+    {
+      "id": "secret:anthropic-api-key",
+      "label": "anthropic-api-key",
+      "kind": "secret",
+      "file": "hosts/zero-kuzea/configuration.nix",
+      "role": "Anthropic API key (OpenClaw Pro setup key); consumed by NullClaw on zero-kuzea",
+      "details": "publicKeys=clawKeys: root-sancta-choir, sancta-claw, rpi5 \u2014 note: zero-kuzea decrypts via the sancta-claw recovery key it carries, not a distinct recipient",
+      "hosts": [
+        "host:zero-kuzea"
+      ]
+    },
+    {
+      "id": "secret:zero-kuzea-telegram-bot-token",
+      "label": "zero-kuzea-telegram-bot-token",
+      "kind": "secret",
+      "file": "secrets/zero-kuzea-telegram-bot-token.age",
+      "role": "Telegram bot token for Zero_kuzea NullClaw bot",
+      "details": "publicKeys=clawKeys ++ [hermes-claw]: root-sancta-choir, sancta-claw, rpi5, hermes-claw",
+      "hosts": [
+        "host:zero-kuzea"
+      ]
+    },
+    {
+      "id": "secret:unifi-password",
+      "label": "unifi-password",
+      "kind": "secret",
+      "file": "hosts/rpi5/configuration.nix",
+      "role": "UniFi controller password injected into unifi MCP at runtime",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": [
+        "host:rpi5",
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "secret:n8n-encryption-key",
+      "label": "n8n-encryption-key",
+      "kind": "secret",
+      "file": "secrets/n8n-encryption-key.age",
+      "role": "N8N_ENCRYPTION_KEY (required assertion)",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:n8n-admin-password",
+      "label": "n8n-admin-password",
+      "kind": "secret",
+      "file": "secrets/n8n-admin-password.age",
+      "role": "n8n admin REST password (community packages)",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:n8n-api-key",
+      "label": "n8n-api-key",
+      "kind": "secret",
+      "file": "secrets/n8n-api-key.age",
+      "role": "n8n REST API key for Claude Code MCP integration",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:telegram-bot-token",
+      "label": "telegram-bot-token",
+      "kind": "secret",
+      "file": "secrets/telegram-bot-token.age",
+      "role": "Telegram bot token for n8n workflow notifications",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:caldav-credentials",
+      "label": "caldav-credentials",
+      "kind": "secret",
+      "file": "hosts/rpi5-full/configuration.nix",
+      "role": "Apple CalDAV creds for NixFrame calendar sidebar (rpi5)",
+      "details": "publicKeys=allKeys: root-sancta-choir, rpi5, sancta-choir",
+      "hosts": []
+    },
+    {
+      "id": "secret:home-assistant-token",
+      "label": "home-assistant-token",
+      "kind": "secret",
+      "file": "hosts/rpi5-full/configuration.nix",
+      "role": "Home Assistant LLAT \u2014 Gatus auth check, hass-cli, hass-mcp",
+      "details": "publicKeys=users++[rpi5]: root-sancta-choir, rpi5",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "secret:rpi5-backup-ssh-key",
+      "label": "rpi5-backup-ssh-key",
+      "kind": "secret",
+      "file": "hosts/rpi5-full/configuration.nix",
+      "role": "SSH key rpi5 uses to pull backups from sancta-claw backup-pull user",
+      "details": "publicKeys=users++[rpi5]: root-sancta-choir, rpi5",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "secret:restic-password",
+      "label": "restic-password",
+      "kind": "secret",
+      "file": "hosts/rpi5-full/configuration.nix",
+      "role": "Restic repo password for rpi5<-sancta-claw backup pull",
+      "details": "publicKeys=clawKeys: root-sancta-choir, sancta-claw, rpi5",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "secret:backup-telegram-env",
+      "label": "backup-telegram-env",
+      "kind": "secret",
+      "file": "secrets/backup-telegram-env.age",
+      "role": "Telegram env (BOT_TOKEN+CHAT_ID) for backup failure alerts on rpi5",
+      "details": "publicKeys=users++[rpi5]: root-sancta-choir, rpi5",
+      "hosts": []
+    },
+    {
+      "id": "svc:open-webui-tailscale",
+      "label": "open-webui-tailscale",
+      "kind": "service",
+      "file": "modules/services/open-webui.nix",
+      "role": "AI chat gateway (OpenRouter) fronted by Tailscale Serve",
+      "port": "8080->443",
+      "details": "ns services.open-webui-tailscale; wraps pkgs-unstable.open-webui (qdrant-client override when vectorDb=qdrant); secrets to /run/open-webui/secrets.env via root ExecStartPre; helper units zdr-function, e2e-test-user, memory-migration, auto-memory-function, cost-tracker-function, tailscale-serve; voice TTS/STT, OIDC via tsidp, memory, Tavily search; ENABLED only on sancta-choir, commented out on rpi5-full.",
+      "hosts": [
+        "host:sancta-choir"
+      ]
+    },
+    {
+      "id": "svc:n8n-tailscale",
+      "label": "n8n-tailscale",
+      "kind": "service",
+      "file": "modules/services/n8n.nix",
+      "role": "Workflow automation (SQLite) fronted by Tailscale Serve",
+      "port": "5678->5678",
+      "details": "ns services.n8n-tailscale; wraps native services.n8n; static n8n user; /run/n8n/env via root ExecStartPre; units n8n-workflow-sync (import+active-state+restart), n8n-community-packages, cleanup-jobs/cache timers; bundles generate-apkg (genanki) from self/scripts; execution pruning, concurrency limit, blockEnvAccessInCode=false on rpi5-full; ENABLED on rpi5-full.",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "svc:qdrant-tailscale",
+      "label": "qdrant-tailscale",
+      "kind": "service",
+      "file": "modules/services/qdrant.nix",
+      "role": "Vector DB for RAG on ARM, fronted by Tailscale Serve",
+      "port": "6333/6334->6333",
+      "details": "ns services.qdrant-tailscale; wraps native services.qdrant; on_disk storage for low RAM (RPi5); tailscale-serve-qdrant uses a shared wait_for() helper (less boilerplate than peers); DISABLED everywhere (commented in rpi5-full), imported on no active host.",
+      "hosts": []
+    },
+    {
+      "id": "svc:gatus-tailscale",
+      "label": "gatus-tailscale",
+      "kind": "service",
+      "file": "modules/services/gatus.nix",
+      "role": "Declarative status/health monitoring page, fronted by Tailscale Serve",
+      "port": "3001->3001",
+      "details": "ns services.gatus-tailscale; wraps native services.gatus; Nix->YAML endpoint/suite DSL; sqlite storage; CAP_NET_RAW for ICMP; gatus-env-setup injects GATUS_API_KEY (HA LLAT) into /run/gatus/env; ENABLED on rpi5-full; monitors n8n/HA/openclaw/openrouter.",
+      "hosts": [
+        "host:rpi5-full"
+      ]
+    },
+    {
+      "id": "doc:owui-function-auto-memory",
+      "label": "auto_memory_filter.py",
+      "kind": "doc",
+      "file": "modules/services/open-webui-functions/auto_memory_filter.py",
+      "role": "OpenWebUI filter: extract+store memories via OpenRouter; read by open-webui.nix and inserted into webui.db"
+    },
+    {
+      "id": "doc:owui-function-zdr-pipe",
+      "label": "openrouter_zdr_pipe.py",
+      "kind": "doc",
+      "file": "modules/services/open-webui-functions/openrouter_zdr_pipe.py",
+      "role": "OpenWebUI manifold pipe: only ZDR-compliant OpenRouter models; read by open-webui.nix zdr-function unit"
+    },
+    {
+      "id": "doc:owui-function-provision",
+      "label": "provision.py (DEAD)",
+      "kind": "doc",
+      "file": "modules/services/open-webui-functions/provision.py",
+      "role": "Standalone provisioner referenced only by README; not wired into any Nix module (provisioning inlined as heredocs in open-webui.nix)"
+    },
+    {
+      "id": "pkg:open-webui",
+      "label": "open-webui",
+      "kind": "pkg",
+      "file": "modules/services/open-webui.nix",
+      "role": "upstream pkgs-unstable.open-webui (ARM-patched via overlay)"
+    },
+    {
+      "id": "pkg:n8n",
+      "label": "n8n",
+      "kind": "pkg",
+      "file": "modules/services/n8n.nix",
+      "role": "upstream n8n (heap-bumped overlay on rpi5-full build)"
+    },
+    {
+      "id": "pkg:n8n-mcp",
+      "label": "n8n-mcp",
+      "kind": "pkg",
+      "file": "modules/services/n8n-mcp-claude.nix",
+      "role": "npm n8n-mcp run via npx (nodejs_22)"
+    },
+    {
+      "id": "pkg:gatus",
+      "label": "gatus",
+      "kind": "pkg",
+      "file": "modules/services/gatus.nix",
+      "role": "upstream gatus (native NixOS module)"
+    },
+    {
+      "id": "pkg:qdrant",
+      "label": "qdrant",
+      "kind": "pkg",
+      "file": "modules/services/qdrant.nix",
+      "role": "upstream qdrant (native NixOS module)"
+    },
+    {
+      "id": "input:self",
+      "label": "self",
+      "kind": "input",
+      "file": "flake.nix",
+      "role": "this flake; n8n reads scripts/generate-apkg.py + n8n-workflows via self"
+    },
+    {
+      "id": "input:n8n-skills-github",
+      "label": "czlonkowski/n8n-skills",
+      "kind": "input",
+      "file": "modules/services/n8n-skills.nix",
+      "role": "fetchFromGitHub source (pinned rev+hash), not a flake input"
+    },
+    {
+      "id": "svc:openclaw-module",
+      "label": "services.openclaw (module)",
+      "kind": "service",
+      "file": "modules/services/openclaw.nix",
+      "role": "DEAD CODE: Claude-Code-CLI file-inbox task runner (claude -p one-shot)",
+      "details": "option ns services.openclaw; uid/gid 991; systemd.path inbox watcher, nftables per-UID egress restriction, restricted sudo wrapper, n8n webhook, optional tailscaleServe:8443; NOT imported by any host"
+    },
+    {
+      "id": "svc:openclaw-host",
+      "label": "openclaw (sancta-claw host svc)",
+      "kind": "service",
+      "file": "hosts/sancta-claw/openclaw-service.nix",
+      "port": "18789",
+      "role": "ACTIVE OpenClaw: official npm 'openclaw gateway' Telegram agent on sancta-claw",
+      "details": "systemd.services.openclaw (not the module); user openclaw; ExecStart npm-global/bin/openclaw gateway --port 18789; injects openai/openrouter auth-profiles; browser config ladder routed through ZDR proxy 127.0.0.1:5780; ships kuzea-ws skills/hooks via tmpfiles"
+    },
+    {
+      "id": "pkg:openclaw-zdr-proxy",
+      "label": "openclaw-zdr-proxy pkg",
+      "kind": "pkg",
+      "file": "modules/services/openclaw-zdr-proxy/default.nix",
+      "port": "5780",
+      "role": "python3+flask+requests+gunicorn wrapper around proxy.py, binds 127.0.0.1",
+      "details": "writeShellApplication running gunicorn --workers 1 --threads 4 proxy:app"
+    },
+    {
+      "id": "svc:home-assistant-tailscale",
+      "label": "services.home-assistant-tailscale",
+      "kind": "service",
+      "file": "modules/services/home-assistant.nix",
+      "port": "8123",
+      "role": "Native Home Assistant bound to 127.0.0.1, fronted by Tailscale Serve",
+      "details": "option ns services.home-assistant-tailscale; wraps services.home-assistant; resource caps; tailscale-serve-home-assistant oneshot; host: rpi5-full [corrected: uses secretsFile (agenix secrets.yaml symlink), unset on rpi5-full]"
+    },
+    {
+      "id": "external:anthropic-api",
+      "label": "api.anthropic.com",
+      "kind": "external",
+      "file": "-",
+      "role": "Anthropic Claude API endpoint"
+    },
+    {
+      "id": "external:openrouter",
+      "label": "openrouter.ai/api/v1",
+      "kind": "external",
+      "file": "-",
+      "role": "OpenRouter model gateway (ZDR allow-list source + model calls)"
+    },
+    {
+      "id": "external:telegram",
+      "label": "Telegram Bot API",
+      "kind": "external",
+      "file": "-",
+      "role": "Telegram bot transport for nullclaw/openclaw/hermes + backup alerts"
+    },
+    {
+      "id": "sys:common",
+      "label": "hosts/common.nix",
+      "kind": "system",
+      "file": "hosts/common.nix",
+      "role": "Shared base imported by every host: tmp clean-on-boot, zramSwap, openssh enable + keepalive settings, nix flakes, /bin/bash symlink, base packages, fail2ban",
+      "details": "services.openssh.enable=true with ClientAliveInterval/CountMax/TCPKeepAlive; nix experimental-features; activationScripts.binbash; base pkgs (age, vim, git, curl, wget, jq, zellij); fail2ban sshd jail. Imported by all 5 active hosts (rpi5-full via rpi5).",
+      "hosts": [
+        "host:rpi5",
+        "host:rpi5-full",
+        "host:sancta-choir",
+        "host:sancta-claw",
+        "host:hermes-claw",
+        "host:zero-kuzea"
+      ]
+    },
+    {
+      "id": "doc:secrets-rotation",
+      "label": "SECRETS-ROTATION.md",
+      "kind": "doc",
+      "file": "SECRETS-ROTATION.md",
+      "role": "Rotation procedures + agenix fail-open-on-host-key-rotation warning"
+    },
+    {
+      "id": "script:check-secret-recipients",
+      "label": "check-secret-recipients.sh",
+      "kind": "script",
+      "file": "scripts/check-secret-recipients.sh",
+      "role": "Agenix recipient-drift + empty-plaintext guard: compares on-disk '-> ' stanza count vs declared publicKeys via nix eval; read-only, never decrypts (#448)",
+      "details": "Run by check.yml. Has KNOWN_PENDING_DRIFT allowlist (hermes-env.age) downgraded to WARN pending on-host re-key",
+      "hosts": []
+    },
+    {
+      "id": "script:install",
+      "label": "install.sh",
+      "kind": "script",
+      "file": "scripts/install.sh",
+      "role": "Fresh-system installer: fetches flake from GitHub, dry-build then switch with --max-jobs 1 --cores 1; interactive yes/no confirm",
+      "details": "Packaged as packages.x86_64-linux.install (writeShellApplication 'nixos-install'); apps.<system>.install; default app. Targets any host by name (examples: sancta-choir, rpi5)"
+    },
+    {
+      "id": "script:deploy",
+      "label": "deploy.sh",
+      "kind": "script",
+      "file": "scripts/deploy.sh",
+      "role": "Local/remote deploy: nix flake check -> nixos-rebuild build --max-jobs 1 --cores 1 -> confirm -> switch; --yes for non-interactive; throttle prevents OOM on small VPS (#252)",
+      "details": "Packaged as packages.x86_64-linux.deploy ('nixos-deploy'); apps.<system>.deploy. Generic <hostname> arg"
+    },
+    {
+      "id": "script:bootstrap",
+      "label": "bootstrap.sh",
+      "kind": "script",
+      "file": "scripts/bootstrap.sh",
+      "role": "Bare-metal/VPS bootstrap: installs Nix, enables flakes, optional nixos-infect (pinned commit + SHA256), generates hardware config, then nixos-rebuild build/switch (NO throttle flags here)",
+      "details": "Packaged as packages.x86_64-linux.bootstrap ('nixos-bootstrap'); apps.<system>.bootstrap. Examples: rpi5, sancta-choir"
+    },
+    {
+      "id": "script:verify-fix-shipped",
+      "label": "verify-fix-shipped.sh",
+      "kind": "script",
+      "file": "scripts/verify-fix-shipped.sh",
+      "role": "Security-fix closure guard: asserts fix commit is git-ancestor of deployed branch (default origin/main) before closing issue; guards #458 unmerged-fix failure mode",
+      "details": "Not packaged in flake; invoked manually / via CLAUDE.md guard. Exit 0=SHIPPED, 1=NOT SHIPPED"
+    },
+    {
+      "id": "script:diagnose-n8n-workflow",
+      "label": "diagnose-n8n-workflow.sh",
+      "kind": "script",
+      "file": "scripts/diagnose-n8n-workflow.sh",
+      "role": "Aux diagnostic: compares source n8n workflow JSON vs deployed sqlite DB version (jq/sqlite3/sha256sum/curl). Not in CI or flake",
+      "details": "Operator tool, runs on rpi5 against n8n database.sqlite"
+    },
+    {
+      "id": "script:generate-apkg",
+      "label": "generate-apkg.py",
+      "kind": "script",
+      "file": "scripts/generate-apkg.py",
+      "role": "Aux: builds Anki .apkg deck from JSON stdin (genanki). Covered by pytest test_generate_apkg.py",
+      "details": "Used by the image-to-anki n8n workflow pipeline"
+    },
+    {
+      "id": "ci:check",
+      "label": "check.yml",
+      "kind": "ci",
+      "file": ".github/workflows/check.yml",
+      "role": "Main CI on push/PR to main: nix flake check --all-systems, nix fmt --check, check-secret-recipients.sh, build x86 hosts, build script pkgs (matrix), evaluate aarch64 hosts",
+      "details": "Jobs: check / build-x86 / build-scripts (matrix install,deploy,bootstrap) / evaluate-aarch64. Uses cachix + cache-nix-action + QEMU for aarch64"
+    },
+    {
+      "id": "ci:python-tests",
+      "label": "python-tests.yml",
+      "kind": "ci",
+      "file": ".github/workflows/python-tests.yml",
+      "role": "Runs pytest tests/ -v --ignore=tests/e2e/ on Python 3.11; path-triggered on tests/** and open-webui-functions/**",
+      "details": "Installs pytest flask werkzeug requests pydantic genanki pillow"
+    },
+    {
+      "id": "ci:trivy",
+      "label": "trivy.yml",
+      "kind": "ci",
+      "file": ".github/workflows/trivy.yml",
+      "role": "Security scan on push/PR: trivy fs (vuln), config (misconfig), secret (CRITICAL/HIGH, exit 1) + SARIF upload to GitHub Security",
+      "details": "Secret scan honors trivy-secret.yaml allowlist \u2014 same boundary as the shell.nix pre-commit hook"
+    },
+    {
+      "id": "ci:flake-update",
+      "label": "flake-update.yml",
+      "kind": "ci",
+      "file": ".github/workflows/flake-update.yml",
+      "role": "Scheduled dep bot: nightly nixpkgs-only -> commit direct to main; weekly/manual full -> PR. Re-evaluates sancta-choir, sancta-claw, rpi5-full after update",
+      "details": "cron 0 2 * * * (nightly) + 0 9 * * 1 (weekly); workflow_dispatch update_all input"
+    },
+    {
+      "id": "ci:claude",
+      "label": "claude.yml",
+      "kind": "ci",
+      "file": ".github/workflows/claude.yml",
+      "role": "@claude mention bot on issues/PR comments/reviews; runs claude-code-action with OAuth token",
+      "details": "Uses secrets.CLAUDE_CODE_OAUTH_TOKEN"
+    },
+    {
+      "id": "ci:claude-code-review",
+      "label": "claude-code-review.yml",
+      "kind": "ci",
+      "file": ".github/workflows/claude-code-review.yml",
+      "role": "Auto PR reviewer on open/synchronize: posts review comment + writes PASS/CRITICAL verdict file; CI fails on CRITICAL or missing verdict",
+      "details": "Allowed tools limited to gh pr/issue read + comment + Write"
+    },
+    {
+      "id": "ci:issue-triage",
+      "label": "issue-triage.yml",
+      "kind": "ci",
+      "file": ".github/workflows/issue-triage.yml",
+      "role": "Auto-labels + comments new issues via Claude (model claude-opus-4-5); category + priority labels",
+      "details": "Skips bot-authored issues; concurrency per issue number"
+    },
+    {
+      "id": "ci:auto-approve-sancta-claw",
+      "label": "auto-approve-sancta-claw.yml",
+      "kind": "ci",
+      "file": ".github/workflows/auto-approve-sancta-claw.yml",
+      "role": "Autonomous approve+merge of kuzea-bot PRs scoped to hosts/sancta-claw/** + openclaw module; pull_request_target with actor gate, fork rejection, path scoping, nix flake check/eval gate",
+      "details": "Accepted risk: no human review for sancta-claw scope. Relies on check.yml build-x86 as required status check"
+    },
+    {
+      "id": "test:openclaw-zdr-proxy-nix",
+      "label": "openclaw-zdr-proxy (nixosTest)",
+      "kind": "test",
+      "file": "tests/openclaw-zdr-proxy.nix",
+      "role": "Boots VM with the ZDR proxy + stub OpenRouter; verifies provider.zdr=true injected on wire and non-ZDR models rejected with 4xx",
+      "details": "Wired as checks.x86_64-linux.openclaw-zdr-proxy; proxy listens :5780, stub :9999"
+    },
+    {
+      "id": "test:n8n-declarative-nix",
+      "label": "n8n-declarative (nixosTest)",
+      "kind": "test",
+      "file": "tests/n8n-declarative.nix",
+      "role": "VM test of declarative n8n workflow import: credentials env, /run/n8n/credentials.json, workflow present in sqlite DB",
+      "details": "STANDALONE \u2014 NOT wired into flake checks or any workflow; run via nix-build tests/n8n-declarative.nix"
+    },
+    {
+      "id": "test:open-webui-tavily-nix",
+      "label": "open-webui-tavily (nixosTest)",
+      "kind": "test",
+      "file": "tests/open-webui-tavily.nix",
+      "role": "VM test asserting Open-WebUI web-search env vars (ENABLE_WEB_SEARCH, WEB_SEARCH_ENGINE=tavily, TAVILY_API_KEY) are set",
+      "details": "STANDALONE \u2014 NOT wired into flake checks; run via nix-build"
+    },
+    {
+      "id": "test:qdrant-integration-nix",
+      "label": "qdrant-integration (nixosTest)",
+      "kind": "test",
+      "file": "tests/qdrant-integration.nix",
+      "role": "VM test: Qdrant health, REST/gRPC ports, on-disk storage write/search, <500MB RSS memory check for RPi5",
+      "details": "STANDALONE \u2014 NOT wired into flake checks; run via nix-build tests/qdrant-integration.nix"
+    },
+    {
+      "id": "test:pytest",
+      "label": "pytest suite",
+      "kind": "test",
+      "file": "tests/",
+      "role": "Python unit tests: test_openclaw_zdr_proxy.py, test_openrouter_zdr_pipe.py, test_generate_apkg.py, test_ankiapp_format.py. Run by python-tests.yml (excludes e2e)",
+      "details": "Covers ZDR proxy proxy.py, openrouter ZDR pipe, generate-apkg.py. e2e/ (owui_client live API + e2e_test_openwebui_zdr.py) excluded in CI \u2014 needs API keys"
+    },
+    {
+      "id": "doc:docs",
+      "label": "docs/",
+      "kind": "doc",
+      "file": "docs/",
+      "role": "8 markdown docs + docs/plans (1 active anki-cache, 2 completed). Mix of reference (DISASTER-RECOVERY, ARM-COMPATIBILITY) and large plan files (kuzea-plan 105KB, nixframe-plan)",
+      "details": "Count: 7 top-level .md + plans/ (1 active, 2 completed). OPENCLAW-MICROVM-PLAN / OFFICIAL-OPENCLAW-TELEGRAM / TELEGRAM-OPENCLAW-SETUP look like one-off setup notes"
+    },
+    {
+      "id": "doc:root-md",
+      "label": "top-level *.md",
+      "kind": "doc",
+      "file": "./",
+      "role": "Root migration/plan notes: README, MIGRATION-RESUME, SECRETS-ROTATION, openrouter-vkeys-c-migration, plan-open-webui-sancta-choir + CLAUDE.md (21KB agent contract)",
+      "details": "5 non-README .md at root; several look like stale one-off migration notes (see notes)"
+    },
+    {
+      "id": "doc:n8n-workflows",
+      "label": "n8n-workflows/",
+      "kind": "doc",
+      "file": "n8n-workflows/",
+      "role": "13 n8n workflow JSON files + 1 research .md (image-to-anki pipeline, nixframe ui/upload, telegram bridges, health-check, tender-news)",
+      "details": "JSON tracked here AND deployed declaratively via services.n8n-tailscale.workflows option (e.g. tests reference /etc/...workflow.json). diagnose-n8n-workflow.sh compares source vs deployed DB"
+    },
+    {
+      "id": "doc:specify",
+      "label": ".specify/",
+      "kind": "doc",
+      "file": ".specify/",
+      "role": "Spec-kit scaffold: constitution.md, 6 bash scripts (create-new-feature, setup-plan, speckit-cli, update-agent-context...), 5 templates",
+      "details": "GitHub spec-kit tooling footprint; appears unused by the actual flake/CI"
+    },
+    {
+      "id": "doc:claude-skills",
+      "label": ".claude/skills/",
+      "kind": "doc",
+      "file": ".claude/skills/",
+      "role": "2 project-level CC skills: review-fix-loop, sweep-bugs (repo-scoped review/fix loops)",
+      "details": "Auto-discovered when CC cwd is inside repo; complements user-level claude-shared skills"
+    },
+    {
+      "id": "doc:ralphex-state",
+      "label": ".ralphex/",
+      "kind": "doc",
+      "file": ".ralphex/",
+      "role": "Ralphex runtime state: ~1.9MB of completed/, progress/, worktrees/, scratch PR bodies, host-key .pub files, openclaw schema notes, zdr-free-models.txt",
+      "details": "Working/scratch artifacts of the ralphex orchestrator checked into the repo root \u2014 bloats the tree (see notes)"
+    },
+    {
+      "id": "doc:completed",
+      "label": "completed/",
+      "kind": "doc",
+      "file": "completed/",
+      "role": "Single archived plan: plan-home-assistant.md",
+      "details": "Archive folder with one stale plan"
+    },
+    {
+      "id": "lib:mkTailscaleServe",
+      "label": "mkTailscaleServe (proposed)",
+      "kind": "lib",
+      "role": "Proposed lib helper to replace the 6 copy-pasted tailscale-serve oneshots; does not exist yet (target of simplification #3)"
+    },
+    {
+      "id": "lib:mkClaudeMcpOneshot",
+      "label": "mkClaudeMcpOneshot (proposed)",
+      "kind": "lib",
+      "role": "Proposed lib helper to dedupe the triplicated ~/.claude.json flock-RMW MCP merge; does not exist yet (target of simplification #4)"
+    },
+    {
+      "id": "host:sancta-claw/hardware-configuration",
+      "label": "hosts/sancta-claw/hardware-configuration.nix",
+      "kind": "host",
+      "role": "Per-host hardware sub-file (boot/fs) present alongside disk-config.nix but absent from the graph; part of the host import set"
+    },
+    {
+      "id": "host:rpi5/hardware-configuration",
+      "label": "rpi5/hardware-configuration",
+      "kind": "host",
+      "file": "hosts/rpi5/hardware-configuration.nix",
+      "role": "67-line substantive hardware config (hybrid SD-firmware/NVMe-root boot, initrd kernel modules nvme/usbhid, Pi5 kernelParams console=ttyAMA10, lib.mkForce overrides of sd-image defaults) imported by hosts/rpi5/configuration.nix. The captured graph decomposes every file under hosts/sancta-claw/ into its own node \u2014 including sancta-claw's equally-present 9-line hardware-configuration.nix (host:sancta-claw/hardware-configuration) \u2014 so omitting rpi5's far more substantive one is an inconsistent gap. No host:rpi5/hardware-configuration node exists."
+    },
+    {
+      "id": "host:zero-kuzea/hardware-configuration",
+      "label": "zero-kuzea/hardware-configuration",
+      "kind": "host",
+      "file": "hosts/zero-kuzea/hardware-configuration.nix",
+      "role": "Real boot/hardware config for the Hetzner VPS: qemu-guest profile import, GRUB EFI loader settings (efiSupport, efiInstallAsRemovable), and initrd availableKernelModules (ata_piix, xen_blkfront, vmw_pvscsi). zero-kuzea already has host:zero-kuzea and host:zero-kuzea/disk-config captured, but its hardware-configuration.nix has no node, unlike the parallel host:sancta-claw/hardware-configuration."
+    },
+    {
+      "id": "host:hermes-claw/hardware-configuration",
+      "label": "hermes-claw/hardware-configuration",
+      "kind": "host",
+      "file": "hosts/hermes-claw/hardware-configuration.nix",
+      "role": "hermes-claw is decomposed into host:hermes-claw, host:hermes-claw/disk-config, and host:hermes-claw/hermes-service \u2014 every file in hosts/hermes-claw/ except hardware-configuration.nix, which carries real VPS boot config and is imported by configuration.nix. The sibling host:sancta-claw/hardware-configuration node is captured, so this omission is inconsistent."
+    },
+    {
+      "id": "host:sancta-choir/hardware-configuration",
+      "label": "sancta-choir/hardware-configuration",
+      "kind": "host",
+      "file": "hosts/sancta-choir/hardware-configuration.nix",
+      "role": "Imported by hosts/sancta-choir/configuration.nix and parallel in role to host:sancta-claw/hardware-configuration (which IS captured). sancta-choir only has the top-level host:sancta-choir node; its hardware-configuration.nix file has no corresponding node, breaking the per-file decomposition pattern used for the sister VPS hosts."
+    }
+  ],
+  "edges": [
+    {
+      "from": "input:home-manager",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "follows nixpkgs"
+    },
+    {
+      "from": "input:vscode-server",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "follows nixpkgs"
+    },
+    {
+      "from": "input:agenix",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "follows nixpkgs"
+    },
+    {
+      "from": "input:disko",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "follows nixpkgs"
+    },
+    {
+      "from": "input:claude-code",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "follows nixpkgs-unstable"
+    },
+    {
+      "from": "input:claude-shared",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "follows nixpkgs"
+    },
+    {
+      "from": "input:claude-shared",
+      "to": "input:home-manager",
+      "kind": "depends-input",
+      "label": "follows home-manager"
+    },
+    {
+      "from": "input:kuzea-workspace",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "follows nixpkgs"
+    },
+    {
+      "from": "input:hermes-agent",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "follows nixpkgs"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "nixosSystem builder"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable specialArg"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "input:claude-code",
+      "kind": "depends-input",
+      "label": "specialArgs claude-code"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "input:owui-openrouter-stats",
+      "kind": "depends-input",
+      "label": "specialArgs owui-openrouter-stats"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "input:home-manager",
+      "kind": "depends-input",
+      "label": "module home-manager"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "input:vscode-server",
+      "kind": "depends-input",
+      "label": "module vscode-server"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "input:agenix",
+      "kind": "depends-input",
+      "label": "module agenix + agenixModule"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "nixosSystem builder"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable specialArg"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "input:kuzea-workspace",
+      "kind": "depends-input",
+      "label": "specialArgs kuzea-ws"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "input:claude-code",
+      "kind": "depends-input",
+      "label": "specialArgs claude-code"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "input:disko",
+      "kind": "depends-input",
+      "label": "module disko"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "input:home-manager",
+      "kind": "depends-input",
+      "label": "module home-manager"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "input:agenix",
+      "kind": "depends-input",
+      "label": "module agenix + agenixModule"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "nixosSystem builder"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable specialArg"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "input:hermes-agent",
+      "kind": "depends-input",
+      "label": "module hermes-agent + framework"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "input:disko",
+      "kind": "depends-input",
+      "label": "module disko"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "input:home-manager",
+      "kind": "depends-input",
+      "label": "module home-manager"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "input:agenix",
+      "kind": "depends-input",
+      "label": "module agenix + agenixModule"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "nixosSystem builder"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable specialArg (inline import, no allowUnfree)"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "input:disko",
+      "kind": "depends-input",
+      "label": "module disko"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "input:agenix",
+      "kind": "depends-input",
+      "label": "module agenix + agenixModule"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "input:nixos-raspberrypi",
+      "kind": "depends-input",
+      "label": "nixosSystem builder + raspberry-pi-5.base"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable(aarch64) specialArg"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "input:claude-code",
+      "kind": "depends-input",
+      "label": "specialArgs claude-code"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "input:claude-shared",
+      "kind": "depends-input",
+      "label": "specialArgs claude-shared"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "input:home-manager",
+      "kind": "depends-input",
+      "label": "module home-manager"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "input:vscode-server",
+      "kind": "depends-input",
+      "label": "module vscode-server"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "input:agenix",
+      "kind": "depends-input",
+      "label": "module agenix + agenixModule"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "input:nixos-raspberrypi",
+      "kind": "depends-input",
+      "label": "nixosSystem builder + raspberry-pi-5.base"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable(aarch64) specialArg"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "input:claude-code",
+      "kind": "depends-input",
+      "label": "specialArgs claude-code"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "input:claude-shared",
+      "kind": "depends-input",
+      "label": "specialArgs claude-shared"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "input:home-manager",
+      "kind": "depends-input",
+      "label": "module home-manager"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "input:vscode-server",
+      "kind": "depends-input",
+      "label": "module vscode-server"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "input:agenix",
+      "kind": "depends-input",
+      "label": "module agenix + agenixModule"
+    },
+    {
+      "from": "pkg:rpi5-sd-image",
+      "to": "host:rpi5",
+      "kind": "deploys",
+      "label": "config.system.build.sdImage from rpi5 (minimal)"
+    },
+    {
+      "from": "pkg:install",
+      "to": "script:install",
+      "kind": "wraps",
+      "label": "readFile scripts/install.sh"
+    },
+    {
+      "from": "pkg:deploy",
+      "to": "script:deploy",
+      "kind": "wraps",
+      "label": "readFile scripts/deploy.sh"
+    },
+    {
+      "from": "pkg:bootstrap",
+      "to": "script:bootstrap",
+      "kind": "wraps",
+      "label": "readFile scripts/bootstrap.sh"
+    },
+    {
+      "from": "pkg:ralphex",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "callPackage from nixpkgsFor"
+    },
+    {
+      "from": "test:module-eval",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "import tests/module-eval.nix { pkgs nixpkgs self }"
+    },
+    {
+      "from": "test:openclaw-zdr-proxy-nix",
+      "to": "input:nixpkgs",
+      "kind": "depends-input",
+      "label": "pkgs.testers.nixosTest"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "host:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "sys:host",
+      "kind": "imports",
+      "label": "system/host.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "sys:networking",
+      "kind": "imports",
+      "label": "system/networking.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "sys:dev-tools",
+      "kind": "imports",
+      "label": "system/dev-tools.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "user:root",
+      "kind": "imports",
+      "label": "users/root.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "svc:claude",
+      "kind": "imports",
+      "label": "services/claude.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "svc:tailscale",
+      "kind": "imports",
+      "label": "services/tailscale.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "svc:open-webui-tailscale",
+      "kind": "imports",
+      "label": "services/open-webui.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "lib:secrets",
+      "kind": "imports",
+      "label": "lib/secrets.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "sys:dev-tools",
+      "kind": "enables",
+      "label": "customModules.dev-tools.enable"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "svc:claude",
+      "kind": "enables",
+      "label": "customModules.claude.enable"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "svc:open-webui-tailscale",
+      "kind": "enables",
+      "label": "services.open-webui-tailscale.enable"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "secret:tailscale-auth-key",
+      "kind": "uses-secret",
+      "label": "tailscale-auth-key"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "secret:open-webui-secret-key",
+      "kind": "uses-secret",
+      "label": "open-webui-secret-key"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "openrouter-api-key"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "secret:tavily-api-key",
+      "kind": "uses-secret",
+      "label": "tavily-api-key"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "secret:e2e-test-api-key",
+      "kind": "uses-secret",
+      "label": "e2e-test-api-key"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "secret:open-webui-secret-key",
+      "kind": "uses-secret",
+      "label": "secretKeyFile"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "openai.apiKeyFile"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "secret:tavily-api-key",
+      "kind": "uses-secret",
+      "label": "tavilySearch.apiKeyFile"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "sys:dev-tools",
+      "kind": "imports",
+      "label": "system/dev-tools.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "sys:nix-ld",
+      "kind": "imports",
+      "label": "system/nix-ld.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "user:root",
+      "kind": "imports",
+      "label": "users/root.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "svc:claude",
+      "kind": "imports",
+      "label": "services/claude.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "svc:tailscale",
+      "kind": "imports",
+      "label": "services/tailscale.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "svc:openclaw-zdr-proxy",
+      "kind": "imports",
+      "label": "services/openclaw-zdr-proxy.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "sys:ssh-hardened",
+      "kind": "imports",
+      "label": "system/ssh-hardened.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "lib:secrets",
+      "kind": "imports",
+      "label": "lib/secrets.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/disk-config",
+      "kind": "contains",
+      "label": "./disk-config.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/backup-user",
+      "kind": "contains",
+      "label": "./backup-user.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/restore",
+      "kind": "contains",
+      "label": "./restore.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/smoke-test",
+      "kind": "contains",
+      "label": "./smoke-test.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/openclaw-service",
+      "kind": "contains",
+      "label": "./openclaw-service.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/openclaw-watchers",
+      "kind": "contains",
+      "label": "./openclaw-watchers.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/openclaw-tailscale-serve",
+      "kind": "contains",
+      "label": "./openclaw-tailscale-serve.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/openclaw-backup-acl",
+      "kind": "contains",
+      "label": "./openclaw-backup-acl.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/openclaw-zdr-proxy-host",
+      "kind": "contains",
+      "label": "ZDR proxy enable (inline)"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "sys:dev-tools",
+      "kind": "enables",
+      "label": "customModules.dev-tools.enable"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "svc:claude",
+      "kind": "enables",
+      "label": "customModules.claude.enable"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-zdr-proxy-host",
+      "to": "svc:openclaw-zdr-proxy",
+      "kind": "enables",
+      "label": "services.openclaw-zdr-proxy.enable"
+    },
+    {
+      "from": "host:sancta-claw/disk-config",
+      "to": "input:disko",
+      "kind": "depends-input",
+      "label": "disko.devices"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "input:kuzea-workspace",
+      "kind": "depends-input",
+      "label": "kuzea-ws skills/hooks"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:tailscale-auth-key",
+      "kind": "uses-secret",
+      "label": "tailscale-auth-key"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:kuzea-caldav-credentials",
+      "kind": "uses-secret",
+      "label": "kuzea-caldav-credentials"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:kuzea-github-token",
+      "kind": "uses-secret",
+      "label": "kuzea-github-token"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:kuzea-todoist-credentials",
+      "kind": "uses-secret",
+      "label": "kuzea-todoist-credentials"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:kuzea-airtable-credentials",
+      "kind": "uses-secret",
+      "label": "kuzea-airtable-credentials"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:kuzea-tavily-api-key",
+      "kind": "uses-secret",
+      "label": "kuzea-tavily-api-key"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:openai-api-key",
+      "kind": "uses-secret",
+      "label": "openai-api-key"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "openrouter-api-key"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-zdr-proxy-host",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "apiKeyFile"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "secret:openai-api-key",
+      "kind": "uses-secret",
+      "label": "inject openai auth"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "inject openrouter auth"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "secret:kuzea-todoist-credentials",
+      "kind": "uses-secret",
+      "label": "EnvironmentFile"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "secret:kuzea-airtable-credentials",
+      "kind": "uses-secret",
+      "label": "EnvironmentFile"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "secret:kuzea-tavily-api-key",
+      "kind": "uses-secret",
+      "label": "EnvironmentFile"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "secret:kuzea-caldav-credentials",
+      "kind": "uses-secret",
+      "label": "vdirsyncer setup"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-service",
+      "to": "svc:openclaw-zdr-proxy",
+      "kind": "talks-to",
+      "label": "models via 127.0.0.1:5780"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-tailscale-serve",
+      "to": "host:sancta-claw/openclaw-service",
+      "kind": "proxies",
+      "label": "tailscale serve --https 18789"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-watchers",
+      "to": "host:sancta-claw/openclaw-service",
+      "kind": "talks-to",
+      "label": "healthz probe + restart"
+    },
+    {
+      "from": "host:sancta-claw/openclaw-backup-acl",
+      "to": "host:sancta-claw/backup-user",
+      "kind": "enables",
+      "label": "group:openclaw rX ACL"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "host:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "sys:nix-ld",
+      "kind": "imports",
+      "label": "system/nix-ld.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "user:root",
+      "kind": "imports",
+      "label": "users/root.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "svc:tailscale",
+      "kind": "imports",
+      "label": "services/tailscale.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "sys:ssh-hardened",
+      "kind": "imports",
+      "label": "system/ssh-hardened.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "lib:secrets",
+      "kind": "imports",
+      "label": "lib/secrets.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "host:hermes-claw/hermes-service",
+      "kind": "contains",
+      "label": "./hermes-service.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "host:hermes-claw/disk-config",
+      "kind": "contains",
+      "label": "./disk-config.nix"
+    },
+    {
+      "from": "host:hermes-claw/hermes-service",
+      "to": "svc:hermes-agent",
+      "kind": "enables",
+      "label": "services.hermes-agent.enable"
+    },
+    {
+      "from": "host:hermes-claw/hermes-service",
+      "to": "svc:hermes-agent",
+      "kind": "wraps",
+      "label": "Podman container mode"
+    },
+    {
+      "from": "host:hermes-claw/hermes-service",
+      "to": "input:hermes-agent",
+      "kind": "depends-input",
+      "label": "services.hermes-agent"
+    },
+    {
+      "from": "host:hermes-claw/disk-config",
+      "to": "input:disko",
+      "kind": "depends-input",
+      "label": "disko.devices"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "secret:tailscale-auth-key",
+      "kind": "uses-secret",
+      "label": "tailscale-auth-key"
+    },
+    {
+      "from": "host:hermes-claw/hermes-service",
+      "to": "secret:hermes-env",
+      "kind": "uses-secret",
+      "label": "environmentFiles"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "host:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "host:zero-kuzea/disk-config",
+      "kind": "contains",
+      "label": "./disk-config.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "svc:tailscale",
+      "kind": "imports",
+      "label": "services/tailscale.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "svc:nullclaw",
+      "kind": "imports",
+      "label": "services/nullclaw.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "sys:ssh-hardened",
+      "kind": "imports",
+      "label": "system/ssh-hardened.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "lib:secrets",
+      "kind": "imports",
+      "label": "lib/secrets.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "svc:nullclaw",
+      "kind": "enables",
+      "label": "services.nullclaw.enable"
+    },
+    {
+      "from": "host:zero-kuzea/disk-config",
+      "to": "input:disko",
+      "kind": "depends-input",
+      "label": "disko.devices"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "secret:tailscale-auth-key",
+      "kind": "uses-secret",
+      "label": "tailscale-auth-key"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "secret:anthropic-api-key",
+      "kind": "uses-secret",
+      "label": "anthropic-api-key"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "secret:zero-kuzea-telegram-bot-token",
+      "kind": "uses-secret",
+      "label": "zero-kuzea-telegram-bot-token"
+    },
+    {
+      "from": "svc:nullclaw",
+      "to": "secret:anthropic-api-key",
+      "kind": "uses-secret",
+      "label": "apiKeyFile"
+    },
+    {
+      "from": "svc:nullclaw",
+      "to": "secret:zero-kuzea-telegram-bot-token",
+      "kind": "uses-secret",
+      "label": "telegram.botTokenFile"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "host:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "sys:dev-tools",
+      "kind": "imports",
+      "label": "system/dev-tools.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "user:root",
+      "kind": "imports",
+      "label": "users/root.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:copilot",
+      "kind": "imports",
+      "label": "services/copilot.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:claude-shared",
+      "kind": "imports",
+      "label": "services/claude-shared.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:tailscale",
+      "kind": "imports",
+      "label": "services/tailscale.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:unifi-mcp",
+      "kind": "imports",
+      "label": "services/unifi-mcp.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:n8n-skills",
+      "kind": "imports",
+      "label": "services/n8n-skills.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:n8n-mcp-claude",
+      "kind": "imports",
+      "label": "services/n8n-mcp-claude.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "sys:dev-tools",
+      "kind": "enables",
+      "label": "customModules.dev-tools.enable"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:claude-shared",
+      "kind": "enables",
+      "label": "customModules.claudeShared.enable"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:unifi-mcp",
+      "kind": "enables",
+      "label": "services.unifi-mcp.enable"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:n8n-skills",
+      "kind": "enables",
+      "label": "services.n8n-skills.enable"
+    },
+    {
+      "from": "svc:claude-shared",
+      "to": "input:claude-shared",
+      "kind": "depends-input",
+      "label": "claude-shared flake"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "secret:tailscale-auth-key",
+      "kind": "uses-secret",
+      "label": "tailscale-auth-key"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "secret:unifi-password",
+      "kind": "uses-secret",
+      "label": "unifi-password"
+    },
+    {
+      "from": "svc:unifi-mcp",
+      "to": "secret:unifi-password",
+      "kind": "uses-secret",
+      "label": "passwordFile"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "host:rpi5",
+      "kind": "imports",
+      "label": "../rpi5/configuration.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:n8n",
+      "kind": "imports",
+      "label": "services/n8n.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:gatus",
+      "kind": "imports",
+      "label": "services/gatus.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:nixframe",
+      "kind": "imports",
+      "label": "services/nixframe.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:backup-pull",
+      "kind": "imports",
+      "label": "services/backup-pull.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:home-assistant-tailscale",
+      "kind": "imports",
+      "label": "services/home-assistant.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:home-assistant-mcp-claude",
+      "kind": "imports",
+      "label": "services/home-assistant-mcp-claude.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "sys:nix-ld",
+      "kind": "imports",
+      "label": "system/nix-ld.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "sys:ssh-hardened",
+      "kind": "imports",
+      "label": "system/ssh-hardened.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "lib:secrets",
+      "kind": "imports",
+      "label": "lib/secrets.nix"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:n8n",
+      "kind": "enables",
+      "label": "services.n8n-tailscale.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:gatus",
+      "kind": "enables",
+      "label": "services.gatus-tailscale.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:nixframe",
+      "kind": "enables",
+      "label": "services.nixframe.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:backup-pull",
+      "kind": "enables",
+      "label": "services.backup-pull.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:home-assistant-tailscale",
+      "kind": "enables",
+      "label": "services.home-assistant-tailscale.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:home-assistant-mcp-claude",
+      "kind": "enables",
+      "label": "services.home-assistant-mcp-claude.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "openrouter-api-key (n8n)"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:openai-api-key",
+      "kind": "uses-secret",
+      "label": "openai-api-key (n8n TTS)"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:n8n-encryption-key",
+      "kind": "uses-secret",
+      "label": "n8n-encryption-key"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:n8n-admin-password",
+      "kind": "uses-secret",
+      "label": "n8n-admin-password"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:n8n-api-key",
+      "kind": "uses-secret",
+      "label": "n8n-api-key"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:telegram-bot-token",
+      "kind": "uses-secret",
+      "label": "telegram-bot-token"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:caldav-credentials",
+      "kind": "uses-secret",
+      "label": "caldav-credentials"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:home-assistant-token",
+      "kind": "uses-secret",
+      "label": "home-assistant-token"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:rpi5-backup-ssh-key",
+      "kind": "uses-secret",
+      "label": "rpi5-backup-ssh-key"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:restic-password",
+      "kind": "uses-secret",
+      "label": "restic-password"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "secret:backup-telegram-env",
+      "kind": "uses-secret",
+      "label": "backup-telegram-env"
+    },
+    {
+      "from": "svc:gatus",
+      "to": "secret:home-assistant-token",
+      "kind": "uses-secret",
+      "label": "apiKeyFile (GATUS_API_KEY)"
+    },
+    {
+      "from": "svc:nixframe",
+      "to": "secret:caldav-credentials",
+      "kind": "uses-secret",
+      "label": "calendar.credentialsFile"
+    },
+    {
+      "from": "svc:backup-pull",
+      "to": "secret:rpi5-backup-ssh-key",
+      "kind": "uses-secret",
+      "label": "sshKeyFile"
+    },
+    {
+      "from": "svc:backup-pull",
+      "to": "secret:restic-password",
+      "kind": "uses-secret",
+      "label": "resticPasswordFile"
+    },
+    {
+      "from": "svc:backup-pull",
+      "to": "secret:backup-telegram-env",
+      "kind": "uses-secret",
+      "label": "telegramEnvFile"
+    },
+    {
+      "from": "svc:home-assistant-mcp-claude",
+      "to": "secret:home-assistant-token",
+      "kind": "uses-secret",
+      "label": "tokenFile"
+    },
+    {
+      "from": "svc:backup-pull",
+      "to": "host:sancta-claw/backup-user",
+      "kind": "talks-to",
+      "label": "rsync pull /var/lib/openclaw"
+    },
+    {
+      "from": "host:sancta-claw/restore",
+      "to": "host:rpi5-full",
+      "kind": "talks-to",
+      "label": "ssh restic restore from rpi5"
+    },
+    {
+      "from": "svc:gatus",
+      "to": "host:sancta-claw/openclaw-service",
+      "kind": "talks-to",
+      "label": "monitor openclaw healthz"
+    },
+    {
+      "from": "svc:n8n",
+      "to": "svc:nixframe",
+      "kind": "talks-to",
+      "label": "n8n writes photos to nixframe dir"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "pkg:open-webui",
+      "kind": "wraps",
+      "label": "pkgs-unstable.open-webui (+qdrant-client override)"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "secret:e2e-test-api-key",
+      "kind": "uses-secret",
+      "label": "testing.apiKeyFile (gates E2E user provision)"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "input:owui-openrouter-stats",
+      "kind": "depends-input",
+      "label": "costTracker filter source function.py"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable for open-webui package"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "svc:tailscale",
+      "kind": "proxies",
+      "label": "tailscale-serve-open-webui :443 -> 127.0.0.1:8080"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "svc:qdrant-tailscale",
+      "kind": "talks-to",
+      "label": "RAG vector DB QDRANT_URI :6333 (when vectorDb.type=qdrant)"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "doc:owui-function-auto-memory",
+      "kind": "contains",
+      "label": "reads auto_memory_filter.py"
+    },
+    {
+      "from": "svc:open-webui-tailscale",
+      "to": "doc:owui-function-zdr-pipe",
+      "kind": "contains",
+      "label": "reads openrouter_zdr_pipe.py"
+    },
+    {
+      "from": "sys:open-webui-arm-fix",
+      "to": "pkg:open-webui",
+      "kind": "wraps",
+      "label": "overlay strips chromadb on aarch64"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "pkg:n8n",
+      "kind": "wraps",
+      "label": "native services.n8n"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "secret:n8n-encryption-key",
+      "kind": "uses-secret",
+      "label": "N8N_ENCRYPTION_KEY (encryptionKeyFile, required)"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "OPENROUTER_API_KEY (openrouterApiKeyFile)"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "secret:openai-api-key",
+      "kind": "uses-secret",
+      "label": "OPENAI_API_KEY (openaiApiKeyFile)"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "secret:telegram-bot-token",
+      "kind": "uses-secret",
+      "label": "TELEGRAM_BOT_TOKEN (telegramBotTokenFile)"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "secret:n8n-admin-password",
+      "kind": "uses-secret",
+      "label": "adminPasswordFile (REST API auth / community pkgs)"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "input:self",
+      "kind": "depends-input",
+      "label": "reads scripts/generate-apkg.py + workflowsDir"
+    },
+    {
+      "from": "svc:n8n-tailscale",
+      "to": "svc:tailscale",
+      "kind": "proxies",
+      "label": "tailscale-serve-n8n :5678 -> 127.0.0.1:5678"
+    },
+    {
+      "from": "svc:n8n-mcp-claude",
+      "to": "pkg:n8n-mcp",
+      "kind": "wraps",
+      "label": "npx -y n8n-mcp (stdio MCP server)"
+    },
+    {
+      "from": "svc:n8n-mcp-claude",
+      "to": "secret:n8n-api-key",
+      "kind": "uses-secret",
+      "label": "N8N_API_KEY injected into ~/.claude.json (apiKeyFile)"
+    },
+    {
+      "from": "svc:n8n-mcp-claude",
+      "to": "svc:n8n-tailscale",
+      "kind": "talks-to",
+      "label": "N8N_API_URL http://127.0.0.1:5678 (full workflow mgmt mode)"
+    },
+    {
+      "from": "svc:n8n-skills",
+      "to": "input:n8n-skills-github",
+      "kind": "depends-input",
+      "label": "fetchFromGitHub czlonkowski/n8n-skills (pinned rev)"
+    },
+    {
+      "from": "svc:gatus-tailscale",
+      "to": "pkg:gatus",
+      "kind": "wraps",
+      "label": "native services.gatus"
+    },
+    {
+      "from": "svc:gatus-tailscale",
+      "to": "secret:home-assistant-token",
+      "kind": "uses-secret",
+      "label": "GATUS_API_KEY env (apiKeyFile, on rpi5-full)"
+    },
+    {
+      "from": "svc:gatus-tailscale",
+      "to": "svc:tailscale",
+      "kind": "proxies",
+      "label": "tailscale-serve-gatus :3001 -> 127.0.0.1:3001"
+    },
+    {
+      "from": "svc:gatus-tailscale",
+      "to": "svc:n8n-tailscale",
+      "kind": "talks-to",
+      "label": "monitors /healthz + nixframe-ui/anki webhooks :5678"
+    },
+    {
+      "from": "svc:gatus-tailscale",
+      "to": "svc:open-webui-tailscale",
+      "kind": "talks-to",
+      "label": "monitors /health (endpoint commented on rpi5-full)"
+    },
+    {
+      "from": "svc:qdrant-tailscale",
+      "to": "pkg:qdrant",
+      "kind": "wraps",
+      "label": "native services.qdrant"
+    },
+    {
+      "from": "svc:qdrant-tailscale",
+      "to": "svc:tailscale",
+      "kind": "proxies",
+      "label": "tailscale-serve-qdrant :6333 -> 127.0.0.1:6333"
+    },
+    {
+      "from": "svc:nixframe",
+      "to": "svc:n8n-tailscale",
+      "kind": "talks-to",
+      "label": "photo upload via n8n webhook /webhook/nixframe-ui (writes photoDir + .trigger)"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "svc:tailscale",
+      "kind": "enables",
+      "label": "services.tailscale"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:n8n-tailscale",
+      "kind": "enables",
+      "label": "services.n8n-tailscale.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:gatus-tailscale",
+      "kind": "enables",
+      "label": "services.gatus-tailscale.enable"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:n8n-mcp-claude",
+      "kind": "enables",
+      "label": "full mode (apiKeyFile + n8nUrl)"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:tailscale",
+      "kind": "enables",
+      "label": "via rpi5 base (exit node)"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:n8n-mcp-claude",
+      "kind": "enables",
+      "label": "docs-only mode"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "svc:tailscale",
+      "kind": "enables",
+      "label": "services.tailscale"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:claude-shared",
+      "kind": "enables",
+      "label": "inherited via rpi5 import"
+    },
+    {
+      "from": "svc:claude",
+      "to": "input:claude-code",
+      "kind": "depends-input",
+      "label": "claude-code.packages.<sys>.default"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "svc:openclaw-host",
+      "kind": "enables",
+      "label": "systemd.services.openclaw (host-level, npm)"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "svc:openclaw-zdr-proxy",
+      "kind": "enables",
+      "label": "services.openclaw-zdr-proxy.enable=true"
+    },
+    {
+      "from": "svc:openclaw-zdr-proxy",
+      "to": "pkg:openclaw-zdr-proxy",
+      "kind": "wraps",
+      "label": "ExecStart = openclaw-zdr-proxy pkg (gunicorn proxy.py)"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "svc:openclaw-zdr-proxy",
+      "kind": "proxies",
+      "label": "openrouter baseUrl=http://127.0.0.1:5780/v1; after+wants proxy"
+    },
+    {
+      "from": "svc:openclaw-zdr-proxy",
+      "to": "external:openrouter",
+      "kind": "talks-to",
+      "label": "forwards to openrouter.ai + fetches ZDR allow-list (fail-closed)"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "input:kuzea-workspace",
+      "kind": "depends-input",
+      "label": "kuzea-ws.* skills/hooks/config via tmpfiles L+/C"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "inject openrouter:zdr-proxy auth-profile"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "secret:openai-api-key",
+      "kind": "uses-secret",
+      "label": "inject openai:manual auth-profile (memory embeddings)"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "secret:kuzea-todoist-credentials",
+      "kind": "uses-secret",
+      "label": "EnvironmentFile"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "secret:kuzea-airtable-credentials",
+      "kind": "uses-secret",
+      "label": "EnvironmentFile"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "secret:kuzea-tavily-api-key",
+      "kind": "uses-secret",
+      "label": "EnvironmentFile"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "secret:kuzea-caldav-credentials",
+      "kind": "uses-secret",
+      "label": "vdirsyncer setup"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "secret:kuzea-github-token",
+      "kind": "uses-secret",
+      "label": "git-credential-agenix helper"
+    },
+    {
+      "from": "svc:openclaw-zdr-proxy",
+      "to": "secret:openrouter-api-key",
+      "kind": "uses-secret",
+      "label": "apiKeyFile -> OPENROUTER_API_KEY env"
+    },
+    {
+      "from": "svc:openclaw-host",
+      "to": "external:telegram",
+      "kind": "talks-to",
+      "label": "Telegram channel (streaming=partial)"
+    },
+    {
+      "from": "svc:openclaw-module",
+      "to": "input:claude-code",
+      "kind": "depends-input",
+      "label": "requires claude-code via specialArgs (asserts non-null)"
+    },
+    {
+      "from": "svc:openclaw-module",
+      "to": "external:anthropic-api",
+      "kind": "talks-to",
+      "label": "claude -p -> api.anthropic.com (nftables-allowed)"
+    },
+    {
+      "from": "svc:nullclaw",
+      "to": "external:anthropic-api",
+      "kind": "talks-to",
+      "label": "provider=anthropic, model claude-sonnet-4-6"
+    },
+    {
+      "from": "svc:nullclaw",
+      "to": "external:telegram",
+      "kind": "talks-to",
+      "label": "Telegram gateway channel"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:copilot",
+      "kind": "imports",
+      "label": "inherited via rpi5 import"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:unifi-mcp",
+      "kind": "enables",
+      "label": "inherited via rpi5 import"
+    },
+    {
+      "from": "svc:home-assistant-mcp-claude",
+      "to": "svc:home-assistant-tailscale",
+      "kind": "talks-to",
+      "label": "haUrl http://127.0.0.1:8123"
+    },
+    {
+      "from": "svc:backup-pull",
+      "to": "svc:openclaw-host",
+      "kind": "talks-to",
+      "label": "rsync pull /var/lib/openclaw FROM sancta-claw"
+    },
+    {
+      "from": "svc:backup-pull",
+      "to": "external:telegram",
+      "kind": "talks-to",
+      "label": "failure-alert sendMessage"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "svc:hermes-agent",
+      "kind": "enables",
+      "label": "services.hermes-agent.enable=true"
+    },
+    {
+      "from": "svc:hermes-agent",
+      "to": "input:hermes-agent",
+      "kind": "depends-input",
+      "label": "hermes-agent.nixosModules.default"
+    },
+    {
+      "from": "svc:hermes-agent",
+      "to": "secret:hermes-env",
+      "kind": "uses-secret",
+      "label": "environmentFiles = [hermes-env.path]"
+    },
+    {
+      "from": "svc:hermes-agent",
+      "to": "external:openrouter",
+      "kind": "talks-to",
+      "label": "nvidia/nemotron-3 free via openrouter.ai/api/v1"
+    },
+    {
+      "from": "svc:hermes-agent",
+      "to": "external:telegram",
+      "kind": "talks-to",
+      "label": "TELEGRAM_ALLOWED_USERS env"
+    },
+    {
+      "from": "sys:dev-tools",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable.github-copilot-cli"
+    },
+    {
+      "from": "user:root",
+      "to": "input:nixpkgs-unstable",
+      "kind": "depends-input",
+      "label": "pkgs-unstable copilot alias"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "sys:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "sys:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "sys:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "sys:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "sys:common",
+      "kind": "imports",
+      "label": "../common.nix"
+    },
+    {
+      "from": "secret:tailscale-auth-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:tailscale-auth-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:tailscale-auth-key",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:tailscale-auth-key",
+      "to": "host:hermes-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:tailscale-auth-key",
+      "to": "host:zero-kuzea",
+      "kind": "decrypts",
+      "label": "decryptable by (via sancta-claw recovery key)"
+    },
+    {
+      "from": "secret:tailscale-auth-key",
+      "to": "svc:tailscale",
+      "kind": "uses-secret",
+      "label": "authKeyFile"
+    },
+    {
+      "from": "secret:open-webui-secret-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:open-webui-secret-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:open-webui-secret-key",
+      "to": "svc:open-webui-tailscale",
+      "kind": "uses-secret",
+      "label": "secretKeyFile"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "host:hermes-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "svc:open-webui-tailscale",
+      "kind": "uses-secret",
+      "label": "openai.apiKeyFile"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "svc:n8n",
+      "kind": "uses-secret",
+      "label": "openrouterApiKeyFile"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "svc:openclaw-zdr-proxy",
+      "kind": "uses-secret",
+      "label": "apiKeyFile"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "svc:openclaw-host",
+      "kind": "uses-secret",
+      "label": "path read in openclaw-service.nix"
+    },
+    {
+      "from": "secret:tavily-api-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:tavily-api-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:tavily-api-key",
+      "to": "svc:open-webui-tailscale",
+      "kind": "uses-secret",
+      "label": "tavilySearch.apiKeyFile"
+    },
+    {
+      "from": "secret:openai-api-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:openai-api-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:openai-api-key",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:openai-api-key",
+      "to": "svc:n8n",
+      "kind": "uses-secret",
+      "label": "openaiApiKeyFile"
+    },
+    {
+      "from": "secret:openai-api-key",
+      "to": "svc:openclaw-host",
+      "kind": "uses-secret",
+      "label": "path read (memory embeddings)"
+    },
+    {
+      "from": "secret:n8n-encryption-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:n8n-encryption-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:n8n-encryption-key",
+      "to": "svc:n8n",
+      "kind": "uses-secret",
+      "label": "encryptionKeyFile"
+    },
+    {
+      "from": "secret:n8n-admin-password",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:n8n-admin-password",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:n8n-admin-password",
+      "to": "svc:n8n",
+      "kind": "uses-secret",
+      "label": "adminPasswordFile"
+    },
+    {
+      "from": "secret:n8n-api-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:n8n-api-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:n8n-api-key",
+      "to": "svc:n8n-mcp-claude",
+      "kind": "uses-secret",
+      "label": "apiKeyFile"
+    },
+    {
+      "from": "secret:telegram-bot-token",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:telegram-bot-token",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:telegram-bot-token",
+      "to": "svc:n8n",
+      "kind": "uses-secret",
+      "label": "telegramBotTokenFile"
+    },
+    {
+      "from": "secret:e2e-test-api-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:e2e-test-api-key",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:e2e-test-api-key",
+      "to": "svc:open-webui-tailscale",
+      "kind": "uses-secret",
+      "label": "testing.apiKeyFile (sancta-choir)"
+    },
+    {
+      "from": "secret:unifi-password",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:unifi-password",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:unifi-password",
+      "to": "svc:unifi-mcp",
+      "kind": "uses-secret",
+      "label": "passwordFile"
+    },
+    {
+      "from": "secret:caldav-credentials",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:caldav-credentials",
+      "to": "host:sancta-choir",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:caldav-credentials",
+      "to": "svc:nixframe",
+      "kind": "uses-secret",
+      "label": "credentialsFile"
+    },
+    {
+      "from": "secret:kuzea-caldav-credentials",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:kuzea-caldav-credentials",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by (edit only)"
+    },
+    {
+      "from": "secret:kuzea-caldav-credentials",
+      "to": "svc:openclaw-host",
+      "kind": "uses-secret",
+      "label": "path read in openclaw-service.nix"
+    },
+    {
+      "from": "secret:kuzea-github-token",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:kuzea-github-token",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by (edit only)"
+    },
+    {
+      "from": "secret:kuzea-github-token",
+      "to": "svc:openclaw-host",
+      "kind": "uses-secret",
+      "label": "git credential helper reads /run/agenix path"
+    },
+    {
+      "from": "secret:kuzea-todoist-credentials",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:kuzea-todoist-credentials",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by (edit only)"
+    },
+    {
+      "from": "secret:kuzea-todoist-credentials",
+      "to": "svc:openclaw-host",
+      "kind": "uses-secret",
+      "label": "path read in openclaw-service.nix"
+    },
+    {
+      "from": "secret:kuzea-airtable-credentials",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:kuzea-airtable-credentials",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by (edit only)"
+    },
+    {
+      "from": "secret:kuzea-airtable-credentials",
+      "to": "svc:openclaw-host",
+      "kind": "uses-secret",
+      "label": "path read in openclaw-service.nix"
+    },
+    {
+      "from": "secret:kuzea-tavily-api-key",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:kuzea-tavily-api-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by (edit only)"
+    },
+    {
+      "from": "secret:kuzea-tavily-api-key",
+      "to": "svc:openclaw-host",
+      "kind": "uses-secret",
+      "label": "path read in openclaw-service.nix"
+    },
+    {
+      "from": "secret:anthropic-api-key",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:anthropic-api-key",
+      "to": "host:zero-kuzea",
+      "kind": "decrypts",
+      "label": "decryptable by (shares sancta-claw recovery key)"
+    },
+    {
+      "from": "secret:anthropic-api-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by (edit only)"
+    },
+    {
+      "from": "secret:anthropic-api-key",
+      "to": "svc:nullclaw",
+      "kind": "uses-secret",
+      "label": "apiKeyFile"
+    },
+    {
+      "from": "secret:zero-kuzea-telegram-bot-token",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:zero-kuzea-telegram-bot-token",
+      "to": "host:zero-kuzea",
+      "kind": "decrypts",
+      "label": "decryptable by (shares sancta-claw recovery key)"
+    },
+    {
+      "from": "secret:zero-kuzea-telegram-bot-token",
+      "to": "host:hermes-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:zero-kuzea-telegram-bot-token",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by (edit only)"
+    },
+    {
+      "from": "secret:zero-kuzea-telegram-bot-token",
+      "to": "svc:nullclaw",
+      "kind": "uses-secret",
+      "label": "telegram.botTokenFile"
+    },
+    {
+      "from": "secret:restic-password",
+      "to": "host:sancta-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:restic-password",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:restic-password",
+      "to": "svc:backup-pull",
+      "kind": "uses-secret",
+      "label": "resticPasswordFile"
+    },
+    {
+      "from": "secret:rpi5-backup-ssh-key",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:rpi5-backup-ssh-key",
+      "to": "svc:backup-pull",
+      "kind": "uses-secret",
+      "label": "sshKeyFile"
+    },
+    {
+      "from": "secret:backup-telegram-env",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:backup-telegram-env",
+      "to": "svc:backup-pull",
+      "kind": "uses-secret",
+      "label": "telegramEnvFile"
+    },
+    {
+      "from": "secret:home-assistant-token",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:home-assistant-token",
+      "to": "svc:home-assistant-mcp-claude",
+      "kind": "uses-secret",
+      "label": "tokenFile"
+    },
+    {
+      "from": "secret:hermes-env",
+      "to": "host:rpi5-full",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:hermes-env",
+      "to": "host:hermes-claw",
+      "kind": "decrypts",
+      "label": "decryptable by"
+    },
+    {
+      "from": "secret:hermes-env",
+      "to": "svc:hermes-agent",
+      "kind": "uses-secret",
+      "label": "environmentFiles"
+    },
+    {
+      "from": "script:check-secret-recipients",
+      "to": "secret:hermes-env",
+      "kind": "tests",
+      "label": "flags hermes-env recipient drift (5 on-disk vs 3 declared)"
+    },
+    {
+      "from": "script:install",
+      "to": "host:sancta-choir",
+      "kind": "deploys",
+      "label": "install (generic host arg)"
+    },
+    {
+      "from": "script:install",
+      "to": "host:rpi5",
+      "kind": "deploys",
+      "label": "install (generic host arg)"
+    },
+    {
+      "from": "script:deploy",
+      "to": "host:rpi5-full",
+      "kind": "deploys",
+      "label": "build+switch throttled"
+    },
+    {
+      "from": "script:deploy",
+      "to": "host:sancta-choir",
+      "kind": "deploys",
+      "label": "build+switch throttled"
+    },
+    {
+      "from": "script:deploy",
+      "to": "host:sancta-claw",
+      "kind": "deploys",
+      "label": "build+switch throttled"
+    },
+    {
+      "from": "script:deploy",
+      "to": "host:hermes-claw",
+      "kind": "deploys",
+      "label": "build+switch throttled"
+    },
+    {
+      "from": "script:bootstrap",
+      "to": "host:rpi5",
+      "kind": "deploys",
+      "label": "infect+rebuild (no throttle)"
+    },
+    {
+      "from": "script:bootstrap",
+      "to": "host:sancta-choir",
+      "kind": "deploys",
+      "label": "infect+rebuild (no throttle)"
+    },
+    {
+      "from": "ci:check",
+      "to": "host:sancta-choir",
+      "kind": "ci-builds",
+      "label": "nix build toplevel"
+    },
+    {
+      "from": "ci:check",
+      "to": "host:sancta-claw",
+      "kind": "ci-builds",
+      "label": "nix build toplevel"
+    },
+    {
+      "from": "ci:check",
+      "to": "host:hermes-claw",
+      "kind": "ci-builds",
+      "label": "nix build toplevel"
+    },
+    {
+      "from": "ci:check",
+      "to": "host:rpi5",
+      "kind": "ci-builds",
+      "label": "nix eval drvPath (aarch64)"
+    },
+    {
+      "from": "ci:check",
+      "to": "host:rpi5-full",
+      "kind": "ci-builds",
+      "label": "nix eval drvPath (aarch64)"
+    },
+    {
+      "from": "ci:check",
+      "to": "script:check-secret-recipients",
+      "kind": "ci-builds",
+      "label": "runs agenix drift guard"
+    },
+    {
+      "from": "ci:check",
+      "to": "script:install",
+      "kind": "ci-builds",
+      "label": "build packages.install (matrix)"
+    },
+    {
+      "from": "ci:check",
+      "to": "script:deploy",
+      "kind": "ci-builds",
+      "label": "build packages.deploy (matrix)"
+    },
+    {
+      "from": "ci:check",
+      "to": "script:bootstrap",
+      "kind": "ci-builds",
+      "label": "build packages.bootstrap (matrix)"
+    },
+    {
+      "from": "ci:flake-update",
+      "to": "host:sancta-choir",
+      "kind": "ci-builds",
+      "label": "re-eval after lock bump"
+    },
+    {
+      "from": "ci:flake-update",
+      "to": "host:sancta-claw",
+      "kind": "ci-builds",
+      "label": "re-eval after lock bump"
+    },
+    {
+      "from": "ci:flake-update",
+      "to": "host:rpi5-full",
+      "kind": "ci-builds",
+      "label": "re-eval after lock bump"
+    },
+    {
+      "from": "ci:python-tests",
+      "to": "test:pytest",
+      "kind": "ci-builds",
+      "label": "pytest (excl e2e)"
+    },
+    {
+      "from": "ci:auto-approve-sancta-claw",
+      "to": "host:sancta-claw",
+      "kind": "ci-builds",
+      "label": "auto-approve+merge scoped PRs"
+    },
+    {
+      "from": "test:module-eval",
+      "to": "host:rpi5-full",
+      "kind": "tests",
+      "label": "evals all service modules used by hosts"
+    },
+    {
+      "from": "test:openclaw-zdr-proxy-nix",
+      "to": "host:sancta-claw",
+      "kind": "tests",
+      "label": "ZDR proxy module (openclaw host)"
+    },
+    {
+      "from": "test:openclaw-zdr-proxy-nix",
+      "to": "test:pytest",
+      "kind": "tests",
+      "label": "complements proxy.py unit tests"
+    },
+    {
+      "from": "test:n8n-declarative-nix",
+      "to": "host:rpi5-full",
+      "kind": "tests",
+      "label": "n8n declarative import (standalone)"
+    },
+    {
+      "from": "test:open-webui-tavily-nix",
+      "to": "host:rpi5-full",
+      "kind": "tests",
+      "label": "open-webui tavily env (standalone)"
+    },
+    {
+      "from": "test:qdrant-integration-nix",
+      "to": "host:rpi5-full",
+      "kind": "tests",
+      "label": "qdrant RAG on ARM (standalone)"
+    },
+    {
+      "from": "test:pytest",
+      "to": "host:sancta-claw",
+      "kind": "tests",
+      "label": "openclaw ZDR proxy.py + openrouter pipe"
+    },
+    {
+      "from": "test:pytest",
+      "to": "script:generate-apkg",
+      "kind": "tests",
+      "label": "generate-apkg.py + ankiapp format"
+    },
+    {
+      "from": "pkg:ralphex",
+      "to": "host:rpi5-full",
+      "kind": "installs",
+      "label": "environment.systemPackages"
+    },
+    {
+      "from": "doc:n8n-workflows",
+      "to": "host:rpi5-full",
+      "kind": "deploys",
+      "label": "workflowsDir"
+    },
+    {
+      "from": "script:diagnose-n8n-workflow",
+      "to": "host:rpi5-full",
+      "kind": "deploys",
+      "label": "diagnoses deployed n8n DB vs source JSON"
+    },
+    {
+      "from": "input:self",
+      "to": "host:rpi5-full",
+      "kind": "depends-input",
+      "label": "self -> age.secrets file = ${self}/secrets/*.age + n8n workflows/scripts"
+    },
+    {
+      "from": "host:rpi5-full",
+      "to": "svc:tailscale",
+      "kind": "configures",
+      "label": "sets useRoutingFeatures=mkForce both + advertise-exit-node (only host that does)"
+    },
+    {
+      "from": "svc:claude",
+      "to": "external:anthropic-api",
+      "kind": "talks-to",
+      "label": "installed CC binary calls Anthropic API at runtime"
+    },
+    {
+      "from": "svc:claude-shared",
+      "to": "external:anthropic-api",
+      "kind": "talks-to",
+      "label": "installed CC binary calls Anthropic API at runtime"
+    },
+    {
+      "from": "ci:check",
+      "to": "test:module-eval",
+      "kind": "ci-builds",
+      "label": "nix flake check --all-systems runs checks.x86_64-linux"
+    },
+    {
+      "from": "ci:check",
+      "to": "test:openclaw-zdr-proxy-nix",
+      "kind": "ci-builds",
+      "label": "nix flake check runs the wired ZDR nixosTest"
+    },
+    {
+      "from": "lib:secrets",
+      "to": "secret:tailscale-auth-key",
+      "kind": "defines",
+      "label": "secret/ownedSecret helpers declare every age.secrets entry"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "host:sancta-claw",
+      "kind": "shares-key",
+      "label": "reuses sancta-claw recovery key + authorizedKeys (single-key blast radius)"
+    },
+    {
+      "from": "secret:openrouter-api-key",
+      "to": "secret:hermes-env",
+      "kind": "duplicates",
+      "label": "same OPENROUTER_API_KEY plaintext re-encrypted into combined env file"
+    },
+    {
+      "from": "host:sancta-claw",
+      "to": "host:sancta-claw/hardware-configuration",
+      "kind": "contains",
+      "label": "imports ./hardware-configuration.nix"
+    },
+    {
+      "from": "host:sancta-choir",
+      "to": "host:sancta-choir/hardware-configuration",
+      "kind": "contains",
+      "label": "imports ./hardware-configuration.nix"
+    },
+    {
+      "from": "host:hermes-claw",
+      "to": "host:hermes-claw/hardware-configuration",
+      "kind": "contains",
+      "label": "imports ./hardware-configuration.nix"
+    },
+    {
+      "from": "host:zero-kuzea",
+      "to": "host:zero-kuzea/hardware-configuration",
+      "kind": "contains",
+      "label": "imports ./hardware-configuration.nix"
+    },
+    {
+      "from": "host:rpi5",
+      "to": "host:rpi5/hardware-configuration",
+      "kind": "contains",
+      "label": "imports ./hardware-configuration.nix"
+    }
+  ],
+  "narrative": "## What this repo is\n\nA single NixOS flake driving a small personal fleet of **6 host configurations across 2 architectures**, all stitched together by Tailscale and agenix-encrypted secrets. The real-world roles split cleanly:\n\n- **rpi5-full** (aarch64, the *only* truly active deploy target per CLAUDE.md) \u2014 the home server. It imports `rpi5/configuration.nix` wholesale and layers on the home-services stack: n8n workflow automation, Gatus monitoring, NixFrame photo frame, Home Assistant, and the backup-pull job. `rpi5` itself exists almost solely to build the SD image \u2014 it is labelled \"minimal\" but already pulls UniFi-MCP, n8n-MCP/skills, claude-shared and copilot, so the only genuine delta is rpi5-full's 6 extra service imports.\n- **sancta-choir** (x86 Hetzner) \u2014 Open-WebUI AI chat gateway on the OpenRouter backend, fronted by Tailscale Serve HTTPS.\n- **sancta-claw** (x86 CX33) \u2014 the dedicated OpenClaw/Kuzea Telegram agent. By far the most complex host (9 sub-files: the systemd unit, self-service watchers, Tailscale-serve front, backup-user + backup-acl, restore + smoke-test DR scripts). All model calls route through a local ZDR sidecar proxy on 127.0.0.1:5780.\n- **hermes-claw** (x86 CX33) \u2014 Nous Research Hermes agent in a Podman container via an upstream flake module.\n- **zero-kuzea** (x86 CX22) \u2014 minimal NullClaw Telegram bot (Anthropic Claude directly).\n\n## How config flows\n\nThe layering is consistent and worth drawing as lanes: **flake inputs \u2192 host builders \u2192 host configs \u2192 service modules \u2192 system fragments \u2192 secrets \u2192 ops/CI**.\n\n`flake.nix` declares ~15 inputs. Most `follows nixpkgs`; the lone exception is `nixos-raspberrypi`, which deliberately carries its own pinned nixpkgs (25.11) \u2014 the entire repo was bumped 25.05\u219225.11 *to align with it* and silence Home-Manager version warnings (#264). That alignment is load-bearing and fragile.\n\nEach host is built by `nixpkgs.lib.nixosSystem` (or the raspberrypi builder for the two Pis), gets `pkgs-unstable` via specialArgs, and pulls in `agenix`, `home-manager`, `disko` (VPS only) and the hand-rolled inline `agenixModule` (just to add the agenix CLI). Every host imports `hosts/common.nix` (SSH keepalives, zram, fail2ban, flakes, `/bin/bash` symlink, core CLI). Service wrappers under `modules/services/` follow one strong pattern: **bind to 127.0.0.1, expose via a per-service `*-tailscale-serve` oneshot, pull secrets through `age.secrets`.** System fragments under `modules/system/` (nix-ld, ssh-hardened, dev-tools, the sancta-choir-only host/networking) and `modules/users/root.nix` round out the base.\n\n## Secrets and trust\n\nagenix runs **two trust models by design**: the core hosts (rpi5/rpi5-full, sancta-choir) use their SSH host key as the recipient (exposed to the documented fail-open-on-host-key-rotation trap), while the VPS hosts use a standalone `/root/.age/recovery.key` so a DR re-image decrypts on first boot. A subtle coupling: **zero-kuzea is not a distinct recipient at all** \u2014 it decrypts its two secrets only because it shares sancta-claw's recovery key, so one key compromise spans both boxes.\n\n## Notable runtime topology\n\nThe fleet is mostly star-shaped around Tailscale, with two real cross-host edges: rpi5-full's `backup-pull` rsyncs `/var/lib/openclaw` **from** sancta-claw (rrsync-restricted `backup-user`), and sancta-claw's `restore.sh` pushes the inverse (ssh+restic restore from rpi5). NixFrame is unusual \u2014 it has **no listener of its own**; its entire upload ingress is the n8n `nixframe-ui` webhook, making n8n a hard runtime dependency of the photo-frame path. Gatus monitors n8n, Home Assistant and (across hosts) sancta-claw's OpenClaw healthz.\n\n## The dominant theme: four agent runners, two Claude modules\n\nThe single biggest structural observation is **product fragmentation**: the same \"Telegram + agent + OpenRouter/Anthropic\" product is implemented three times across three dedicated VPSes (openclaw-host npm, nullclaw zig, hermes container) \u2014 plus a fully-built-but-**dead** fourth implementation, `modules/services/openclaw.nix` (~820 lines, zero importers, confirmed by grep). On top of that, Claude Code itself is provisioned two ways (legacy package-only `claude.nix` on the choir/claw VPSes vs the full `claude-shared` stack on the Pis), pulling the CC binary from two different inputs \u2014 a version-skew risk the repo's own header comments flag as a deprecation path.",
+  "layers": [
+    {
+      "name": "Flake Inputs",
+      "kinds": [
+        "input"
+      ],
+      "description": "External flake inputs and flake=false sources: nixpkgs (+unstable), home-manager, agenix, disko, nixos-raspberrypi, claude-code/claude-shared, kuzea-workspace, hermes-agent, owui-openrouter-stats, self. nixos-raspberrypi is the only one not following nixpkgs."
+    },
+    {
+      "name": "Hosts",
+      "kinds": [
+        "host"
+      ],
+      "description": "The 6 host configs + shared bases (common.nix) + sancta-claw's 9 sub-files. rpi5-full is the active target; rpi5 feeds the SD image. Three VPS hosts share copy-pasted disk/networking/identity."
+    },
+    {
+      "name": "Service Modules",
+      "kinds": [
+        "service",
+        "external"
+      ],
+      "description": "modules/services/* wrappers (Tailscale-serve + agenix pattern) plus the inline host services (openclaw-host, open-webui). Includes the 4 agent runners and the dormant qdrant/open-webui-arm-fix."
+    },
+    {
+      "name": "System & Packages",
+      "kinds": [
+        "system",
+        "pkg",
+        "user",
+        "lib"
+      ],
+      "description": "modules/system/* fragments (nix-ld, ssh-hardened, dev-tools, host/networking), modules/users/root.nix, lib/secrets.nix, and packaged derivations (open-webui, n8n, gatus, ralphex, openclaw-zdr-proxy)."
+    },
+    {
+      "name": "Secrets",
+      "kinds": [
+        "secret"
+      ],
+      "description": "agenix .age files (two trust models) and the external API endpoints they unlock (anthropic, openrouter, telegram)."
+    },
+    {
+      "name": "Ops, CI & Tests",
+      "kinds": [
+        "ci",
+        "test",
+        "script",
+        "doc"
+      ],
+      "description": "GitHub workflows, deploy/install/bootstrap scripts, policy guards, nixosTests + pytest, and the docs/root-md/n8n-workflows/specify/ralphex-state artifacts."
+    }
+  ],
+  "dataFlows": [
+    {
+      "title": "Open-WebUI chat (sancta-choir)",
+      "path": "user -> tailscale serve :443 -> open-webui :8080 -> openrouter.ai (+ tavily web search); WEBUI_SECRET_KEY/OPENAI_API_KEY/TAVILY_API_KEY from agenix"
+    },
+    {
+      "title": "OpenClaw agent with ZDR enforcement (sancta-claw)",
+      "path": "user -> Telegram Bot API -> openclaw-host gateway :18789 -> openclaw-zdr-proxy 127.0.0.1:5780 (injects provider.zdr=true, rejects non-ZDR) -> openrouter.ai/api/v1"
+    },
+    {
+      "title": "Cross-host backup + restore loop",
+      "path": "rpi5-full backup-pull -> ssh rrsync -> sancta-claw backup-user reads /var/lib/openclaw -> tmpfs -> restic encrypted repo; inverse: sancta-claw restore.sh -> ssh rpi5 -> restic restore -> rsync back"
+    },
+    {
+      "title": "NixFrame photo upload (no native listener)",
+      "path": "user -> tailscale serve :5678 -> n8n /webhook/nixframe-ui -> n8n (in nixframe group) writes photoDir + .trigger -> nixframe slideshow on HDMI/VT7"
+    },
+    {
+      "title": "n8n MCP into Claude Code (rpi5-full)",
+      "path": "Claude Code -> ~/.claude.json MCP entry -> npx n8n-mcp (stdio) -> N8N_API_URL 127.0.0.1:5678 with N8N_API_KEY from agenix"
+    },
+    {
+      "title": "NullClaw bot (zero-kuzea)",
+      "path": "user -> Telegram Bot API -> nullclaw gateway :18790 -> api.anthropic.com (claude-sonnet); decrypts via shared sancta-claw recovery key"
+    }
+  ],
+  "simplifications": [
+    {
+      "title": "Delete the dead openclaw.nix module (~820 lines, zero importers)",
+      "severity": "high",
+      "evidence": "modules/services/openclaw.nix defines services.openclaw (claude -p file-inbox runner) but grep across hosts/ + flake.nix finds no `services.openclaw.enable` and no import of the file. The only live 'openclaw' is hosts/sancta-claw/openclaw-service.nix's inline `systemd.services.openclaw` (npm gateway) \u2014 a name collision. Its tailscaleServe block is even a self-described 'Phase 2 placeholder' that proxies nothing. CLAUDE.md still documents this dead module as the live `services.openclaw` AI partner.",
+      "recommendation": "Delete modules/services/openclaw.nix and remove the stale `services.openclaw` row + 'file-based inbox' description from CLAUDE.md's Services table. If any logic (nftables egress lockdown, restricted-sudo build wrapper) is worth keeping, lift it into openclaw-service.nix first.",
+      "risk": "Low \u2014 nothing imports it, so eval/build is unaffected. Only risk is losing the egress-lockdown reference design; mitigate by grepping it for reusable snippets before deletion.",
+      "nodeIds": [
+        "svc:openclaw-module",
+        "svc:openclaw-host",
+        "doc:root-md"
+      ],
+      "verdict": {
+        "title": "Delete the dead openclaw.nix module (~820 lines, zero importers)",
+        "holds": false,
+        "reason": "The finding's central premise \u2014 \"zero importers\" / \"grep across hosts/ + flake.nix finds no `services.openclaw.enable` and no import of the file\" \u2014 is FALSE. `/Users/alexandru/nixos-config/tests/module-eval.nix` imports `../modules/services/openclaw.nix` three times (lines 413, 430, 450) and exercises `services.openclaw.enable` in three test cases: `openclaw-missing-claude-code` (shouldFail, asserts the null claude-code input fires), `openclaw-nix-store-secret-rejected` (shouldFail, asserts /nix/store secret rejection), and `openclaw-disabled` (shouldEval). Crucially, `module-eval` IS wired into CI: `/Users/alexandru/nixos-config/flake.nix` line 302 sets `checks.x86_64-linux.module-eval = import ./tests/module-eval.nix {...}`. tests/module-eval.nix:31-74 shows `evalConfig` imports each module path directly and `shouldEval` force-evaluates it with no tryEval guard, so deleting modules/services/openclaw.nix would make the import path nonexistent and break `nix flake check` (the repo's documented primary validation, run in CI per CLAUDE.md). The finding's risk line (\"Low \u2014 nothing imports it, so eval/build is unaffected\") is therefore factually wrong: a naive deletion DOES break eval. The secondary observations in the finding are accurate: there genuinely is a name collision (hosts/sancta-claw/openclaw-service.nix:346 declares an inline `systemd.services.openclaw` npm gateway, separate from the module's `services.openclaw`), the module's tailscale-serve-openclaw is a self-described \"Phase 2 placeholder\" (openclaw.nix:694), and CLAUDE.md's Services table does still document `services.openclaw` as the live \"AI programming partner (Claude Code, file-based inbox)\". But no host imports the module (only openclaw-zdr-proxy.nix is imported by sancta-claw), so the module is unused-in-production \u2014 yet not unreferenced. \"Zero importers\" is false and \"~820 lines\" is the only number that checks out (wc -l = 822).",
+        "confidence": "high",
+        "correction": "Do not delete modules/services/openclaw.nix in isolation. If the module is to be retired, the change must ALSO remove the three openclaw test cases (openclaw-missing-claude-code, openclaw-nix-store-secret-rejected, openclaw-disabled) from tests/module-eval.nix lines ~410-456, and the stale `services.openclaw` row from CLAUDE.md's Services table, then run `nix flake check` (the module-eval check) to prove eval is still green. Before deletion, lift any worth-keeping logic (per-UID nftables egress lockdown at openclaw.nix:812, restricted-sudo build wrapper, the /nix/store-secret assertion) \u2014 note the security assertions are currently the module's main remaining value, since they are tested even though no host enables the service."
+      }
+    },
+    {
+      "title": "Consolidate the legacy claude.nix into claude-shared (retire the package-only fork)",
+      "severity": "high",
+      "evidence": "svc:claude (modules/services/claude.nix) is package-only and used by sancta-choir + sancta-claw; svc:claude-shared is a strict superset (same binary + skills/agents/commands) used by rpi5/rpi5-full. The two pull the CC binary from DIFFERENT inputs (input:claude-code vs claude-shared's bundled claude-code) \u2014 a version-skew risk. claude-shared.nix's own header says it 'replaces the in-repo claude*.nix modules'. CLAUDE.md documents the split as deliberate.",
+      "recommendation": "Add a headless/no-skills profile to claudeShared, migrate sancta-choir + sancta-claw onto it, then delete claude.nix and the `input:claude-code` specialArg wiring for those hosts. Removes one whole input-coupling path and the two-source version skew.",
+      "risk": "Med \u2014 claude-shared pulls home-manager wiring; on a small VPS that's extra eval/closure. Mitigate with an enable flag that installs only the package when skills aren't wanted.",
+      "nodeIds": [
+        "svc:claude",
+        "svc:claude-shared",
+        "input:claude-code",
+        "input:claude-shared",
+        "host:sancta-choir",
+        "host:sancta-claw"
+      ],
+      "verdict": {
+        "title": "Consolidate the legacy claude.nix into claude-shared (retire the package-only fork)",
+        "holds": true,
+        "reason": "Every load-bearing claim verifies against the repo. Wiring: hosts/sancta-choir/configuration.nix:44,51 and hosts/sancta-claw/configuration.nix:22,30 import modules/services/claude.nix and set customModules.claude.enable; hosts/rpi5/configuration.nix:33,43 imports modules/services/claude-shared.nix and sets customModules.claudeShared. rpi5-full does get claudeShared too (hosts/rpi5-full/configuration.nix:49 imports ../rpi5/configuration.nix), so the finding's 'rpi5/rpi5-full' is correct. Subset/superset: claude.nix:37-38 only adds claude-code.packages.<system>.default. The claude-shared HM module (~/.claude-shared/module/default.nix:269-287) installs the same upstream package PLUS skills/agents/commands symlinks and a user CLAUDE.md \u2014 a genuine functional superset. The header of claude-shared.nix:1-2 indeed states it 'replaces the in-repo claude{,-settings,-skills,-agents}.nix modules'. Version skew is real and confirmed in flake.lock: two distinct claude-code nodes \u2014 top-level claude-code rev 0b01bf3 (consumed by claude.nix via specialArgs in flake.nix:134,151) vs claude-shared's bundled claude-code_2 rev 304b96c (newer lastModified) consumed on rpi5/rpi5-full. So choir/claw and the Pis pull the CC binary from different inputs. Feasibility: both VPS hosts already wire home-manager (sancta-choir/configuration.nix:109, sancta-claw/configuration.nix:83), so no new HM plumbing is needed. CLAUDE.md documents the split as deliberate, matching the finding. Bonus: the top-level claude-code input's only other consumer is the dead modules/services/openclaw.nix (not imported by any host \u2014 confirmed), so retiring claude.nix really would remove a whole input-coupling path. Nothing here would break a host on eval; the consolidation is genuine, not meaningful divergence.",
+        "confidence": "high",
+        "correction": "Recommendation is directionally correct but understates one hard prerequisite: claude-shared's HM module is NOT a drop-in for a headless VPS as written. Under cfg.enable it unconditionally (a) runs a git-clone/pull of github.com/alexandru-savinov/claude-shared at activation (~/.claude-shared/module/default.nix:239-247), (b) symlinks skills/agents/commands into ~/.claude (lines 146-150,237), and (c) writes a user-level ~/.claude/CLAUDE.md (line 288-290). zellijIntegration.enable=false (already set in the in-repo claude-shared.nix wrapper) does NOT suppress these. So the 'add a headless/no-skills profile' flag the finding proposes is a required precondition, not an optional nicety \u2014 without it, migrating choir/claw would start cloning the content repo and writing skill symlinks on each VPS at every rebuild. Correct sequence: (1) add e.g. installPackageOnly/contentless option to the claude-shared module that gates the clone activation + contentSymlinks + userClaudeMd off while keeping installPackage; (2) point that input's claude-code to the top-level rev (or accept the bundled one) to collapse the skew; (3) migrate choir+claw; (4) delete claude.nix and drop the top-level claude-code specialArg for those hosts. Note the top-level claude-code input also feeds the dead openclaw.nix, so it can only be fully dropped once that module (index-0 finding) is also deleted."
+      }
+    },
+    {
+      "title": "Extract one mkTailscaleServe lib helper for the 6 copy-pasted serve oneshots",
+      "severity": "high",
+      "evidence": "The `tailscale serve status | grep -q https:PORT` idempotency guard + partOf/wantedBy/TimeoutStartSec=150 + wait-for-port loop + preStop `serve --https PORT off` is copy-pasted in n8n.nix:788, open-webui.nix:1133, unifi-mcp.nix:589, openclaw.nix:724, nullclaw.nix:390, qdrant.nix:195 (and gatus). qdrant.nix already factored a wait_for() helper; gatus uses a divergent grep pattern ('https?://.*:PORT') vs the others' 'https:PORT' \u2014 a latent inconsistency.",
+      "recommendation": "Add lib/mkTailscaleServe.nix taking {port, httpsPort, requires} that emits the standard oneshot, and reconcile the grep pattern to one form. Replaces ~6 near-identical units with one call each.",
+      "risk": "Low-Med \u2014 must preserve the #449 partOf-start-gap behavior and per-service port/preStop; verify with the existing open-webui-tavily / n8n-declarative nixosTests after refactor.",
+      "nodeIds": [
+        "svc:n8n-tailscale",
+        "svc:open-webui-tailscale",
+        "svc:gatus-tailscale",
+        "svc:qdrant-tailscale",
+        "svc:unifi-mcp",
+        "svc:nullclaw",
+        "svc:tailscale"
+      ],
+      "verdict": {
+        "title": "Extract one mkTailscaleServe lib helper for the 6 copy-pasted serve oneshots",
+        "holds": true,
+        "reason": "Verified by reading all cited files in /Users/alexandru/nixos-config/modules/services/. The `tailscale serve status | grep -q \"https:PORT\"` idempotency guard exists at EXACTLY the cited lines: n8n.nix:788, open-webui.nix:1133, unifi-mcp.nix:589, openclaw.nix:724, nullclaw.nix:390, qdrant.nix:195, plus gatus.nix:632 and home-assistant.nix:158. The surrounding oneshot shape (partOf=[main.service], wantedBy=[multi-user.target], serviceConfig Type=oneshot/RemainAfterExit=true/TimeoutStartSec=150, a tailscaled+port wait loop, and a preStop `serve --https PORT off`) is genuinely near-duplicated across the live service modules \u2014 real copy-paste, not meaningful divergence. The claimed grep-pattern inconsistency is CONFIRMED and even understated: gatus.nix:632 AND home-assistant.nix:158 both use the divergent `grep -qE \"https?://.*:PORT( |$)\"` while the other six use the literal `grep -q \"https:PORT\"` \u2014 a true latent inconsistency a helper would fix. qdrant.nix:178-189 already factored a `wait_for()` helper (as the finding states), and nullclaw.nix:374-385 has its own `wait_for()` too, proving the authors themselves saw the duplication. The referenced verification tests (tests/n8n-declarative.nix, tests/open-webui-tavily.nix) both exist. Removing the duplication does not break any host: the helper would emit the same units, and the listed nixosTests guard the behavior.",
+        "confidence": "high",
+        "correction": "Add lib/mkTailscaleServe.nix and reconcile the grep pattern to one form \u2014 sound. But scope corrections: (1) The helper must be parameterized over MORE than {port, httpsPort, requires}: the modules differ in health-check command (nc -z for n8n/open-webui/unifi-mcp/gatus/home-assistant/qdrant vs `curl -sf .../health` in nullclaw), upstream host (127.0.0.1 vs cfg.host in open-webui/qdrant), wait-loop style (inline while/until in 5 files vs wait_for() helper in qdrant+nullclaw), and preStop error handling (`|| true` vs explicit WARNING vs openclaw's custom message; nullclaw drops `--bg` in preStop). So pass {port, httpsPort, upstreamHost, healthCheck, requires} \u2014 it is not a trivial drop-in. (2) EXCLUDE openclaw.nix from the consolidation: it is dead code (finding index 0; `services.openclaw` is enabled on no host and CLAUDE.md documents it as legacy) and its oneshot is a self-described Phase-2 placeholder that proxies nothing. Delete it rather than fold it in; the live duplication is across ~6-7 modules (n8n, open-webui, unifi-mcp, nullclaw, qdrant, gatus, home-assistant), not the openclaw count. (3) home-assistant.nix is a real second consumer of the divergent grep pattern but is missing from the finding's nodeIds \u2014 add it."
+      }
+    },
+    {
+      "title": "Factor the triplicated ~/.claude.json MCP-merge oneshot into lib/mkClaudeMcpOneshot.nix",
+      "severity": "med",
+      "evidence": "unifi-mcp.nix, home-assistant-mcp-claude.nix and n8n-mcp-claude.nix each implement the same flock + read-modify-write + atomic-mv merge of one MCP entry into ~/.claude.json (each grep-confirmed to call flock 2-3x); the files even cross-reference 'pattern mirrored from n8n-mcp-claude.nix'. ~80 lines duplicated 3x. copilot.nix is the odd one out (writes ~/.copilot/mcp-config.json, no enable option).",
+      "recommendation": "Add lib/mkClaudeMcpOneshot.nix taking {name, mcpConfig, users} and reduce the three modules to thin callers. Optionally fold n8n-skills (a pure HM symlink) under claude-shared content rather than services/.",
+      "risk": "Low \u2014 behavior-preserving; verify the merged ~/.claude.json still parses on rpi5-full after rebuild (no nixosTest exists for these, so check by hand).",
+      "nodeIds": [
+        "svc:unifi-mcp",
+        "svc:home-assistant-mcp-claude",
+        "svc:n8n-mcp-claude",
+        "svc:copilot"
+      ],
+      "verdict": {
+        "title": "Factor the triplicated ~/.claude.json MCP-merge oneshot into lib/mkClaudeMcpOneshot.nix",
+        "holds": true,
+        "reason": "Verified by reading all four cited files. The triplication is real and the shared skeleton is functionally byte-identical across the three modules:\n\n- modules/services/n8n-mcp-claude.nix (generateMcpConfigScript, lines 87-138, ~52 body lines)\n- modules/services/home-assistant-mcp-claude.nix (lines 55-102, ~48 lines)\n- modules/services/unifi-mcp.nix (lines 170-236, ~67 lines)\n\nEach implements the same read-modify-write oneshot: `set -euo pipefail` + `USER_HOME=$(eval echo \"~${user}\")` + `CONFIG_FILE=\"$USER_HOME/.claude.json\"`, then `exec 9>\"$CONFIG_FILE.lock\"` + `flock 9`, then the identical `if .mcpServers == null then .mcpServers = {}` jq init guard, a `<<'MCPEOF'` heredoc carrying `${builtins.toJSON mkMcpConfigBase}`, a runtime secret-injection step, and the identical atomic tail: `mktemp` -> `jq '.mcpServers[\"<name>\"] = $x'` -> `chown` -> `chmod 600` -> `mv -f`. I diffed the init/lock/read blocks of n8n vs home-assistant directly \u2014 they differ only in comment wording. Each calls `${pkgs.util-linux}/bin/flock 9` exactly once; the finding's \"flock 2-3x\" grep count is corroborated (2/2/3, inflated by comment mentions, not a bug in the claim).\n\nThe cross-references the finding cites exist verbatim: home-assistant-mcp-claude.nix:18 \"Pattern mirrored from modules/services/n8n-mcp-claude.nix\" and unifi-mcp.nix:162 \"mirroring the n8n / home-assistant siblings.\"\n\nThe only per-module variance maps cleanly onto helper parameters: (a) the MCP entry name (n8n-mcp / home-assistant / unifi), (b) the mkMcpConfigBase attrset, (c) the secret-injection step \u2014 n8n's nullable apiKeyFile (optionalString), HA's nullable tokenFile (optionalString), unifi's mandatory passwordFile with a useDocker/non-docker arg-vs-env branch. So `{name, mcpConfig, users}` plus an injection hook captures all three; the finding's signature is essentially right but understated on the secret hook.\n\ncopilot.nix (lines 1-16) is confirmed the odd one out: it writes ~/.copilot/mcp-config.json via home-manager.users.root with no enable option and no flock/RMW \u2014 correctly excluded.\n\nSafety: the three modules are enabled only on rpi5/rpi5-full (unifi-mcp + n8n-mcp on rpi5; n8n-mcp + home-assistant-mcp on rpi5-full), all aarch64 hosts; no VPS uses them, so a behavior-preserving extraction can't break a remote host. lib/ already exists at repo root (currently only lib/secrets.nix), so adding lib/mkClaudeMcpOneshot.nix fits the layout.",
+        "confidence": "high",
+        "correction": "Recommendation is sound but tighten the helper signature: `lib/mkClaudeMcpOneshot.nix` taking `{name, mcpConfigBase, users, injectSecret ? null}` where injectSecret is a shell snippet (or function of the config var name) that the body splices in before the atomic write \u2014 this is needed to cover unifi's mandatory-password + docker/non-docker branch and the two siblings' nullable-secret optionalString guards, which a bare `{name, mcpConfig, users}` does not express. Preserve unifi's documented load-bearing 4-space heredoc indentation inside the helper and re-run `nix fmt` after. Drop the \"fold n8n-skills under claude-shared\" clause from this finding's scope \u2014 n8n-skills.nix is a separate HM-symlink module (imported on rpi5) unrelated to the MCP-merge duplication; bundling it muddies an otherwise clean, behavior-preserving refactor."
+      }
+    },
+    {
+      "title": "Create hosts/vps-common.nix + disk-cx-vps.nix to kill the 3-way VPS duplication",
+      "severity": "med",
+      "evidence": "hosts/{sancta-claw,hermes-claw,zero-kuzea}/disk-config.nix are byte-identical except a header comment (confirmed by diff). The three VPS hosts also share an identical block: useDHCP, usePredictableInterfaceNames=mkForce false, nameservers [8.8.8.8 185.12.64.1 185.12.64.2], firewall [22], Europe/Chisinau tz, age.identityPaths /root/.age/recovery.key, 4GB swapfile (#451/#252), and the same two root authorizedKeys (also pasted into sancta-choir).",
+      "recommendation": "Add hosts/system/disk-cx-vps.nix (shared disko layout) and hosts/vps-common.nix (DHCP/nameservers/tz/recovery-key/authorizedKeys/swap). Import from the three VPS hosts; pull the shared authorizedKeys list into one place referenced by all four.",
+      "risk": "Med \u2014 disko on the wrong device is destructive; keep /dev/sda parameterizable and re-run `nix eval` per host + the module-eval check. Recovery-key path is load-bearing for DR.",
+      "nodeIds": [
+        "host:sancta-claw/disk-config",
+        "host:hermes-claw/disk-config",
+        "host:zero-kuzea/disk-config",
+        "host:sancta-claw",
+        "host:hermes-claw",
+        "host:zero-kuzea"
+      ],
+      "verdict": {
+        "title": "Create hosts/vps-common.nix + disk-cx-vps.nix to kill the 3-way VPS duplication",
+        "holds": false,
+        "reason": "Verified by reading all cited files. The finding has two claims; one holds, the central one does not.\n\nDISK-CONFIG (partly holds): The disko *payload* is functionally identical across all three \u2014 same `/dev/sda`, gpt, EF02 1M boot / 256M vfat ESP / 100% ext4 root \u2014 in hosts/sancta-claw/disk-config.nix (L15-54), hosts/hermes-claw/disk-config.nix, hosts/zero-kuzea/disk-config.nix (L3-42). But \"byte-identical except a header comment (confirmed by diff)\" is only true for sancta-claw vs hermes-claw (diff = 1 comment line). zero-kuzea differs by a whole comment block (2 lines vs 14 lines of sgdisk instructions), not \"a header comment\". The shared disko layout is real and worth factoring, so disk-cx-vps.nix is justified.\n\nSHARED SYSTEM BLOCK (does NOT hold \u2014 the load-bearing claim): The finding asserts \"the three VPS hosts also share an identical block\" of useDHCP + usePredictableInterfaceNames=mkForce false + nameservers [8.8.8.8 185.12.64.1 185.12.64.2] + firewall [22] + Europe/Chisinau tz + recovery-key + 4GB swapfile + authorizedKeys. This is overstated:\n - Networking (useDHCP, usePredictableInterfaceNames, nameservers, firewall [22]) and tz/locale (Europe/Chisinau) exist in sancta-claw/configuration.nix (L36-50) and hermes-claw/configuration.nix (L22-36) \u2014 but NOT in zero-kuzea. grep for useDHCP|nameservers|usePredictableInterfaceNames|firewall|timeZone across hosts/zero-kuzea/ returns NONE FOUND; zero-kuzea only sets networking.hostName (L22) and relies on NixOS defaults. common.nix and zero-kuzea/hardware-configuration.nix carry no networking. So this block is shared by only 2 of 3 hosts, not 3.\n - \"4GB swapfile\" is wrong: swap sizes are 12288 (sancta-claw L92), 4096 (hermes-claw L64), 2048 (zero-kuzea L29) \u2014 three different values. Only hermes-claw is 4GB; swap is per-host, not a shareable constant.\n - Genuinely shared across all three: age.identityPaths = /root/.age/recovery.key, and the two root authorizedKeys (also present verbatim in sancta-choir/configuration.nix L126-127).\n\nBecause the central \"identical block across the three VPS hosts\" is false (networking/tz cover only 2 hosts; swap differs across all 3), the proposed single vps-common.nix imported by all three would either force DHCP/nameservers/tz onto zero-kuzea (a behavior change, not a refactor) or carry a wrong swap value. The duplication that actually exists is narrow: the disko layout (3 hosts) + recovery-key path + authorizedKeys (3-4 hosts).",
+        "confidence": "high",
+        "correction": "Split into two narrower, honest moves: (1) Add hosts/system/disk-cx-vps.nix with the shared disko layout (genuinely identical payload in all three -claw/-kuzea hosts); keep the device path parameterizable (all three hardcode /dev/sda). (2) Hoist only the two truly-shared bits into a small shared file: the two root authorizedKeys (shared by sancta-claw, hermes-claw, zero-kuzea AND sancta-choir) and age.identityPaths=/root/.age/recovery.key. Do NOT fold useDHCP/nameservers/firewall/tz into a \"vps-common\" imported by all three \u2014 zero-kuzea deliberately omits all of it; at most factor a networking snippet shared by sancta-claw+hermes-claw only. Do NOT put swap in the shared file \u2014 the three sizes are 12G/4G/2G, intentionally per-host."
+      }
+    },
+    {
+      "title": "De-duplicate sancta-choir SSH hardening and networking (host.nix vs networking.nix vs ssh-hardened.nix)",
+      "severity": "med",
+      "evidence": "host.nix:32-33 open-codes PermitRootLogin=prohibit-password + PasswordAuthentication=false \u2014 the exact pair in ssh-hardened.nix:8-9 which the other 4 VPS hosts import; sancta-choir is the only VPS NOT importing ssh-hardened. Separately host.nix and networking.nix BOTH declare eth0 116.203.223.113, gateway 172.31.1.1, nameservers 185.12.64.x for the same host (grep-confirmed) \u2014 double-maintained.",
+      "recommendation": "Make sancta-choir import modules/system/ssh-hardened.nix and drop the inline SSH block; collapse the networking half of the mis-named host.nix into networking.nix (or inline both into hosts/sancta-choir/configuration.nix). Removes a 3-way SSH split and a duplicated IP/gateway/DNS declaration.",
+      "risk": "Med \u2014 networking changes on a remote VPS can lock you out; verify eth0/gateway/DNS resolve identically via `nix eval` of the final networking attrs and prefer `nixos-rebuild boot` for the switch.",
+      "nodeIds": [
+        "sys:host",
+        "sys:networking",
+        "sys:ssh-hardened",
+        "host:sancta-choir"
+      ],
+      "verdict": {
+        "title": "De-duplicate sancta-choir SSH hardening and networking (host.nix vs networking.nix vs ssh-hardened.nix)",
+        "holds": true,
+        "reason": "Verified by reading the files and by `nix eval` of the live sancta-choir config (eval succeeds, cross-platform-pure).\n\nSSH claim \u2014 CONFIRMED. /Users/alexandru/nixos-config/modules/system/host.nix lines 32-33 open-code `PermitRootLogin = \"prohibit-password\"` and `PasswordAuthentication = false`, the exact pair in /Users/alexandru/nixos-config/modules/system/ssh-hardened.nix lines 8-9. grep confirms sancta-choir is the only x86 VPS that does NOT import ssh-hardened: sancta-claw (configuration.nix:25), hermes-claw (:15), zero-kuzea (:18) all import it (rpi5-full:64 too). `nix eval` of config.services.openssh.settings.PermitRootLogin returns \"prohibit-password\", proving the inline block is what is live.\n\nNetworking duplication \u2014 CONFIRMED and stronger than the finding states. host.nix and networking.nix BOTH set networking.interfaces.eth0.ipv4.addresses, networking.defaultGateway, networking.nameservers, networking.useDHCP for the same host, and both are imported only by sancta-choir (configuration.nix:40-41 \u2014 no other importer per grep). Because these are list/mergeable options at equal priority they concatenate rather than conflict, so the config still evaluates \u2014 but eval proves the redundancy leaks real duplicates: config.networking.interfaces.eth0.ipv4.addresses = [116.203.223.113/32, 116.203.223.113/32] (the SAME address twice) and config.networking.nameservers = [\"8.8.8.8\",\"185.12.64.1\",\"185.12.64.2\",\"185.12.64.1\",\"185.12.64.2\"] (185.12.64.1/.2 listed twice). There is also genuine drift: host.nix nameservers omit 8.8.8.8 while networking.nix includes it \u2014 exactly the double-maintenance hazard the finding warns about. So this is not benign overlap; it is meaningful, observable redundancy that one consolidated source would fix.\n\nSeverity med is appropriate; the recommendation (import ssh-hardened, drop the inline SSH block, collapse the two networking declarations into one) is correct and would remove the duplicate runtime entries with no behavior loss (gateway/address are identical; nameserver union just needs the intended set chosen).",
+        "confidence": "high",
+        "correction": "Recommendation is sound. Two precision corrections: (1) The files are modules/system/host.nix and modules/system/networking.nix (shared-module location), NOT hosts/sancta-choir/ files as the finding's phrasing implies \u2014 but both are imported ONLY by sancta-choir, so they are effectively host-specific and the consolidation argument holds. The mis-named host.nix is the root issue: it is a sancta-choir-only networking+SSH+misc module masquerading as a generic system module. (2) When collapsing, explicitly pick ONE nameserver list \u2014 host.nix drops 8.8.8.8, networking.nix keeps it; today both leak so you get a 5-entry list with duplicates. Decide whether 8.8.8.8 is wanted, then declare nameservers once."
+      }
+    },
+    {
+      "title": "Wire or delete the three orphaned nixosTests; they rot silently",
+      "severity": "med",
+      "evidence": "flake.nix checks.x86_64-linux (lines 294-310) wires ONLY module-eval and openclaw-zdr-proxy. tests/n8n-declarative.nix, open-webui-tavily.nix and qdrant-integration.nix are referenced by no workflow and use the legacy `{ pkgs ? import <nixpkgs> {} }` channel pattern instead of the flake's pinned pkgs \u2014 runnable only by hand, never in CI.",
+      "recommendation": "Add n8n-declarative + open-webui-tavily to checks.x86_64-linux (they assert real env wiring on rpi5-full/sancta-choir paths) and convert them to the flake's pinned pkgs; drop qdrant-integration.nix since Qdrant runs nowhere (see next finding).",
+      "risk": "Low \u2014 adding checks only lengthens CI; converting away from <nixpkgs> is mechanical. Watch CI runtime since these boot VMs.",
+      "nodeIds": [
+        "test:n8n-declarative-nix",
+        "test:open-webui-tavily-nix",
+        "test:qdrant-integration-nix",
+        "test:module-eval"
+      ],
+      "verdict": {
+        "title": "Wire or delete the three orphaned nixosTests; they rot silently",
+        "holds": true,
+        "reason": "Every claim verified against the real repo. flake.nix lines 294-310 (checks.x86_64-linux) wire ONLY module-eval (line 302) and openclaw-zdr-proxy (line 309); the three tests are absent. All three files begin with the legacy channel pattern `{ pkgs ? import <nixpkgs> { } }:` \u2014 tests/n8n-declarative.nix:1, tests/open-webui-tavily.nix:1, tests/qdrant-integration.nix:13 \u2014 vs the flake's pinned `nixpkgsFor.x86_64-linux` used by the wired checks. No workflow references them: grep across .github/workflows/*.yml finds zero hits; check.yml line 46 runs only `nix flake check --all-systems` (so only the two wired checks execute) and python-tests.yml line 47 runs pytest, not nixosTests. The recommendation's targeting is sound: n8n-declarative exercises modules/services/n8n.nix's n8n-tailscale, enabled on hosts/rpi5-full/configuration.nix; open-webui-tavily exercises open-webui-tailscale, enabled on both sancta-choir and rpi5-full; qdrant-integration tests qdrant which runs nowhere (hosts/rpi5-full/configuration.nix:228-229 has it commented out), making the suggested deletion consistent with finding #7. These are genuinely un-run, rotting test assets \u2014 real dead-loop, not meaningful divergence.",
+        "confidence": "high",
+        "correction": "Recommendation is essentially correct; two precision notes. (1) checks.x86_64-linux is x86-only by deliberate design (flake.nix comment lines 291-293: CI runs --all-systems on x86 runners without aarch64 builders), so adding these VM-boot tests there is the right home, but they WILL boot full VMs and noticeably increase CI wall-clock \u2014 the risk field already flags this; budget for it rather than calling it merely 'lengthens CI'. (2) Both n8n-declarative and open-webui-tavily already disable tailscaleServe/oidc in-test, so converting them to the flake's pinned pkgs (replace the `{ pkgs ? import <nixpkgs> {} }` head with `pkgs.testers.nixosTest (import ./tests/<f>.nix { inherit pkgs; })` wiring like openclaw-zdr-proxy at flake.nix:309) is indeed mechanical. Drop qdrant-integration.nix per finding #7."
+      }
+    },
+    {
+      "title": "Remove the dormant RAG-on-ARM stack (qdrant + open-webui-arm-fix)",
+      "severity": "med",
+      "evidence": "svc:qdrant / pkg:qdrant / qdrant-integration test and sys:open-webui-arm-fix run on NO active host \u2014 both commented out in rpi5-full as too heavy for RPi5, and open-webui (their only consumer) runs only on x86 sancta-choir which needs neither. open-webui talks to qdrant only when vectorDb.type=qdrant, which is not set anywhere.",
+      "recommendation": "Delete modules/services/qdrant.nix, modules/system/open-webui-arm-fix.nix, tests/qdrant-integration.nix and the commented-out rpi5-full import/Gatus-endpoint blocks. If RAG-on-ARM is a real future goal, keep them on a documented branch instead of dead in main.",
+      "risk": "Low \u2014 nothing enables them today. Only risk is losing the ARM overlay reference if Open-WebUI ever moves to a Pi; note that intent in a commit message.",
+      "nodeIds": [
+        "svc:qdrant",
+        "svc:qdrant-tailscale",
+        "pkg:qdrant",
+        "sys:open-webui-arm-fix",
+        "test:qdrant-integration-nix"
+      ],
+      "verdict": {
+        "title": "Remove the dormant RAG-on-ARM stack (qdrant + open-webui-arm-fix)",
+        "holds": true,
+        "reason": "The core premise is verified true. (1) modules/services/qdrant.nix, modules/system/open-webui-arm-fix.nix, and tests/qdrant-integration.nix all exist. (2) In hosts/rpi5-full/configuration.nix the qdrant import (line 54), the open-webui-arm-fix import (line 52), the services.qdrant-tailscale block (lines 229-230) and the Gatus qdrant endpoint (line 272) are ALL commented out. (3) open-webui-arm-fix.nix is imported by NO active host (only the commented rpi5-full reference). (4) The only live open-webui consumer is sancta-choir (x86_64-linux, hosts/sancta-choir/configuration.nix:71-97), which sets memory/tavily/zdr but NO vectorDb.type, so it defaults to \"chromadb\" (open-webui.nix:162) and never touches qdrant. No host anywhere sets vectorDb.type=\"qdrant\" or services.qdrant. So the stack is genuinely dormant \u2014 nothing enables it today.\n\nHOWEVER, the recommendation as written (\"Delete modules/services/qdrant.nix\") is imprecise and its \"Low risk / eval unaffected\" rating is UNDERSTATED. tests/module-eval.nix:93-119 imports ../modules/services/qdrant.nix in three live test cases (qdrant-minimal, qdrant-on-disk, qdrant-disabled), and module-eval IS a live CI check wired into flake.nix checks.x86_64-linux (lines 301-303, the same one finding #6 confirms is the only wired check besides openclaw-zdr-proxy). Deleting qdrant.nix without also removing those three cases from module-eval.nix would break `nix flake check` and CI. The finding's evidence section never mentions this coupling and the nodeIds omit test:module-eval. open-webui-arm-fix.nix has zero live importers and zero CI coupling, so deleting it is genuinely Low risk. open-webui.nix also still carries the vectorDb option machinery (lines 159-225, 540-664, 735-736) which would become dead config if qdrant is dropped \u2014 worth noting but not strictly broken.",
+        "confidence": "high",
+        "correction": "Keep the simplification but make it precise: (a) Delete modules/system/open-webui-arm-fix.nix and tests/qdrant-integration.nix (both orphaned, safe). (b) When deleting modules/services/qdrant.nix, ALSO remove the three qdrant cases (qdrant-minimal/qdrant-on-disk/qdrant-disabled, lines 93-119) from tests/module-eval.nix in the same change, or `nix flake check`/CI will break. (c) Remove the commented qdrant/arm-fix import and Gatus-endpoint lines in hosts/rpi5-full/configuration.nix (lines 52, 54, 229-230, 272). (d) Optionally prune the now-dead vectorDb=qdrant branches in modules/services/open-webui.nix and the qdrant-tailscale row in CLAUDE.md's Services table."
+      }
+    },
+    {
+      "title": "Archive stale root-level migration .md notes and the lone completed/ dir",
+      "severity": "low",
+      "evidence": "Repo root carries one-off migration writeups: MIGRATION-RESUME.md, openrouter-vkeys-c-migration.md, plan-open-webui-sancta-choir.md (all dated Apr-May, no live references). docs/ holds 105KB kuzea-plan.md + nixframe-plan + OPENCLAW-MICROVM/TELEGRAM setup writeups. Two competing archive conventions exist: completed/plan-home-assistant.md at root vs docs/plans/completed/.",
+      "recommendation": "Move the three root migration .md files and the historical docs/ plans into docs/plans/completed/, and fold completed/ into it so there is one archive convention. Keep README, SECRETS-ROTATION, CLAUDE.md live.",
+      "risk": "Low \u2014 pure docs move. Ensure nothing in scripts/CI greps these paths (none observed).",
+      "nodeIds": [
+        "doc:root-md",
+        "doc:docs",
+        "doc:completed"
+      ],
+      "verdict": {
+        "title": "Archive stale root-level migration .md notes and the lone completed/ dir",
+        "holds": true,
+        "reason": "Every factual claim checks out against the real repo. Root carries the three named one-off writeups: /Users/alexandru/nixos-config/MIGRATION-RESUME.md (Apr 18), openrouter-vkeys-c-migration.md (May 23), plan-open-webui-sancta-choir.md (Apr 18) \u2014 Apr-May dates confirmed. /Users/alexandru/nixos-config/docs/ holds kuzea-plan.md (exactly 105635 bytes ~= the claimed 105KB), nixframe-plan.md, OPENCLAW-MICROVM-PLAN.md, and TELEGRAM-OPENCLAW-SETUP.md. The two competing archive conventions are real: /Users/alexandru/nixos-config/completed/plan-home-assistant.md exists at root alongside /Users/alexandru/nixos-config/docs/plans/completed/ (which contains 20260508-hermes-claw-upstream-module-container-mode.md and logical-finding-flurry.md). The 'no live references' claim holds for functional dependencies: grep across scripts/, .github/, and flake.nix returns nothing, and no .nix file imports any of these markdown docs. The only grep hits for the migration files are docs/architecture-map.html and docs/architecture-graph.json, which are NOT git-tracked (this review's own untracked analysis artifacts, timestamped today) so they don't count as live references. README.md, SECRETS-ROTATION.md, and CLAUDE.md are correctly identified as the live docs to keep. This is a genuine, behavior-neutral housekeeping move.",
+        "confidence": "high",
+        "correction": "The recommendation is sound but should add one step: completed/plan-home-assistant.md is referenced by bare filename in three live source comments \u2014 secrets/secrets.nix:127, hosts/rpi5-full/configuration.nix:327, and modules/services/home-assistant-mcp-claude.nix:22 (each 'see plan-home-assistant.md Task 5/6'). Moving that file into docs/plans/completed/ won't break eval/build (comments only), but those three pointers should be updated to the new path (or left as bare-filename references, which remain findable). Everything else in the recommendation (move the 3 root migration files + historical docs/ plans into docs/plans/completed/, fold root completed/ into it, keep README/SECRETS-ROTATION/CLAUDE.md live) is accurate."
+      }
+    },
+    {
+      "title": "Collapse duplicated-plaintext secrets (Tavily, CalDAV, Telegram, hermes-env)",
+      "severity": "low",
+      "evidence": "Per secrets map: tavily-api-key vs kuzea-tavily-api-key (same vendor, two ciphertexts), caldav-credentials vs kuzea-caldav-credentials, and three Telegram bot tokens. hermes-env.age embeds the same OPENROUTER_API_KEY plaintext that already lives in openrouter-api-key.age (secrets.nix:148-150), so rotating one silently desyncs the other. hermes-env also has the known recipient drift (5 on-disk vs 3 declared) tracked by check-secret-recipients.sh.",
+      "recommendation": "Where the plaintext is genuinely identical, prefer a single .age recipient-broadened to all consuming hosts over per-host duplicates; for hermes-env, build the env file from the existing openrouter-api-key + telegram token at activation rather than re-encrypting the combined plaintext. Then clear the KNOWN_PENDING_DRIFT entry.",
+      "risk": "Med \u2014 broadening a secret's recipients widens blast radius; rotating shared keys touches multiple hosts at once. Do per-secret, re-run check-secret-recipients.sh and a deploy after each.",
+      "nodeIds": [
+        "secret:tavily-api-key",
+        "secret:kuzea-tavily-api-key",
+        "secret:caldav-credentials",
+        "secret:kuzea-caldav-credentials",
+        "secret:hermes-env",
+        "secret:openrouter-api-key"
+      ],
+      "verdict": {
+        "title": "Collapse duplicated-plaintext secrets (Tavily, CalDAV, Telegram, hermes-env)",
+        "holds": true,
+        "reason": "Partially verified against /Users/alexandru/nixos-config/secrets/secrets.nix and scripts/check-secret-recipients.sh. The hermes-env half of the finding is solid and actionable. secrets.nix:147-151 explicitly states hermes-env.age \"Contains OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN (same plaintext as the per-value secrets above, combined into one env file)\" used only as `environmentFiles` for the upstream module in hosts/hermes-claw/hermes-service.nix:62. Critically, openrouter-api-key.age is declared `allPlusBoth` (secrets.nix:73), which INCLUDES hermes-claw, and zero-kuzea-telegram-bot-token.age is `clawKeys ++ [hermes-claw]` (secrets.nix:142, comment: \"also re-keyed for hermes-claw so the Hermes Agent can decrypt the same plaintext\"). So BOTH source plaintexts are already decryptable on hermes-claw \u2014 meaning the recommendation to build the env file from them at activation instead of re-encrypting a combined blob is genuinely feasible, and the rotate-one-desyncs-the-other risk is real. The recipient-drift claim is confirmed exactly: `grep -a -c '^-> '` gives hermes-env.age=5 stanzas vs declared `users ++ [rpi5 hermes-claw]`=3 (secrets.nix:151), matching the KNOWN_PENDING_DRIFT entry in check-secret-recipients.sh:53-55 (issue #448). HOWEVER the tavily/caldav/telegram half is imprecise and conflates deliberate least-privilege separation with redundancy: kuzea-tavily-api-key.age / kuzea-caldav-credentials.age are scoped to `clawKeys` (sancta-claw + owner only) while tavily-api-key.age / caldav-credentials.age are `allKeys` (rpi5 + sancta-choir) \u2014 these are intentionally different recipient sets for different hosts (sancta-claw's openclaw-service vs sancta-choir's open-webui / rpi5's nixframe), and the plaintexts may be genuinely different vendor keys/accounts, which the finding never proves. The \"three Telegram bot tokens\" (telegram-bot-token=n8n tender-monitor, zero-kuzea-telegram-bot-token=NullClaw bot, backup-telegram-env=backup-alert env with TOKEN+CHAT_ID) serve three distinct bots and are almost certainly NOT the same plaintext, so they are not consolidation candidates at all \u2014 listing them weakens the finding. Severity \"low\" and risk \"Med\" are correctly rated, and the recommendation is appropriately hedged (\"Where the plaintext is genuinely identical\").",
+        "confidence": "med",
+        "correction": "Split this into two findings. STRONG/keep: For hermes-env, stop maintaining a combined re-encrypted blob \u2014 both its values are already independently decryptable on hermes-claw (openrouter-api-key.age via allPlusBoth, zero-kuzea-telegram-bot-token.age via the explicit +hermes-claw re-key). Generate the KEY=VALUE env file at activation from those two existing secrets (e.g. a small activation script / systemd ExecStartPre that cats them into a 0400 file owned by hermes), delete hermes-env.age, and clear the KNOWN_PENDING_DRIFT entry in check-secret-recipients.sh. WEAK/drop or downgrade: Do NOT present tavily/kuzea-tavily, caldav/kuzea-caldav, or the three Telegram tokens as duplicated plaintext. The kuzea-* variants are a deliberate least-privilege split (clawKeys vs allKeys) for sancta-claw; the three Telegram tokens are different bots. Before touching any of these, first decrypt and prove the plaintexts are byte-identical AND that broadening recipients does not violate the intended host isolation \u2014 most likely they should stay separate."
+      }
+    },
+    {
+      "title": "Add mkRpiHost/mkX86Host helpers and fix zero-kuzea's inline unstable import",
+      "severity": "low",
+      "evidence": "rpi5 and rpi5-full are near-identical flake wirings differing only in the configuration.nix path; the four x86 hosts share the nixosSystem + pkgs-unstable-x86 + agenix-stack shape. zero-kuzea re-imports nixpkgs-unstable inline `import nixpkgs-unstable { system=...; }` with NO config.allowUnfree (vs the shared pkgs-unstable-x86 the other three reuse) \u2014 a second instantiation and a latent allowUnfree breakage. agenixModule is a hand-rolled inline module duplicated into all 6 hosts.",
+      "recommendation": "Add mkRpiHost and mkX86Host helpers in flake.nix; change zero-kuzea to `inherit pkgs-unstable;`; fold agenixModule + agenix.nixosModules.default into hosts/common.nix so they aren't repeated per host.",
+      "risk": "Low \u2014 pure flake refactor caught by `nix flake check`/eval. zero-kuzea fix removes an eval-cost duplicate with no behavior change today.",
+      "nodeIds": [
+        "host:rpi5",
+        "host:rpi5-full",
+        "host:zero-kuzea",
+        "host:sancta-choir",
+        "host:sancta-claw",
+        "host:hermes-claw",
+        "input:agenix"
+      ],
+      "verdict": {
+        "title": "Add mkRpiHost/mkX86Host helpers and fix zero-kuzea's inline unstable import",
+        "holds": true,
+        "reason": "Verified against /Users/alexandru/nixos-config/flake.nix and the host configs. (1) rpi5 (lines 198-211) and rpi5-full (219-232) are byte-identical wirings except the configuration.nix path \u2014 mkRpiHost is genuinely warranted. (2) zero-kuzea (line 183) inlines `import nixpkgs-unstable { system = \"x86_64-linux\"; }` with NO config.allowUnfree, while sancta-choir/sancta-claw/hermes-claw (lines 133/149/166) all reuse the shared `pkgs-unstable-x86` binding (lines 82-85) which sets `config.allowUnfree = true`. This is a real second nixpkgs-unstable instantiation (eval-cost duplicate) plus a latent allowUnfree gap. (3) agenixModule (defined once at line 92) is appended to all 6 host module lists (grep: 6 occurrences) and could fold into hosts/common.nix, which all 6 hosts import \u2014 directly for 5, transitively for rpi5-full via ../rpi5/configuration.nix. The structural redundancy genuinely exists and consolidating it would not break any host (eval-only refactor, no behavior change today).",
+        "confidence": "high",
+        "correction": "The zero-kuzea fix and the agenixModule fold-into-common.nix are both clean, high-value, and correct as written. The mkRpiHost helper is also justified (rpi5/rpi5-full are identical bar one path). However, mkX86Host is imprecise: the four x86 hosts do NOT share a uniform shape \u2014 sancta-choir has no disko, adds vscode-server + owui-openrouter-stats specialArg; sancta-claw adds disko + kuzea-ws specialArg, no vscode-server; hermes-claw adds disko + hermes-agent.nixosModules.default; zero-kuzea has disko but NO home-manager and NO claude-code. A single mkX86Host would need significant parameterization (extra modules list + extra specialArgs), so its payoff is modest. Recommend prioritizing the two concrete fixes (zero-kuzea `inherit pkgs-unstable;` and folding agenixModule + agenix.nixosModules.default into common.nix) and treating mkX86Host as optional, with the helper accepting `extraModules`/`extraSpecialArgs` to absorb the per-host divergence."
+      }
+    },
+    {
+      "title": "Align bootstrap.sh throttle + stale host help, and .gitignore .ralphex/",
+      "severity": "low",
+      "evidence": "deploy.sh/install.sh apply --max-jobs 1 --cores 1 (the #252 OOM fix) but bootstrap.sh's apply_config does NOT \u2014 the exact unthrottled small-VPS rebuild the throttle was meant to prevent. bootstrap.sh + install.sh help text still list only 'sancta-choir, rpi5' though the repo now has 5+ hosts. .ralphex/ (~1.9MB of progress/, worktrees/, scratch PR bodies, host-key .pub files) is agent scratch checked into the repo root. .specify/ appears unused/vestigial.",
+      "recommendation": "Add --max-jobs 1 --cores 1 to bootstrap.sh's rebuild; refresh the host lists in both help texts; add .ralphex/ to .gitignore (and remove from tracking); confirm .specify/ is unused and delete it.",
+      "risk": "Low \u2014 script/ops hygiene. The throttle change only makes bootstrap safer; verify it still completes on a real bootstrap run.",
+      "nodeIds": [
+        "script:bootstrap",
+        "script:install",
+        "script:deploy",
+        "doc:ralphex-state",
+        "doc:specify"
+      ],
+      "verdict": {
+        "title": "Align bootstrap.sh throttle + stale host help, and .gitignore .ralphex/",
+        "holds": false,
+        "reason": "This finding bundles four sub-claims; verified against the real repo at /Users/alexandru/nixos-config, two hold but two do not, and the two flagship items (.ralphex/ and .specify/) are wrong.\n\n1) bootstrap.sh missing throttle \u2014 TRUE. scripts/bootstrap.sh apply_config() runs `nixos-rebuild build` (line 330) and `switch` (line 344) with NO `--max-jobs 1 --cores 1`. scripts/deploy.sh (lines 121, 152) and scripts/install.sh (lines 100, 126) both carry the throttle. CLAUDE.md documents the #252 OOM context. Genuine inconsistency. (Minor caveat: bootstrap.sh is banner-scoped to fresh RPi5/aarch64 infect, but it does accept any host arg, so the throttle is still warranted.)\n\n2) Stale host help text \u2014 TRUE. scripts/bootstrap.sh:41 lists \"sancta-choir, rpi5\"; scripts/install.sh:27-28 lists only sancta-choir + rpi5. flake.nix:128-238 defines 6 nixosConfigurations (sancta-choir, sancta-claw, hermes-claw, zero-kuzea, rpi5, rpi5-full). Help text is stale.\n\n3) \".gitignore .ralphex/ (and remove from tracking)\" \u2014 FALSE / already done. .ralphex/ is ALREADY the last entry in /Users/alexandru/nixos-config/.gitignore (\"# ralphex scratch state ...\" then \".ralphex/\"). `git ls-files .ralphex/` returns 0 files and `git log --all -- .ralphex/` is empty: it was never tracked. There is even a nested .ralphex/.gitignore. The evidence's premise that .ralphex/ is \"agent scratch checked into the repo root\" is factually false, and the recommended action is a no-op.\n\n4) \".specify/ appears unused/vestigial ... confirm unused and delete it\" \u2014 WRONG and risky. .specify/ has 12 git-tracked files (scripts + templates + memory/constitution.md). All 8 .github/prompts/speckit.*.prompt.md prompts invoke `.specify/scripts/bash/check-prerequisites.sh` (Spec-Kit / speckit integration). It is wired and live, not vestigial; deleting it would break that workflow.\n\nNet: the two valid parts are real but low-severity script hygiene; the headline action (.ralphex/ gitignore) is already complete and the .specify/ delete recommendation is incorrect/destructive. The finding as written does not genuinely hold.",
+        "confidence": "high",
+        "correction": "Drop the .ralphex/ item entirely \u2014 it is already in .gitignore and was never tracked (verified via git ls-files / git log). Do NOT delete .specify/ \u2014 it is the active Spec-Kit integration referenced by all 8 .github/prompts/speckit.*.prompt.md prompts via .specify/scripts/bash/check-prerequisites.sh. Keep only the two valid, low-severity fixes: (a) add `--max-jobs 1 --cores 1` to scripts/bootstrap.sh apply_config()'s `nixos-rebuild build` (line 330) and `switch` (line 344) to match deploy.sh/install.sh and the #252 OOM throttle; (b) refresh the host lists in scripts/bootstrap.sh:41 and scripts/install.sh:27-28 to reflect the 6 current host configs."
+      }
+    }
+  ],
+  "accuracy": {
+    "overallPct": 92,
+    "verdict": "trustworthy-with-fixes",
+    "headline": "The architecture map is broadly trustworthy: structurally correct on inputs, hosts, and wiring, with a handful of well-localized node-field errors, three fabricated secret edges, and five orphaned hardware-config nodes that should be fixed before relying on it.",
+    "findingsHold": 9,
+    "findingsRefuted": 3
+  }
+}
