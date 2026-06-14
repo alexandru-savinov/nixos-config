@@ -102,7 +102,7 @@ let
           # transitive-dep resolution (Node.js traverses the real path, not the
           # .pnpm symlink chain). cp -r preserves relative symlinks so Node.js
           # still resolves packages through .pnpm/<pkg>/node_modules/<dep>/.
-          cp -rL dist package.json $out/
+          cp -r dist package.json $out/
           cp -r node_modules $out/
         '';
       };

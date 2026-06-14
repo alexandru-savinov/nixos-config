@@ -202,13 +202,19 @@ in
     # Requires adminPasswordFile to authenticate with n8n
     communityPackages = [ "n8n-nodes-zip" ];
 
-    # Enable Node.js built-in modules in Code nodes:
+    # Node.js built-in modules in Code nodes:
     # - crypto: efficient SHA256 hashing (pure JS is slow on ARM)
     # - fs, path: file-based job status tracking for async workflow patterns
     # - child_process: NixFrame HEIC→JPEG conversion (removing from Code nodes doesn't
     #   help — n8n's Execute Command node allows the same; n8n user is systemd-sandboxed)
+    allowBuiltinModules = [
+      "fs"
+      "path"
+      "crypto"
+      "child_process"
+    ];
+
     extraEnvironment = {
-      NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto,child_process";
       # Enable n8n Public API for Claude Code MCP integration
       N8N_PUBLIC_API_DISABLED = "false";
       # Increase task runner heap for APKG assembly (reads all card files into one JSON blob)
@@ -329,6 +335,35 @@ in
     enable = true;
     timeZone = "Europe/Bucharest";
     tailscaleServe.enable = true;
+    # Roborock Saros 10 vacuum — bundles python-roborock so the cloud-light
+    # integration (Roborock account login once, then local LAN control) can be
+    # configured via the Add Integration UI / config flow.
+    extraComponents = [ "roborock" ];
+  };
+
+  # python-roborock v4 login workaround. Roborock's v4 auth endpoint
+  # (/api/v4/auth/email/login/code) returns "parameter error" (code 1002) for
+  # some accounts/regions — confirmed for this account: every country/countryCode
+  # /majorVersion variant fails, while the legacy v1 endpoints
+  # (/api/v1/sendEmailCode + /api/v1/loginWithCode) succeed end-to-end. HA's
+  # roborock config flow hard-codes request_code_v4 / code_login_v4, so it can
+  # never finish setup (and would also break later on token-reauth). The library
+  # already delegates to its working v1 methods when country/country_code are
+  # unset, so we force that fallback branch unconditionally.
+  services.home-assistant.package = pkgs.home-assistant.override {
+    packageOverrides = _self: super: {
+      python-roborock = super.python-roborock.overridePythonAttrs (old: {
+        postPatch = (old.postPatch or "") + ''
+          substituteInPlace roborock/web_api.py \
+            --replace-fail \
+              'if await self.country_code is None or await self.country is None:' \
+              'if True:  # nixos: v4 endpoint 1002s for some regions; force v1 request_code' \
+            --replace-fail \
+              'if country_code is None or country is None:' \
+              'if True:  # nixos: force v1 code_login (v4 broken)'
+        '';
+      });
+    };
   };
 
   # Explicit external/internal URLs so HA doesn't auto-detect behind the
@@ -471,6 +506,10 @@ in
     ];
     telegramEnvFile = secret "backup-telegram-env";
   };
+
+  # Operator alert when the DNS-watchdog crash-loop breaker opens (#450).
+  # Reuses the backup alert credentials (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID).
+  services.tailscale-dns-watchdog.telegramEnvFile = secret "backup-telegram-env";
 
   # Add n8n to nixframe group so it can write photos to nixframe's home dir
   users.users.n8n.extraGroups = [ "nixframe" ];

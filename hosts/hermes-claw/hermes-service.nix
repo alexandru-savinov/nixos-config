@@ -23,6 +23,16 @@
     enable = true;
     addToSystemPackages = true;
 
+    # Build the sealed venv with the `messaging` optional-dependency group
+    # so python-telegram-bot (and discord.py, slack-sdk, qrcode) are
+    # bundled. The default `all` group excludes them; without this, the
+    # Telegram adapter logs "python-telegram-bot not installed / No
+    # adapter available for telegram" and the bot stops responding
+    # silently after every container recreation (writable layer wipes
+    # any prior apt/pip install). Resolved by uv from the existing lock
+    # — no collision risk.
+    extraDependencyGroups = [ "messaging" ];
+
     # Container configuration
     container = {
       enable = true;
@@ -39,16 +49,24 @@
 
     # Declarative config — deep-merged into $HERMES_HOME/config.yaml
     settings = {
+      # OpenRouter via the `openrouter` provider. API key in agenix secret
+      # `hermes-env` (OPENROUTER_API_KEY). Previously tried ChatGPT
+      # subscription via openai-codex/gpt-5.5 (PR #467) but the user is on
+      # the free plan — every call hit HTTP 429 usage_limit_reached. The
+      # `:free` Nemotron variant is blocked by OpenRouter's privacy
+      # guardrail (404 "No endpoints available matching your guardrail
+      # restrictions"); the paid Nemotron routes via DeepInfra and runs
+      # cleanly. Cost observed: ~$0.000007 per `reply: pong` call.
       model = {
-        default = "nvidia/nemotron-3-super-120b-a12b:free";
+        default = "nvidia/nemotron-3-super-120b-a12b";
         provider = "openrouter";
         base_url = "https://openrouter.ai/api/v1";
       };
       auxiliary = {
-        title_generation = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        compression = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        session_search = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
-        web_extract = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b:free"; };
+        title_generation = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
+        compression = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
+        session_search = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
+        web_extract = { provider = "openrouter"; model = "nvidia/nemotron-3-super-120b-a12b"; };
       };
       toolsets = [ "all" ];
       memory = { enabled = true; };

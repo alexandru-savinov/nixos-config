@@ -655,7 +655,13 @@ in
     systemd.services.open-webui = {
       # Ensure Qdrant is running before Open-WebUI starts when using Qdrant vector DB
       after = mkIf (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ];
-      wants = mkIf (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ];
+      wants = mkMerge [
+        (mkIf (cfg.vectorDb.type == "qdrant") [ "qdrant.service" ])
+        # PartOf on the serve oneshot only propagates stop/restart, not a plain
+        # start — open-webui also `wants` the serve unit so HTTPS is
+        # reconfigured on every start (pattern from home-assistant.nix).
+        (mkIf cfg.tailscaleServe.enable [ "tailscale-serve-open-webui.service" ])
+      ];
 
       serviceConfig = mkMerge [
         {
@@ -1022,16 +1028,18 @@ in
             """, (user_id, user_email, pw_hash))
             print("Created auth entry for E2E test user")
 
-        # Enable API keys in config if not already enabled
-        cursor.execute("SELECT data FROM config LIMIT 1")
+        # Enable API keys in config if not already enabled. Open-WebUI treats
+        # the highest-id row as the active config — read and update only that
+        # row (an unscoped UPDATE would clobber every row with the one read).
+        cursor.execute("SELECT id, data FROM config ORDER BY id DESC LIMIT 1")
         config_row = cursor.fetchone()
         if config_row:
-            config = json.loads(config_row[0])
+            config = json.loads(config_row[1])
             if "features" not in config:
                 config["features"] = {}
             if not config["features"].get("enable_api_keys"):
                 config["features"]["enable_api_keys"] = True
-                cursor.execute("UPDATE config SET data=?", (json.dumps(config),))
+                cursor.execute("UPDATE config SET data=? WHERE id=?", (json.dumps(config), config_row[0]))
                 print("Enabled API keys in config")
 
         conn.commit()
@@ -1092,6 +1100,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Wait loops below total up to 120s (60s tailscaled + 60s open-webui);
+        # the rpi5 host default of 90s would SIGTERM the oneshot mid-loop.
+        TimeoutStartSec = 150;
       };
 
       script = ''
@@ -1221,9 +1232,10 @@ in
         try:
             cursor = conn.cursor()
 
-            # Get current config
+            # Get current config — Open-WebUI treats the highest-id row as
+            # the active config, so target that (not rowid 1).
             try:
-                cursor.execute("SELECT data FROM config LIMIT 1")
+                cursor.execute("SELECT id, data FROM config ORDER BY id DESC LIMIT 1")
             except sqlite3.OperationalError as e:
                 print(f"ERROR: Failed to query config table: {e}")
                 conn.close()
@@ -1233,7 +1245,7 @@ in
 
             if row:
                 try:
-                    config = json.loads(row[0])
+                    config = json.loads(row[1])
                 except json.JSONDecodeError as e:
                     print(f"ERROR: Config data in database is not valid JSON: {e}")
                     conn.close()
@@ -1271,15 +1283,24 @@ in
 
             if changed:
                 try:
-                    cursor.execute("UPDATE config SET data = ? WHERE rowid = 1", (json.dumps(config),))
-                    if cursor.rowcount == 0:
+                    if row:
+                        cursor.execute(
+                            "UPDATE config SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            (json.dumps(config), row[0]),
+                        )
+                    else:
+                        # version is NOT NULL with no default; created_at and
+                        # updated_at have CURRENT_TIMESTAMP defaults.
                         print("WARNING: No config row found to update, inserting new row")
-                        cursor.execute("INSERT INTO config (data) VALUES (?)", (json.dumps(config),))
+                        cursor.execute(
+                            "INSERT INTO config (data, version) VALUES (?, 0)",
+                            (json.dumps(config),),
+                        )
                     conn.commit()
                     print(f"Memory feature migration complete (updated {cursor.rowcount} row(s))")
-                except sqlite3.OperationalError as e:
+                except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     print(f"ERROR: Failed to update config in database: {e}")
-                    print("HINT: Database may be locked, disk may be full, or filesystem may be read-only")
+                    print("HINT: Database may be locked, disk full, read-only, or the config table schema may not match the expected Open-WebUI schema (id, data, version, created_at, updated_at)")
                     conn.close()
                     sys.exit(1)
             else:

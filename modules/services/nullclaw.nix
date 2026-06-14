@@ -269,7 +269,12 @@ in
     systemd.services.nullclaw = {
       description = "NullClaw AI Assistant (Gateway)";
       after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
+      # The serve oneshot's PartOf only propagates stop/restart, not a plain
+      # start — also `wants` it so HTTPS returns on every nullclaw start.
+      wants = [
+        "network-online.target"
+      ]
+      ++ lib.optionals cfg.tailscaleServe.enable [ "nullclaw-tailscale-serve.service" ];
       wantedBy = [ "multi-user.target" ];
 
       # NullClaw's libcurl dynamically loads NSS modules for DNS resolution.

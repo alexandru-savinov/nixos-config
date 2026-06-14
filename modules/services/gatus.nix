@@ -567,6 +567,11 @@ in
     # Ensure gatus waits for env setup
     systemd.services.gatus.after = mkIf (cfg.apiKeyFile != null) [ "gatus-env-setup.service" ];
 
+    # PartOf on the serve oneshot only propagates stop/restart, not a plain
+    # start — gatus also `wants` the serve unit so HTTPS is reconfigured on
+    # every gatus start (pattern from home-assistant.nix).
+    systemd.services.gatus.wants = mkIf cfg.tailscaleServe.enable [ "tailscale-serve-gatus.service" ];
+
     # Tailscale Serve configuration for HTTPS access
     systemd.services.tailscale-serve-gatus = mkIf cfg.tailscaleServe.enable {
       description = "Configure Tailscale Serve for Gatus HTTPS access";
@@ -588,6 +593,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Wait loops below total up to 120s (60s tailscaled + 60s gatus); the
+        # rpi5 host default of 90s would SIGTERM the oneshot mid-loop.
+        TimeoutStartSec = 150;
       };
 
       script = ''

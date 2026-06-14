@@ -1,5 +1,10 @@
 # Disaster Recovery — sancta-claw
 
+> **Before touching secrets after a re-image:** read
+> [SECRETS-ROTATION.md](SECRETS-ROTATION.md) — running `agenix -r`/`-e` on a
+> host whose SSH host key rotated corrupts secrets (fail-open, empty
+> plaintext).
+
 ## Prerequisites
 
 - Access to Hetzner Cloud console (hetzner.com)

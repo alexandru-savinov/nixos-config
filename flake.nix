@@ -26,6 +26,15 @@
     # Uses nvmd/nixos-raspberrypi which has the same kernel as the pre-built SD image
     # Cache: nixos-raspberrypi.cachix.org
     # See: https://github.com/nvmd/nixos-raspberrypi
+    #
+    # INTENTIONALLY no `inputs.nixpkgs.follows = "nixpkgs"` (#182): the
+    # nixos-raspberrypi binary cache (kernel, firmware) is built against ITS
+    # pinned nixpkgs. Following our nixpkgs would change the kernel derivation
+    # hash and force multi-hour from-source kernel builds on the 4GB Pi.
+    # Consequence: rpi5/rpi5-full track nixos-raspberrypi's nixpkgs pin while
+    # the other hosts track the root `nixpkgs` input — both on the same
+    # nixos-25.11 branch since the 25.11 upgrade, but at slightly different
+    # revisions (days apart). Keep both fresh with `nix flake update`.
     nixos-raspberrypi = {
       url = "github:nvmd/nixos-raspberrypi";
     };
@@ -46,6 +55,7 @@
       url = "github:alexandru-savinov/claude-shared";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.home-manager.follows = "home-manager";
+      inputs.claude-code.follows = "claude-code";
     };
     kuzea-workspace = {
       url = "github:alexandru-savinov/kuzea-workspace";
@@ -60,8 +70,20 @@
     };
     # Hermes Agent (Nous Research) — AI agent framework with NixOS module.
     # Container mode: uv2nix-built binary bind-mounted into Ubuntu, writable layer.
+    # Pinned to v0.16.0 release commit (3c231eb, 2026-06-05). v0.16 ships
+    # locales/ in $out/share/hermes-agent/ and sets HERMES_BUNDLED_LOCALES
+    # in the wrapper, fixing /status etc. rendering as raw i18n keys
+    # (gateway.status.header, …). Earlier releases (incl. v0.14.0 /
+    # v2026.5.16) ship the locales as setuptools data-files, which the
+    # uv2nix venv places where agent.i18n._locales_dir() does NOT look —
+    # so /status was returning literal key strings to Telegram before
+    # this upgrade. Upstream nix/lib.nix on 3c231eb pins a stale
+    # npmDepsHash for hermes-tui; we patch it in `outputs` via
+    # runCommand+callPackage (see `hermesAgentPatched` below) so the fix
+    # stays in git, not /tmp. Drop the overlay once upstream's
+    # auto-fix-lockfiles CI catches up.
     hermes-agent = {
-      url = "github:NousResearch/hermes-agent";
+      url = "github:NousResearch/hermes-agent/3c231eb3979ab9c57d5cd6d02f1d577a3b718b43";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -94,6 +116,37 @@
           agenix.packages.${pkgs.system}.default
         ];
       };
+
+      # Patched hermes-agent package: upstream v0.16.0 nix/lib.nix pins an
+      # npmDepsHash for hermes-tui that is stale (FOD hash mismatch breaks
+      # the build). We materialize the upstream source, bump the hash in
+      # place via substituteInPlace, then call the upstream build recipe
+      # directly via callPackage (avoids getFlake — which pure-eval rejects
+      # on store paths). The recipe's inputs (uv2nix, pyproject-nix, etc.)
+      # are re-used from hermes-agent's own flake inputs.
+      # Remove this overlay once upstream's auto-fix-lockfiles CI catches up.
+      hermesAgentPatched = system:
+        let
+          pkgs = nixpkgsFor.${system};
+          # Patcher runs on target arch (x86_64 for hermes-claw): native on
+          # GitHub CI runners; on rpi5 (aarch64) the nixos-rebuild
+          # `--build-host root@hermes-claw` flag delegates the IFD build
+          # over SSH-ng. If you ever `nix eval` this output directly on
+          # rpi5 without --builders, add hermes-claw to nix.buildMachines.
+          patchedSrc = pkgs.runCommand "hermes-agent-patched-src" { } ''
+            cp -r ${hermes-agent} $out
+            chmod -R +w $out
+            substituteInPlace $out/nix/lib.nix \
+              --replace-fail \
+                'sha256-cY+gM1FnTBjmld/uqt7RsqRtW9uQGs8LGokCcxu7bjQ=' \
+                'sha256-hgnqcpKRPztHhDEpwC7HJrALuJp9wsrV4+GJ6t6HI2c='
+          '';
+        in
+        pkgs.callPackage "${patchedSrc}/nix/hermes-agent.nix" {
+          inherit (hermes-agent.inputs) uv2nix pyproject-nix pyproject-build-systems;
+          npm-lockfile-fix = hermes-agent.inputs.npm-lockfile-fix.packages.${system}.default;
+          rev = null;
+        };
     in
     {
       # Formatter for `nix fmt`
@@ -131,7 +184,7 @@
           system = "x86_64-linux";
           specialArgs = {
             pkgs-unstable = pkgs-unstable-x86;
-            inherit self claude-code owui-openrouter-stats;
+            inherit self claude-code claude-shared owui-openrouter-stats;
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix
@@ -173,6 +226,8 @@
             agenix.nixosModules.default
             agenixModule
             hermes-agent.nixosModules.default
+            # Override default package with our patched hermes-tui hash.
+            { services.hermes-agent.package = hermesAgentPatched "x86_64-linux"; }
           ];
         };
 
@@ -251,6 +306,12 @@
           # See pkgs/ralphex.nix; install via environment.systemPackages.
           ralphex = pkgs.callPackage ./pkgs/ralphex.nix { };
 
+          # Declarative n8n VM test (#42). A package (not a check) so plain
+          # `nix flake check` stays light — see the note in the checks
+          # section. CI builds it in the "Build x86_64 Configs" job; run
+          # locally with: nix build .#n8n-declarative-test
+          n8n-declarative-test = import ./tests/n8n-declarative.nix { inherit pkgs self; };
+
           # Fresh system installation script
           install = pkgs.writeShellApplication {
             name = "nixos-install";
@@ -307,6 +368,24 @@
           # OpenRouter, verifies provider.zdr=true is injected on the wire
           # and non-ZDR models are rejected before reaching the upstream.
           openclaw-zdr-proxy = pkgs.testers.nixosTest (import ./tests/openclaw-zdr-proxy.nix { inherit pkgs; });
+
+          # Agenix recipient-drift + fail-open corruption guard (#448):
+          # on-disk `-> ` stanza counts must match secrets.nix declarations,
+          # and no .age payload may carry the empty-plaintext signature.
+          secrets-recipient-guard = import ./tests/secrets-recipient-guard.nix { inherit pkgs; };
+
+          # Workflow JSON sanity (#100): malformed JSON or a missing stable
+          # `id` used to fail only at runtime during ExecStartPost import.
+          n8n-workflows-valid = import ./tests/n8n-workflows-valid.nix { inherit pkgs; };
+
+          # NOTE: the declarative n8n VM test (#42) deliberately lives under
+          # packages.<system>.n8n-declarative-test, NOT here. `nix flake
+          # check` builds every check inside the resource-constrained
+          # "Check Flake & Formatting" CI job — adding the n8n source build
+          # (unfree, never binary-cached) plus a second KVM VM there killed
+          # the runner with a shutdown signal. CI runs the test as an
+          # explicit step in the "Build x86_64 Configs" job instead, which
+          # frees ~30GB disk first and runs nothing concurrently.
         };
 
       # Apps - makes packages runnable with `nix run`

@@ -93,6 +93,9 @@ in
         Generate with: openssl rand -hex 32
         Use agenix for secret management.
         WARNING: If null, credentials will not be encrypted (insecure).
+        ROTATION: changing this key makes existing stored credentials
+        unreadable — follow docs/N8N-KEY-ROTATION.md (export/inventory
+        first, swap key, wipe credentials_entity, re-enter/re-import).
       '';
     };
 
@@ -300,6 +303,22 @@ in
       '';
     };
 
+    allowBuiltinModules = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = literalExpression ''[ "fs" "path" "crypto" ]'';
+      description = ''
+        Node.js built-in modules usable inside n8n Code nodes (rendered as
+        NODE_FUNCTION_ALLOW_BUILTIN). Type-safe, mergeable alternative to
+        setting the raw variable via extraEnvironment.
+
+        SECURITY: every module listed widens what workflow authors can do.
+        "child_process" in particular allows arbitrary command execution as
+        the n8n user (equivalent to the built-in Execute Command node; the
+        n8n user is systemd-sandboxed). Keep this list minimal.
+      '';
+    };
+
     communityPackages = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -356,6 +375,14 @@ in
           Set it to an agenix secret path: config.age.secrets.n8n-encryption-key.path
         '';
       }
+      {
+        assertion = !(cfg.allowBuiltinModules != [ ] && cfg.extraEnvironment ? NODE_FUNCTION_ALLOW_BUILTIN);
+        message = ''
+          services.n8n-tailscale: NODE_FUNCTION_ALLOW_BUILTIN is set both via
+          allowBuiltinModules and extraEnvironment — the duplicate env-file
+          lines would silently shadow one another. Use allowBuiltinModules only.
+        '';
+      }
     ];
 
     # Enable native n8n service
@@ -367,6 +394,10 @@ in
     # Configure systemd service with environment variables
     # Uses ExecStartPre with "+" prefix to run as root for secret file setup
     systemd.services.n8n = {
+      # PartOf on the serve oneshot only propagates stop/restart, not a plain
+      # start — n8n also `wants` the serve unit so HTTPS is reconfigured on
+      # every n8n start (pattern from home-assistant.nix).
+      wants = mkIf cfg.tailscaleServe.enable [ "tailscale-serve-n8n.service" ];
       serviceConfig = {
         # Use static n8n user instead of DynamicUser to ensure consistent file ownership
         # This prevents SQLite database lock conflicts with n8n-workflow-sync service
@@ -478,6 +509,11 @@ in
 
                         # Concurrency limit
                         echo "N8N_CONCURRENCY_PRODUCTION_LIMIT=${toString cfg.concurrencyLimit}" >> "$ENV_FILE"
+
+                        # Node.js built-ins allowed in Code nodes (typed option)
+                        ${optionalString (cfg.allowBuiltinModules != [ ]) ''
+                          echo "NODE_FUNCTION_ALLOW_BUILTIN=${concatStringsSep "," cfg.allowBuiltinModules}" >> "$ENV_FILE"
+                        ''}
 
                         # Extra environment variables (values escaped to prevent shell injection)
                         ${concatStringsSep "\n" (mapAttrsToList (name: value: ''
@@ -745,6 +781,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # Wait loops below total up to 120s (60s tailscaled + 60s n8n); the
+        # rpi5 host default of 90s would SIGTERM the oneshot mid-loop.
+        TimeoutStartSec = 150;
       };
 
       script = ''
