@@ -62,6 +62,7 @@
       # Open-WebUI secrets
       open-webui-secret-key = secret "open-webui-secret-key";
       openrouter-api-key = secret "openrouter-api-key";
+      sancta-port-openrouter-prd = secret "sancta-port-openrouter-prd";
       tavily-api-key = secret "tavily-api-key";
       e2e-test-api-key = secret "e2e-test-api-key";
     };
@@ -76,7 +77,7 @@
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
 
     # OpenRouter as LLM backend
-    openai.apiKeyFile = config.age.secrets.openrouter-api-key.path;
+    openai.apiKeyFile = config.age.secrets.sancta-port-openrouter-prd.path;
 
     # OIDC via Tailscale tsidp
     oidc.enable = true;

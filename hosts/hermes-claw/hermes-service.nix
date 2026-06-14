@@ -19,6 +19,14 @@
   };
 
   # ── Hermes Agent (upstream NixOS module, container mode) ─────────────
+  # OR virtual key for hermes (Sancta Port - dev tier, env-file format).
+  age.secrets.sancta-port-openrouter-dev = {
+    file = ../../secrets/sancta-port-openrouter-dev.age;
+    owner = "hermes";
+    group = "hermes";
+    mode = "0400";
+  };
+
   services.hermes-agent = {
     enable = true;
     addToSystemPackages = true;
@@ -77,7 +85,10 @@
     };
 
     # Secrets via combined agenix env file
-    environmentFiles = [ config.age.secrets.hermes-env.path ];
+    environmentFiles = [
+      config.age.secrets.hermes-env.path # TELEGRAM_BOT_TOKEN (legacy file; OR_KEY here shadowed by dev file below)
+      config.age.secrets.sancta-port-openrouter-dev.path # OPENROUTER_API_KEY (env-file format)
+    ];
 
     # Non-secret environment
     environment = {
