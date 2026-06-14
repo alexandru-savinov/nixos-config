@@ -42,6 +42,7 @@
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/claude.nix
+    ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
   ];
@@ -49,6 +50,11 @@
   # Enable development tools and Claude Code
   customModules.dev-tools.enable = true;
   customModules.claude.enable = true;
+
+  # herdr — always-on terminal workspace server for AI coding agents. The server
+  # lives here so long-running sessions survive the Mac sleeping; attach with
+  # `herdr --remote root@sancta-choir-1.tail4249a9.ts.net`.
+  customModules.herdr.enable = true;
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets =
