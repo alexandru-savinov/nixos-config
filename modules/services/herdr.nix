@@ -40,15 +40,32 @@ let
     };
   };
 
+  herdrFlake = "github:alexandru-savinov/nixos-config#sancta-choir";
+
   # Fixed-flake deploy wrapper — the ONLY nixos-rebuild path the herdr user can
   # sudo. Pins the flake to the canonical (CI-checked, merged) config and takes
   # NO user arguments, so an agent in a pane cannot run
   # `sudo nixos-rebuild --flake github:attacker/...` to root the box; risky
   # changes must go through PR -> CI -> merge before they can be deployed here.
+  #
+  # Build-before-switch + `--max-jobs 1 --cores 1` throttle per CLAUDE.md's VPS
+  # deploy rule: an OOM-killed build on this small-RAM box must NOT leave a
+  # half-activated, unbootable system (the #252 outage). `set -e` gates the
+  # switch on a clean build; `--refresh` defeats the flake branch-cache
+  # staleness gotcha.
   herdr-deploy = pkgs.writeShellScriptBin "herdr-deploy" ''
     set -euo pipefail
+    /run/current-system/sw/bin/nixos-rebuild build \
+      --flake ${herdrFlake} --refresh --max-jobs 1 --cores 1
     exec /run/current-system/sw/bin/nixos-rebuild switch \
-      --flake github:alexandru-savinov/nixos-config#sancta-choir
+      --flake ${herdrFlake} --max-jobs 1 --cores 1
+  '';
+
+  # Scoped log reader — herdr-server's OWN journal only, no user args, so a pane
+  # cannot widen it to other services' secret-bearing logs (open-webui / n8n API
+  # keys, etc.). Replaces broad systemd-journal group membership.
+  herdr-logs = pkgs.writeShellScriptBin "herdr-logs" ''
+    exec /run/current-system/sw/bin/journalctl -u herdr-server -n 200 --no-pager
   '';
 in
 {
@@ -74,6 +91,7 @@ in
     environment.systemPackages = [
       herdr
       herdr-deploy
+      herdr-logs
     ];
 
     # Dedicated unprivileged user the server runs as and that you SSH in as to
@@ -84,8 +102,6 @@ in
     users.users.herdr = {
       isSystemUser = true;
       group = "herdr";
-      # Read journal logs without sudo (replaces the old `sudo journalctl` rule).
-      extraGroups = [ "systemd-journal" ];
       home = "/var/lib/herdr";
       createHome = true;
       shell = pkgs.bash;
@@ -94,22 +110,27 @@ in
     users.groups.herdr = { };
 
     # Scoped, auditable escalation. Agent panes run as the unprivileged herdr
-    # user and get passwordless sudo for ONLY two things:
-    #   - herdr-deploy: the fixed-flake wrapper above (no user args), so deploys
-    #     are constrained to the canonical CI-checked config — NOT raw
-    #     `nixos-rebuild`, which would accept `--flake github:attacker/...` and
-    #     hand a pane full root.
+    # user and get passwordless sudo for ONLY three fixed wrappers/commands —
+    # none of which takes attacker-controlled arguments:
+    #   - herdr-deploy: build-then-switch of the canonical CI-checked flake (no
+    #     user args), NOT raw `nixos-rebuild` (which would accept
+    #     `--flake github:attacker/...` and hand a pane full root).
+    #   - herdr-logs: reads herdr-server's OWN journal only — not other services'
+    #     secret-bearing logs (hence no broad systemd-journal group).
     #   - nixos-collect-garbage: prunes old generations; not a code-exec vector.
-    # Log access is via the systemd-journal group (no sudo). Broad `systemctl` is
-    # intentionally NOT granted — `sudo systemctl stop sshd` / `start
-    # emergency.target` would be a trivial lockout/escalation; a redeploy via
-    # herdr-deploy restarts changed units.
+    # Broad `systemctl` is intentionally NOT granted — `sudo systemctl stop sshd`
+    # / `start emergency.target` would be a trivial lockout/escalation; a redeploy
+    # via herdr-deploy restarts changed units.
     security.sudo.extraRules = [
       {
         users = [ "herdr" ];
         commands = [
           {
             command = "/run/current-system/sw/bin/herdr-deploy";
+            options = [ "NOPASSWD" ];
+          }
+          {
+            command = "/run/current-system/sw/bin/herdr-logs";
             options = [ "NOPASSWD" ];
           }
           {
