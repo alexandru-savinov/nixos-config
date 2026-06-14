@@ -3,8 +3,9 @@
 # herdr — terminal workspace manager for AI coding agents.
 #
 # Runs the herdr *server* on this host (always-on, supervised) so long-running
-# agent sessions live on the VPS and survive the Mac going to sleep. Attach from
-# the Mac with:  herdr --remote root@<this-host>
+# agent sessions live on the VPS and survive the Mac going to sleep. The server
+# runs as a dedicated unprivileged `herdr` user (not root); attach from the Mac
+# with:  herdr --remote herdr@<this-host>
 #
 # Packaging: the upstream prebuilt release binary is statically linked
 # (verified `file`: "static-pie linked", no INTERP segment, no NEEDED libs), so
@@ -42,19 +43,74 @@ in
 {
   options.customModules.herdr = {
     enable = lib.mkEnableOption "herdr terminal workspace server for AI coding agents";
+
+    authorizedKeys = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = config.users.users.root.openssh.authorizedKeys.keys;
+      defaultText = lib.literalExpression "config.users.users.root.openssh.authorizedKeys.keys";
+      description = ''
+        SSH public keys allowed to attach as the herdr user
+        (`herdr --remote herdr@host`). Defaults to root's authorized keys, so
+        whoever already manages this VPS can attach.
+      '';
+    };
   };
 
   config = lib.mkIf config.customModules.herdr.enable {
-    # herdr CLI on PATH — required so `herdr --remote root@host` finds the binary
+    # herdr CLI on PATH — required so `herdr --remote herdr@host` finds the binary
     # on the remote, and so you can run `herdr` locally on the box.
     environment.systemPackages = [ herdr ];
 
-    # Always-on, supervised server. Runs as root with HOME=/root so it owns
-    # /root/.config/herdr/herdr.sock — the same socket `herdr --remote root@host`
-    # uses — so the remote client ATTACHES to this server instead of spawning a
-    # rival. Restart=on-failure + WantedBy=multi-user.target give auto-restart on
-    # crash and return-after-reboot. `herdr server` runs in the foreground, so
-    # Type=simple lets systemd track it directly.
+    # Dedicated unprivileged user the server runs as and that you SSH in as to
+    # attach (`herdr --remote herdr@host`). Mirrors the openclaw/nullclaw pattern:
+    # keeping the long-lived, opaque prebuilt binary off root shrinks the blast
+    # radius of a compromise. The attach socket lives under this user's HOME at
+    # /var/lib/herdr/.config/herdr/herdr.sock.
+    users.users.herdr = {
+      isSystemUser = true;
+      group = "herdr";
+      home = "/var/lib/herdr";
+      createHome = true;
+      shell = pkgs.bash;
+      openssh.authorizedKeys.keys = config.customModules.herdr.authorizedKeys;
+    };
+    users.groups.herdr = { };
+
+    # Scoped, auditable escalation: agent panes run as the unprivileged herdr
+    # user but can still drive the system ops they need (deploy, service/log
+    # inspection, GC) via passwordless sudo for exactly these commands — nothing
+    # else. Paths are the stable /run/current-system/sw/bin/* that `sudo <cmd>`
+    # resolves to via PATH.
+    security.sudo.extraRules = [
+      {
+        users = [ "herdr" ];
+        commands = [
+          {
+            command = "/run/current-system/sw/bin/nixos-rebuild";
+            options = [ "NOPASSWD" ];
+          }
+          {
+            command = "/run/current-system/sw/bin/systemctl";
+            options = [ "NOPASSWD" ];
+          }
+          {
+            command = "/run/current-system/sw/bin/journalctl";
+            options = [ "NOPASSWD" ];
+          }
+          {
+            command = "/run/current-system/sw/bin/nixos-collect-garbage";
+            options = [ "NOPASSWD" ];
+          }
+        ];
+      }
+    ];
+
+    # Always-on, supervised server running as the unprivileged herdr user with
+    # HOME=/var/lib/herdr so it owns /var/lib/herdr/.config/herdr/herdr.sock — the
+    # socket `herdr --remote herdr@host` attaches to, so the remote client ATTACHES
+    # to this server instead of spawning a rival. Restart=on-failure +
+    # WantedBy=multi-user.target give auto-restart on crash and return-after-reboot.
+    # `herdr server` runs in the foreground, so Type=simple lets systemd track it.
     systemd.services.herdr-server = {
       description = "herdr terminal workspace server (AI coding agents)";
       wantedBy = [ "multi-user.target" ];
@@ -69,11 +125,12 @@ in
       # curl must be on the unit's PATH or the manifest refresh / update check
       # fail at startup; agent detection is herdr's headline feature on this host.
       path = [ pkgs.curl ];
-      environment.HOME = "/root";
+      environment.HOME = "/var/lib/herdr";
       serviceConfig = {
         Type = "simple";
-        User = "root";
-        WorkingDirectory = "/root";
+        User = "herdr";
+        Group = "herdr";
+        WorkingDirectory = "/var/lib/herdr";
         ExecStart = "${lib.getExe herdr} server";
         Restart = "on-failure";
         RestartSec = 5;

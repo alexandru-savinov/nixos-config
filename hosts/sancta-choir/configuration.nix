@@ -54,8 +54,9 @@
   };
 
   # herdr — always-on terminal workspace server for AI coding agents. The server
-  # lives here so long-running sessions survive the Mac sleeping; attach with
-  # `herdr --remote root@sancta-choir-1.tail4249a9.ts.net`.
+  # lives here so long-running sessions survive the Mac sleeping; it runs as a
+  # dedicated unprivileged `herdr` user (scoped passwordless sudo for deploy/ops),
+  # attach with `herdr --remote herdr@sancta-choir-1.tail4249a9.ts.net`.
   customModules.herdr.enable = true;
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
