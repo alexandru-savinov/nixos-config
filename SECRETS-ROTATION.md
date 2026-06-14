@@ -3,6 +3,68 @@
 ## Overview
 This document describes how to rotate secrets managed by agenix in the nixos-config repository.
 
+## ⚠️ Critical: agenix "fails open" on host-key rotation
+
+`agenix -e` / `agenix -r` re-encrypts a secret to the recipient set **declared
+in `secrets.nix`**, using the running host's SSH **host key** to first *decrypt*
+the existing ciphertext. If that host key has rotated away from the key the
+`.age` file was encrypted to, agenix **cannot decrypt the old content and
+re-encrypts EMPTY plaintext** to the new recipients. The result looks
+well-formed (valid `age-encryption.org/v1` header, valid recipient stanzas) but
+carries zero useful bytes — and there is **no error**: the failure only surfaces
+later when the consuming service breaks.
+
+This happened in this repo: re-imaging `rpi5` (the `nixos-raspberrypi` switch,
+`e5339b1`/#57) rotated its host key and corrupted five secrets, followed by a
+restore → re-corrupt → restore thrash (#60/#61/#62). Corrupted files collapsed
+to a uniform ~432 bytes (a 32-byte ciphertext = the age STREAM tag for a
+zero-length payload).
+
+**Rules to avoid a recurrence:**
+
+1. **Re-encrypt a secret ONLY from a host whose *current* SSH host key still
+   matches one of that secret's recipient stanzas.** Re-imaged a host? Do not
+   run `agenix -e`/`-r` on it until its new key is added as a recipient *and*
+   the files were re-encrypted from a host that could still decrypt them.
+2. **Recipient lists serve two roles** — they must cover both the runtime host
+   *and* every machine you EDIT from (this is why `secrets.nix` keeps `rpi5` in
+   `clawKeys`, the `eff778c` fix).
+3. **Disposable VPS hosts encrypt to a stable `age1…` recovery identity**
+   decoupled from the SSH host key (`age.identityPaths = /root/.age/recovery.key`
+   on sancta-claw / hermes-claw / zero-kuzea), so a re-image decrypts on first
+   boot with no re-keying.
+4. **CI guards this mechanically** — `scripts/check-secret-recipients.sh` (run in
+   `.github/workflows/check.yml`) flags recipient drift (on-disk `-> ` stanza
+   count vs declared `publicKeys`) and the empty-plaintext signature, read-only,
+   without ever decrypting.
+
+### Risk posture: `rpi5` / `rpi5-full` / `sancta-choir` (decision, #448)
+
+These three hosts still use their **SSH host key** as the agenix recipient
+(`secrets/secrets.nix:7`), so they remain exposed to the fail-open mode above on
+a future re-image — unlike the three VPS hosts, which carry a standalone
+recovery key. **Current decision: accepted risk**, mitigated by (a) the CI drift
+guard, (b) this documented procedure, and (c) keeping a decrypting host available
+before any re-image. Giving `rpi5` the same `recovery.key` + `age.identityPaths`
+treatment is tracked by the agenix recipient-model refactor in **#414**; revisit
+the posture there rather than ad hoc.
+
+### Reconciling recipient drift (manual, host-gated)
+
+`scripts/check-secret-recipients.sh` currently WARNs on a known drift:
+`secrets/hermes-env.age` is encrypted on-disk to **5** recipients but
+`secrets.nix` declares **3** (`users ++ [ rpi5 hermes-claw ]`). To reconcile,
+**on a host whose key matches a current stanza** (e.g. `rpi5`):
+
+```bash
+cd secrets && agenix -e hermes-env.age   # re-saves to the 3 declared recipients
+# verify: grep -ac '^-> ' hermes-env.age  → 3
+```
+
+Then remove `hermes-env.age` from `KNOWN_PENDING_DRIFT` in the guard script.
+**Do not** run this from a host (like a darwin laptop) that cannot decrypt the
+file — that is exactly the fail-open trap above.
+
 ## Prerequisites
 - SSH access to the host machine
 - SSH key authorized in `secrets/secrets.nix`
