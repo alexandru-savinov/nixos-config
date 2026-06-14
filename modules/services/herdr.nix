@@ -48,17 +48,23 @@ let
   # `sudo nixos-rebuild --flake github:attacker/...` to root the box; risky
   # changes must go through PR -> CI -> merge before they can be deployed here.
   #
-  # Build-before-switch + `--max-jobs 1 --cores 1` throttle per CLAUDE.md's VPS
-  # deploy rule: an OOM-killed build on this small-RAM box must NOT leave a
-  # half-activated, unbootable system (the #252 outage). `set -e` gates the
-  # switch on a clean build; `--refresh` defeats the flake branch-cache
-  # staleness gotcha.
+  # Build-gate + `--max-jobs 1 --cores 1` throttle + `boot` (not `switch`) per
+  # CLAUDE.md's VPS deploy rule for these GRUB-based Hetzner hosts:
+  #   - throttled `build` first, `set -e` gating the activation on a clean build,
+  #     so an OOM-killed build on this small-RAM box can't strand the system
+  #     (the #252 outage);
+  #   - `boot` instead of `switch` so a bad/failed activation only costs a
+  #     reboot — the live system is never left half-switched. It also avoids the
+  #     pre-existing open-webui-memory-migration `switch` exit-4 masking
+  #     herdr-deploy's own status. (New generation activates on next reboot.)
+  #   - `--refresh` on both steps defeats the flake branch-cache staleness gotcha
+  #     and keeps build+boot on the same resolved revision.
   herdr-deploy = pkgs.writeShellScriptBin "herdr-deploy" ''
     set -euo pipefail
     /run/current-system/sw/bin/nixos-rebuild build \
       --flake ${herdrFlake} --refresh --max-jobs 1 --cores 1
-    exec /run/current-system/sw/bin/nixos-rebuild switch \
-      --flake ${herdrFlake} --max-jobs 1 --cores 1
+    exec /run/current-system/sw/bin/nixos-rebuild boot \
+      --flake ${herdrFlake} --refresh --max-jobs 1 --cores 1
   '';
 
   # Scoped log reader — herdr-server's OWN journal only, no user args, so a pane
@@ -162,6 +168,11 @@ in
       # fail at startup; agent detection is herdr's headline feature on this host.
       path = [ pkgs.curl ];
       environment.HOME = "/var/lib/herdr";
+      # Latch to `failed` after 5 crashes in 60s rather than looping forever at
+      # RestartSec=5 (which, against systemd's default 10s window, would never
+      # trip the burst cap) — a persistent crash becomes observable, not silent.
+      startLimitIntervalSec = 60;
+      startLimitBurst = 5;
       serviceConfig = {
         Type = "simple";
         User = "herdr";
