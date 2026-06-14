@@ -58,11 +58,16 @@ in
     systemd.services.herdr-server = {
       description = "herdr terminal workspace server (AI coding agents)";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
-      # herdr shells out to curl to refresh its agent-state detection manifest
-      # (idle/working/blocked) and to check for updates. Without curl on the
-      # unit's PATH both fail at startup; agent detection is herdr's headline
-      # feature on this agent-runtime host, so put curl within reach.
+      # herdr shells out to curl at startup to refresh its agent-state detection
+      # manifest (idle/working/blocked) and to check for updates, so order after
+      # real connectivity — network.target only means networking *started*, not
+      # that an interface has a routable IP / DNS. Match every other networked
+      # service in this repo (qdrant, n8n, openclaw, gatus, ...) that waits on
+      # network-online.target; otherwise those boot-time fetches race the network.
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      # curl must be on the unit's PATH or the manifest refresh / update check
+      # fail at startup; agent detection is herdr's headline feature on this host.
       path = [ pkgs.curl ];
       environment.HOME = "/root";
       serviceConfig = {
