@@ -59,6 +59,11 @@ in
       description = "herdr terminal workspace server (AI coding agents)";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+      # herdr shells out to curl to refresh its agent-state detection manifest
+      # (idle/working/blocked) and to check for updates. Without curl on the
+      # unit's PATH both fail at startup; agent detection is herdr's headline
+      # feature on this agent-runtime host, so put curl within reach.
+      path = [ pkgs.curl ];
       environment.HOME = "/root";
       serviceConfig = {
         Type = "simple";
