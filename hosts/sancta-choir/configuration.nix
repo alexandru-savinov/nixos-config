@@ -56,10 +56,15 @@
     users = [ "root" "herdr" ];
   };
 
-  # OpenAI Codex CLI (github.com/openai/codex) — a second terminal coding agent
-  # alongside Claude Code, available to all users (incl. herdr panes) on this
-  # agent-runtime host.
-  environment.systemPackages = [ pkgs.codex ];
+  # Agent tooling on the system PATH so herdr panes (which inherit the
+  # herdr-server unit's PATH, not a login shell's) can find + launch them:
+  # OpenAI Codex CLI (github.com/openai/codex) as a second coding agent
+  # alongside Claude Code, plus git + curl that the agents and herdr need.
+  environment.systemPackages = [
+    pkgs.codex
+    pkgs.git
+    pkgs.curl
+  ];
 
   # herdr — always-on terminal workspace server for AI coding agents. The server
   # lives here so long-running sessions survive the Mac sleeping; it runs as a
