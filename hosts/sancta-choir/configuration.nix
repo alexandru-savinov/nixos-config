@@ -66,6 +66,22 @@
     pkgs.curl
   ];
 
+  # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
+  # which clobbers the claude agent-state hook that `herdr integration install`
+  # wires into it — and a no-change `nixos-rebuild switch` re-runs HM but does
+  # NOT restart herdr-server, so its ExecStartPost wouldn't re-add the hook.
+  # Re-install both integrations at the END of herdr's HM activation (after the
+  # settings file is written), so the hook is present after every deploy, even
+  # no-change ones. (codex stores its hook in its own hooks.json, which HM does
+  # not touch, but we re-run it too for symmetry/idempotence.)
+  home-manager.users.herdr = { lib, ... }: {
+    home.activation.herdrIntegrations = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      export PATH="/etc/profiles/per-user/herdr/bin:/run/current-system/sw/bin:$PATH"
+      herdr integration install claude || true
+      herdr integration install codex || true
+    '';
+  };
+
   # herdr — always-on terminal workspace server for AI coding agents. The server
   # lives here so long-running sessions survive the Mac sleeping; it runs as a
   # dedicated unprivileged `herdr` user whose only sudo is a fixed-flake deploy
