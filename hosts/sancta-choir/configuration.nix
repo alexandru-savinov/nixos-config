@@ -50,8 +50,21 @@
   customModules.dev-tools.enable = true;
   customModules.claudeShared = {
     enable = true;
-    users = [ "root" ];
+    # `herdr` is included so the dedicated herdr user (which runs the herdr
+    # server + agent panes) gets the full Claude Code stack — claude CLI, skills,
+    # agents, commands — under /var/lib/herdr/.claude, not just root.
+    users = [ "root" "herdr" ];
   };
+
+  # Agent tooling on the system PATH so herdr panes (which inherit the
+  # herdr-server unit's PATH, not a login shell's) can find + launch them:
+  # OpenAI Codex CLI (github.com/openai/codex) as a second coding agent
+  # alongside Claude Code, plus git + curl that the agents and herdr need.
+  environment.systemPackages = [
+    pkgs.codex
+    pkgs.git
+    pkgs.curl
+  ];
 
   # herdr — always-on terminal workspace server for AI coding agents. The server
   # lives here so long-running sessions survive the Mac sleeping; it runs as a

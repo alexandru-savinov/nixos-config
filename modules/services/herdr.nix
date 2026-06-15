@@ -174,12 +174,29 @@ in
       # that an interface has a routable IP / DNS. Match every other networked
       # service in this repo (qdrant, n8n, openclaw, gatus, ...) that waits on
       # network-online.target; otherwise those boot-time fetches race the network.
-      after = [ "network-online.target" ];
+      # Also order after the herdr user's home-manager activation: it writes
+      # ~/.claude/settings.json, and the ExecStartPost below wires the claude
+      # agent-state hook INTO that file — if the server (and its ExecStartPost)
+      # started before HM finished, HM clobbers the hook (the deploy-time race we
+      # hit). Ordering after HM makes ExecStartPost the last writer, every time.
+      after = [
+        "network-online.target"
+        "home-manager-herdr.service"
+      ];
       wants = [ "network-online.target" ];
-      # curl must be on the unit's PATH or the manifest refresh / update check
-      # fail at startup; agent detection is herdr's headline feature on this host.
-      path = [ pkgs.curl ];
-      environment.HOME = "/var/lib/herdr";
+      # herdr panes + integration hooks/launching inherit THIS unit's environment
+      # (they are children of the long-lived server, NOT login shells), so the
+      # agent binaries must be on this PATH or `herdr` finds no integrations and
+      # can't launch them — and curl must be here for the agent-state manifest
+      # refresh. Set explicitly (not via `path = [...]`) because claude lives in
+      # the per-user profile dir, not a single package output:
+      #   /etc/profiles/per-user/herdr/bin : claude (+ skills/agents, claudeShared)
+      #   /run/current-system/sw/bin        : codex, git, curl, coreutils, ...
+      #   /run/wrappers/bin                 : sudo (for herdr-deploy)
+      environment = {
+        HOME = "/var/lib/herdr";
+        PATH = lib.mkForce "/etc/profiles/per-user/herdr/bin:/run/current-system/sw/bin:/run/wrappers/bin";
+      };
       # Latch to `failed` after 5 crashes in 60s rather than looping forever at
       # RestartSec=5 (which, against systemd's default 10s window, would never
       # trip the burst cap) — a persistent crash becomes observable, not silent.
@@ -191,6 +208,15 @@ in
         Group = "herdr";
         WorkingDirectory = "/var/lib/herdr";
         ExecStart = "${lib.getExe herdr} server";
+        # Register the claude + codex integrations: writes agent-state hooks into
+        # ~/.claude and ~/.codex so herdr detects/launches them. Idempotent and
+        # re-run on every start, so it self-heals if a home-manager activation
+        # rewrites ~/.claude. Without this, an attached herdr shows NO integrations
+        # even though the agents are installed.
+        ExecStartPost = "${pkgs.writeShellScript "herdr-install-integrations" ''
+          ${lib.getExe herdr} integration install claude || true
+          ${lib.getExe herdr} integration install codex || true
+        ''}";
         Restart = "on-failure";
         RestartSec = 5;
       };
