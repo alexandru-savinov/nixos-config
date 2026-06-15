@@ -74,11 +74,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1780759303,
-        "narHash": "sha256-khJNRrEmHk3l+qO0vluZ5aUr9ZKCpOClMClc+4h0OHQ=",
+        "lastModified": 1781469882,
+        "narHash": "sha256-uLdfmsAYDIlsOTjjUo8qaOdTbiHvj+m0Sls3uJi/ZdA=",
         "owner": "alexandru-savinov",
         "repo": "claude-shared",
-        "rev": "47b65c9370060627f9c72b49ac951204ca8f23f8",
+        "rev": "c15b9bccc47969a5647de832c57c7ff19a288fbd",
         "type": "github"
       },
       "original": {
