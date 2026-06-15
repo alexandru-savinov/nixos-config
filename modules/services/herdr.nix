@@ -40,13 +40,12 @@ let
     };
   };
 
-  herdrFlake = "github:alexandru-savinov/nixos-config#sancta-choir";
+  herdrRepo = "https://github.com/alexandru-savinov/nixos-config";
 
-  # Fixed-flake deploy wrapper — the ONLY nixos-rebuild path the herdr user can
-  # sudo. Pins the flake to the canonical (CI-checked, merged) config and takes
-  # NO user arguments, so an agent in a pane cannot run
-  # `sudo nixos-rebuild --flake github:attacker/...` to root the box; risky
-  # changes must go through PR -> CI -> merge before they can be deployed here.
+  # Fixed-source deploy wrapper — the ONLY nixos-rebuild path the herdr user can
+  # sudo. Deploys the canonical main branch and takes NO user arguments, so an
+  # agent in a pane cannot run `sudo nixos-rebuild --flake github:attacker/...`
+  # to root the box; risky changes must go through PR -> CI -> merge first.
   #
   # Build-gate + `--max-jobs 1 --cores 1` throttle + `boot` (not `switch`) per
   # CLAUDE.md's VPS deploy rule for these GRUB-based Hetzner hosts:
@@ -57,14 +56,27 @@ let
   #     reboot — the live system is never left half-switched. It also avoids the
   #     pre-existing open-webui-memory-migration `switch` exit-4 masking
   #     herdr-deploy's own status. (New generation activates on next reboot.)
-  #   - `--refresh` on both steps defeats the flake branch-cache staleness gotcha
-  #     and keeps build+boot on the same resolved revision.
+  #
+  # Resolve main's exact rev over the git protocol and PIN it, rather than
+  # `nixos-rebuild --refresh` on a branch flakeref. `--refresh` silently falls
+  # back to a STALE cached rev when api.github.com 504s, and `boot` then stages
+  # that revert with exit 0 and no signal (observed live, #499 follow-up).
+  # `git ls-remote` uses the git protocol (not the flaky REST API), fails hard
+  # under `set -e`/the empty-rev guard so a transient outage ABORTS instead of
+  # deploying stale, and pinning $rev leaves no branch-HEAD lookup to fall back
+  # on — build and boot use the identical revision.
   herdr-deploy = pkgs.writeShellScriptBin "herdr-deploy" ''
     set -euo pipefail
+    rev="$(${pkgs.git}/bin/git ls-remote ${herdrRepo} refs/heads/main | cut -f1)"
+    if [ -z "$rev" ]; then
+      echo "herdr-deploy: could not resolve main HEAD; aborting (refusing to deploy a stale rev)" >&2
+      exit 1
+    fi
+    flake="github:alexandru-savinov/nixos-config/$rev#sancta-choir"
     /run/current-system/sw/bin/nixos-rebuild build \
-      --flake ${herdrFlake} --refresh --max-jobs 1 --cores 1
+      --flake "$flake" --max-jobs 1 --cores 1
     exec /run/current-system/sw/bin/nixos-rebuild boot \
-      --flake ${herdrFlake} --refresh --max-jobs 1 --cores 1
+      --flake "$flake" --max-jobs 1 --cores 1
   '';
 
   # Scoped log reader — herdr-server's OWN journal only, no user args, so a pane
