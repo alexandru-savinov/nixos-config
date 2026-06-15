@@ -174,7 +174,15 @@ in
       # that an interface has a routable IP / DNS. Match every other networked
       # service in this repo (qdrant, n8n, openclaw, gatus, ...) that waits on
       # network-online.target; otherwise those boot-time fetches race the network.
-      after = [ "network-online.target" ];
+      # Also order after the herdr user's home-manager activation: it writes
+      # ~/.claude/settings.json, and the ExecStartPost below wires the claude
+      # agent-state hook INTO that file — if the server (and its ExecStartPost)
+      # started before HM finished, HM clobbers the hook (the deploy-time race we
+      # hit). Ordering after HM makes ExecStartPost the last writer, every time.
+      after = [
+        "network-online.target"
+        "home-manager-herdr.service"
+      ];
       wants = [ "network-online.target" ];
       # herdr panes + integration hooks/launching inherit THIS unit's environment
       # (they are children of the long-lived server, NOT login shells), so the
