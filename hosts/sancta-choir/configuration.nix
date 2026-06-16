@@ -69,6 +69,32 @@
     # claude-shared skills on this host (the latter hands off to `ralphex`).
     # Mirrors rpi5-full; sancta-choir is the always-on agent host.
     self.packages.${pkgs.system}.ralphex
+
+    # `hermes-claw` — full SSH login from the unprivileged `herdr` user to
+    # hermes-claw (root), so a herdr pane can drive the Hermes agent (Nous
+    # Research) that runs in the `hermes-agent` Podman container over there.
+    # The Hermes gateway, its sessions, memory and workspace all live INSIDE
+    # that container (HERMES_HOME=/data/.hermes), so an interactive session
+    # must run there too — the wrapper opens a root shell on hermes-claw; to
+    # jump straight into a live Hermes session co-located with the agent, run:
+    #   hermes-claw podman exec -it hermes-agent hermes chat
+    # Key: agenix `herdr-hermes-ssh-key` (private), whose public half is in
+    # hosts/hermes-claw root authorizedKeys. Reaches the box over Tailscale.
+    (pkgs.writeShellScriptBin "hermes-claw" ''
+      exec ${pkgs.openssh}/bin/ssh -t \
+        -i ${config.age.secrets.herdr-hermes-ssh-key.path} \
+        -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=accept-new \
+        -o UserKnownHostsFile=/var/lib/herdr/.ssh/known_hosts \
+        root@hermes-claw.tail4249a9.ts.net "$@"
+    '')
+  ];
+
+  # Writable known_hosts dir for the herdr user so the `hermes-claw` wrapper's
+  # `accept-new` can persist hermes-claw's host key across connections (the
+  # herdr-server unit and its panes run as `herdr` with HOME=/var/lib/herdr).
+  systemd.tmpfiles.rules = [
+    "d /var/lib/herdr/.ssh 0700 herdr herdr -"
   ];
 
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
@@ -97,7 +123,7 @@
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets =
     let
-      inherit (import ../../lib/secrets.nix { inherit self; }) secret;
+      inherit (import ../../lib/secrets.nix { inherit self; }) secret ownedSecret;
     in
     {
       tailscale-auth-key = secret "tailscale-auth-key";
@@ -106,6 +132,10 @@
       openrouter-api-key = secret "openrouter-api-key";
       tavily-api-key = secret "tavily-api-key";
       e2e-test-api-key = secret "e2e-test-api-key";
+      # SSH private key for the herdr user → hermes-claw (the `hermes-claw`
+      # wrapper above). owner=herdr so the unprivileged server/panes can read
+      # it; public half lives in hosts/hermes-claw root authorizedKeys.
+      herdr-hermes-ssh-key = ownedSecret "herdr" "herdr-hermes-ssh-key";
     };
 
   # ==========================================================================

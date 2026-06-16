@@ -66,9 +66,16 @@
   ];
 
   # ── SSH authorized keys (cross-host management from sancta-choir + rpi5) ──
+  # The third key belongs to the unprivileged `herdr` user on sancta-choir
+  # (private half in agenix `herdr-hermes-ssh-key`). It lets a herdr pane on
+  # sancta-choir log in here to drive the Hermes agent in the hermes-agent
+  # Podman container (`podman exec -it hermes-agent hermes chat`). Full login
+  # (not a forced command) by deliberate choice — sancta-choir's herdr is the
+  # owner's agent host, trusted for cross-VPS management of Hermes.
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICEIJUJM90xXZneLfKqaGnHMbBexjAARlE8FBx9HITom herdr@sancta-choir->hermes-claw"
   ];
 
   # ── Automatic security updates ──────────────────────────────────────────
