@@ -64,6 +64,11 @@
     pkgs.codex
     pkgs.git
     pkgs.curl
+    # ralphex — multi-step Claude Code plan orchestrator (umputun/ralphex,
+    # packaged in pkgs/ralphex.nix). Activates the `ralphex` + `brainstorming`
+    # claude-shared skills on this host (the latter hands off to `ralphex`).
+    # Mirrors rpi5-full; sancta-choir is the always-on agent host.
+    self.packages.${pkgs.system}.ralphex
   ];
 
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
