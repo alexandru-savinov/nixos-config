@@ -149,4 +149,13 @@ in
   # Contains OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN (same plaintext as
   # the per-value secrets above, combined into one env file).
   "hermes-env.age".publicKeys = users ++ [ rpi5 hermes-claw ];
+
+  # SSH private key for the sancta-choir `herdr` user → hermes-claw, so a herdr
+  # pane can open an interactive Hermes session (`podman exec -it hermes-agent
+  # hermes chat`) co-located with the agent. Only sancta-choir decrypts it (it
+  # holds the private key); the matching PUBLIC key is committed into
+  # hosts/hermes-claw/configuration.nix root authorizedKeys. Mirrors the
+  # rpi5-backup-ssh-key pattern (private in agenix, public in target host).
+  # Generate: ssh-keygen -t ed25519 -C "herdr@sancta-choir -> hermes-claw"
+  "herdr-hermes-ssh-key.age".publicKeys = users ++ [ sancta-choir rpi5 ];
 }
