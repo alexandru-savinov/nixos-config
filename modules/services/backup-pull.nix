@@ -243,12 +243,18 @@ in
                 ''
               else
                 "";
+            # A multi-line `bash -c '…'` with embedded "…" + the %i specifier can't be
+            # parsed by systemd's ExecStart quoting (unbalanced-quoting → the unit fails
+            # to load → backup-failure alerts silently never fired). Put the body in a
+            # script file and pass the instance via %i → $1; no inline quoting for
+            # systemd to misparse.
+            alertScript = pkgs.writeShellScript "backup-failure-alert" ''
+              msg="❌ BACKUP FAILURE: $1 failed at $(date -Iseconds) on $(hostname)"
+              echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t backup-alert -p err
+              ${telegramCmd}
+            '';
           in
-          "${pkgs.bash}/bin/bash -c ${lib.escapeShellArg ''
-            msg="❌ BACKUP FAILURE: %i failed at $(date -Iseconds) on $(hostname)"
-            echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t backup-alert -p err
-            ${telegramCmd}
-          ''}";
+          "${alertScript} %i";
         EnvironmentFile = lib.mkIf (cfg.telegramEnvFile != null) cfg.telegramEnvFile;
       };
     };
