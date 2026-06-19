@@ -369,6 +369,13 @@ in
               'if country_code is None or country is None:' \
               'if True:  # nixos: force v1 code_login (v4 broken)'
         '';
+        # Skip the stale upstream MQTT-setup test. test_set_value asserts a hardcoded
+        # received-message count (==2), but python-roborock 3.8.0's
+        # connected_a01_mqtt_client fixture now emits 3 setup messages — the upstream
+        # test is out of sync with upstream's own MQTT setup. It is NOT our v1 web_api
+        # patch (a different subsystem) and NOT a runtime fault (vacuum.saros_10 + the
+        # roborock entities work end-to-end). The other 238 tests still run.
+        disabledTests = (old.disabledTests or [ ]) ++ [ "test_set_value" ];
       });
     };
   };
