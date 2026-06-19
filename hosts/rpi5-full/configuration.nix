@@ -62,7 +62,14 @@ in
     ../../modules/services/home-assistant-mcp-claude.nix # hass-mcp for Claude Code
     ../../modules/system/nix-ld.nix # runtime loader so uvx-spawned hass-mcp interpreter can run
     ../../modules/system/ssh-hardened.nix
+    ../../modules/services/shared-memory/shared-memory.nix # fleet shared-memory commons
   ];
+
+  # Fleet shared-memory commons — localhost-bound first deploy.
+  # Cross-host access over Tailscale is a deliberate follow-up (bind the
+  # tailscale IP / add a tailscale-serve unit) once the allow-all auth seam
+  # is reviewed. Today: same-host writers (drop-box + local curl) only.
+  services.sharedMemory.enable = true;
 
   # Package overrides for memory-constrained ARM builds
   nixpkgs.overlays = [
