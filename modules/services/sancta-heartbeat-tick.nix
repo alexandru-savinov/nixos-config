@@ -66,133 +66,144 @@ let
   # Residual (d) from the design doc: --strict-mcp-config and the tool cuts
   # MUST live visibly in the ExecStart script so a review of this file is a
   # review of the actual flags. Do not move them into generated config.
-  tickScript = pkgs.writeShellScript "sancta-heartbeat-tick" ''
-    set -euo pipefail
-
-    STATE="${stateDir}"
-    STAGING="$STATE/staging"
-    INBOX="$STATE/inbox"
-    NOW=$(${cu}/date +%s)
-
-    write_last_tick() {
-      # write_last_tick <ok:true|false> <reason-or-empty>
-      ${jqBin} -n --arg ts "$(${cu}/date -Is)" --argjson ok "$1" --arg reason "$2" \
-        '{ts: $ts, ok: $ok, by: "sancta-heartbeat-tick"}
-         + (if $reason != "" then {reason: $reason} else {} end)' \
-        > "$STATE/last-tick.json.tmp"
-      ${cu}/mv "$STATE/last-tick.json.tmp" "$STATE/last-tick.json"
-    }
-
-    # Drop stale staging output from a previous run so the promotion path can
-    # never promote yesterday's output after today's failure.
-    ${cu}/rm -f "$STAGING/tick-output.json" "$STAGING/raw-output.json" "$STAGING/result.txt"
-
-    # ── 1. Dedup guard: if ANY tick (warm session or cold) ran fewer than
-    # dedupWindowMinutes ago, exit quietly. Warm path is primary; this timer
-    # is the fallback. Checks both the mirrored index record and our own.
-    for f in "$INBOX/last-tick-index.json" "$STATE/last-tick.json"; do
-      if [ -f "$f" ]; then
-        ts=$(${jqBin} -r '.ts // empty' "$f" 2>/dev/null || true)
-        if [ -n "$ts" ]; then
-          tsec=$(${cu}/date -d "$ts" +%s 2>/dev/null || echo 0)
-          if [ $((NOW - tsec)) -lt $((${toString cfg.dedupWindowMinutes} * 60)) ]; then
-            echo "dedup: a tick ran <${toString cfg.dedupWindowMinutes}min ago ($f) — exiting quietly"
-            exit 0
-          fi
-        fi
-      fi
-    done
-
-    # ── 2. Daily cap: bound worst-case cold invocations (billing/starvation
-    # guard). Counter lives in StateDir; old counters are pruned.
-    TODAY=$(${cu}/date +%F)
-    CAPFILE="$STATE/invocations-$TODAY.count"
-    ${findutils}/bin/find "$STATE" -maxdepth 1 -name 'invocations-*.count' \
-      ! -name "invocations-$TODAY.count" -delete
-    COUNT=$(${cu}/cat "$CAPFILE" 2>/dev/null || echo 0)
-    if [ "$COUNT" -ge ${toString cfg.dailyCap} ]; then
-      echo "daily cap reached ($COUNT >= ${toString cfg.dailyCap}) — self-suppressing"
-      write_last_tick false "capped"
-      exit 0
-    fi
-
-    # ── 3. Not-logged-in self-suppression: safe to merge+rebuild BEFORE the
-    # one-time `claude login` into this config dir has happened.
-    if [ ! -s "$STATE/config/.credentials.json" ]; then
-      echo "no credentials in $STATE/config — self-suppressing (reason: no-auth)"
-      write_last_tick false "no-auth"
-      exit 0
-    fi
-
-    echo $((COUNT + 1)) > "$CAPFILE"
-
-    # ── 4. The claude call. Verified seam (design doc §3, RESOLVED):
-    #   * CLAUDE_CONFIG_DIR fully relocates config AND credentials — the real
-    #     ~/.claude is never consulted (ProtectHome=true stays ON).
-    #   * --strict-mcp-config strips ALL MCP tools, including account-level
-    #     claude.ai connectors riding the OAuth account.
-    #   * --disallowedTools cuts every write/exec/network built-in; the tick
-    #     is read-and-report over the mirrored inbox only.
-    export CLAUDE_CONFIG_DIR="$STATE/config"
-    export HOME="$STATE"
-    export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-
-    RAW="$STAGING/raw-output.json"
-    RC=0
-    ${claudeCodePkg}/bin/claude \
-      -p "$(${cu}/cat ${promptFile})" \
-      --strict-mcp-config \
-      --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,TodoWrite,KillShell,BashOutput" \
-      --allowedTools "Read,Glob,Grep" \
-      --model "${cfg.model}" \
-      --max-turns ${toString cfg.maxTurns} \
-      --output-format json \
-      > "$RAW" 2> "$STAGING/stderr.log" || RC=$?
-
-    if [ "$RC" -ne 0 ]; then
-      echo "claude exited non-zero ($RC); stderr tail:" >&2
-      ${cu}/tail -n 20 "$STAGING/stderr.log" >&2 || true
-      write_last_tick false "claude-exit-$RC"
-      # Fail the unit so OnFailure= surfaces it (alert unit mirrors last-tick).
-      exit 1
-    fi
-
-    # ── 5. Staging + schema gate (first of two — promotion re-validates).
-    # Size bound on the raw envelope, then extract .result, then require a
-    # single JSON object {feed: string, reply: string|null} within bounds.
-    SIZE=$(${cu}/stat -c %s "$RAW")
-    if [ "$SIZE" -gt 262144 ]; then
-      echo "raw output too large ($SIZE bytes) — dropping" >&2
-      write_last_tick false "output-too-large"
-      exit 0
-    fi
-
-    if ! ${jqBin} -e '.is_error != true and (.result | type == "string")' "$RAW" > /dev/null 2>&1; then
-      echo "unexpected claude output envelope — dropping" >&2
-      write_last_tick false "bad-envelope"
-      exit 0
-    fi
-
-    # Strip optional markdown fences the model might add despite instructions.
-    ${jqBin} -r '.result' "$RAW" \
-      | ${gnused}/bin/sed -e 's/^```[a-z]*$//' -e 's/^```$//' \
-      > "$STAGING/result.txt"
-
-    if ${jqBin} -e '
-        type == "object"
-        and (.feed | type == "string" and length > 0 and length <= 1000)
-        and ((.reply | type == "string" and length <= 4000) or .reply == null)
-      ' "$STAGING/result.txt" > /dev/null 2>&1; then
-      ${jqBin} -c '{feed: .feed, reply: .reply}' "$STAGING/result.txt" \
-        > "$STAGING/tick-output.json"
-      echo "tick OK — output staged for promotion"
-      write_last_tick true ""
+  #
+  # The throw guard gives a readable error if the claude-code flake input is
+  # missing: interpolating a null claudeCodePkg would otherwise abort eval
+  # with a cryptic "cannot coerce null to a string" BEFORE the assertions
+  # block below gets a chance to explain.
+  tickScript =
+    if claudeCodePkg == null
+    then throw "services.sancta-heartbeat-tick requires the claude-code flake input via specialArgs: specialArgs = { inherit claude-code; };"
     else
-      echo "model output failed schema check — dropped (kept in staging/result.txt for inspection)" >&2
-      write_last_tick false "malformed-output"
-    fi
-    exit 0
-  '';
+      pkgs.writeShellScript "sancta-heartbeat-tick" ''
+        set -euo pipefail
+
+        STATE="${stateDir}"
+        STAGING="$STATE/staging"
+        INBOX="$STATE/inbox"
+        NOW=$(${cu}/date +%s)
+
+        write_last_tick() {
+          # write_last_tick <ok:true|false> <reason-or-empty>
+          ${jqBin} -n --arg ts "$(${cu}/date -Is)" --argjson ok "$1" --arg reason "$2" \
+            '{ts: $ts, ok: $ok, by: "sancta-heartbeat-tick"}
+             + (if $reason != "" then {reason: $reason} else {} end)' \
+            > "$STATE/last-tick.json.tmp"
+          ${cu}/mv "$STATE/last-tick.json.tmp" "$STATE/last-tick.json"
+        }
+
+        # Drop stale staging output from a previous run so the promotion path can
+        # never promote yesterday's output after today's failure, and stale logs
+        # don't accumulate.
+        ${cu}/rm -f "$STAGING/tick-output.json" "$STAGING/raw-output.json" \
+          "$STAGING/result.txt" "$STAGING/stderr.log"
+
+        # ── 1. Dedup guard: if ANY tick (warm session or cold) ran fewer than
+        # dedupWindowMinutes ago, exit quietly. Warm path is primary; this timer
+        # is the fallback. Checks both the mirrored index record and our own.
+        for f in "$INBOX/last-tick-index.json" "$STATE/last-tick.json"; do
+          if [ -f "$f" ]; then
+            ts=$(${jqBin} -r '.ts // empty' "$f" 2>/dev/null || true)
+            if [ -n "$ts" ]; then
+              tsec=$(${cu}/date -d "$ts" +%s 2>/dev/null || echo 0)
+              if [ $((NOW - tsec)) -lt $((${toString cfg.dedupWindowMinutes} * 60)) ]; then
+                echo "dedup: a tick ran <${toString cfg.dedupWindowMinutes}min ago ($f) — exiting quietly"
+                exit 0
+              fi
+            fi
+          fi
+        done
+
+        # ── 2. Daily cap: bound worst-case cold invocations (billing/starvation
+        # guard). Counter lives in StateDir; old counters are pruned.
+        TODAY=$(${cu}/date +%F)
+        CAPFILE="$STATE/invocations-$TODAY.count"
+        ${findutils}/bin/find "$STATE" -maxdepth 1 -name 'invocations-*.count' \
+          ! -name "invocations-$TODAY.count" -delete
+        COUNT=$(${cu}/cat "$CAPFILE" 2>/dev/null || echo 0)
+        if [ "$COUNT" -ge ${toString cfg.dailyCap} ]; then
+          echo "daily cap reached ($COUNT >= ${toString cfg.dailyCap}) — self-suppressing"
+          write_last_tick false "capped"
+          exit 0
+        fi
+
+        # ── 3. Not-logged-in self-suppression: safe to merge+rebuild BEFORE the
+        # one-time `claude login` into this config dir has happened.
+        if [ ! -s "$STATE/config/.credentials.json" ]; then
+          echo "no credentials in $STATE/config — self-suppressing (reason: no-auth)"
+          write_last_tick false "no-auth"
+          exit 0
+        fi
+
+        echo $((COUNT + 1)) > "$CAPFILE"
+
+        # ── 4. The claude call. Verified seam (design doc §3, RESOLVED):
+        #   * CLAUDE_CONFIG_DIR fully relocates config AND credentials — the real
+        #     ~/.claude is never consulted (ProtectHome=true stays ON).
+        #   * --strict-mcp-config strips ALL MCP tools, including account-level
+        #     claude.ai connectors riding the OAuth account.
+        #   * --disallowedTools cuts every write/exec/network built-in; the tick
+        #     is read-and-report over the mirrored inbox only.
+        export CLAUDE_CONFIG_DIR="$STATE/config"
+        export HOME="$STATE"
+        export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+
+        RAW="$STAGING/raw-output.json"
+        RC=0
+        ${claudeCodePkg}/bin/claude \
+          -p "$(${cu}/cat ${promptFile})" \
+          --strict-mcp-config \
+          --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,TodoWrite,KillShell,BashOutput" \
+          --allowedTools "Read,Glob,Grep" \
+          --model "${cfg.model}" \
+          --max-turns ${toString cfg.maxTurns} \
+          --output-format json \
+          > "$RAW" 2> "$STAGING/stderr.log" || RC=$?
+
+        if [ "$RC" -ne 0 ]; then
+          echo "claude exited non-zero ($RC); stderr tail:" >&2
+          ${cu}/tail -n 20 "$STAGING/stderr.log" >&2 || true
+          write_last_tick false "claude-exit-$RC"
+          # Fail the unit so OnFailure= surfaces it (alert unit mirrors last-tick).
+          exit 1
+        fi
+
+        # ── 5. Staging + schema gate (first of two — promotion re-validates).
+        # Size bound on the raw envelope, then extract .result, then require a
+        # single JSON object {feed: string, reply: string|null} within bounds.
+        SIZE=$(${cu}/stat -c %s "$RAW")
+        if [ "$SIZE" -gt 262144 ]; then
+          echo "raw output too large ($SIZE bytes) — dropping" >&2
+          write_last_tick false "output-too-large"
+          exit 0
+        fi
+
+        if ! ${jqBin} -e '.is_error != true and (.result | type == "string")' "$RAW" > /dev/null 2>&1; then
+          echo "unexpected claude output envelope — dropping" >&2
+          write_last_tick false "bad-envelope"
+          exit 0
+        fi
+
+        # Strip optional markdown fences the model might add despite instructions.
+        ${jqBin} -r '.result' "$RAW" \
+          | ${gnused}/bin/sed -e 's/^```[a-z]*$//' -e 's/^```$//' \
+          > "$STAGING/result.txt"
+
+        if ${jqBin} -e '
+            type == "object"
+            and (.feed | type == "string" and length > 0 and length <= 1000)
+            and ((.reply | type == "string" and length <= 4000) or .reply == null)
+          ' "$STAGING/result.txt" > /dev/null 2>&1; then
+          ${jqBin} -c '{feed: .feed, reply: .reply}' "$STAGING/result.txt" \
+            > "$STAGING/tick-output.json"
+          echo "tick OK — output staged for promotion"
+          write_last_tick true ""
+        else
+          echo "model output failed schema check — dropped (kept in staging/result.txt for inspection)" >&2
+          write_last_tick false "malformed-output"
+        fi
+        exit 0
+      '';
 
   # ── Sync: index (under /home) → StateDir mirrors (runs as indexOwner) ────
   syncScript = pkgs.writeShellScript "sancta-tick-sync" ''
@@ -274,6 +285,18 @@ let
         >> "$INDEX/feed.json"
     fi
     ${cu}/rm -f "$F"
+
+    # Bound feed.json growth (~17.5k lines/year at 30-min cadence otherwise).
+    # comm-replies.jsonl is deliberately NOT rotated here: it is shared
+    # conversation history owned by the warm sessions, not this module's to
+    # truncate.
+    if [ -f "$INDEX/feed.json" ] \
+       && [ "$(${cu}/wc -l < "$INDEX/feed.json")" -gt ${toString cfg.feedMaxLines} ]; then
+      ${cu}/tail -n ${toString cfg.feedMaxLines} "$INDEX/feed.json" > "$INDEX/feed.json.tmp"
+      ${cu}/chmod 0644 "$INDEX/feed.json.tmp"
+      ${cu}/mv "$INDEX/feed.json.tmp" "$INDEX/feed.json"
+      echo "rotated feed.json to last ${toString cfg.feedMaxLines} lines"
+    fi
   '';
 
   # ── OnFailure alert: a crashing tick is surfaced, not swallowed ──────────
@@ -402,6 +425,15 @@ in
       description = "Tripwire fires when last-tick.ts is older than this.";
     };
 
+    feedMaxLines = mkOption {
+      type = types.int;
+      default = 5000;
+      description = ''
+        Promotion rotates feed.json down to this many most-recent lines so
+        the 30-min cadence cannot grow it without bound.
+      '';
+    };
+
     model = mkOption {
       type = types.str;
       default = "sonnet";
@@ -507,6 +539,11 @@ in
     # ── The tick (boundary #2: the systemd sandbox) ─────────────────────────
     systemd.services.sancta-heartbeat-tick = {
       description = "Sancta sandboxed decoupled heartbeat tick (claude -p, read-and-report)";
+      # `wants` (not `requires`) on the sync unit is INTENTIONAL: the tick is
+      # a liveness safety net, so it must still run — and stamp last-tick —
+      # against a stale or missing inbox mirror rather than silently skip.
+      # A failed sync is visible in its own unit; a skipped tick would only
+      # surface via the tripwire 40+ minutes later.
       after = [ "network-online.target" "sancta-tick-sync.service" ];
       wants = [ "network-online.target" "sancta-tick-sync.service" ];
       onSuccess = [ "sancta-tick-promote.service" ];
