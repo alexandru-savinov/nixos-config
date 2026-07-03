@@ -44,8 +44,6 @@
 
 { config, pkgs, lib, claude-code ? null, ... }:
 
-with lib;
-
 let
   cfg = config.services.sancta-heartbeat-tick;
 
@@ -103,9 +101,9 @@ let
         # is the fallback. Checks both the mirrored index record and our own.
         for f in "$INBOX/last-tick-index.json" "$STATE/last-tick.json"; do
           if [ -f "$f" ]; then
-            ts=$(${jqBin} -r '.ts // empty' "$f" 2>/dev/null || true)
+            ts=$(${jqBin} -r '.ts // empty' "$f" || true)
             if [ -n "$ts" ]; then
-              tsec=$(${cu}/date -d "$ts" +%s 2>/dev/null || echo 0)
+              tsec=$(${cu}/date -d "$ts" +%s || echo 0)
               if [ $((NOW - tsec)) -lt $((${toString cfg.dedupWindowMinutes} * 60)) ]; then
                 echo "dedup: a tick ran <${toString cfg.dedupWindowMinutes}min ago ($f) — exiting quietly"
                 exit 0
@@ -178,7 +176,7 @@ let
           exit 0
         fi
 
-        if ! ${jqBin} -e '.is_error != true and (.result | type == "string")' "$RAW" > /dev/null 2>&1; then
+        if ! ${jqBin} -e '.is_error != true and (.result | type == "string")' "$RAW" > /dev/null; then
           echo "unexpected claude output envelope — dropping" >&2
           write_last_tick false "bad-envelope"
           exit 0
@@ -193,7 +191,7 @@ let
             type == "object"
             and (.feed | type == "string" and length > 0 and length <= 1000)
             and ((.reply | type == "string" and length <= 4000) or .reply == null)
-          ' "$STAGING/result.txt" > /dev/null 2>&1; then
+          ' "$STAGING/result.txt" > /dev/null; then
           ${jqBin} -c '{feed: .feed, reply: .reply}' "$STAGING/result.txt" \
             > "$STAGING/tick-output.json"
           echo "tick OK — output staged for promotion"
@@ -241,11 +239,29 @@ let
       exit 1
     fi
 
+    # Size gate on the live append targets: above the byte cap we SKIP the
+    # append (loud journal warning) instead of rotating/truncating — these
+    # files are shared substrate owned by the warm sessions, not this
+    # module's to rewrite. Rotation is a follow-up owned by the substrate
+    # side.
+    can_append() {
+      # can_append <file> — true if the file is absent or under the cap
+      size=0
+      if [ -f "$1" ]; then
+        size=$(${cu}/stat -c %s "$1")
+      fi
+      if [ "$size" -gt ${toString cfg.liveFileByteCap} ]; then
+        echo "WARNING: $1 is $size bytes (> ${toString cfg.liveFileByteCap} cap) — skipping append; rotate it (follow-up) to resume" >&2
+        return 1
+      fi
+      return 0
+    }
+
     # Always mirror last-tick.json back into the index (the tripwire and the
     # warm sessions' dedup guard read it there) — success or handled-fail.
     if [ -f "$STATE/last-tick.json" ] \
        && ${jqBin} -e '(.ts | type == "string") and (.ok | type == "boolean")' \
-            "$STATE/last-tick.json" > /dev/null 2>&1 \
+            "$STATE/last-tick.json" > /dev/null \
        && [ "$(${cu}/stat -c %s "$STATE/last-tick.json")" -le 4096 ]; then
       ${cu}/cp "$STATE/last-tick.json" "$INDEX/last-tick.json.tmp"
       ${cu}/chmod 0644 "$INDEX/last-tick.json.tmp"
@@ -266,37 +282,31 @@ let
             type == "object"
             and (.feed | type == "string" and length > 0 and length <= 1000)
             and ((.reply | type == "string" and length <= 4000) or .reply == null)
-          ' "$F" > /dev/null 2>&1; then
-      ${jqBin} -c --arg ts "$TS" \
-        '{ts: $ts, source: "sancta-heartbeat-tick", line: .feed}' "$F" \
-        >> "$INDEX/feed.json"
-      if [ "$(${jqBin} -r '.reply == null' "$F")" = "false" ]; then
+          ' "$F" > /dev/null; then
+      if can_append "$INDEX/feed.json"; then
         ${jqBin} -c --arg ts "$TS" \
-          '{ts: $ts, from: "sancta-tick", text: .reply}' "$F" \
-          >> "$INDEX/comm-replies.jsonl"
+          '{ts: $ts, source: "sancta-heartbeat-tick", line: .feed}' "$F" \
+          >> "$INDEX/feed.json"
+      fi
+      if [ "$(${jqBin} -r '.reply == null' "$F")" = "false" ]; then
+        if can_append "$INDEX/comm-replies.jsonl"; then
+          ${jqBin} -c --arg ts "$TS" \
+            '{ts: $ts, from: "sancta-tick", text: .reply}' "$F" \
+            >> "$INDEX/comm-replies.jsonl"
+        fi
         echo "promoted feed line + reply"
       else
         echo "promoted feed line (no reply)"
       fi
     else
       echo "ERROR: staged tick output failed promotion schema check — DROPPED" >&2
-      ${jqBin} -cn --arg ts "$TS" \
-        '{ts: $ts, source: "sancta-tick-promote", alert: "malformed-tick-output-dropped"}' \
-        >> "$INDEX/feed.json"
+      if can_append "$INDEX/feed.json"; then
+        ${jqBin} -cn --arg ts "$TS" \
+          '{ts: $ts, source: "sancta-tick-promote", alert: "malformed-tick-output-dropped"}' \
+          >> "$INDEX/feed.json"
+      fi
     fi
     ${cu}/rm -f "$F"
-
-    # Bound feed.json growth (~17.5k lines/year at 30-min cadence otherwise).
-    # comm-replies.jsonl is deliberately NOT rotated here: it is shared
-    # conversation history owned by the warm sessions, not this module's to
-    # truncate.
-    if [ -f "$INDEX/feed.json" ] \
-       && [ "$(${cu}/wc -l < "$INDEX/feed.json")" -gt ${toString cfg.feedMaxLines} ]; then
-      ${cu}/tail -n ${toString cfg.feedMaxLines} "$INDEX/feed.json" > "$INDEX/feed.json.tmp"
-      ${cu}/chmod 0644 "$INDEX/feed.json.tmp"
-      ${cu}/mv "$INDEX/feed.json.tmp" "$INDEX/feed.json"
-      echo "rotated feed.json to last ${toString cfg.feedMaxLines} lines"
-    fi
   '';
 
   # ── OnFailure alert: a crashing tick is surfaced, not swallowed ──────────
@@ -310,7 +320,7 @@ let
 
     # Mirror whatever last-tick the tick managed to write before failing.
     if [ -f "$STATE/last-tick.json" ] \
-       && ${jqBin} -e '(.ts | type == "string")' "$STATE/last-tick.json" > /dev/null 2>&1; then
+       && ${jqBin} -e '(.ts | type == "string")' "$STATE/last-tick.json" > /dev/null; then
       ${cu}/cp "$STATE/last-tick.json" "$INDEX/last-tick.json.tmp"
       ${cu}/chmod 0644 "$INDEX/last-tick.json.tmp"
       ${cu}/mv "$INDEX/last-tick.json.tmp" "$INDEX/last-tick.json"
@@ -335,8 +345,8 @@ let
     if [ ! -f "$LT" ]; then
       stale_reason="last-tick.json missing"
     else
-      ts=$(${jqBin} -r '.ts // empty' "$LT" 2>/dev/null || true)
-      tsec=$(${cu}/date -d "$ts" +%s 2>/dev/null || echo 0)
+      ts=$(${jqBin} -r '.ts // empty' "$LT" || true)
+      tsec=$(${cu}/date -d "$ts" +%s || echo 0)
       if [ "$tsec" -eq 0 ]; then
         stale_reason="last-tick.json unparseable"
       elif [ $((NOW - tsec)) -gt "$MAX_AGE" ]; then
@@ -366,10 +376,10 @@ let
 in
 {
   options.services.sancta-heartbeat-tick = {
-    enable = mkEnableOption "Sancta sandboxed decoupled heartbeat tick";
+    enable = lib.mkEnableOption "Sancta sandboxed decoupled heartbeat tick";
 
-    indexDir = mkOption {
-      type = types.path;
+    indexDir = lib.mkOption {
+      type = lib.types.path;
       default = "/home/nixos/.claude/index";
       description = ''
         Live communication index (owned by {option}`indexOwner`). The
@@ -378,8 +388,8 @@ in
       '';
     };
 
-    indexOwner = mkOption {
-      type = types.str;
+    indexOwner = lib.mkOption {
+      type = lib.types.str;
       default = "nixos";
       description = ''
         User owning the index files. Runs the sync/promotion/alert/tripwire
@@ -388,20 +398,20 @@ in
       '';
     };
 
-    interval = mkOption {
-      type = types.str;
+    interval = lib.mkOption {
+      type = lib.types.str;
       default = "*:00/30";
       description = "OnCalendar expression for the tick timer (~every 30 min).";
     };
 
-    randomizedDelaySec = mkOption {
-      type = types.str;
+    randomizedDelaySec = lib.mkOption {
+      type = lib.types.str;
       default = "90";
       description = "RandomizedDelaySec for the tick timer.";
     };
 
-    dedupWindowMinutes = mkOption {
-      type = types.int;
+    dedupWindowMinutes = lib.mkOption {
+      type = lib.types.int;
       default = 25;
       description = ''
         If ANY tick (warm session or cold) ran fewer than this many minutes
@@ -409,8 +419,8 @@ in
       '';
     };
 
-    dailyCap = mkOption {
-      type = types.int;
+    dailyCap = lib.mkOption {
+      type = lib.types.int;
       default = 30;
       description = ''
         Maximum cold claude invocations per day. Beyond it the tick
@@ -419,72 +429,82 @@ in
       '';
     };
 
-    staleAfterMinutes = mkOption {
-      type = types.int;
+    staleAfterMinutes = lib.mkOption {
+      type = lib.types.int;
       default = 40;
       description = "Tripwire fires when last-tick.ts is older than this.";
     };
 
-    feedMaxLines = mkOption {
-      type = types.int;
-      default = 5000;
+    liveFileByteCap = lib.mkOption {
+      type = lib.types.int;
+      default = 5242880; # 5 MiB
       description = ''
-        Promotion rotates feed.json down to this many most-recent lines so
-        the 30-min cadence cannot grow it without bound.
+        Byte cap for the live append targets (feed.json,
+        comm-replies.jsonl). Above it, promotion SKIPS the append with a
+        loud journal warning instead of truncating: those files are shared
+        substrate owned by the warm sessions, so rotation is a follow-up
+        on that side, not this module's to perform.
       '';
     };
 
-    model = mkOption {
-      type = types.str;
-      default = "sonnet";
+    model = lib.mkOption {
+      type = lib.types.str;
+      # Full versioned ID, not the "sonnet" shorthand: shorthands may
+      # resolve differently across CLI versions.
+      default = "claude-sonnet-4-6";
       description = "Claude model for the cold tick (--model).";
     };
 
-    maxTurns = mkOption {
-      type = types.int;
+    maxTurns = lib.mkOption {
+      type = lib.types.int;
       default = 10;
       description = "Maximum agent turns per tick (--max-turns).";
     };
 
-    memoryMax = mkOption {
-      type = types.str;
+    memoryMax = lib.mkOption {
+      type = lib.types.str;
       default = "1G";
       description = "MemoryMax for the tick service.";
     };
 
-    cpuQuota = mkOption {
-      type = types.str;
+    cpuQuota = lib.mkOption {
+      type = lib.types.str;
       default = "50%";
       description = "CPUQuota for the tick service.";
     };
 
     egressPinning = {
-      enable = mkEnableOption "systemd IP-level egress pinning (IPAddressDeny=any + allowlist)" // {
-        default = true;
-      };
+      # Default OFF (explicit opt-in): the pinned ranges are brittle by
+      # nature, and RestrictAddressFamilies + --strict-mcp-config +
+      # --disallowedTools already bound egress meaningfully without them.
+      enable = lib.mkEnableOption "systemd IP-level egress pinning (IPAddressDeny=any + allowlist; explicit opt-in — the default address ranges are brittle)";
 
-      allowedAddresses = mkOption {
-        type = types.listOf types.str;
+      allowedAddresses = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
         default = [
           # Loopback (and the local stub area) for name resolution plumbing.
           "localhost"
           # Tailscale MagicDNS — this host's /etc/resolv.conf nameserver.
           "100.100.100.100"
           # Anthropic's own IP ranges (api/console/statsig.anthropic.com all
-          # resolve here as of 2026-07; same static ranges the openclaw
-          # module pins). BRITTLE BY NATURE: if Anthropic moves endpoints
-          # (e.g. behind Cloudflare, as claude.ai already is), the tick
-          # starts failing — loudly, via OnFailure + the tripwire — and the
-          # remedy is updating this list or disabling egressPinning.
+          # resolve here; same static ranges the openclaw module pins).
+          # BRITTLE BY NATURE: if Anthropic moves endpoints (e.g. behind
+          # Cloudflare, as claude.ai already is), the tick starts failing —
+          # loudly, via OnFailure + the tripwire — and the remedy is
+          # updating this list or disabling egressPinning.
           "160.79.104.0/23"
           "2607:6bc0::/48"
         ];
-        description = "IPAddressAllow list applied when egress pinning is enabled.";
+        description = ''
+          IPAddressAllow list applied when egress pinning is enabled.
+          Default Anthropic ranges as of 2026-07-03 — verify against
+          current DNS before enabling, and expect to maintain this list.
+        '';
       };
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
     assertions = [
       {
         assertion = claudeCodePkg != null;
@@ -539,13 +559,14 @@ in
     # ── The tick (boundary #2: the systemd sandbox) ─────────────────────────
     systemd.services.sancta-heartbeat-tick = {
       description = "Sancta sandboxed decoupled heartbeat tick (claude -p, read-and-report)";
-      # `wants` (not `requires`) on the sync unit is INTENTIONAL: the tick is
-      # a liveness safety net, so it must still run — and stamp last-tick —
-      # against a stale or missing inbox mirror rather than silently skip.
-      # A failed sync is visible in its own unit; a skipped tick would only
-      # surface via the tripwire 40+ minutes later.
+      # `requires` (not `wants`) on the sync unit: the tick must not run —
+      # and must not stamp a green last-tick — against stale or missing
+      # inbox data. If the sync fails, the tick fails its dependency, the
+      # timer run is skipped, and the tripwire surfaces the resulting
+      # staleness within staleAfterMinutes.
       after = [ "network-online.target" "sancta-tick-sync.service" ];
-      wants = [ "network-online.target" "sancta-tick-sync.service" ];
+      wants = [ "network-online.target" ];
+      requires = [ "sancta-tick-sync.service" ];
       onSuccess = [ "sancta-tick-promote.service" ];
       onFailure = [ "sancta-tick-alert.service" ];
 
@@ -581,7 +602,7 @@ in
         MemoryMax = cfg.memoryMax;
         CPUQuota = cfg.cpuQuota;
         Nice = 10;
-      } // optionalAttrs cfg.egressPinning.enable {
+      } // lib.optionalAttrs cfg.egressPinning.enable {
         # Residual (b): IP-level egress bound. See egressPinning option docs
         # for the honest brittleness note.
         IPAddressDeny = "any";
