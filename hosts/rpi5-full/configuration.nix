@@ -63,7 +63,15 @@ in
     ../../modules/system/nix-ld.nix # runtime loader so uvx-spawned hass-mcp interpreter can run
     ../../modules/system/ssh-hardened.nix
     ../../modules/services/shared-memory/shared-memory.nix # fleet shared-memory commons
+    ../../modules/services/sancta-heartbeat-tick.nix # sandboxed decoupled heartbeat
   ];
+
+  # Sancta sandboxed decoupled heartbeat — ~30-min cognitive tick that
+  # survives session death/reboots. Dedicated sancta-tick user + full systemd
+  # sandbox; self-suppresses ("no-auth") until the one-time
+  #   sudo -u sancta-tick env CLAUDE_CONFIG_DIR=/var/lib/sancta-tick/config claude login
+  # See modules/services/sancta-heartbeat-tick.nix for the architecture.
+  services.sancta-heartbeat-tick.enable = true;
 
   # Fleet shared-memory commons — localhost-bound first deploy.
   # Cross-host access over Tailscale is a deliberate follow-up (bind the
