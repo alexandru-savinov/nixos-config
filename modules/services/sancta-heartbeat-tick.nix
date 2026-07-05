@@ -519,7 +519,12 @@ in
     };
 
     oauthTokenFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
+      # str, NOT path: this is a RUNTIME path to a hand-placed file, so it must
+      # stay a plain string. lib.types.path would coerce a Nix path literal
+      # (e.g. ./token) into a world-readable /nix/store copy of the secret —
+      # exactly what we must avoid. String means the path is referenced, never
+      # the contents.
+      type = lib.types.nullOr lib.types.str;
       default = null;
       example = "/var/lib/sancta-tick/oauth-token";
       description = ''
@@ -531,6 +536,11 @@ in
         {option}`LoadCredential` (copied into the unit's private
         `$CREDENTIALS_DIRECTORY` tmpfs, readable only by the service) and
         exported as `CLAUDE_CODE_OAUTH_TOKEN` for the headless `claude -p` call.
+        Residual exposure: once exported, the token is in the tick process
+        environment (`/proc/<pid>/environ`, root-readable) for the lifetime of
+        that `claude -p` call — inherent to the CLI's documented env-var auth
+        (no fd-based alternative). The sandbox and the never-log/never-persist
+        handling keep this to the minimum.
 
         When null (the default), no credential is loaded and the tick
         self-suppresses every run with last-tick reason "no-auth" — so merging
