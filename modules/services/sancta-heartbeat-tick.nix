@@ -67,14 +67,22 @@ let
   # (written by the sandboxed tick) ever exploited one of these scripts.
   # ReadWritePaths is passed per-unit (sync/tripwire touch only their own
   # StateDir subdir; promote/alert also write the live index).
-  # NOTE: ProtectHome is deliberately NOT set here — these helpers exist to
-  # bridge the tick's StateDir to the live index under /home, so /home must
-  # stay reachable. ProtectSystem=strict makes everything read-only anyway;
-  # each unit's ReadWritePaths grants exactly the writable paths it needs.
+  #
+  # ProtectHome=tmpfs replaces /home with an empty tmpfs so the ONLY /home path
+  # any helper can see is the index dir, re-exposed via BindPaths. This shrinks
+  # the blast radius of a hypothetical exploit (via staging content the
+  # sandboxed tick wrote) from "all of /home/<indexOwner>" — SSH keys, the main
+  # ~/.claude, everything — down to exactly the one index dir the helper must
+  # bridge. ProtectSystem=strict does NOT cover /home, so without this the
+  # helpers had unrestricted read+write over the whole home; now they do not.
+  # BindPaths (read-write) is used because promote/alert append to the index;
+  # per-unit ReadWritePaths still scopes which of those bound paths are writable.
   helperHardening = {
     NoNewPrivileges = true;
     PrivateTmp = true;
     ProtectSystem = "strict";
+    ProtectHome = "tmpfs";
+    BindPaths = [ cfg.indexDir ];
     ProtectKernelTunables = true;
     ProtectKernelModules = true;
     ProtectControlGroups = true;
@@ -123,6 +131,21 @@ let
         # don't accumulate.
         ${cu}/rm -f "$STAGING/tick-output.json" "$STAGING/raw-output.json" \
           "$STAGING/result.txt" "$STAGING/stderr.log"
+
+        # HOME="$STATE" (set below) makes the claude CLI drop its own cache/
+        # state dot-dirs (~/.cache, ~/.config, ~/.claude, ~/.npm, ...) directly
+        # under $STATE. Those are pure caches — re-created on demand — and have
+        # no owner to prune them, so on a long-lived deployment they grow
+        # unbounded. Clear them at the START of every tick. This is bounded and
+        # reversible: it deletes only these known cache/state dot-dirs and never
+        # touches the credentialed config dir, the inbox/staging/tripwire
+        # exchange dirs, the cap counters, or last-tick.json. CLAUDE_CONFIG_DIR
+        # points at "$STATE/config" (NOT "$STATE/.claude"), so credentials
+        # survive.
+        for d in "$STATE/.cache" "$STATE/.config" "$STATE/.claude" \
+                 "$STATE/.npm" "$STATE/.local" "$STATE/.anthropic"; do
+          ${cu}/rm -rf "$d"
+        done
 
         # ── 1. Dedup guard: if ANY tick (warm session or cold) ran fewer than
         # dedupWindowMinutes ago, exit quietly. Warm path is primary; this timer
