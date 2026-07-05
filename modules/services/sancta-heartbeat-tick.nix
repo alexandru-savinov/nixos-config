@@ -60,6 +60,34 @@ let
 
   promptFile = ./sancta-heartbeat-tick-prompt.md;
 
+  # ── Shared hardening for the indexOwner helper units (sync/promote/alert/
+  # tripwire). These are pure local-file operations — no network, no new privs,
+  # no capabilities, no namespaces. ProtectSystem=strict + an explicit
+  # ReadWritePaths allowlist keeps the blast radius tight if staging content
+  # (written by the sandboxed tick) ever exploited one of these scripts.
+  # ReadWritePaths is passed per-unit (sync/tripwire touch only their own
+  # StateDir subdir; promote/alert also write the live index).
+  # NOTE: ProtectHome is deliberately NOT set here — these helpers exist to
+  # bridge the tick's StateDir to the live index under /home, so /home must
+  # stay reachable. ProtectSystem=strict makes everything read-only anyway;
+  # each unit's ReadWritePaths grants exactly the writable paths it needs.
+  helperHardening = {
+    NoNewPrivileges = true;
+    PrivateTmp = true;
+    ProtectSystem = "strict";
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectControlGroups = true;
+    RestrictNamespaces = true;
+    RestrictSUIDSGID = true;
+    RestrictRealtime = true;
+    LockPersonality = true;
+    CapabilityBoundingSet = "";
+    RestrictAddressFamilies = [ "AF_UNIX" ];
+    SystemCallFilter = [ "@system-service" ];
+    IPAddressDeny = "any";
+  };
+
   # ── The tick itself (runs as sancta-tick inside the sandbox) ─────────────
   # Residual (d) from the design doc: --strict-mcp-config and the tool cuts
   # MUST live visibly in the ExecStart script so a review of this file is a
@@ -118,7 +146,10 @@ let
         CAPFILE="$STATE/invocations-$TODAY.count"
         ${findutils}/bin/find "$STATE" -maxdepth 1 -name 'invocations-*.count' \
           ! -name "invocations-$TODAY.count" -delete
-        COUNT=$(${cu}/cat "$CAPFILE" 2>/dev/null || echo 0)
+        # Sanitize to digits-only: a partial write / fs hiccup leaving
+        # non-numeric content would otherwise crash the arithmetic under
+        # set -e and wedge every subsequent tick until cleared by hand.
+        COUNT=$(${cu}/cat "$CAPFILE" 2>/dev/null | ${pkgs.gnugrep}/bin/grep -E '^[0-9]+$' || echo 0)
         if [ "$COUNT" -ge ${toString cfg.dailyCap} ]; then
           echo "daily cap reached ($COUNT >= ${toString cfg.dailyCap}) — self-suppressing"
           write_last_tick false "capped"
@@ -318,6 +349,13 @@ let
 
     echo "ALERT: sancta-heartbeat-tick.service FAILED — writing feed alert" >&2
 
+    # Existence guard (matches promoteScript): with set -euo pipefail a missing
+    # index dir would fail loudly on the append and obscure the real failure.
+    if [ ! -d "$INDEX" ]; then
+      echo "ERROR: index dir $INDEX missing — cannot write feed alert" >&2
+      exit 1
+    fi
+
     # Mirror whatever last-tick the tick managed to write before failing.
     if [ -f "$STATE/last-tick.json" ] \
        && ${jqBin} -e '(.ts | type == "string")' "$STATE/last-tick.json" > /dev/null; then
@@ -326,9 +364,18 @@ let
       ${cu}/mv "$INDEX/last-tick.json.tmp" "$INDEX/last-tick.json"
     fi
 
-    ${jqBin} -cn --arg ts "$TS" \
-      '{ts: $ts, source: "sancta-tick-alert", alert: "heartbeat-tick-unit-failed", hint: "journalctl -u sancta-heartbeat-tick"}' \
-      >> "$INDEX/feed.json"
+    # Byte cap on the shared feed (same cap promoteScript enforces): above it,
+    # skip the append with a loud warning rather than growing it unbounded.
+    FEED="$INDEX/feed.json"
+    FSIZE=0
+    if [ -f "$FEED" ]; then FSIZE=$(${cu}/stat -c %s "$FEED"); fi
+    if [ "$FSIZE" -gt ${toString cfg.liveFileByteCap} ]; then
+      echo "WARNING: $FEED is $FSIZE bytes (> ${toString cfg.liveFileByteCap} cap) — skipping alert append; rotate it (follow-up) to resume" >&2
+    else
+      ${jqBin} -cn --arg ts "$TS" \
+        '{ts: $ts, source: "sancta-tick-alert", alert: "heartbeat-tick-unit-failed", hint: "journalctl -u sancta-heartbeat-tick"}' \
+        >> "$FEED"
+    fi
   '';
 
   # ── Tripwire: staleness detected by a DIFFERENT mechanism than the tick.
@@ -339,6 +386,14 @@ let
     MARKER="${stateDir}/tripwire/last-alert"
     NOW=$(${cu}/date +%s)
     MAX_AGE=$((${toString cfg.staleAfterMinutes} * 60))
+
+    # Existence guard (matches promoteScript): a missing index dir means the
+    # last-tick record can't be read — fail loudly with a clear cause rather
+    # than a set -euo pipefail abort on the append later.
+    if [ ! -d "$INDEX" ]; then
+      echo "ERROR: index dir $INDEX missing — cannot run tripwire" >&2
+      exit 1
+    fi
 
     stale_reason=""
     LT="$INDEX/last-tick.json"
@@ -365,9 +420,19 @@ let
     # so a long outage doesn't flood the substrate.
     last_alert=$(${cu}/cat "$MARKER" 2>/dev/null || echo 0)
     if [ $((NOW - last_alert)) -gt "$MAX_AGE" ]; then
-      ${jqBin} -cn --arg ts "$(${cu}/date -Is)" --arg r "$stale_reason" \
-        '{ts: $ts, source: "sancta-tick-tripwire", alert: "heartbeat-stale", reason: $r}' \
-        >> "$INDEX/feed.json"
+      # Byte cap on the shared feed (same cap promoteScript enforces): the
+      # marker already rate-limits to one line per stale window, but honour the
+      # cap for consistency so tripwire noise can't grow the feed unbounded.
+      FEED="$INDEX/feed.json"
+      FSIZE=0
+      if [ -f "$FEED" ]; then FSIZE=$(${cu}/stat -c %s "$FEED"); fi
+      if [ "$FSIZE" -gt ${toString cfg.liveFileByteCap} ]; then
+        echo "WARNING: $FEED is $FSIZE bytes (> ${toString cfg.liveFileByteCap} cap) — skipping tripwire append; rotate it (follow-up) to resume" >&2
+      else
+        ${jqBin} -cn --arg ts "$(${cu}/date -Is)" --arg r "$stale_reason" \
+          '{ts: $ts, source: "sancta-tick-tripwire", alert: "heartbeat-stale", reason: $r}' \
+          >> "$FEED"
+      fi
       echo "$NOW" > "$MARKER"
     fi
     # Exit non-zero so the failure is visible in systemctl --failed too.
@@ -457,7 +522,11 @@ in
 
     maxTurns = lib.mkOption {
       type = lib.types.int;
-      default = 10;
+      # The tick is a read-and-report task (Read/Glob/Grep the mirrored inbox,
+      # emit one JSON object) — it should finish in 1-3 turns. A low cap bounds
+      # the blast radius of a prompt injection that tried to keep the agent
+      # looping at billing cost. Raise only if a legitimate tick needs more.
+      default = 4;
       description = "Maximum agent turns per tick (--max-turns).";
     };
 
@@ -523,7 +592,12 @@ in
       group = "sancta-tick";
       home = stateDir;
       description = "Sancta sandboxed heartbeat tick";
-      shell = pkgs.bash; # needed for the one-time interactive `claude login`
+      # nologin: this user is never meant to have an interactive session. The
+      # one-time `claude login` runs the binary DIRECTLY under sudo -u (`sudo -u
+      # sancta-tick env CLAUDE_CONFIG_DIR=… claude login`), which does not spawn
+      # the target user's login shell — so nologin does not break setup while
+      # removing an interactive login path if the account ever gained a key.
+      shell = "${pkgs.shadow}/bin/nologin";
     };
     users.groups.sancta-tick = { };
 
@@ -545,14 +619,12 @@ in
     # ── Sync: refresh the tick's read-only view of the index ────────────────
     systemd.services.sancta-tick-sync = {
       description = "Mirror comm index into the sancta-tick sandbox inbox";
-      serviceConfig = {
+      serviceConfig = helperHardening // {
         Type = "oneshot";
         User = cfg.indexOwner;
         ExecStart = syncScript;
-        # Local file shuffling only — no network at all.
-        NoNewPrivileges = true;
-        PrivateTmp = true;
-        IPAddressDeny = "any";
+        # Reads cfg.indexDir (under /home), writes only the sandbox inbox mirror.
+        ReadWritePaths = [ "${stateDir}/inbox" ];
       };
     };
 
@@ -584,11 +656,22 @@ in
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
+        # The inbox is DATA the tick only READS (mirrored by the sync unit);
+        # keeping it read-only means a fully prompt-injected tick still cannot
+        # rewrite last-tick-index.json to defeat the dedup guard. The tick only
+        # ever WRITES its own config (credentials), staging (output), tripwire
+        # marker, and last-tick.json / cap counters at the StateDir root.
         ReadWritePaths = [ stateDir ];
+        ReadOnlyPaths = [ "${stateDir}/inbox" ];
         PrivateTmp = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
+        # No capabilities are needed (unprivileged user, read-and-report);
+        # dropping the whole bounding set + blocking namespace creation closes
+        # user-namespace escalation vectors on top of NoNewPrivileges.
+        CapabilityBoundingSet = "";
+        RestrictNamespaces = true;
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
         SystemCallFilter = [ "@system-service" ];
         RestrictSUIDSGID = true;
@@ -623,38 +706,36 @@ in
     # ── Promotion (boundary #3: the live substrate is written only here) ────
     systemd.services.sancta-tick-promote = {
       description = "Validate and promote staged tick output into the live comm index";
-      serviceConfig = {
+      serviceConfig = helperHardening // {
         Type = "oneshot";
         User = cfg.indexOwner;
         ExecStart = promoteScript;
-        NoNewPrivileges = true;
-        PrivateTmp = true;
-        IPAddressDeny = "any";
+        # Reads staging (under StateDir), writes the live index + last-tick mirror.
+        ReadWritePaths = [ cfg.indexDir stateDir ];
       };
     };
 
     systemd.services.sancta-tick-alert = {
       description = "Surface a failed heartbeat tick into the feed (OnFailure hook)";
-      serviceConfig = {
+      serviceConfig = helperHardening // {
         Type = "oneshot";
         User = cfg.indexOwner;
         ExecStart = alertScript;
-        NoNewPrivileges = true;
-        PrivateTmp = true;
-        IPAddressDeny = "any";
+        # Reads StateDir last-tick, writes the live index (alert line + mirror).
+        ReadWritePaths = [ cfg.indexDir stateDir ];
       };
     };
 
     # ── Liveness tripwire: separate mechanism, cannot die green ─────────────
     systemd.services.sancta-tick-tripwire = {
       description = "Sancta heartbeat liveness tripwire (alerts on stale last-tick)";
-      serviceConfig = {
+      serviceConfig = helperHardening // {
         Type = "oneshot";
         User = cfg.indexOwner;
         ExecStart = tripwireScript;
-        NoNewPrivileges = true;
-        PrivateTmp = true;
-        IPAddressDeny = "any";
+        # Reads the live index last-tick, writes the tripwire marker + a feed
+        # alert line into the index.
+        ReadWritePaths = [ cfg.indexDir "${stateDir}/tripwire" ];
       };
     };
 
