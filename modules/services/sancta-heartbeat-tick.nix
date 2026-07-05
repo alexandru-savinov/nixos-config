@@ -241,6 +241,11 @@ let
         #     Claude Code 2.1.x and made claude reject the ENTIRE run ("matches
         #     no known tool"), failing every tick. An unknown name in --tools is
         #     silently ignored; an unknown name in --disallowedTools is fatal.
+        #     (Silent-ignore verified empirically against Claude Code 2.1.197 on
+        #     2026-07-05, not a documented spec guarantee — but even if a future
+        #     CLI made unknown --tools names fatal too, this list is exactly the
+        #     three CANONICAL always-present read tools, so it has no name that
+        #     can go stale the way a broad denylist did.)
         #   * --allowedTools "Read,Glob,Grep" additionally auto-approves those
         #     three (all no-permission read tools anyway) so the headless -p run
         #     never stalls on a permission prompt. All three names are stable.
@@ -295,8 +300,16 @@ let
           #     this handled branch.
           # The observable-failure guarantee is preserved via last-tick.ok +
           # the journal; only the redundant per-tick unit-failure alert is
-          # dropped. (A follow-up could add a ok:false-streak detector on the
-          # promote side if a quieter "persistently unhealthy" signal is wanted.)
+          # dropped.
+          # KNOWN RESIDUAL GAP (accepted tradeoff): a PERSISTENT handled failure
+          # keeps writing a FRESH last-tick.ts with ok:false, so the tripwire —
+          # which fires on timestamp AGE, not on ok — stays green and no feed
+          # alert is raised. The failure is then visible ONLY in last-tick.ok +
+          # the journal, not pushed to the feed. This is deliberate (the storm we
+          # are killing), but it means "ticking but every tick fails" is a quiet
+          # state. Follow-up to close it: an ok:false-STREAK detector on the
+          # promote/tripwire side (alert once after N consecutive ok:false) —
+          # tracked as the quieter "persistently unhealthy" signal.
           exit 0
         fi
 
