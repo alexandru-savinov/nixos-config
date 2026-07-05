@@ -68,10 +68,14 @@ in
 
   # Sancta sandboxed decoupled heartbeat — ~30-min cognitive tick that
   # survives session death/reboots. Dedicated sancta-tick user + full systemd
-  # sandbox; self-suppresses ("no-auth") until the one-time
-  #   sudo -u sancta-tick env CLAUDE_CONFIG_DIR=/var/lib/sancta-tick/config claude login
+  # sandbox; self-suppresses ("no-auth") until the OAuth token file below is
+  # placed by hand (off-git, off-store, chmod 600):
+  #   claude setup-token   # mint a long-lived token where already logged in
+  #   sudo install -m600 /dev/stdin /var/lib/sancta-tick/oauth-token  # paste, Ctrl-D
+  #   sudo nixos-rebuild switch --flake .#rpi5-full
   # See modules/services/sancta-heartbeat-tick.nix for the architecture.
   services.sancta-heartbeat-tick.enable = true;
+  services.sancta-heartbeat-tick.oauthTokenFile = "/var/lib/sancta-tick/oauth-token";
 
   # Fleet shared-memory commons — localhost-bound first deploy.
   # Cross-host access over Tailscale is a deliberate follow-up (bind the
