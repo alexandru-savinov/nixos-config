@@ -230,7 +230,19 @@ let
         export CLAUDE_CONFIG_DIR="$STATE/config"
         export HOME="$STATE"
         export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-        export CLAUDE_CODE_OAUTH_TOKEN="$(${cu}/cat "$OAUTH_TOKEN_CRED")"
+        # Read the token from the LoadCredential tmpfs into the env ONLY (never
+        # logged, never written to disk). The -s gate in §3 already proved the
+        # file is non-empty; guard the read anyway so a transient read failure or
+        # an all-whitespace file self-suppresses ("no-auth") cleanly instead of
+        # exporting an empty/garbage token and hitting a guaranteed auth error.
+        # $() strips the trailing newline `setup-token` / a stray Enter may add.
+        OAUTH_TOKEN_VALUE="$(${cu}/cat "$OAUTH_TOKEN_CRED" 2>/dev/null || true)"
+        if [ -z "''${OAUTH_TOKEN_VALUE//[[:space:]]/}" ]; then
+          echo "OAuth token credential unreadable/blank — self-suppressing (reason: no-auth)"
+          write_last_tick false "no-auth"
+          exit 0
+        fi
+        export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN_VALUE"
 
         RAW="$STAGING/raw-output.json"
         RC=0
@@ -778,12 +790,28 @@ in
         # or the nix store. The tick reads it into CLAUDE_CODE_OAUTH_TOKEN.
         # When oauthTokenFile is null this key is absent → no credential → the
         # tick self-suppresses ("no-auth").
+        #
+        # LoadCredential= is enforced by systemd BEFORE ExecStart: a MISSING
+        # source file fails the unit outright (the in-script self-suppress never
+        # runs), so the "safe to rebuild before the token exists" property is
+        # instead upheld by ConditionPathExists= in unitConfig below — an absent
+        # file skips the unit as success, no onFailure alert storm.
         LoadCredential = "oauth-token:${cfg.oauthTokenFile}";
       } // lib.optionalAttrs cfg.egressPinning.enable {
         # Residual (b): IP-level egress bound. See egressPinning option docs
         # for the honest brittleness note.
         IPAddressDeny = "any";
         IPAddressAllow = cfg.egressPinning.allowedAddresses;
+      };
+
+      # Keep the "safe to rebuild BEFORE the token file is placed" guarantee even
+      # with oauthTokenFile set: if the file is absent, ConditionPathExists=
+      # makes systemd SKIP the unit (recorded as a success — no onFailure, so no
+      # alert storm), rather than LoadCredential= failing the unit every tick.
+      # Once the file exists the condition passes and LoadCredential delivers it.
+      # (unitConfig → [Unit] section; conditions do NOT belong in serviceConfig.)
+      unitConfig = lib.mkIf (cfg.oauthTokenFile != null) {
+        ConditionPathExists = cfg.oauthTokenFile;
       };
     };
 
