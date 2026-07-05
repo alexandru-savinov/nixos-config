@@ -37,10 +37,28 @@
 # helper units owned by the index owner (nixos) bridge the two worlds and
 # re-validate everything at the trust boundary.
 #
-# Post-merge, one-time (Alexandru's hand):
-#   sudo -u sancta-tick env CLAUDE_CONFIG_DIR=/var/lib/sancta-tick/config claude login
-# Until then the tick self-suppresses (last-tick reason "no-auth") — merging
-# and rebuilding BEFORE the login is safe.
+# Authentication — long-lived OAuth token (headless-correct):
+#   The tick authenticates via CLAUDE_CODE_OAUTH_TOKEN, the token minted by
+#   `claude setup-token` (a one-year OAuth token for a Claude subscription —
+#   https://code.claude.com/docs/en/authentication#generate-a-long-lived-token).
+#   This is the correct headless-service mechanism: it survives OAuth reauth
+#   better than an interactive-login .credentials.json and needs no browser.
+#
+#   The token is delivered to the unit via systemd LoadCredential=, which copies
+#   the file (services.sancta-heartbeat-tick.oauthTokenFile) into the unit's
+#   private $CREDENTIALS_DIRECTORY tmpfs — readable only by this service, never
+#   world-readable, and never in the nix store. The token FILE itself is placed
+#   by Alexandru's hand (chmod 600), NOT via git and NOT via chat; the module
+#   only ever references its PATH.
+#
+# Post-merge, one-time (Alexandru's hand) — replaces the old `claude login`:
+#   1. Mint a token (on any machine where he is logged in):  claude setup-token
+#   2. Place it on the host, owner-only, off-git, off-store:
+#        sudo install -m600 /dev/stdin /var/lib/sancta-tick/oauth-token
+#        <paste the token, then Ctrl-D>
+#   3. sudo nixos-rebuild switch --flake .#rpi5-full
+# Until the token file exists the tick self-suppresses (last-tick reason
+# "no-auth") — merging and rebuilding BEFORE the file is placed is safe.
 
 { config, pkgs, lib, claude-code ? null, ... }:
 
@@ -138,10 +156,10 @@ let
         # no owner to prune them, so on a long-lived deployment they grow
         # unbounded. Clear them at the START of every tick. This is bounded and
         # reversible: it deletes only these known cache/state dot-dirs and never
-        # touches the credentialed config dir, the inbox/staging/tripwire
-        # exchange dirs, the cap counters, or last-tick.json. CLAUDE_CONFIG_DIR
-        # points at "$STATE/config" (NOT "$STATE/.claude"), so credentials
-        # survive.
+        # touches the isolated config dir, the inbox/staging/tripwire exchange
+        # dirs, the cap counters, or last-tick.json. Auth is supplied via the
+        # CLAUDE_CODE_OAUTH_TOKEN env (from the LoadCredential tmpfs), so it is
+        # unaffected by clearing these caches.
         for d in "$STATE/.cache" "$STATE/.config" "$STATE/.claude" \
                  "$STATE/.npm" "$STATE/.local" "$STATE/.anthropic"; do
           ${cu}/rm -rf "$d"
@@ -179,10 +197,16 @@ let
           exit 0
         fi
 
-        # ── 3. Not-logged-in self-suppression: safe to merge+rebuild BEFORE the
-        # one-time `claude login` into this config dir has happened.
-        if [ ! -s "$STATE/config/.credentials.json" ]; then
-          echo "no credentials in $STATE/config — self-suppressing (reason: no-auth)"
+        # ── 3. No-auth self-suppression: safe to merge+rebuild BEFORE the
+        # one-time OAuth token file (services.sancta-heartbeat-tick.oauthTokenFile)
+        # has been placed by hand. systemd delivers that file via LoadCredential=
+        # into $CREDENTIALS_DIRECTORY/oauth-token (a private per-unit tmpfs). If
+        # oauthTokenFile is unset the credential is absent; if the file is empty
+        # the credential is empty — either way we self-suppress. The token value
+        # is NEVER echoed.
+        OAUTH_TOKEN_CRED="''${CREDENTIALS_DIRECTORY:-}/oauth-token"
+        if [ ! -s "$OAUTH_TOKEN_CRED" ]; then
+          echo "no OAuth token credential present — self-suppressing (reason: no-auth)"
           write_last_tick false "no-auth"
           exit 0
         fi
@@ -190,8 +214,15 @@ let
         echo $((COUNT + 1)) > "$CAPFILE"
 
         # ── 4. The claude call. Verified seam (design doc §3, RESOLVED):
-        #   * CLAUDE_CONFIG_DIR fully relocates config AND credentials — the real
-        #     ~/.claude is never consulted (ProtectHome=true stays ON).
+        #   * Auth comes from CLAUDE_CODE_OAUTH_TOKEN (the `claude setup-token`
+        #     long-lived token), read from the LoadCredential tmpfs into the env
+        #     ONLY — it is never logged or written to disk by this script. This
+        #     is the headless-correct mechanism (survives OAuth reauth; no
+        #     interactive login). NOTE: --bare would ignore this token; the tick
+        #     deliberately does NOT use --bare.
+        #   * CLAUDE_CONFIG_DIR still relocates config (isolated dot-dir + MCP
+        #     strip) — the real ~/.claude is never consulted (ProtectHome stays
+        #     ON). Auth no longer depends on a .credentials.json in that dir.
         #   * --strict-mcp-config strips ALL MCP tools, including account-level
         #     claude.ai connectors riding the OAuth account.
         #   * --disallowedTools cuts every write/exec/network built-in; the tick
@@ -199,6 +230,19 @@ let
         export CLAUDE_CONFIG_DIR="$STATE/config"
         export HOME="$STATE"
         export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+        # Read the token from the LoadCredential tmpfs into the env ONLY (never
+        # logged, never written to disk). The -s gate in §3 already proved the
+        # file is non-empty; guard the read anyway so a transient read failure or
+        # an all-whitespace file self-suppresses ("no-auth") cleanly instead of
+        # exporting an empty/garbage token and hitting a guaranteed auth error.
+        # $() strips the trailing newline `setup-token` / a stray Enter may add.
+        OAUTH_TOKEN_VALUE="$(${cu}/cat "$OAUTH_TOKEN_CRED" 2>/dev/null || true)"
+        if [ -z "''${OAUTH_TOKEN_VALUE//[[:space:]]/}" ]; then
+          echo "OAuth token credential unreadable/blank — self-suppressing (reason: no-auth)"
+          write_last_tick false "no-auth"
+          exit 0
+        fi
+        export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN_VALUE"
 
         RAW="$STAGING/raw-output.json"
         RC=0
@@ -486,6 +530,36 @@ in
       '';
     };
 
+    oauthTokenFile = lib.mkOption {
+      # str, NOT path: this is a RUNTIME path to a hand-placed file, so it must
+      # stay a plain string. lib.types.path would coerce a Nix path literal
+      # (e.g. ./token) into a world-readable /nix/store copy of the secret —
+      # exactly what we must avoid. String means the path is referenced, never
+      # the contents.
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/var/lib/sancta-tick/oauth-token";
+      description = ''
+        Path to a chmod-600 file containing ONLY the long-lived OAuth token
+        string minted by `claude setup-token` (no trailing structure — just the
+        token). Placed by hand, owner-only, NOT in git and NOT in the nix store.
+
+        When set, the file is delivered to the tick unit via systemd
+        {option}`LoadCredential` (copied into the unit's private
+        `$CREDENTIALS_DIRECTORY` tmpfs, readable only by the service) and
+        exported as `CLAUDE_CODE_OAUTH_TOKEN` for the headless `claude -p` call.
+        Residual exposure: once exported, the token is in the tick process
+        environment (`/proc/<pid>/environ`, root-readable) for the lifetime of
+        that `claude -p` call — inherent to the CLI's documented env-var auth
+        (no fd-based alternative). The sandbox and the never-log/never-persist
+        handling keep this to the minimum.
+
+        When null (the default), no credential is loaded and the tick
+        self-suppresses every run with last-tick reason "no-auth" — so merging
+        and rebuilding BEFORE the token file exists is safe.
+      '';
+    };
+
     interval = lib.mkOption {
       type = lib.types.str;
       default = "*:00/30";
@@ -615,11 +689,11 @@ in
       group = "sancta-tick";
       home = stateDir;
       description = "Sancta sandboxed heartbeat tick";
-      # nologin: this user is never meant to have an interactive session. The
-      # one-time `claude login` runs the binary DIRECTLY under sudo -u (`sudo -u
-      # sancta-tick env CLAUDE_CONFIG_DIR=… claude login`), which does not spawn
-      # the target user's login shell — so nologin does not break setup while
-      # removing an interactive login path if the account ever gained a key.
+      # nologin: this user is never meant to have an interactive session. With
+      # OAuth-token auth there is no `claude login` step at all — auth arrives as
+      # a file placed by hand + delivered via LoadCredential — so nothing ever
+      # needs to run under this account interactively. nologin closes the
+      # interactive-login path if the account ever gained a key.
       shell = "${pkgs.shadow}/bin/nologin";
     };
     users.groups.sancta-tick = { };
@@ -630,7 +704,8 @@ in
 
     systemd.tmpfiles.rules = [
       "d ${stateDir} 0750 sancta-tick sancta-tick -"
-      # OAuth credentials live here after the one-time login — owner-only.
+      # Isolated CLAUDE_CONFIG_DIR (config + MCP strip) — owner-only. Auth no
+      # longer lives here; it arrives via LoadCredential (CLAUDE_CODE_OAUTH_TOKEN).
       "d ${stateDir}/config 0700 sancta-tick sancta-tick -"
       # Exchange dirs: setgid so files stay group sancta-tick; group-writable
       # so the indexOwner helpers can write mirrors / clean up staging.
@@ -708,11 +783,35 @@ in
         MemoryMax = cfg.memoryMax;
         CPUQuota = cfg.cpuQuota;
         Nice = 10;
+      } // lib.optionalAttrs (cfg.oauthTokenFile != null) {
+        # Deliver the OAuth token securely: systemd copies the file into the
+        # unit's private $CREDENTIALS_DIRECTORY tmpfs (readable only by this
+        # service), never exposing the path contents to the sandbox filesystem
+        # or the nix store. The tick reads it into CLAUDE_CODE_OAUTH_TOKEN.
+        # When oauthTokenFile is null this key is absent → no credential → the
+        # tick self-suppresses ("no-auth").
+        #
+        # LoadCredential= is enforced by systemd BEFORE ExecStart: a MISSING
+        # source file fails the unit outright (the in-script self-suppress never
+        # runs), so the "safe to rebuild before the token exists" property is
+        # instead upheld by ConditionPathExists= in unitConfig below — an absent
+        # file skips the unit as success, no onFailure alert storm.
+        LoadCredential = "oauth-token:${cfg.oauthTokenFile}";
       } // lib.optionalAttrs cfg.egressPinning.enable {
         # Residual (b): IP-level egress bound. See egressPinning option docs
         # for the honest brittleness note.
         IPAddressDeny = "any";
         IPAddressAllow = cfg.egressPinning.allowedAddresses;
+      };
+
+      # Keep the "safe to rebuild BEFORE the token file is placed" guarantee even
+      # with oauthTokenFile set: if the file is absent, ConditionPathExists=
+      # makes systemd SKIP the unit (recorded as a success — no onFailure, so no
+      # alert storm), rather than LoadCredential= failing the unit every tick.
+      # Once the file exists the condition passes and LoadCredential delivers it.
+      # (unitConfig → [Unit] section; conditions do NOT belong in serviceConfig.)
+      unitConfig = lib.mkIf (cfg.oauthTokenFile != null) {
+        ConditionPathExists = cfg.oauthTokenFile;
       };
     };
 
