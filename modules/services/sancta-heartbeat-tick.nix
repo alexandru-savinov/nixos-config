@@ -267,6 +267,28 @@ let
           write_last_tick false "no-auth"
           exit 0
         fi
+        # Trim surrounding whitespace (stray spaces/newlines a hand-paste can add).
+        # Deliberately NOT stripping INTERIOR whitespace: that would "repair" a
+        # corrupt paste into a syntactically clean but wrong token — interior
+        # junk must fail the charset gate below instead.
+        OAUTH_TOKEN_VALUE="''${OAUTH_TOKEN_VALUE#"''${OAUTH_TOKEN_VALUE%%[![:space:]]*}"}"
+        OAUTH_TOKEN_VALUE="''${OAUTH_TOKEN_VALUE%"''${OAUTH_TOKEN_VALUE##*[![:space:]]}"}"
+        # Charset gate. A `claude setup-token` token (sk-ant-oat01-…) is plain
+        # ASCII from [A-Za-z0-9_-] only. A terminal paste of the token can
+        # capture TUI pane-border bytes (e.g. "│ │", U+2502 = e2 94 82)
+        # MID-token; the whitespace-only check above passes such a token, and
+        # the resulting corrupt Authorization header makes `claude -p` exit 1
+        # with an EMPTY stderr (with --output-format json the real error goes
+        # to stdout) — burning a daily-cap slot on a guaranteed failure every
+        # tick. Reject any byte outside the token alphabet BEFORE spending the
+        # invocation. LC_ALL=C keeps the bracket expression byte-safe (no
+        # locale-dependent ranges); the token value itself is never echoed.
+        if ${cu}/printf '%s' "$OAUTH_TOKEN_VALUE" \
+             | LC_ALL=C ${pkgs.gnugrep}/bin/grep -q '[^A-Za-z0-9_-]'; then
+          echo "OAuth token contains non-token characters — self-suppressing (reason: bad-token)"
+          write_last_tick false "bad-token"
+          exit 0
+        fi
         export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN_VALUE"
 
         RAW="$STAGING/raw-output.json"
@@ -284,6 +306,21 @@ let
         if [ "$RC" -ne 0 ]; then
           echo "claude exited non-zero ($RC); stderr tail:" >&2
           ${cu}/tail -n 20 "$STAGING/stderr.log" >&2 || true
+          # With --output-format json the REAL error often lands on STDOUT
+          # inside the JSON envelope (.result / raw-output.json), leaving
+          # stderr EMPTY — the corrupt-token auth failure surfaced NOTHING in
+          # the journal this way. When stderr has nothing, also emit a
+          # REDACTED tail of the raw stdout: extract .result when the envelope
+          # parses (fall back to the raw bytes otherwise), scrub any
+          # token-shaped value FIRST so a token can never reach the journal,
+          # and byte-bound the tail. Makes the "error only on stdout" class
+          # visible on FIRST occurrence.
+          if [ ! -s "$STAGING/stderr.log" ] && [ -s "$RAW" ]; then
+            echo "stderr empty — redacted stdout tail:" >&2
+            { ${jqBin} -r '.result // .' "$RAW" 2>/dev/null || ${cu}/cat "$RAW"; } \
+              | ${gnused}/bin/sed 's/sk-ant-oat01-[A-Za-z0-9_-]*/sk-ant-oat01-<REDACTED>/g' \
+              | ${cu}/tail -c 2048 >&2 || true
+          fi
           write_last_tick false "claude-exit-$RC"
           # HANDLED failure — exit 0 (like the other handled-fail paths below:
           # output-too-large / bad-envelope / malformed-output). A non-zero
