@@ -8,19 +8,30 @@ his wife's). This is the most confidential data category the system has touched.
 > **Status: DESIGN, council-gated. Council RETURNED: escalate-to-human, risk HIGH**
 > (log `council-20260706T172246Z-cf6dda`). It is NOT a green light to build — the
 > council escalated to the human and produced a load-bearing architectural finding
-> plus 4 required amendments (§§5–7, §11), all folded in below. See "Gates before
-> build" at the end — no code is written until Alexandru approves and his wife's
-> apex-veto is cleared through him.
+> plus 4 required amendments, all folded in below. See "Gates before build" at the
+> end — no code is written until Alexandru approves and his wife's apex-veto is
+> cleared through him.
+>
+> **COMMITTED ARCHITECTURE (Alexandru's decision, 2026-07-06 — architecture
+> authority, NOT a launch authorization):** the **PUSH model with HA-side
+> aggregation + a normal stale-TTL** is the primary, committed shape. Home
+> Assistant does the minimization at source (aggregates the allowlist into one
+> non-denominated bit, quantizes/debounces it HA-side) and **pushes** that single
+> bit to a **dumb sink proxy on sancta-claw that holds ZERO HA credential**. The
+> proxy stores `{bit, last_push_ts}` and serves `GET /presence`; if no verified
+> push arrived within the stale-TTL it serves `null`. The PULL model (proxy holds
+> the full-scope HA token) is **rejected** — see §7. This eliminates the token
+> entirely: content-blindness AND token-absence are both structural.
 >
 > **Load-bearing finding (council-20260706T172246Z-cf6dda):** content-blindness is
 > already STRUCTURAL (good) — Sancta cannot address HA, so it cannot read a
 > biometric value. But **temporal-blindness and fail-closed are currently POLICY
 > where they MUST be STRUCTURE** — the exact anti-pattern the doctrine forbids
-> ("secure-by-construction, not by discipline"). The shape is NOT ready to forge
-> until those move from discipline to wiring: the timeline side-channel must be
-> closed by server-side quantization (not manners), and `null` must be the *type's
-> initializer* (not a fallback branch). This doc now says that plainly; the ralphex
-> plan implements the structural versions.
+> ("secure-by-construction, not by discipline"). The committed push model moves
+> them to wiring: the timeline side-channel is closed by **HA-side quantization +
+> debounce** (§6), and `null` is the *type's initializer* served whenever a
+> verified fresh push is absent (§5). This doc says that plainly; the ralphex plan
+> implements it.
 
 ---
 
@@ -57,228 +68,288 @@ The consent record is the standing `aggregate-presence` opt-in in the
 consent-ledger (`~/.claude/index/consent-ledger.jsonl`): explicit, revocable,
 with an `expiresAt`.
 
-## 3. Secure-by-construction architecture
+## 3. Secure-by-construction architecture — the PUSH model (committed)
 
-### 3.1 Why a proxy is MANDATORY — the token cannot be scoped
+### 3.1 The un-scopeable token is the whole reason to invert the flow
 
 **KEY FACT (state it up front):** Home Assistant long-lived access tokens
 **cannot be scoped per-entity.** A long-lived token grants *full* HA API access —
 every entity, including all biometric / health / location sensors and the
-history API. There is no "read-only, presence-only" HA token to hand to Sancta.
+history API. There is no "read-only, presence-only" HA token.
 
-Therefore a naive "give Sancta a scoped token" is **impossible and insecure**:
-any token Sancta held would be able to read biometrics. The proxy is not a
-convenience — it is the *only* way to expose the aggregate bit without exposing
-the token that can read everything. **Sancta holds NO HA token, ever.**
+A *pull* proxy — one that queries HA for the aggregate — would have to **hold that
+full-scope token next to Sancta on sancta-claw**, making the entire HA API the
+blast radius if the proxy is ever compromised. The committed design **inverts the
+flow**: **Home Assistant PUSHES** the single aggregate bit *out* to the proxy, so
+**the proxy holds NO HA credential at all.** The token that could read biometrics
+**never leaves HA.** This is not a mitigation of the token risk — it is its
+*elimination*. (The rejected pull alternative is §7.)
 
-### 3.2 The presence-proxy service
+### 3.2 HA side — the data holder does the minimization at source
 
-- Runs on host **sancta-claw** — NOT rpi5, NOT kuzea. sancta-claw is the single
-  place the full-scope HA long-lived token is allowed to live.
-- Holds the HA long-lived token (via agenix; see §7 blast-radius).
-- Reads **only** an explicit, operator-defined **allowlist of presence entity
-  IDs**. This is a *positive allowlist*, never a denylist — see §3.4.
-- Aggregates the allowlisted entities with a **single boolean OR** into one bit.
-- Exposes **exactly one endpoint**:
+The minimization happens closest to the data, inside HA, where the raw entities
+already live and never have to leave:
+
+- **Template `binary_sensor.someone_home`** = a **single boolean OR** across the
+  operator's allowlisted presence entities. It is **non-denominated by
+  construction** — never *who*, never *how many*, never *which room*, never a
+  value. The bit is identical whether she alone, he alone, or both are home.
+- **An HA automation pushes ONLY that one bit** to the proxy, on two triggers:
+  - **(a) on each DEBOUNCED / QUANTIZED change** — HA-side hysteresis so brief
+    transitions and exact edge-times do not leak (§6);
+  - **(b) a periodic KEEPALIVE push** — a heartbeat proving liveness so the proxy
+    can distinguish "no change" from "HA went silent" (§5 stale-TTL).
+- **The allowlist, the OR-aggregation, and the quantization ALL live in HA.** The
+  operator defines the allowlist entities in HA config (his hand). A new,
+  possibly-biometric HA entity is invisible to the bit until the operator adds it
+  to the template's allowlist — a *positive allowlist*, never a denylist (§3.5).
+- **On HA restart the automation MUST re-fire an immediate sync push** so the
+  proxy is not left stale after a restart. (HA-side requirement, restated in §5.)
+
+### 3.3 Proxy on sancta-claw — a DUMB SINK with ZERO HA token
+
+- Runs on host **sancta-claw** — NOT rpi5, NOT kuzea.
+- **Holds NO HA credential of any kind.** There is no HA token, no HA URL it
+  queries, no HA API client. It cannot address HA. It only *receives*.
+- **Receives HMAC-signed pushes over the tailnet only** (inbound), verifies the
+  signature against a shared secret held in agenix, and **rejects any push it
+  cannot verify**.
+- **Stores exactly `{someone_home_bit, last_push_ts}`** — the latest bit and when
+  it last arrived. No history, no ring buffer (§6).
+- **Exposes exactly one read endpoint:**
 
   ```
   GET /presence  →  {"someone_home": true | false | null, "ts": "<iso8601>"}
   ```
 
-- Does **NOT** proxy arbitrary HA queries. `/presence` is the *sole* endpoint.
-  There is no "ask HA for entity X" path, no passthrough, no query parameters
-  that select entities. Sancta cannot name an entity to the proxy.
+- Serves the stored bit **only** when it is fresh (a verified push within the
+  stale-TTL) AND consent is active AND the kill-switch is clear; otherwise `null`
+  (§5). There is no other endpoint, no query parameter, no way for a reader to
+  name an entity or influence what HA aggregates.
 
-### 3.3 Sancta's side — no token, no path
+### 3.4 Sancta's side — no token, no path
 
 - Sancta holds **NO HA token** and has **NO network path** to Home Assistant
-  except the proxy's one endpoint, reached over the tailnet.
-- The path to biometric data **structurally does not exist** for Sancta. There is
-  nothing to misconfigure into a leak: Sancta literally cannot address HA.
+  except the proxy's one `GET /presence` endpoint, reached over the tailnet.
+- The path to biometric data **structurally does not exist** for Sancta. Nor does
+  it exist for the proxy: neither can address HA. There is nothing to misconfigure
+  into a leak.
 
-### 3.4 Allowlist, not denylist — and why
+### 3.5 Allowlist, not denylist — and why (HA-side)
 
-The proxy aggregates a **positive allowlist** of entity IDs, defined by the
-operator by name. It is explicitly **not** a denylist for one reason:
+The template sensor aggregates a **positive allowlist** of entity IDs, chosen by
+the operator by name, in HA config. It is explicitly **not** a denylist:
 
-- A **denylist forgets a new entity.** If HA gains a new (possibly biometric)
-  entity, a denylist would let it through until someone remembers to block it.
+- A **denylist forgets a new entity.** A new (possibly biometric) HA entity would
+  be included until someone remembers to block it.
 - An **allowlist cannot leak what isn't listed.** A new HA entity is invisible to
   the aggregate until the operator explicitly adds it. Silence is the safe default.
 
-This is the core secure-by-construction property: **the aggregate can only ever
-reflect entities a human deliberately chose**, and forgetting fails *closed*.
+The core secure-by-construction property: **the aggregate can only ever reflect
+entities a human deliberately chose**, and forgetting fails *closed*.
 
-### 3.5 Aggregate + non-denominated
+### 3.6 Aggregate + non-denominated
 
-The output is a plain OR across the allowlisted entities:
+The pushed bit is a plain OR across the allowlisted entities:
 
 - never per-person,
 - never "which person",
 - never a count,
 - never a room or a value.
 
-So even someone observing the bit cannot back out *whose* presence it reflects.
-His wife's patterns cannot be inferred from a non-denominated OR — the bit is
-identical whether she alone, he alone, or both are home.
+So even an observer of the bit cannot back out *whose* presence it reflects. His
+wife's patterns cannot be inferred from a non-denominated OR at a single moment
+(the temporal / cross-signal caveats are §8).
 
-## 4. Data-flow (one tick)
+## 4. Data-flow — two independent flows
+
+### 4.1 Ingest (HA → proxy) — HA pushes, proxy has no token
+
+```
+Home Assistant                                    presence-proxy (sancta-claw)
+  binary_sensor.someone_home = OR(allowlist)       (holds ZERO HA credential)
+  (aggregated + quantized + debounced HA-side)
+        │
+        ├─ on debounced change ──HMAC-signed POST──▶ verify HMAC (agenix secret)
+        ├─ periodic keepalive ───HMAC-signed POST──▶   │  └─ bad sig ─▶ REJECT (drop)
+        └─ on HA restart: immediate sync push ───────▶ store {bit, last_push_ts}
+```
+
+The proxy never asks HA anything. It only receives verified pushes and updates
+its `{bit, last_push_ts}` store. An unverifiable push is dropped, not stored.
+
+### 4.2 Read (Sancta → proxy) — the gated, fail-closed read
 
 ```
 Sancta ──GET /presence──▶ presence-proxy        (tailnet; Sancta holds NO HA token)
+                          │  bit starts as null (the initializer, §5)
                           │
-                          ├─▶ check consent-ledger for a valid
-                          │   `aggregate-presence` entry (not expired, not revoked)
-                          │        │
-                          │        └─ no valid entry ─▶ {"someone_home": null,
-                          │                              "reason": "no-consent"}
+                          ├─▶ apex kill-switch engaged?
+                          │        └─ yes ─▶ {"someone_home": null, "reason": "apex-veto"}
                           │
-                          ├─▶ check apex-veto kill-switch
-                          │        └─ engaged ─▶ {"someone_home": null,
-                          │                       "reason": "apex-veto"}
+                          ├─▶ consent-ledger `aggregate-presence` active & unexpired?
+                          │        └─ no  ─▶ {"someone_home": null, "reason": "no-consent"}
                           │
-                          ├─▶ query HA for ONLY the allowlist entity IDs
-                          │        └─ HA down / timeout ─▶ {"someone_home": null,
-                          │                                  "reason": "ha-unreachable"}
+                          ├─▶ a verified push within the stale-TTL?
+                          │        └─ no  ─▶ {"someone_home": null, "reason": "stale"}
                           │
-                          └─▶ OR-aggregate the allowlisted states
+                          └─▶ ALL three hold ─▶ serve the stored bit
                                    ▼
-                          {"someone_home": <bool>, "ts": "<iso8601>"}
+                          {"someone_home": <bool>, "ts": "<last_push_ts>"}
 ```
 
-Sancta never sees which entities were queried, how many there were, or their
-values — only the aggregated bit (or `null`) and a timestamp.
+Sancta never sees which entities HA aggregated, how many there were, or their
+values — only the aggregated bit (or `null` + reason) and a timestamp.
 
-## 5. Fail-closed as a TYPE, not a fallback  (council amendment 3 — council-20260706T172246Z-cf6dda)
+## 5. Fail-closed as a TYPE + the stale-TTL  (council amendment 3 — council-20260706T172246Z-cf6dda)
 
 **The council's requirement:** fail-closed must be *structural*, not a set of
 `catch`/`else` branches that discipline keeps complete. The wiring:
 
-- **`null` is the INITIALIZER.** The response bit starts life as `null`. A real
-  boolean is **written ONLY on the fully-validated happy path** — every one of:
-  valid + unexpired consent, non-empty allowlist, asserted entity `device_class`
-  (§11), and a fresh HA read that parsed. If any precondition is missing, nothing
-  overwrites the initializer, so the response is `null` **by never having written
-  anything else** — not by a fallback that could be forgotten.
+- **`null` is the INITIALIZER.** The served bit starts life as `null`. A real
+  boolean is **served ONLY on the fully-validated happy path** — every one of:
+  - a **verified fresh push within the stale-TTL** (HMAC checked, not stale),
+  - **consent** `aggregate-presence` active and unexpired,
+  - **apex kill-switch** not engaged.
+  If any precondition is missing, nothing overwrites the initializer, so the
+  response is `null` **by never having served anything else** — not by a fallback
+  that could be forgotten.
 - Consequently, all of these yield `null` structurally, with no dedicated
   "return null here" branch to maintain:
+  - no push received yet (fresh boot),
+  - **stale**: last verified push older than the stale-TTL (HA went silent),
+  - a push that failed HMAC verification (never stored in the first place),
   - missing / corrupt / unreadable consent ledger,
-  - empty allowlist,
   - expired consent (`expiresAt` in the past = revoked),
-  - HA down / timeout / connection error,
-  - malformed / unparseable HA response,
-  - `device_class` assertion fails (allowlist drift, §11),
-  - apex-veto kill-switch engaged (checked before anything is written).
-- **NO last-true / last-value cache.** A cache of the previous bit is the ONE
-  construct that silently turns fail-closed into fail-**open** — HA goes down and
-  the proxy keeps serving a stale `true`. Forbidden. The timing cache in §6 caches
-  only *within* a validated interval and is itself initialized to `null`; it never
-  survives a validation failure. (`null ≠ false`: never claim the house is empty
-  on a guess, and never claim it occupied on a stale read.)
-- **A NEW HA entity does NOT auto-join the aggregate.** Only the explicit
-  allowlist is queried; a new, possibly-biometric entity stays invisible until
-  the operator adds it by name. Forgetting fails closed.
-- **The proxy never accepts "query HA for X" from Sancta.** No client-supplied
-  entity selection, ever. `/presence` takes no entity argument.
+  - apex-veto kill-switch engaged (checked first, before anything is served).
 
-The verification for this is a **structural property test**: no code path emits a
+### 5.1 The stale-TTL — NORMAL, defined concretely
+
+The proxy distinguishes "no *change*" from "HA went *silent*" using the keepalive
+heartbeat (§3.2). Concrete, sane defaults — **"normal" = fail-closed on ~2 missed
+keepalives** (balanced: neither aggressive null-flapping nor relaxed staleness):
+
+| Option | Default | Meaning |
+|---|---|---|
+| `keepaliveInterval` | **~5 min** | HA re-pushes the current bit at least this often |
+| `staleTtl` | **~10–12 min** (≈ 2× keepalive) | no verified push within this ⇒ serve `null` (reason `stale`) |
+
+This **tolerates one missed keepalive** (transient blip) and **fails closed on
+two** (HA genuinely silent). Both are **module options** with these defaults; the
+operator can tune them, but the default is the committed "normal" balance.
+
+- **On HA restart the automation MUST re-fire an immediate sync push** (§3.2) so
+  a restart does not leave the proxy stale for a whole keepalive interval.
+- **NO last-true-beyond-TTL / no last-value cache.** A cache that survives the TTL
+  is the ONE construct that silently turns fail-closed into fail-**open** — HA
+  goes silent and the proxy keeps serving a stale `true`. Forbidden. The stored
+  bit is served *only* while fresh; past the TTL it reads `null`. (`null ≠ false`:
+  never claim the house is empty on a guess, and never claim it occupied on a
+  stale read.)
+- **A NEW HA entity does NOT auto-join the aggregate.** Only the operator's
+  explicit HA-side allowlist feeds the template sensor; a new, possibly-biometric
+  entity stays invisible until the operator adds it by name. Forgetting fails
+  closed.
+- **The proxy is receive-only.** No reader can name an entity, select a query, or
+  influence what HA aggregates. `/presence` takes no arguments.
+
+The verification for this is a **structural property test**: no code path serves a
 non-`null` bit without having passed through the full validation chain, and every
-error input maps to `null` (see §12, and the plan's Task 5).
+error / stale / no-consent / kill-switch input maps to `null` (see §12, plan Task
+of tests).
 
-## 6. Timing side-channel — SERVER-SIDE STRUCTURE, not manners  (council amendment 1 — council-20260706T172246Z-cf6dda)
+## 6. Timing side-channel — HA-SIDE STRUCTURE, not manners  (council amendment 1 — council-20260706T172246Z-cf6dda)
 
 **The council flagged this as the sharpest risk.** Even a single aggregate bit
-becomes an **inference channel about her** when polled finely: a high-frequency
-`/presence` poller reconstructs an **occupancy timeline** — arrival/departure
-edges, routines, absences. In a **two-person household this de-facto denominates
-to HER** arrivals and departures (when he is away, every transition is hers).
-This is the temporal denomination that the instantaneous OR cannot prevent (§11).
+becomes an **inference channel about her** if its transitions are observable at
+fine resolution: a fine-grained occupancy timeline — arrival/departure edges,
+routines, absences — **de-facto denominates to HER** in a two-person home (when
+he is away, every transition is hers). This is the temporal denomination the
+instantaneous OR cannot prevent (§8).
 
-**The mitigation must be server-side STRUCTURE, not client manners.** A polite
-"don't poll too often" is discipline; the doctrine requires wiring. The proxy
-enforces:
+In the push model the mitigation lives **at the source, in HA** — closest to the
+data, and structurally, not by client manners:
 
-- **Proxy-side rate-limit:** at most one authoritative HA read per fixed interval,
-  enforced at the server. Excess requests are served the current quantized bucket,
-  never a fresh read — the client cannot out-poll the quantizer.
-- **Coarse time quantization:** the proxy emits **one bucketed reading per fixed
-  interval** (a coarse grid). The `ts` returned is the bucket boundary, not the
-  instant of the read — so two requests in the same bucket are indistinguishable
-  and sub-bucket transitions are invisible.
-- **Hysteresis / debounce on transitions:** an edge (occupied↔empty) only
-  propagates after it persists across the debounce window, so the exact moment of
-  arrival/departure is smeared and short blips do not leak.
-- **Sancta may hold ONLY the current bit — with NO history structure to fill.**
-  There is no transitions list, no ring buffer, no `presence_since`, nothing whose
-  shape invites accumulating a timeline. If the structure to hold history does not
-  exist, a timeline cannot be assembled.
+- **HA-side quantization / debounce (hysteresis).** The HA automation only pushes
+  a *change* after the new state persists across a debounce window, so brief
+  transitions and the exact moment of an edge do not leave HA. What the proxy ever
+  receives is already coarsened; there is no fine edge for a poller to observe
+  because a fine edge was never pushed.
+- **Keepalive, not continuous stream.** Between debounced changes HA sends only a
+  periodic keepalive of the *current* bit — a heartbeat, not a high-resolution
+  feed. The information rate crossing the HA boundary is bounded by construction.
+- **Polling cannot out-resolve the push.** Sancta reading `/presence` more often
+  than HA pushes learns nothing new — the proxy just returns the same stored bit
+  and its `last_push_ts`. The reader cannot out-poll the source; the resolution is
+  set HA-side, where the raw data is, not by how fast Sancta asks.
+- **The proxy holds NO history structure.** It stores only `{bit, last_push_ts}`
+  — no transitions list, no ring buffer, no `presence_since`. If the structure to
+  hold a timeline does not exist, a timeline cannot be assembled from the proxy.
 - **Explicit ban: `/presence` responses are NEVER written into memory, dream, or
   the meaning-index.** No persistence of the bit or its `ts` into any durable
   Sancta substrate — that would rebuild the very timeline the quantization erased.
-  (This is a usage invariant enforced in the client + Constraints; see §11 on the
-  limits of what the proxy alone can close.)
+  (Usage invariant enforced in the client + Constraints; see §8 on the limits of
+  what the proxy alone can close.)
 
-The concrete interval, bucket size, and debounce window are ratified in
-`council-20260706T172246Z-cf6dda` and carried as module options in the plan
-(Task 3); they must be coarse enough that a reconstructed timeline cannot resolve
-individual arrivals/departures.
+The concrete debounce window and keepalive interval are carried as module / HA
+options (defaults in §5.1); they must be coarse enough that a reconstructed
+timeline cannot resolve individual arrivals/departures.
 
-## 7. Token blast-radius containment  (council amendment 2 — council-20260706T172246Z-cf6dda)
+## 7. Token absence + proxy hardening — and the rejected pull alternative  (council amendment 2 — council-20260706T172246Z-cf6dda)
 
-**The council re-framed the blast surface.** The real risk is NOT the one
-aggregate bit — it is the **full-scope, un-scopeable HA long-lived token
-co-located with Sancta on sancta-claw**. If the proxy is compromised, that token
-reads everything in HA (all biometrics/health/location). Contain it hard:
+**The council re-framed the blast surface, and the committed push model removes
+it.** The real risk was never the one aggregate bit — it was the **full-scope,
+un-scopeable HA long-lived token co-located with Sancta on sancta-claw.** In the
+push model **there is no such token anywhere on sancta-claw**: HA pushes the bit
+out, the proxy only receives. Content-blindness AND token-absence are both
+structural.
 
-- **agenix for the token:** stored encrypted, mode **0600**, decrypted only for
-  the proxy user at runtime. **Never in the Nix store in plaintext, never in the
-  repo.**
+The proxy still holds one secret — the **HMAC shared secret** that authenticates
+pushes — but its blast radius is bounded to "someone could forge presence bits,"
+not "someone could read all of HA." That is a categorically smaller surface. Even
+so, harden the sink:
+
+- **agenix for the HMAC secret:** stored encrypted, mode **0600**, decrypted only
+  for the proxy user at runtime. Never in the Nix store plaintext, never in the
+  repo. **No HA token is present to protect** — that is the point.
 - **Hardened systemd unit:** `DynamicUser`, `NoNewPrivileges`,
   `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, a **seccomp**
   `SystemCallFilter=@system-service`, plus `RestrictAddressFamilies=AF_INET
   AF_INET6`, `MemoryDenyWriteExecute`, `ProtectKernel*`, read-only FS except a
   private runtime dir.
-- **Bind loopback / Tailscale-only — NEVER public.** The proxy listens only on the
-  tailnet interface (or loopback fronted by Tailscale Serve); it is never reachable
-  from the public internet.
-- **Egress firewalled to the HA host:port only.** A compromised proxy can open a
-  connection to *nothing but* Home Assistant — so it cannot exfiltrate the token
-  outbound.
-- **Allowlist COMPILED IN, zero passthrough.** The entity allowlist is baked into
-  the service config, not accepted at request time. There is **no URL / path /
-  query passthrough** from client to HA — the client cannot influence which
-  entities (or which HA endpoint) the proxy touches.
-- **Token-rotation runbook.** A documented procedure to rotate the HA long-lived
-  token (revoke in HA, re-encrypt the agenix secret, restart the proxy) so a
-  suspected leak has a fast, rehearsed response.
+- **Bind Tailscale-only — NEVER public.** The proxy listens only on the tailnet
+  interface (or loopback fronted by Tailscale Serve). Both the HA ingest webhook
+  and the Sancta read endpoint are tailnet-only; never reachable from the public
+  internet.
+- **Inbound-only — no egress needed.** The proxy never *calls out* to HA (or
+  anywhere). It only accepts inbound pushes and serves inbound reads. Egress can
+  be firewalled to nothing — there is no outbound connection for a compromised
+  proxy to exfiltrate through, and no token to exfiltrate anyway.
+- **HMAC-verify every push; reject the unverifiable.** A push that fails signature
+  verification is dropped, never stored — a forged bit cannot enter the store.
+- **HMAC-secret-rotation runbook.** A documented procedure to rotate the shared
+  secret (re-generate, re-encrypt the agenix secret on both HA and proxy sides,
+  restart) so a suspected leak has a fast, rehearsed response.
 
-### 7.1 PREFERRED ALTERNATIVE — invert the trust: HA PUSHES presence (push-model)
+### 7.1 REJECTED ALTERNATIVE — the PULL model (proxy holds the HA token)
 
-**The council's preferred shape.** The entire blast-radius above exists because
-the *proxy pulls* from HA and therefore must hold the god-token. **Invert it:**
-have **Home Assistant PUSH** the aggregate presence to the proxy via an HA
-automation → webhook. Then:
+The obvious-but-wrong shape is a *pull* proxy that queries HA for the aggregate.
+**Rejected**, for one decisive reason:
 
-- The **proxy holds NO HA token at all** — the structural weakness (a full-scope
-  token next to Sancta) simply does not exist. The token that could read
-  biometrics never leaves HA.
-- HA's own automation computes the OR over the allowlisted entities (HA-side,
-  where the data already lives) and POSTs only `{someone_home, ts}` (already
-  quantized/debounced HA-side, or quantized again proxy-side) to the proxy's
-  ingest webhook. The proxy stores the latest bucketed bit and serves it on
-  `GET /presence`. Sancta's read path is unchanged.
-- This **turns the structural weakness into a strength**: content-blindness AND
-  token-absence both become structural. The cost is that presence freshness now
-  depends on HA pushing (a stale-push detector + fail-closed-to-`null` on
-  no-recent-push is required — an absent push must read as `null`, never a stale
-  `true`, consistent with §5's no-last-true-cache rule).
+- A pull proxy must **hold the full-scope, un-scopeable HA long-lived token**
+  (§3.1) right next to Sancta on sancta-claw. If that proxy is ever compromised,
+  **the entire HA API is the blast radius** — every biometric, health, and
+  location entity, plus the history API. The token that can read everything would
+  live one process-compromise away from Sancta.
+- The push model **eliminates** that token rather than *containing* it. Removing a
+  risk beats mitigating it: there is no token to leak, no egress to firewall, no
+  rotation-under-fire of a god-credential. **The structural weakness becomes a
+  structural strength.**
 
-**Decision is deferred to a spec spike (plan Task 0):** evaluate the push-model
-vs the pull-model **before committing** to the pull design. The council flagged
-push as the preferred shape; this design carries the pull-model as the fallback
-if the spike surfaces a blocker (e.g. HA automation cannot express the
-quantization, or webhook auth introduces a worse surface). Whichever wins, §§5–6
-and §11 still apply.
+The only thing pull would buy is pull-freshness-on-demand; the push model recovers
+freshness with the keepalive + stale-TTL (§5.1) at the cost of nothing that
+matters here. Pull is therefore not built. (This is the council's preferred shape,
+now committed by Alexandru's architecture decision — 2026-07-06.)
 
 ## 8. Per-person inference — the honest answer is NO, not "impossible"  (council amendment 4 — council-20260706T172246Z-cf6dda)
 
@@ -289,8 +360,8 @@ OR-aggregate proves non-denomination at a single moment — the bit is identical
 signals**:
 
 - **Temporal denomination:** a timeline of the bit (§6) denominates to her in a
-  two-person home. Partly closable by the proxy (quantization/hysteresis), never
-  fully — the proxy can blunt resolution but cannot make an occupancy signal
+  two-person home. Partly closable HA-side (quantization/hysteresis at the source),
+  never fully — coarsening can blunt resolution but cannot make an occupancy signal
   timeless.
 - **Cross-signal denomination:** the bit joined with *another* presence-bearing
   signal Sancta already holds — his calendar, a location fact, the NixFrame's
@@ -302,14 +373,17 @@ So the OR-aggregate is necessary but not sufficient. The structural mitigations
 this design bakes in to shrink the gap as far as it goes:
 
 - **Prefer whole-home occupancy sensors over per-person device-trackers** in the
-  allowlist. A single "home occupied" sensor is denomination-resistant by nature;
-  a set of per-person `device_tracker`s is not. The operator SHOULD populate the
-  allowlist with aggregate occupancy entities, not personal trackers.
-- **Assert allowlisted entities' `device_class` at READ time.** The proxy checks
-  each entity is the expected class on every read; if an entity's type ever changes
-  (a rename or reconfiguration silently turning a presence entity into something
-  biometric — the **allowlist-drift / rename leak**), the read is rejected → `null`.
-  The allowlist names an ID; this guards against the ID's meaning drifting.
+  HA-side allowlist. A single "home occupied" sensor is denomination-resistant by
+  nature; a set of per-person `device_tracker`s is not. The operator SHOULD
+  populate the template sensor's allowlist with aggregate occupancy entities, not
+  personal trackers.
+- **Assert allowlisted entities' `device_class` HA-side, in the template.** The
+  template sensor / automation guards each allowlisted entity's expected class; if
+  an entity's type ever changes (a rename or reconfiguration silently turning a
+  presence entity into something biometric — the **allowlist-drift / rename
+  leak**), it is excluded from the OR rather than silently contributing a
+  biometric value. The proxy is a dumb sink and never sees entities, so this guard
+  necessarily lives where the entities are — in HA.
 - **Forbid Sancta joining `/presence` against any other presence-bearing signal.**
   A hard usage rule (Constraints, and §6's no-persistence ban): the bit is read and
   used in isolation, never correlated with calendar / location / frame / any other
@@ -340,16 +414,17 @@ each with its own gates:
 - **Family access** — anyone other than Sancta consuming presence. Deferred.
 - **A general HA API** — any endpoint beyond `/presence`, any richer HA surface
   for Sancta. Deferred, and deliberately not built now (it would reintroduce the
-  full-token risk the proxy exists to remove).
+  full-token / pull risk the push model exists to remove).
 
 ## 11. What stays at the operator's / her hand (NOT Sancta)
 
 The human retains every lever that touches the gated data:
 
-- **Defining the entity allowlist** — by name, chosen by the operator (preferring
-  whole-home occupancy entities, §8). Sancta never reads HA values to discover or
-  propose entities; the allowlist is human-authored input, not something Sancta
-  derives.
+- **Defining the entity allowlist in HA config** — by name, chosen by the operator
+  (preferring whole-home occupancy entities, §8), feeding the template
+  `binary_sensor.someone_home`. Sancta never reads HA values to discover or propose
+  entities; the allowlist is human-authored HA-side input, not something Sancta
+  derives. The proxy never sees the allowlist at all.
 - **Creating the consent-ledger `aggregate-presence` entry** — explicit,
   revocable, with `expiresAt`, in the existing ledger (§9). The operator's hand.
 - **Holding the apex kill-switch** — hers (the northstar apex switch), exercised
@@ -359,18 +434,20 @@ The human retains every lever that touches the gated data:
 
 The council required honesty about the closing check (the frame-blind precedent):
 
-- **Sancta-verifiable (unit / property tests):** every error input → `null`; no
-  non-`null` bit is ever written without passing the full validation chain (§5);
-  aggregation is OR and non-denominated (§8); no code path emits a bit
-  un-validated; the timing quantizer serves ≤1 HA read per interval and holds no
-  history structure (§6); Sancta config holds NO HA token/URL/path (§3.3). These
-  run on mocks/fixtures — **no real HA personal data is read during development.**
-- **Routes to Alexandru as WITNESS (Sancta stays blind):** the end-to-end
-  "does the live proxy actually read HA / does the live bit track reality" check
-  touches real presence and therefore real PII. Consistent with the structural
-  blindness to the live frame, **Sancta does not run this**; Alexandru (or the
-  Witness role) confirms the live behavior in a separate window and reports
-  da/no. Sancta only ever sees its own PII-amputated outputs.
+- **Sancta-verifiable (unit / property tests):** every error / stale / no-consent /
+  kill-switch input → `null`; no non-`null` bit is ever served without passing the
+  full validation chain (§5); the pushed aggregation is a pure OR and
+  non-denominated (§3.6, §8); an HMAC-invalid push is rejected (never stored); the
+  proxy holds NO HA token/URL/HA-client anywhere (§3.3); the proxy stores no
+  history structure, only `{bit, last_push_ts}` (§6); Sancta config holds NO HA
+  token/URL/path (§3.4). These run on mocks/fixtures — **no real HA personal data
+  is read during development.**
+- **Routes to Alexandru as WITNESS (Sancta stays blind):** the end-to-end "does HA
+  actually push, does the live bit track reality" check touches real presence and
+  therefore real PII. Consistent with the structural blindness to the live frame,
+  **Sancta does not run this**; Alexandru (or the Witness role) confirms the live
+  behavior in a separate window and reports da/no. Sancta only ever sees its own
+  PII-amputated outputs.
 
 ## 13. Gates before build
 
@@ -387,9 +464,11 @@ The council required honesty about the closing check (the frame-blind precedent)
    data (HA is the most confidential category yet); her veto sits above the
    council and is mediated entirely through him.
 
-Before build, the **push-model spec spike (plan Task 0)** must also resolve the
-pull-vs-push architecture decision (§7.1) — push is the council's preferred shape.
+The **architecture is committed** (Alexandru's 2026-07-06 decision): the PUSH
+model with HA-side aggregation + a normal stale-TTL. That decision is his
+authority over the *shape* — it is **NOT** a launch authorization. The three gates
+above remain fully open.
 
-Only after all of the above does the companion ralphex plan
+Only after all three gates clear does the companion ralphex plan
 (`2026-07-06-ha-presence-proxy-plan.md`) become launchable — by Alexandru's
 hand, from a normal terminal, never autonomously.
