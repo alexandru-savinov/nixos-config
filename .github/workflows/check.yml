@@ -68,6 +68,35 @@ jobs:
 
             - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+            # Detect whether this change touches anything the n8n declarative
+            # VM test could possibly depend on (#42). Used ONLY to skip the
+            # heavy test on pull_request events that don't touch n8n — on push
+            # to main the test always runs regardless of this output (see the
+            # step `if:` below). The trigger set is a deliberate SUPERSET
+            # (over-trigger by design): a false positive wastes ~16min, a
+            # false negative ships an untested n8n regression to main. When in
+            # doubt, a path is INCLUDED. `.github/workflows/check.yml` is in the
+            # set, so any change to this workflow re-runs the test (self-test).
+            # SHA-pinned to match the repo's other use of this action
+            # (auto-approve-sancta-claw.yml) for supply-chain integrity.
+            - name: Detect n8n-relevant changes
+              id: n8n_changes
+              uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+              with:
+                  filters: |
+                      n8n:
+                          - 'modules/services/n8n*.nix'
+                          - 'tests/n8n-declarative.nix'
+                          - 'tests/n8n-workflows-valid.nix'
+                          - 'scripts/generate-apkg.py'
+                          - 'scripts/diagnose-n8n-workflow.sh'
+                          - 'n8n-workflows/**'
+                          - 'hosts/**/configuration.nix'
+                          - 'hosts/common.nix'
+                          - 'flake.nix'
+                          - 'flake.lock'
+                          - '.github/workflows/check.yml'
+
             - name: Install Nix
               uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
               with:
@@ -102,7 +131,20 @@ jobs:
             # binary-cached) + boots a KVM VM. Runs here — after the
             # free-disk step, with nothing concurrent — because adding it
             # to `nix flake check` killed the Check job's runner.
+            #
+            # CONDITIONAL (council-20260706T164646Z-c3c904): this step is
+            # ~16min of build-x86's ~35min. On pull_request it runs ONLY when
+            # an n8n-relevant path changed (see "Detect n8n-relevant changes"
+            # above). On push to main it ALWAYS runs, unconditionally, so main
+            # never merges an untested n8n regression. It stays a STEP-level
+            # skip inside build-x86 (never a separate job) so build-x86's
+            # green/red meaning is unchanged and no phantom job can hang the
+            # branch-protection contract.
             - name: Run n8n declarative VM test (x86_64-linux)
+              if: >-
+                  github.event_name == 'push' ||
+                  (github.event_name == 'pull_request' &&
+                   steps.n8n_changes.outputs.n8n == 'true')
               run: nix build .#n8n-declarative-test -L
 
     build-scripts:
