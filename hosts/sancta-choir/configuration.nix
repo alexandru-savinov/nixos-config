@@ -1,5 +1,6 @@
 { config
 , pkgs
+, pkgs-unstable
 , lib
 , self
 , ...
@@ -60,8 +61,13 @@
   # herdr-server unit's PATH, not a login shell's) can find + launch them:
   # OpenAI Codex CLI (github.com/openai/codex) as a second coding agent
   # alongside Claude Code, plus git + curl that the agents and herdr need.
+  # Codex ships from `pkgs-unstable` (nixpkgs-unstable input), NOT the stable
+  # `pkgs` (nixos-25.11) — the 25.11 branch caps codex at 0.92.0, which is far
+  # behind upstream. Scoping codex alone to unstable (same idiom as
+  # dev-tools' github-copilot-cli and nullclaw's zig) keeps the fast-moving
+  # agent CLI current without dragging the whole host onto unstable nixpkgs.
   environment.systemPackages = [
-    pkgs.codex
+    pkgs-unstable.codex
     pkgs.git
     pkgs.curl
     # ralphex — multi-step Claude Code plan orchestrator (umputun/ralphex,
