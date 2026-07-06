@@ -205,15 +205,21 @@ let
     # - Free-first: rungs 0-3 are all :free (zero cost), tried before any paid
     #   token is ever spent.
     # - 262K rungs first; the agent's working session can accumulate >131K
-    #   tokens, so smaller-context rungs hit "Context overflow" before they ever
-    #   serve a token and only add latency to the failover path.
+    #   tokens. Only two FREE ZDR-eligible rungs offer 262K context (rungs 0-1) —
+    #   no other free ZDR model on OpenRouter exceeds 131K — so rungs 2 (131K) and
+    #   3 (65K) are lower-context free options that a long session will
+    #   "Context overflow" past before they serve a token. That is intended: they
+    #   still catch SHORT sessions for free; long sessions fall straight through
+    #   to the 262K paid anchor.
     # - Coder-tuned primary because OpenClaw's main role is an "AI programming
     #   partner".
     # - Rung 4 is the PAID anchor: qwen/qwen3-coder-30b-a3b-instruct is the
     #   cheapest coder-tuned, tools-capable, 262K, ZDR-eligible model on
-    #   OpenRouter (~$0.07/M input, ~$0.27/M output). It exists so that when the
-    #   free tier is exhausted by 429 rate-limits the ladder still has a working
-    #   ZDR fallback instead of dead-ending. It reuses the same
+    #   OpenRouter (~$0.07/M input, ~$0.27/M output). It exists so the ladder
+    #   never dead-ends once the free tier is unavailable — whether from 429
+    #   rate-limits OR from a long session (>131K tokens) that context-overflows
+    #   every free rung. So it DOES fire on long sessions, not only on 429s;
+    #   cost is ~$0 only for short/light sessions. It reuses the same
     #   openrouter-api-key + ZDR proxy — no new provider/auth, ZDR preserved.
     LADDER = [
         {"id": "qwen/qwen3-coder:free",                 "name": "Qwen3 Coder (free, ZDR)",         "ctx": 262144},
