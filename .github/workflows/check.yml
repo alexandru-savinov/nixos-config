@@ -92,6 +92,7 @@ jobs:
                           - 'scripts/diagnose-n8n-workflow.sh'
                           - 'n8n-workflows/**'
                           - 'hosts/**/configuration.nix'
+                          - 'hosts/common.nix'
                           - 'flake.nix'
                           - 'flake.lock'
                           - '.github/workflows/check.yml'
