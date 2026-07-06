@@ -21,7 +21,13 @@
 #              │                feed.json / comm-replies.jsonl, mirrors
 #              │                last-tick.json back into the index
 #              └─ OnFailure ─▶ sancta-tick-alert.service   (User=<indexOwner>)
-#                               feed alert + last-tick mirror (fails loud)
+#                               feed alert + last-tick mirror (fails loud).
+#                               ONLY a genuine crash (script bug / OOM / sandbox
+#                               fault) trips this — HANDLED outcomes (claude
+#                               exited non-zero, bad envelope, malformed output,
+#                               capped, no-auth) exit 0 and are surfaced instead
+#                               via last-tick.{ok:false,reason} + the journal, so
+#                               a persistent handled error does not storm alerts.
 #
 #   sancta-tick-tripwire.timer ─▶ tripwire.service (User=<indexOwner>)
 #     SEPARATE mechanism: if now - last-tick.ts > staleAfterMinutes (or the
@@ -225,8 +231,27 @@ let
         #     ON). Auth no longer depends on a .credentials.json in that dir.
         #   * --strict-mcp-config strips ALL MCP tools, including account-level
         #     claude.ai connectors riding the OAuth account.
-        #   * --disallowedTools cuts every write/exec/network built-in; the tick
-        #     is read-and-report over the mirrored inbox only.
+        #   * --tools is a TRUE built-in whitelist ("Specify the list of
+        #     available tools from the built-in set") — it removes every other
+        #     built-in (Bash/Edit/Write/WebFetch/WebSearch/Task/…) from the
+        #     model's context, so the tick is read-and-report over the mirrored
+        #     inbox only. This is a whitelist, not a denylist: it names what the
+        #     tick CAN do, so it cannot break when a built-in is renamed —
+        #     unlike --disallowedTools, whose "MultiEdit" entry became stale in
+        #     Claude Code 2.1.x and made claude reject the ENTIRE run ("matches
+        #     no known tool"), failing every tick. An unknown name in --tools is
+        #     silently ignored; an unknown name in --disallowedTools is fatal.
+        #     (Silent-ignore verified empirically against Claude Code 2.1.197 on
+        #     2026-07-05, not a documented spec guarantee — but even if a future
+        #     CLI made unknown --tools names fatal too, this list is exactly the
+        #     three CANONICAL always-present read tools, so it has no name that
+        #     can go stale the way a broad denylist did.)
+        #   * --allowedTools "Read,Glob,Grep" additionally auto-approves those
+        #     three (all no-permission read tools anyway) so the headless -p run
+        #     never stalls on a permission prompt. All three names are stable.
+        #   NOTE: --allowedTools is NOT a whitelist (it only skips permission
+        #   prompts; other tools stay available) — the availability boundary is
+        #   --tools. See code.claude.com/docs/en/tools-reference + cli-reference.
         export CLAUDE_CONFIG_DIR="$STATE/config"
         export HOME="$STATE"
         export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
@@ -249,7 +274,7 @@ let
         ${claudeCodePkg}/bin/claude \
           -p "$(${cu}/cat ${promptFile})" \
           --strict-mcp-config \
-          --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,TodoWrite,KillShell,BashOutput" \
+          --tools "Read,Glob,Grep" \
           --allowedTools "Read,Glob,Grep" \
           --model "${cfg.model}" \
           --max-turns ${toString cfg.maxTurns} \
@@ -260,8 +285,32 @@ let
           echo "claude exited non-zero ($RC); stderr tail:" >&2
           ${cu}/tail -n 20 "$STAGING/stderr.log" >&2 || true
           write_last_tick false "claude-exit-$RC"
-          # Fail the unit so OnFailure= surfaces it (alert unit mirrors last-tick).
-          exit 1
+          # HANDLED failure — exit 0 (like the other handled-fail paths below:
+          # output-too-large / bad-envelope / malformed-output). A non-zero
+          # claude exit is a recorded outcome, not a crash of THIS script:
+          # last-tick.json carries {ok:false, reason:claude-exit-$RC}, the
+          # promote unit mirrors that record into the index, and the journal
+          # keeps the loud stderr line. Exiting 0 keeps the two liveness signals
+          # honest without an OnFailure alert-storm on a PERSISTENT error (this
+          # exact stale-tool-name bug fired OnFailure every ~30 min):
+          #   * the tripwire trips on last-tick TIMESTAMP age — a tick that
+          #     stops running entirely still surfaces within staleAfterMinutes;
+          #   * a genuine tick CRASH (script bug, OOM, sandbox fault) still exits
+          #     non-zero here and DOES fire OnFailure, because it never reaches
+          #     this handled branch.
+          # The observable-failure guarantee is preserved via last-tick.ok +
+          # the journal; only the redundant per-tick unit-failure alert is
+          # dropped.
+          # KNOWN RESIDUAL GAP (accepted tradeoff): a PERSISTENT handled failure
+          # keeps writing a FRESH last-tick.ts with ok:false, so the tripwire —
+          # which fires on timestamp AGE, not on ok — stays green and no feed
+          # alert is raised. The failure is then visible ONLY in last-tick.ok +
+          # the journal, not pushed to the feed. This is deliberate (the storm we
+          # are killing), but it means "ticking but every tick fails" is a quiet
+          # state. Follow-up to close it: an ok:false-STREAK detector on the
+          # promote/tripwire side (alert once after N consecutive ok:false) —
+          # tracked as the quieter "persistently unhealthy" signal.
+          exit 0
         fi
 
         # ── 5. Staging + schema gate (first of two — promotion re-validates).
@@ -641,8 +690,9 @@ in
 
     egressPinning = {
       # Default OFF (explicit opt-in): the pinned ranges are brittle by
-      # nature, and RestrictAddressFamilies + --strict-mcp-config +
-      # --disallowedTools already bound egress meaningfully without them.
+      # nature, and RestrictAddressFamilies + --strict-mcp-config + the
+      # --tools read-only whitelist already bound egress meaningfully without
+      # them (WebFetch/WebSearch are not in the whitelist, so not available).
       enable = lib.mkEnableOption "systemd IP-level egress pinning (IPAddressDeny=any + allowlist; explicit opt-in — the default address ranges are brittle)";
 
       allowedAddresses = lib.mkOption {
