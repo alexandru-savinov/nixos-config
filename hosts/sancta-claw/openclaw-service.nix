@@ -190,24 +190,37 @@ let
     # and agents.defaults.model.{primary,fallbacks}) so a future PR adding or
     # removing a rung touches one place.
     #
-    # Ordering rationale (observed empirically on sancta-claw — see #420 thread):
-    # - 262K rungs first; the agent's working session has accumulated >131K tokens,
-    #   so smaller-context rungs hit "Context overflow" before they ever serve a
-    #   token and only add latency to the failover path.
-    # - Providers are spread across Venice, SiliconFlow, Novita, Z.AI so an
-    #   outage on any single upstream doesn't drain the whole ladder. OpenRouter's
-    #   free tier caps each model at ~8 rpm, so 5 rungs ≈ 40 rpm of burst budget.
+    # ZDR CONSTRAINT — every rung MUST be present on the live OpenRouter ZDR
+    # allow-list (https://openrouter.ai/api/v1/endpoints/zdr, the same source
+    # the openclaw-zdr-proxy sidecar enforces). A rung that is NOT on that list
+    # is 403'd by the proxy ("zdr_blocked") and dead-ends the ladder. This list
+    # was rebuilt after 3 of the previous 5 rungs (tencent/hy3-preview:free,
+    # inclusionai/ling-2.6-1t:free, z-ai/glm-4.5-air:free) fell off the ZDR
+    # allow-list and 403'd, while the 2 survivors were left rate-limited (429)
+    # with no working fallback. To re-verify before editing:
+    #   curl -s https://openrouter.ai/api/v1/endpoints/zdr \
+    #     | jq -r '.data[].model_id' | sort -u | grep -F '<id>'
+    #
+    # Ordering rationale:
+    # - Free-first: rungs 0-3 are all :free (zero cost), tried before any paid
+    #   token is ever spent.
+    # - 262K rungs first; the agent's working session can accumulate >131K
+    #   tokens, so smaller-context rungs hit "Context overflow" before they ever
+    #   serve a token and only add latency to the failover path.
     # - Coder-tuned primary because OpenClaw's main role is an "AI programming
     #   partner".
-    # - GLM-Air is kept as the LAST rung (smaller 131K context) — only reachable
-    #   after every higher-context rung has been tried, so its context-overflow
-    #   failure mode is harmless on short sessions and never blocks a long one.
+    # - Rung 4 is the PAID anchor: qwen/qwen3-coder-30b-a3b-instruct is the
+    #   cheapest coder-tuned, tools-capable, 262K, ZDR-eligible model on
+    #   OpenRouter (~$0.07/M input, ~$0.27/M output). It exists so that when the
+    #   free tier is exhausted by 429 rate-limits the ladder still has a working
+    #   ZDR fallback instead of dead-ending. It reuses the same
+    #   openrouter-api-key + ZDR proxy — no new provider/auth, ZDR preserved.
     LADDER = [
-        {"id": "qwen/qwen3-coder:free",                 "name": "Qwen3 Coder (free, ZDR)",   "ctx": 262144},
-        {"id": "tencent/hy3-preview:free",              "name": "Hunyuan 3 Preview (free, ZDR)", "ctx": 262144},
-        {"id": "inclusionai/ling-2.6-1t:free",          "name": "Ling 2.6 1T (free, ZDR)",   "ctx": 262144},
-        {"id": "qwen/qwen3-next-80b-a3b-instruct:free", "name": "Qwen3 Next 80B (free, ZDR)","ctx": 262144},
-        {"id": "z-ai/glm-4.5-air:free",                 "name": "GLM 4.5 Air (free, ZDR)",   "ctx": 131072},
+        {"id": "qwen/qwen3-coder:free",                 "name": "Qwen3 Coder (free, ZDR)",         "ctx": 262144},
+        {"id": "qwen/qwen3-next-80b-a3b-instruct:free", "name": "Qwen3 Next 80B (free, ZDR)",       "ctx": 262144},
+        {"id": "nousresearch/hermes-3-llama-3.1-405b:free", "name": "Hermes 3 405B (free, ZDR)",   "ctx": 131072},
+        {"id": "meta-llama/llama-3.3-70b-instruct:free", "name": "Llama 3.3 70B (free, ZDR)",      "ctx": 65536},
+        {"id": "qwen/qwen3-coder-30b-a3b-instruct",     "name": "Qwen3 Coder 30B (paid anchor, ZDR)", "ctx": 262144},
     ]
 
     def _make_model_entry(rung):
