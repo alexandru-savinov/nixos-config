@@ -134,257 +134,344 @@ let
     then throw "services.sancta-heartbeat-tick requires the claude-code flake input via specialArgs: specialArgs = { inherit claude-code; };"
     else
       pkgs.writeShellScript "sancta-heartbeat-tick" ''
-        set -euo pipefail
+                set -euo pipefail
 
-        STATE="${stateDir}"
-        STAGING="$STATE/staging"
-        INBOX="$STATE/inbox"
-        NOW=$(${cu}/date +%s)
+                STATE="${stateDir}"
+                STAGING="$STATE/staging"
+                INBOX="$STATE/inbox"
+                NOW=$(${cu}/date +%s)
 
-        write_last_tick() {
-          # write_last_tick <ok:true|false> <reason-or-empty>
-          ${jqBin} -n --arg ts "$(${cu}/date -Is)" --argjson ok "$1" --arg reason "$2" \
-            '{ts: $ts, ok: $ok, by: "sancta-heartbeat-tick"}
-             + (if $reason != "" then {reason: $reason} else {} end)' \
-            > "$STATE/last-tick.json.tmp"
-          ${cu}/mv "$STATE/last-tick.json.tmp" "$STATE/last-tick.json"
-        }
+                write_last_tick() {
+                  # write_last_tick <ok:true|false> <reason-or-empty> [quality-or-empty]
+                  # quality (amendment 3): a low-cardinality tag on the tick's VALUE, so
+                  # a "ticking but every reply is low-value/handled-fail" state is not
+                  # invisible behind a green timestamp. Values:
+                  #   reflected     — ok tick that staged a real reflection reply
+                  #   bare-ack      — ok tick, no open message, reply=null (heartbeat only)
+                  #   <reason>      — handled-fail ticks reuse their reason as the quality
+                  # A simple check (or the deferred ok:false / low-value-streak detector,
+                  # backlog sancta-tick-okfalse-streak-detector) can watch this field to
+                  # surface a stuck-but-green heartbeat. Minimal by design: one string.
+                  ${jqBin} -n --arg ts "$(${cu}/date -Is)" --argjson ok "$1" \
+                    --arg reason "$2" --arg quality "''${3:-}" \
+                    '{ts: $ts, ok: $ok, by: "sancta-heartbeat-tick"}
+                     + (if $reason != "" then {reason: $reason} else {} end)
+                     + (if $quality != "" then {quality: $quality} else {} end)' \
+                    > "$STATE/last-tick.json.tmp"
+                  ${cu}/mv "$STATE/last-tick.json.tmp" "$STATE/last-tick.json"
+                }
 
-        # Drop stale staging output from a previous run so the promotion path can
-        # never promote yesterday's output after today's failure, and stale logs
-        # don't accumulate.
-        ${cu}/rm -f "$STAGING/tick-output.json" "$STAGING/raw-output.json" \
-          "$STAGING/result.txt" "$STAGING/stderr.log"
+                # Drop stale staging output from a previous run so the promotion path can
+                # never promote yesterday's output after today's failure, and stale logs
+                # don't accumulate.
+                ${cu}/rm -f "$STAGING/tick-output.json" "$STAGING/raw-output.json" \
+                  "$STAGING/result.txt" "$STAGING/stderr.log"
 
-        # HOME="$STATE" (set below) makes the claude CLI drop its own cache/
-        # state dot-dirs (~/.cache, ~/.config, ~/.claude, ~/.npm, ...) directly
-        # under $STATE. Those are pure caches — re-created on demand — and have
-        # no owner to prune them, so on a long-lived deployment they grow
-        # unbounded. Clear them at the START of every tick. This is bounded and
-        # reversible: it deletes only these known cache/state dot-dirs and never
-        # touches the isolated config dir, the inbox/staging/tripwire exchange
-        # dirs, the cap counters, or last-tick.json. Auth is supplied via the
-        # CLAUDE_CODE_OAUTH_TOKEN env (from the LoadCredential tmpfs), so it is
-        # unaffected by clearing these caches.
-        for d in "$STATE/.cache" "$STATE/.config" "$STATE/.claude" \
-                 "$STATE/.npm" "$STATE/.local" "$STATE/.anthropic"; do
-          ${cu}/rm -rf "$d"
-        done
+                # HOME="$STATE" (set below) makes the claude CLI drop its own cache/
+                # state dot-dirs (~/.cache, ~/.config, ~/.claude, ~/.npm, ...) directly
+                # under $STATE. Those are pure caches — re-created on demand — and have
+                # no owner to prune them, so on a long-lived deployment they grow
+                # unbounded. Clear them at the START of every tick. This is bounded and
+                # reversible: it deletes only these known cache/state dot-dirs and never
+                # touches the isolated config dir, the inbox/staging/tripwire exchange
+                # dirs, the cap counters, or last-tick.json. Auth is supplied via the
+                # CLAUDE_CODE_OAUTH_TOKEN env (from the LoadCredential tmpfs), so it is
+                # unaffected by clearing these caches.
+                for d in "$STATE/.cache" "$STATE/.config" "$STATE/.claude" \
+                         "$STATE/.npm" "$STATE/.local" "$STATE/.anthropic"; do
+                  ${cu}/rm -rf "$d"
+                done
 
-        # ── 1. Dedup guard: if ANY tick (warm session or cold) ran fewer than
-        # dedupWindowMinutes ago, exit quietly. Warm path is primary; this timer
-        # is the fallback. Checks both the mirrored index record and our own.
-        for f in "$INBOX/last-tick-index.json" "$STATE/last-tick.json"; do
-          if [ -f "$f" ]; then
-            ts=$(${jqBin} -r '.ts // empty' "$f" || true)
-            if [ -n "$ts" ]; then
-              tsec=$(${cu}/date -d "$ts" +%s || echo 0)
-              if [ $((NOW - tsec)) -lt $((${toString cfg.dedupWindowMinutes} * 60)) ]; then
-                echo "dedup: a tick ran <${toString cfg.dedupWindowMinutes}min ago ($f) — exiting quietly"
+                # ── 1. Dedup guard: if ANY tick (warm session or cold) ran fewer than
+                # dedupWindowMinutes ago, exit quietly. Warm path is primary; this timer
+                # is the fallback. Checks both the mirrored index record and our own.
+                for f in "$INBOX/last-tick-index.json" "$STATE/last-tick.json"; do
+                  if [ -f "$f" ]; then
+                    ts=$(${jqBin} -r '.ts // empty' "$f" || true)
+                    if [ -n "$ts" ]; then
+                      tsec=$(${cu}/date -d "$ts" +%s || echo 0)
+                      if [ $((NOW - tsec)) -lt $((${toString cfg.dedupWindowMinutes} * 60)) ]; then
+                        echo "dedup: a tick ran <${toString cfg.dedupWindowMinutes}min ago ($f) — exiting quietly"
+                        exit 0
+                      fi
+                    fi
+                  fi
+                done
+
+                # ── 2. Daily cap: bound worst-case cold invocations (billing/starvation
+                # guard). Counter lives in StateDir; old counters are pruned.
+                TODAY=$(${cu}/date +%F)
+                CAPFILE="$STATE/invocations-$TODAY.count"
+                ${findutils}/bin/find "$STATE" -maxdepth 1 -name 'invocations-*.count' \
+                  ! -name "invocations-$TODAY.count" -delete
+                # Sanitize to digits-only: a partial write / fs hiccup leaving
+                # non-numeric content would otherwise crash the arithmetic under
+                # set -e and wedge every subsequent tick until cleared by hand.
+                COUNT=$(${cu}/cat "$CAPFILE" 2>/dev/null | ${pkgs.gnugrep}/bin/grep -E '^[0-9]+$' || echo 0)
+                if [ "$COUNT" -ge ${toString cfg.dailyCap} ]; then
+                  echo "daily cap reached ($COUNT >= ${toString cfg.dailyCap}) — self-suppressing"
+                  write_last_tick false "capped" "capped"
+                  exit 0
+                fi
+
+                # ── 3. No-auth self-suppression: safe to merge+rebuild BEFORE the
+                # one-time OAuth token file (services.sancta-heartbeat-tick.oauthTokenFile)
+                # has been placed by hand. systemd delivers that file via LoadCredential=
+                # into $CREDENTIALS_DIRECTORY/oauth-token (a private per-unit tmpfs). If
+                # oauthTokenFile is unset the credential is absent; if the file is empty
+                # the credential is empty — either way we self-suppress. The token value
+                # is NEVER echoed.
+                OAUTH_TOKEN_CRED="''${CREDENTIALS_DIRECTORY:-}/oauth-token"
+                if [ ! -s "$OAUTH_TOKEN_CRED" ]; then
+                  echo "no OAuth token credential present — self-suppressing (reason: no-auth)"
+                  write_last_tick false "no-auth" "no-auth"
+                  exit 0
+                fi
+
+                echo $((COUNT + 1)) > "$CAPFILE"
+
+                # ── 4. The claude call. Verified seam (design doc §3, RESOLVED):
+                #   * Auth comes from CLAUDE_CODE_OAUTH_TOKEN (the `claude setup-token`
+                #     long-lived token), read from the LoadCredential tmpfs into the env
+                #     ONLY — it is never logged or written to disk by this script. This
+                #     is the headless-correct mechanism (survives OAuth reauth; no
+                #     interactive login). NOTE: --bare would ignore this token; the tick
+                #     deliberately does NOT use --bare.
+                #   * CLAUDE_CONFIG_DIR still relocates config (isolated dot-dir + MCP
+                #     strip) — the real ~/.claude is never consulted (ProtectHome stays
+                #     ON). Auth no longer depends on a .credentials.json in that dir.
+                #   * --strict-mcp-config strips ALL MCP tools, including account-level
+                #     claude.ai connectors riding the OAuth account.
+                #   * --tools is a TRUE built-in whitelist ("Specify the list of
+                #     available tools from the built-in set") — it removes every other
+                #     built-in (Bash/Edit/Write/WebFetch/WebSearch/Task/…) from the
+                #     model's context, so the tick is read-and-report over the mirrored
+                #     inbox only. This is a whitelist, not a denylist: it names what the
+                #     tick CAN do, so it cannot break when a built-in is renamed —
+                #     unlike --disallowedTools, whose "MultiEdit" entry became stale in
+                #     Claude Code 2.1.x and made claude reject the ENTIRE run ("matches
+                #     no known tool"), failing every tick. An unknown name in --tools is
+                #     silently ignored; an unknown name in --disallowedTools is fatal.
+                #     (Silent-ignore verified empirically against Claude Code 2.1.197 on
+                #     2026-07-05, not a documented spec guarantee — but even if a future
+                #     CLI made unknown --tools names fatal too, this list is exactly the
+                #     three CANONICAL always-present read tools, so it has no name that
+                #     can go stale the way a broad denylist did.)
+                #   * --allowedTools "Read,Glob,Grep" additionally auto-approves those
+                #     three (all no-permission read tools anyway) so the headless -p run
+                #     never stalls on a permission prompt. All three names are stable.
+                #   NOTE: --allowedTools is NOT a whitelist (it only skips permission
+                #   prompts; other tools stay available) — the availability boundary is
+                #   --tools. See code.claude.com/docs/en/tools-reference + cli-reference.
+                export CLAUDE_CONFIG_DIR="$STATE/config"
+                export HOME="$STATE"
+                export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+                # Read the token from the LoadCredential tmpfs into the env ONLY (never
+                # logged, never written to disk). The -s gate in §3 already proved the
+                # file is non-empty; guard the read anyway so a transient read failure or
+                # an all-whitespace file self-suppresses ("no-auth") cleanly instead of
+                # exporting an empty/garbage token and hitting a guaranteed auth error.
+                # $() strips the trailing newline `setup-token` / a stray Enter may add.
+                OAUTH_TOKEN_VALUE="$(${cu}/cat "$OAUTH_TOKEN_CRED" 2>/dev/null || true)"
+                if [ -z "''${OAUTH_TOKEN_VALUE//[[:space:]]/}" ]; then
+                  echo "OAuth token credential unreadable/blank — self-suppressing (reason: no-auth)"
+                  write_last_tick false "no-auth" "no-auth"
+                  exit 0
+                fi
+                # Trim surrounding whitespace (stray spaces/newlines a hand-paste can add).
+                # Deliberately NOT stripping INTERIOR whitespace: that would "repair" a
+                # corrupt paste into a syntactically clean but wrong token — interior
+                # junk must fail the charset gate below instead.
+                OAUTH_TOKEN_VALUE="''${OAUTH_TOKEN_VALUE#"''${OAUTH_TOKEN_VALUE%%[![:space:]]*}"}"
+                OAUTH_TOKEN_VALUE="''${OAUTH_TOKEN_VALUE%"''${OAUTH_TOKEN_VALUE##*[![:space:]]}"}"
+                # Charset gate. A `claude setup-token` token (sk-ant-oat01-…) is plain
+                # ASCII from [A-Za-z0-9_-] only. A terminal paste of the token can
+                # capture TUI pane-border bytes (e.g. "│ │", U+2502 = e2 94 82)
+                # MID-token; the whitespace-only check above passes such a token, and
+                # the resulting corrupt Authorization header makes `claude -p` exit 1
+                # with an EMPTY stderr (with --output-format json the real error goes
+                # to stdout) — burning a daily-cap slot on a guaranteed failure every
+                # tick. Reject any byte outside the token alphabet BEFORE spending the
+                # invocation. LC_ALL=C keeps the bracket expression byte-safe (no
+                # locale-dependent ranges); the token value itself is never echoed.
+                if ${cu}/printf '%s' "$OAUTH_TOKEN_VALUE" \
+                     | LC_ALL=C ${pkgs.gnugrep}/bin/grep -q '[^A-Za-z0-9_-]'; then
+                  echo "OAuth token contains non-token characters — self-suppressing (reason: bad-token)"
+                  write_last_tick false "bad-token" "bad-token"
+                  exit 0
+                fi
+                export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN_VALUE"
+
+                # ── 4a. MECHANICAL trusted-context pre-compute (amendment 2). The
+                # inbox/open/answered counts and the newest-open message are derived
+                # HERE, deterministically, from the mirrored JSONL — NOT by the model
+                # from untrusted inbox prose. A crafted inbox line therefore cannot fake
+                # "0 open" or claim it is already answered: the model is told to trust
+                # ONLY these numbers. The block is bounded and never fails the tick:
+                # any parse error / missing file degrades to zero counts + null newest
+                # (the model then falls back to the bare ACK).
+                #
+                # Rules (deterministic):
+                #   inbox_count   = # of parseable JSON lines in comm-inbox.jsonl
+                #   replies_count = # of parseable JSON lines in comm-replies.jsonl
+                #   an inbox msg is ANSWERED iff some reply's ts is strictly greater than
+                #     the msg's ts (ISO-8601 → epoch via fromdateiso8601; ties/unparseable
+                #     ts count as NOT answered, the cautious direction);
+                #   open          = inbox_count - answered;
+                #   newest_open_message = .message of the newest-ts inbox line that is
+                #     still open, truncated to 600 bytes (bounds a huge crafted line).
+                # jq -R 'fromjson? // empty' silently drops non-JSON/garbage lines, so a
+                # garbage inbox yields inbox_count 0 → newest_open_message null → bare ACK.
+                INBOX_FILE="$INBOX/comm-inbox.jsonl"
+                REPLIES_FILE="$INBOX/comm-replies.jsonl"
+                [ -f "$INBOX_FILE" ] || INBOX_FILE=/dev/null
+                [ -f "$REPLIES_FILE" ] || REPLIES_FILE=/dev/null
+                TRUSTED_CONTEXT="$(
+                  ${jqBin} -n \
+                    --slurpfile inbox <(${jqBin} -R 'fromjson? // empty' "$INBOX_FILE") \
+                    --slurpfile replies <(${jqBin} -R 'fromjson? // empty' "$REPLIES_FILE") '
+                    # epoch of an ISO-8601 ts, or null if absent/unparseable
+                    def epoch: (.ts // "") as $t
+                      | try ($t | fromdateiso8601) catch null;
+                    ($replies | map(epoch) | map(select(. != null))) as $rep_epochs
+                    | ($inbox
+                        | map(. + {e: epoch})
+                        | map(.e as $me
+                              | . + {answered:
+                                  ($me != null and ($rep_epochs | any(. > $me)))})
+                      ) as $msgs
+                    | ($msgs | map(select(.answered)) | length) as $answered
+                    | ($msgs | length) as $n
+                    | ($msgs
+                        | map(select(.answered | not))
+                        | map(select(.e != null))
+                        | sort_by(.e)
+                        | last) as $newest_open
+                    | {
+                        inbox_count: $n,
+                        replies_count: ($replies | length),
+                        answered: $answered,
+                        open: ($n - $answered),
+                        newest_open_message:
+                          ( ($newest_open.message // null)
+                            | if type == "string" then .[0:600] else null end )
+                      }'
+                )" || TRUSTED_CONTEXT='{"inbox_count":0,"replies_count":0,"answered":0,"open":0,"newest_open_message":null}'
+                # Non-secret, bounded — safe to log for the Witness closing check.
+                echo "trusted-context: $TRUSTED_CONTEXT"
+
+                # The prompt (static contract) + the mechanically-computed trusted block.
+                # The model is instructed (in the prompt) to trust ONLY this block for
+                # counts and the restatement source, never the raw inbox prose.
+                PROMPT="$(${cu}/cat ${promptFile})
+        TRUSTED-CONTEXT (computed mechanically OUTSIDE the model — authoritative):
+        $TRUSTED_CONTEXT"
+
+                RAW="$STAGING/raw-output.json"
+                RC=0
+                ${claudeCodePkg}/bin/claude \
+                  -p "$PROMPT" \
+                  --strict-mcp-config \
+                  --tools "Read,Glob,Grep" \
+                  --allowedTools "Read,Glob,Grep" \
+                  --model "${cfg.model}" \
+                  --max-turns ${toString cfg.maxTurns} \
+                  --output-format json \
+                  > "$RAW" 2> "$STAGING/stderr.log" || RC=$?
+
+                if [ "$RC" -ne 0 ]; then
+                  echo "claude exited non-zero ($RC); stderr tail:" >&2
+                  ${cu}/tail -n 20 "$STAGING/stderr.log" >&2 || true
+                  # With --output-format json the REAL error often lands on STDOUT
+                  # inside the JSON envelope (.result / raw-output.json), leaving
+                  # stderr EMPTY — the corrupt-token auth failure surfaced NOTHING in
+                  # the journal this way. When stderr has nothing, also emit a
+                  # REDACTED tail of the raw stdout: extract .result when the envelope
+                  # parses (fall back to the raw bytes otherwise), scrub any
+                  # token-shaped value FIRST so a token can never reach the journal,
+                  # and byte-bound the tail. Makes the "error only on stdout" class
+                  # visible on FIRST occurrence.
+                  if [ ! -s "$STAGING/stderr.log" ] && [ -s "$RAW" ]; then
+                    echo "stderr empty — redacted stdout tail:" >&2
+                    { ${jqBin} -r '.result // .' "$RAW" 2>/dev/null || ${cu}/cat "$RAW"; } \
+                      | ${gnused}/bin/sed 's/sk-ant-oat01-[A-Za-z0-9_-]*/sk-ant-oat01-<REDACTED>/g' \
+                      | ${cu}/tail -c 2048 >&2 || true
+                  fi
+                  write_last_tick false "claude-exit-$RC" "claude-exit"
+                  # HANDLED failure — exit 0 (like the other handled-fail paths below:
+                  # output-too-large / bad-envelope / malformed-output). A non-zero
+                  # claude exit is a recorded outcome, not a crash of THIS script:
+                  # last-tick.json carries {ok:false, reason:claude-exit-$RC}, the
+                  # promote unit mirrors that record into the index, and the journal
+                  # keeps the loud stderr line. Exiting 0 keeps the two liveness signals
+                  # honest without an OnFailure alert-storm on a PERSISTENT error (this
+                  # exact stale-tool-name bug fired OnFailure every ~30 min):
+                  #   * the tripwire trips on last-tick TIMESTAMP age — a tick that
+                  #     stops running entirely still surfaces within staleAfterMinutes;
+                  #   * a genuine tick CRASH (script bug, OOM, sandbox fault) still exits
+                  #     non-zero here and DOES fire OnFailure, because it never reaches
+                  #     this handled branch.
+                  # The observable-failure guarantee is preserved via last-tick.ok +
+                  # the journal; only the redundant per-tick unit-failure alert is
+                  # dropped.
+                  # KNOWN RESIDUAL GAP (accepted tradeoff): a PERSISTENT handled failure
+                  # keeps writing a FRESH last-tick.ts with ok:false, so the tripwire —
+                  # which fires on timestamp AGE, not on ok — stays green and no feed
+                  # alert is raised. The failure is then visible ONLY in last-tick.ok +
+                  # the journal, not pushed to the feed. This is deliberate (the storm we
+                  # are killing), but it means "ticking but every tick fails" is a quiet
+                  # state. Follow-up to close it: an ok:false-STREAK detector on the
+                  # promote/tripwire side (alert once after N consecutive ok:false) —
+                  # tracked as the quieter "persistently unhealthy" signal.
+                  exit 0
+                fi
+
+                # ── 5. Staging + schema gate (first of two — promotion re-validates).
+                # Size bound on the raw envelope, then extract .result, then require a
+                # single JSON object {feed: string, reply: string|null} within bounds.
+                SIZE=$(${cu}/stat -c %s "$RAW")
+                if [ "$SIZE" -gt 262144 ]; then
+                  echo "raw output too large ($SIZE bytes) — dropping" >&2
+                  write_last_tick false "output-too-large" "output-too-large"
+                  exit 0
+                fi
+
+                if ! ${jqBin} -e '.is_error != true and (.result | type == "string")' "$RAW" > /dev/null; then
+                  echo "unexpected claude output envelope — dropping" >&2
+                  write_last_tick false "bad-envelope" "bad-envelope"
+                  exit 0
+                fi
+
+                # Strip optional markdown fences the model might add despite instructions.
+                ${jqBin} -r '.result' "$RAW" \
+                  | ${gnused}/bin/sed -e 's/^```[a-z]*$//' -e 's/^```$//' \
+                  > "$STAGING/result.txt"
+
+                if ${jqBin} -e '
+                    type == "object"
+                    and (.feed | type == "string" and length > 0 and length <= 1000)
+                    and ((.reply | type == "string" and length <= 4000) or .reply == null)
+                  ' "$STAGING/result.txt" > /dev/null; then
+                  ${jqBin} -c '{feed: .feed, reply: .reply}' "$STAGING/result.txt" \
+                    > "$STAGING/tick-output.json"
+                  # Quality tag (amendment 3): a staged non-null reply is a real
+                  # REFLECTION; a null reply is the bare heartbeat ACK. This lets a
+                  # simple check distinguish "ticking AND reflecting" from "ticking but
+                  # every reply is the bare ack" — a stuck-but-green state that a green
+                  # timestamp alone would hide. Seed of the deferred ok:false /
+                  # low-value-streak detector (backlog sancta-tick-okfalse-streak-detector).
+                  if [ "$(${jqBin} -r '.reply == null' "$STAGING/tick-output.json")" = "false" ]; then
+                    QUALITY="reflected"
+                  else
+                    QUALITY="bare-ack"
+                  fi
+                  echo "tick OK ($QUALITY) — output staged for promotion"
+                  write_last_tick true "" "$QUALITY"
+                else
+                  echo "model output failed schema check — dropped (kept in staging/result.txt for inspection)" >&2
+                  write_last_tick false "malformed-output" "malformed-output"
+                fi
                 exit 0
-              fi
-            fi
-          fi
-        done
-
-        # ── 2. Daily cap: bound worst-case cold invocations (billing/starvation
-        # guard). Counter lives in StateDir; old counters are pruned.
-        TODAY=$(${cu}/date +%F)
-        CAPFILE="$STATE/invocations-$TODAY.count"
-        ${findutils}/bin/find "$STATE" -maxdepth 1 -name 'invocations-*.count' \
-          ! -name "invocations-$TODAY.count" -delete
-        # Sanitize to digits-only: a partial write / fs hiccup leaving
-        # non-numeric content would otherwise crash the arithmetic under
-        # set -e and wedge every subsequent tick until cleared by hand.
-        COUNT=$(${cu}/cat "$CAPFILE" 2>/dev/null | ${pkgs.gnugrep}/bin/grep -E '^[0-9]+$' || echo 0)
-        if [ "$COUNT" -ge ${toString cfg.dailyCap} ]; then
-          echo "daily cap reached ($COUNT >= ${toString cfg.dailyCap}) — self-suppressing"
-          write_last_tick false "capped"
-          exit 0
-        fi
-
-        # ── 3. No-auth self-suppression: safe to merge+rebuild BEFORE the
-        # one-time OAuth token file (services.sancta-heartbeat-tick.oauthTokenFile)
-        # has been placed by hand. systemd delivers that file via LoadCredential=
-        # into $CREDENTIALS_DIRECTORY/oauth-token (a private per-unit tmpfs). If
-        # oauthTokenFile is unset the credential is absent; if the file is empty
-        # the credential is empty — either way we self-suppress. The token value
-        # is NEVER echoed.
-        OAUTH_TOKEN_CRED="''${CREDENTIALS_DIRECTORY:-}/oauth-token"
-        if [ ! -s "$OAUTH_TOKEN_CRED" ]; then
-          echo "no OAuth token credential present — self-suppressing (reason: no-auth)"
-          write_last_tick false "no-auth"
-          exit 0
-        fi
-
-        echo $((COUNT + 1)) > "$CAPFILE"
-
-        # ── 4. The claude call. Verified seam (design doc §3, RESOLVED):
-        #   * Auth comes from CLAUDE_CODE_OAUTH_TOKEN (the `claude setup-token`
-        #     long-lived token), read from the LoadCredential tmpfs into the env
-        #     ONLY — it is never logged or written to disk by this script. This
-        #     is the headless-correct mechanism (survives OAuth reauth; no
-        #     interactive login). NOTE: --bare would ignore this token; the tick
-        #     deliberately does NOT use --bare.
-        #   * CLAUDE_CONFIG_DIR still relocates config (isolated dot-dir + MCP
-        #     strip) — the real ~/.claude is never consulted (ProtectHome stays
-        #     ON). Auth no longer depends on a .credentials.json in that dir.
-        #   * --strict-mcp-config strips ALL MCP tools, including account-level
-        #     claude.ai connectors riding the OAuth account.
-        #   * --tools is a TRUE built-in whitelist ("Specify the list of
-        #     available tools from the built-in set") — it removes every other
-        #     built-in (Bash/Edit/Write/WebFetch/WebSearch/Task/…) from the
-        #     model's context, so the tick is read-and-report over the mirrored
-        #     inbox only. This is a whitelist, not a denylist: it names what the
-        #     tick CAN do, so it cannot break when a built-in is renamed —
-        #     unlike --disallowedTools, whose "MultiEdit" entry became stale in
-        #     Claude Code 2.1.x and made claude reject the ENTIRE run ("matches
-        #     no known tool"), failing every tick. An unknown name in --tools is
-        #     silently ignored; an unknown name in --disallowedTools is fatal.
-        #     (Silent-ignore verified empirically against Claude Code 2.1.197 on
-        #     2026-07-05, not a documented spec guarantee — but even if a future
-        #     CLI made unknown --tools names fatal too, this list is exactly the
-        #     three CANONICAL always-present read tools, so it has no name that
-        #     can go stale the way a broad denylist did.)
-        #   * --allowedTools "Read,Glob,Grep" additionally auto-approves those
-        #     three (all no-permission read tools anyway) so the headless -p run
-        #     never stalls on a permission prompt. All three names are stable.
-        #   NOTE: --allowedTools is NOT a whitelist (it only skips permission
-        #   prompts; other tools stay available) — the availability boundary is
-        #   --tools. See code.claude.com/docs/en/tools-reference + cli-reference.
-        export CLAUDE_CONFIG_DIR="$STATE/config"
-        export HOME="$STATE"
-        export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-        # Read the token from the LoadCredential tmpfs into the env ONLY (never
-        # logged, never written to disk). The -s gate in §3 already proved the
-        # file is non-empty; guard the read anyway so a transient read failure or
-        # an all-whitespace file self-suppresses ("no-auth") cleanly instead of
-        # exporting an empty/garbage token and hitting a guaranteed auth error.
-        # $() strips the trailing newline `setup-token` / a stray Enter may add.
-        OAUTH_TOKEN_VALUE="$(${cu}/cat "$OAUTH_TOKEN_CRED" 2>/dev/null || true)"
-        if [ -z "''${OAUTH_TOKEN_VALUE//[[:space:]]/}" ]; then
-          echo "OAuth token credential unreadable/blank — self-suppressing (reason: no-auth)"
-          write_last_tick false "no-auth"
-          exit 0
-        fi
-        # Trim surrounding whitespace (stray spaces/newlines a hand-paste can add).
-        # Deliberately NOT stripping INTERIOR whitespace: that would "repair" a
-        # corrupt paste into a syntactically clean but wrong token — interior
-        # junk must fail the charset gate below instead.
-        OAUTH_TOKEN_VALUE="''${OAUTH_TOKEN_VALUE#"''${OAUTH_TOKEN_VALUE%%[![:space:]]*}"}"
-        OAUTH_TOKEN_VALUE="''${OAUTH_TOKEN_VALUE%"''${OAUTH_TOKEN_VALUE##*[![:space:]]}"}"
-        # Charset gate. A `claude setup-token` token (sk-ant-oat01-…) is plain
-        # ASCII from [A-Za-z0-9_-] only. A terminal paste of the token can
-        # capture TUI pane-border bytes (e.g. "│ │", U+2502 = e2 94 82)
-        # MID-token; the whitespace-only check above passes such a token, and
-        # the resulting corrupt Authorization header makes `claude -p` exit 1
-        # with an EMPTY stderr (with --output-format json the real error goes
-        # to stdout) — burning a daily-cap slot on a guaranteed failure every
-        # tick. Reject any byte outside the token alphabet BEFORE spending the
-        # invocation. LC_ALL=C keeps the bracket expression byte-safe (no
-        # locale-dependent ranges); the token value itself is never echoed.
-        if ${cu}/printf '%s' "$OAUTH_TOKEN_VALUE" \
-             | LC_ALL=C ${pkgs.gnugrep}/bin/grep -q '[^A-Za-z0-9_-]'; then
-          echo "OAuth token contains non-token characters — self-suppressing (reason: bad-token)"
-          write_last_tick false "bad-token"
-          exit 0
-        fi
-        export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN_VALUE"
-
-        RAW="$STAGING/raw-output.json"
-        RC=0
-        ${claudeCodePkg}/bin/claude \
-          -p "$(${cu}/cat ${promptFile})" \
-          --strict-mcp-config \
-          --tools "Read,Glob,Grep" \
-          --allowedTools "Read,Glob,Grep" \
-          --model "${cfg.model}" \
-          --max-turns ${toString cfg.maxTurns} \
-          --output-format json \
-          > "$RAW" 2> "$STAGING/stderr.log" || RC=$?
-
-        if [ "$RC" -ne 0 ]; then
-          echo "claude exited non-zero ($RC); stderr tail:" >&2
-          ${cu}/tail -n 20 "$STAGING/stderr.log" >&2 || true
-          # With --output-format json the REAL error often lands on STDOUT
-          # inside the JSON envelope (.result / raw-output.json), leaving
-          # stderr EMPTY — the corrupt-token auth failure surfaced NOTHING in
-          # the journal this way. When stderr has nothing, also emit a
-          # REDACTED tail of the raw stdout: extract .result when the envelope
-          # parses (fall back to the raw bytes otherwise), scrub any
-          # token-shaped value FIRST so a token can never reach the journal,
-          # and byte-bound the tail. Makes the "error only on stdout" class
-          # visible on FIRST occurrence.
-          if [ ! -s "$STAGING/stderr.log" ] && [ -s "$RAW" ]; then
-            echo "stderr empty — redacted stdout tail:" >&2
-            { ${jqBin} -r '.result // .' "$RAW" 2>/dev/null || ${cu}/cat "$RAW"; } \
-              | ${gnused}/bin/sed 's/sk-ant-oat01-[A-Za-z0-9_-]*/sk-ant-oat01-<REDACTED>/g' \
-              | ${cu}/tail -c 2048 >&2 || true
-          fi
-          write_last_tick false "claude-exit-$RC"
-          # HANDLED failure — exit 0 (like the other handled-fail paths below:
-          # output-too-large / bad-envelope / malformed-output). A non-zero
-          # claude exit is a recorded outcome, not a crash of THIS script:
-          # last-tick.json carries {ok:false, reason:claude-exit-$RC}, the
-          # promote unit mirrors that record into the index, and the journal
-          # keeps the loud stderr line. Exiting 0 keeps the two liveness signals
-          # honest without an OnFailure alert-storm on a PERSISTENT error (this
-          # exact stale-tool-name bug fired OnFailure every ~30 min):
-          #   * the tripwire trips on last-tick TIMESTAMP age — a tick that
-          #     stops running entirely still surfaces within staleAfterMinutes;
-          #   * a genuine tick CRASH (script bug, OOM, sandbox fault) still exits
-          #     non-zero here and DOES fire OnFailure, because it never reaches
-          #     this handled branch.
-          # The observable-failure guarantee is preserved via last-tick.ok +
-          # the journal; only the redundant per-tick unit-failure alert is
-          # dropped.
-          # KNOWN RESIDUAL GAP (accepted tradeoff): a PERSISTENT handled failure
-          # keeps writing a FRESH last-tick.ts with ok:false, so the tripwire —
-          # which fires on timestamp AGE, not on ok — stays green and no feed
-          # alert is raised. The failure is then visible ONLY in last-tick.ok +
-          # the journal, not pushed to the feed. This is deliberate (the storm we
-          # are killing), but it means "ticking but every tick fails" is a quiet
-          # state. Follow-up to close it: an ok:false-STREAK detector on the
-          # promote/tripwire side (alert once after N consecutive ok:false) —
-          # tracked as the quieter "persistently unhealthy" signal.
-          exit 0
-        fi
-
-        # ── 5. Staging + schema gate (first of two — promotion re-validates).
-        # Size bound on the raw envelope, then extract .result, then require a
-        # single JSON object {feed: string, reply: string|null} within bounds.
-        SIZE=$(${cu}/stat -c %s "$RAW")
-        if [ "$SIZE" -gt 262144 ]; then
-          echo "raw output too large ($SIZE bytes) — dropping" >&2
-          write_last_tick false "output-too-large"
-          exit 0
-        fi
-
-        if ! ${jqBin} -e '.is_error != true and (.result | type == "string")' "$RAW" > /dev/null; then
-          echo "unexpected claude output envelope — dropping" >&2
-          write_last_tick false "bad-envelope"
-          exit 0
-        fi
-
-        # Strip optional markdown fences the model might add despite instructions.
-        ${jqBin} -r '.result' "$RAW" \
-          | ${gnused}/bin/sed -e 's/^```[a-z]*$//' -e 's/^```$//' \
-          > "$STAGING/result.txt"
-
-        if ${jqBin} -e '
-            type == "object"
-            and (.feed | type == "string" and length > 0 and length <= 1000)
-            and ((.reply | type == "string" and length <= 4000) or .reply == null)
-          ' "$STAGING/result.txt" > /dev/null; then
-          ${jqBin} -c '{feed: .feed, reply: .reply}' "$STAGING/result.txt" \
-            > "$STAGING/tick-output.json"
-          echo "tick OK — output staged for promotion"
-          write_last_tick true ""
-        else
-          echo "model output failed schema check — dropped (kept in staging/result.txt for inspection)" >&2
-          write_last_tick false "malformed-output"
-        fi
-        exit 0
       '';
 
   # ── Sync: index (under /home) → StateDir mirrors (runs as indexOwner) ────
