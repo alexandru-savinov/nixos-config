@@ -76,12 +76,20 @@ let
       prune)
         keep=''${2:?prune needs a keep count}
         case "$keep" in *[!0-9]*) echo "bad keep: $keep" >&2; exit 2 ;; esac
-        ${pkgs.coreutils}/bin/ls -1 "$DIR"/sancta-self-*.tar.gz.age 2>/dev/null \
+        # || true guards only the "nothing to prune" case (head over an empty
+        # list); the rm loop below does NOT swallow failures, so a delete that
+        # cannot complete surfaces non-zero to the pushing rpi5 (which fails the
+        # backup run loud) rather than being silently reported as pruned.
+        old_list=$(${pkgs.coreutils}/bin/ls -1 "$DIR"/sancta-self-*.tar.gz.age 2>/dev/null \
           | ${pkgs.coreutils}/bin/sort \
-          | ${pkgs.coreutils}/bin/head -n -"$keep" \
-          | while IFS= read -r old; do
-              [ -n "$old" ] && echo "pruning remote: $old" && ${pkgs.coreutils}/bin/rm -f "$old"
-            done || true
+          | ${pkgs.coreutils}/bin/head -n -"$keep" || true)
+        if [ -n "$old_list" ]; then
+          while IFS= read -r old; do
+            [ -n "$old" ] || continue
+            echo "pruning remote: $old"
+            ${pkgs.coreutils}/bin/rm -f "$old"
+          done <<< "$old_list"
+        fi
         echo "pruned (kept $keep)"
         ;;
       *)

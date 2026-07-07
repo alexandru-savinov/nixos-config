@@ -161,13 +161,20 @@ let
     # remotely. Local prune here; remote prune via the wrapper.
     echo "=== prune (keep last $KEEP) ==="
     # List oldest-first by name (YYYY-MM-DD sorts chronologically), drop all
-    # but the newest $KEEP, rm the rest locally.
-    ${cu}/ls -1 "$OUTDIR"/sancta-self-*.tar.gz.age 2>/dev/null \
+    # but the newest $KEEP, rm the rest locally. Capture the delete list first
+    # (|| true only guards the head/pipe when there is nothing to prune — an
+    # empty list is fine), then rm WITHOUT swallowing failures: a prune that
+    # cannot delete an old archive must fail the run, not be silently ignored.
+    OLD_LIST=$(${cu}/ls -1 "$OUTDIR"/sancta-self-*.tar.gz.age 2>/dev/null \
       | ${pkgs.coreutils}/bin/sort \
-      | ${pkgs.coreutils}/bin/head -n -"$KEEP" \
-      | while IFS= read -r old; do
-          [ -n "$old" ] && echo "pruning local: $old" && ${cu}/rm -f "$old"
-        done || true
+      | ${pkgs.coreutils}/bin/head -n -"$KEEP" || true)
+    if [ -n "$OLD_LIST" ]; then
+      while IFS= read -r old; do
+        [ -n "$old" ] || continue
+        echo "pruning local: $old"
+        ${cu}/rm -f "$old"
+      done <<< "$OLD_LIST"
+    fi
 
     # Remote prune is idempotent and self-contained in the wrapper.
     $SSH "$REMOTE" "prune $KEEP"
@@ -274,11 +281,18 @@ in
 
     remoteUser = mkOption {
       type = types.str;
-      default = "sancta-selfbackup";
+      # MUST match the account the receiver authorizes the push key on. The
+      # receiver (hosts/sancta-claw/sancta-selfbackup-receiver.nix) authorizes
+      # the restricted forced-command key on ROOT (so it can write /root/dr,
+      # matching the proven manual root@sancta-claw:/root/dr push). The key's
+      # capability is collapsed to the put/sha256/list/prune wrapper regardless
+      # of the account, so this being root does not grant a shell.
+      default = "root";
       description = ''
-        Restricted SSH user on the remote whose forced command is a fixed
-        put/sha256/list/prune allowlist confined to {option}`remoteDir`. See
-        hosts/sancta-claw/sancta-selfbackup-receiver.nix.
+        SSH user on the remote whose forced command is a fixed
+        put/sha256/list/prune allowlist confined to {option}`remoteDir`. Must
+        match the account the push key is authorized on in
+        hosts/sancta-claw/sancta-selfbackup-receiver.nix (root by default).
       '';
     };
 
@@ -361,7 +375,10 @@ in
       description = "Durable weekly Sancta self-backup (dual-recipient age, off-device, hash-verified)";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
-      onFailure = [ "sancta-self-backup-alert.service" ];
+      # Template instance carries the failed unit name via %N → the alert's %i,
+      # so the feed line names the actual unit that failed (not a hardcoded
+      # fallback). Mirrors the restic backup-failure-alert@ pattern.
+      onFailure = [ "sancta-self-backup-alert@%N.service" ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -411,8 +428,10 @@ in
     };
 
     # ── OnFailure: loud feed alert, never swallowed ─────────────────────────
-    systemd.services.sancta-self-backup-alert = {
-      description = "Surface a failed self-backup into the feed (OnFailure hook)";
+    # Template ("@") service: the OnFailure instance name (%N of the failed
+    # unit) arrives as %i → $1, so the alert names the real failed unit.
+    systemd.services."sancta-self-backup-alert@" = {
+      description = "Surface a failed self-backup into the feed (OnFailure hook) for %i";
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
