@@ -117,6 +117,18 @@ in
   # EnvironmentFile format — only rpi5 needs this (runs the backup service)
   "backup-telegram-env.age".publicKeys = users ++ [ rpi5 ];
 
+  # SSH private key for the DURABLE weekly Sancta self-backup PUSH
+  # (rpi5 → root@sancta-claw:/root/dr, restricted forced-command wrapper).
+  # Only rpi5 needs to decrypt this (it holds the private key). The matching
+  # PUBLIC key goes into hosts/sancta-claw/sancta-selfbackup-receiver.nix
+  # (replace SANCTA_SELFBACKUP_PUBKEY_PLACEHOLDER).
+  # Generate: ssh-keygen -t ed25519 -C "rpi5 -> sancta-claw sancta-self-backup" -f /tmp/ssb
+  # Then:     agenix -e secrets/sancta-selfbackup-push-ssh-key.age   # paste /tmp/ssb (private)
+  # WARNING (same as the pull key above): this .age must EXIST before rpi5-full
+  # is rebuilt with services.sancta-self-backup.enable — agenix activation
+  # decrypts it at switch time. Until the file exists, do not rebuild rpi5.
+  "sancta-selfbackup-push-ssh-key.age".publicKeys = users ++ [ rpi5 ];
+
   # ── Home Assistant secrets (rpi5 only) ─────────────────────────────────
   # WARNING: registering a key here is INERT — it does NOT create the .age
   # file. The .age must be created with `agenix -e` BEFORE any host config

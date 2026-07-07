@@ -9,6 +9,7 @@
     ./hardware-configuration.nix
     ./disk-config.nix
     ./backup-user.nix
+    ./sancta-selfbackup-receiver.nix
     ./restore.nix
     ./smoke-test.nix
     ./openclaw-service.nix
