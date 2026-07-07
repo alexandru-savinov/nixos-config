@@ -45,8 +45,14 @@ let
     ${pkgs.coreutils}/bin/mkdir -p "$DIR"
     ${pkgs.coreutils}/bin/chmod 700 "$DIR"
 
-    cmd=''${SSH_ORIGINAL_COMMAND:-}
-    set -- $cmd
+    # Split $SSH_ORIGINAL_COMMAND SAFELY: `read -ra` into an explicit array
+    # instead of an unquoted `set -- $cmd`, so no IFS metacharacter in the
+    # (attacker-influencable) command participates in word-splitting/globbing
+    # before the allowlist below is applied. Defense-in-depth on top of the
+    # safe_name / digit-only checks.
+    _args=()
+    read -ra _args <<< "''${SSH_ORIGINAL_COMMAND:-}"
+    set -- ''${_args[@]+"''${_args[@]}"}
     action=''${1:-}
 
     # Reject any path component that could escape remoteDir. Only a plain
@@ -75,7 +81,11 @@ let
         ;;
       prune)
         keep=''${2:?prune needs a keep count}
+        # Digits only AND >= 1. keep=0 is rejected: `head -n -0` returns ALL
+        # lines (prunes nothing), which would silently mean "keep everything"
+        # under a name that reads like "delete all" — refuse the ambiguity.
         case "$keep" in *[!0-9]*) echo "bad keep: $keep" >&2; exit 2 ;; esac
+        if [ "$keep" -lt 1 ]; then echo "keep must be >= 1: $keep" >&2; exit 2; fi
         # || true guards only the "nothing to prune" case (head over an empty
         # list); the rm loop below does NOT swallow failures, so a delete that
         # cannot complete surfaces non-zero to the pushing rpi5 (which fails the

@@ -57,6 +57,19 @@ let
   inherit (pkgs) coreutils gnutar gzip age openssh nodejs;
   cu = "${coreutils}/bin";
 
+  # Path of the NixOS-managed known_hosts materialized from knownHostsEntry.
+  etcKnownHosts = "/etc/sancta-self-backup/known_hosts";
+
+  # Effective known_hosts source: a declaratively-pinned entry wins (closes
+  # the TOFU window entirely), else an operator-supplied file, else null →
+  # accept-new (TOFU on first connect only, then pinned in the user's own
+  # known_hosts which persists across runs — PrivateTmp does not touch $HOME).
+  effectiveKnownHosts =
+    if cfg.knownHostsEntry != "" then
+      etcKnownHosts
+    else
+      cfg.knownHostsFile;
+
   # ── The backup script (runs as cfg.user). Uses only store-path binaries so
   # ProtectSystem=strict + a scoped PATH cannot surprise it at runtime. ──────
   #
@@ -106,7 +119,7 @@ let
     fi
 
     SSH="${openssh}/bin/ssh -i $SSH_KEY -o BatchMode=yes -o StrictHostKeyChecking=${
-      if cfg.knownHostsFile != null then "yes -o UserKnownHostsFile=${cfg.knownHostsFile}" else "accept-new"
+      if effectiveKnownHosts != null then "yes -o UserKnownHostsFile=${effectiveKnownHosts}" else "accept-new"
     } -o ConnectTimeout=30"
 
     # ── 1. tar the self, EXCLUDING regenerable gallery renders, then gzip.
@@ -323,8 +336,23 @@ in
       type = types.nullOr types.str;
       default = null;
       description = ''
-        Optional known_hosts file for StrictHostKeyChecking=yes. When null,
-        accept-new is used (TOFU on first connect).
+        Optional known_hosts file for StrictHostKeyChecking=yes. When null (and
+        {option}`knownHostsEntry` is also empty) accept-new is used (TOFU on
+        first connect only, then pinned in this file). Prefer
+        {option}`knownHostsEntry` for a fully declarative pin.
+      '';
+    };
+
+    knownHostsEntry = mkOption {
+      type = types.str;
+      default = "";
+      description = ''
+        SSH known_hosts line for the remote push host, e.g.
+        "sancta-claw ssh-ed25519 AAAA...". When set, it is materialized to
+        /etc/sancta-self-backup/known_hosts and StrictHostKeyChecking=yes is
+        used, CLOSING the TOFU/MITM window entirely (the host key is pinned
+        declaratively — no first-connect trust). Get the value with:
+        `ssh-keyscan -t ed25519 <host>`. Mirrors services.backup-pull.
       '';
     };
 
@@ -348,9 +376,11 @@ in
     };
 
     keep = mkOption {
-      type = types.int;
+      # positive: keep=0 would mean `head -n -0` keeps ALL (prunes nothing) —
+      # a confusing no-op; forbid it at eval time.
+      type = types.ints.positive;
       default = 4;
-      description = "Number of weekly archives to keep (local AND remote).";
+      description = "Number of weekly archives to keep (local AND remote, >= 1).";
     };
 
     onCalendar = mkOption {
@@ -369,7 +399,21 @@ in
   config = mkIf cfg.enable {
     systemd.tmpfiles.rules = [
       "d ${cfg.localDir} 0700 ${cfg.user} - -"
+      # Ensure ~/.ssh exists so that, in the accept-new fallback, the accepted
+      # host key PERSISTS to ~/.ssh/known_hosts across runs — turning TOFU into
+      # a one-time-first-connect trust rather than a per-run window. (For a
+      # fully closed window, set knownHostsEntry to pin the key declaratively.)
+      "d /home/${cfg.user}/.ssh 0700 ${cfg.user} - -"
     ];
+
+    # Declarative host-key pin (closes the TOFU/MITM window) when an entry is
+    # provided. StrictHostKeyChecking=yes then reads exactly this file.
+    environment.etc = lib.mkIf (cfg.knownHostsEntry != "") {
+      "sancta-self-backup/known_hosts" = {
+        text = cfg.knownHostsEntry + "\n";
+        mode = "0444";
+      };
+    };
 
     systemd.services.sancta-self-backup = {
       description = "Durable weekly Sancta self-backup (dual-recipient age, off-device, hash-verified)";
@@ -396,11 +440,26 @@ in
         # writable surface to localDir only; sources are read-only.
         NoNewPrivileges = true;
         ProtectSystem = "strict";
-        # ProtectHome would hide the sources (under /home) and the feed tool;
-        # instead scope precisely with ReadOnlyPaths + ReadWritePaths below.
+        # ProtectHome=false is a DELIBERATE, scoped trade-off (not forgotten
+        # hardening): the backup sources, the feed tool, and ~/.ssh all live
+        # under /home, so hiding /home would break the service. ProtectSystem=
+        # strict still makes the WHOLE filesystem (including /home) read-only
+        # except the explicit ReadWritePaths below, and ReadOnlyPaths pins the
+        # sources; so the effective writable surface is exactly localDir +
+        # feedDir + ~/.ssh, no wider. The isolation is done by the path scoping,
+        # not by ProtectHome.
         ProtectHome = false;
         ReadOnlyPaths = [ cfg.indexDir cfg.memoryDir cfg.claudeMd ];
-        ReadWritePaths = [ cfg.localDir cfg.feedDir ];
+        # localDir + feedDir for the archive and the feed line; ~/.ssh so the
+        # accept-new fallback can PERSIST the accepted host key to known_hosts
+        # (otherwise ProtectSystem=strict makes /home read-only and every run
+        # re-TOFUs). With knownHostsEntry set, known_hosts is read from /etc and
+        # this path is merely unused.
+        ReadWritePaths = [
+          cfg.localDir
+          cfg.feedDir
+          "/home/${cfg.user}/.ssh"
+        ];
         PrivateTmp = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
@@ -412,8 +471,15 @@ in
         # ssh push needs INET; UNIX for local plumbing. No other families.
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
         SystemCallFilter = [ "@system-service" ];
-        # The agenix mount for OTHER secrets is not this service's business.
-        InaccessiblePaths = [ "-/run/agenix.d" ];
+        # NOTE on OTHER agenix secrets: we deliberately do NOT add an
+        # InaccessiblePaths entry for /run/agenix. Agenix decrypts each secret
+        # to /run/agenix/<name> with per-secret 0400 owner-only modes, so this
+        # service (running as cfg.user) already cannot read any secret it does
+        # not own — including secrets owned by root or other service users. Its
+        # OWN push key (cfg.sshKeyFile → /run/agenix/…) MUST stay readable, so
+        # blocking /run/agenix wholesale would break the backup. The earlier
+        # `-/run/agenix.d` entry was a no-op (wrong path) that gave a false
+        # sense of isolation; the real isolation is the per-secret file mode.
       };
     };
 
