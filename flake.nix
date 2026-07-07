@@ -378,6 +378,12 @@
           # `id` used to fail only at runtime during ExecStartPost import.
           n8n-workflows-valid = import ./tests/n8n-workflows-valid.nix { inherit pkgs; };
 
+          # Heartbeat membrane-reflection guard (#519): runs the shared
+          # trusted-context jq against fractional-second (…NNN Z) fixtures —
+          # the real new Date().toISOString() form — and asserts the parsed
+          # counts. Locks the fix so the module and this check can never drift.
+          heartbeat-trusted-context = import ./tests/heartbeat-trusted-context.nix { inherit pkgs; };
+
           # NOTE: the declarative n8n VM test (#42) deliberately lives under
           # packages.<system>.n8n-declarative-test, NOT here. `nix flake
           # check` builds every check inside the resource-constrained
@@ -386,6 +392,20 @@
           # the runner with a shutdown signal. CI runs the test as an
           # explicit step in the "Build x86_64 Configs" job instead, which
           # frees ~30GB disk first and runs nothing concurrently.
+        };
+
+      # aarch64-linux checks: only the architecture-independent, cheap
+      # pure-jq/bash guards that are also meaningful on the actual deploy
+      # host. `heartbeat-trusted-context` is re-exposed here (same fixture,
+      # same shared .jq — no drift) so the guard for the tick, which runs
+      # on rpi5-full (aarch64), can be built NATIVELY on the Pi without
+      # x86_64 emulation. CI still exercises it on the x86_64 runner.
+      checks.aarch64-linux =
+        let
+          pkgs = nixpkgsFor.aarch64-linux;
+        in
+        {
+          heartbeat-trusted-context = import ./tests/heartbeat-trusted-context.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`
