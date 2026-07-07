@@ -83,6 +83,7 @@ let
   jqBin = "${jq}/bin/jq";
 
   promptFile = ./sancta-heartbeat-tick-prompt.md;
+  trustedContextJq = ./sancta-heartbeat-trusted-context.jq;
 
   # ── Shared hardening for the indexOwner helper units (sync/promote/alert/
   # tripwire). These are pure local-file operations — no network, no new privs,
@@ -329,33 +330,8 @@ let
                 TRUSTED_CONTEXT="$(
                   ${jqBin} -n \
                     --slurpfile inbox <(${jqBin} -R 'fromjson? // empty' "$INBOX_FILE") \
-                    --slurpfile replies <(${jqBin} -R 'fromjson? // empty' "$REPLIES_FILE") '
-                    # epoch of an ISO-8601 ts, or null if absent/unparseable
-                    def epoch: (.ts // "") as $t
-                      | try ($t | fromdateiso8601) catch null;
-                    ($replies | map(epoch) | map(select(. != null))) as $rep_epochs
-                    | ($inbox
-                        | map(. + {e: epoch})
-                        | map(.e as $me
-                              | . + {answered:
-                                  ($me != null and ($rep_epochs | any(. > $me)))})
-                      ) as $msgs
-                    | ($msgs | map(select(.answered)) | length) as $answered
-                    | ($msgs | length) as $n
-                    | ($msgs
-                        | map(select(.answered | not))
-                        | map(select(.e != null))
-                        | sort_by(.e)
-                        | last) as $newest_open
-                    | {
-                        inbox_count: $n,
-                        replies_count: ($replies | length),
-                        answered: $answered,
-                        open: ($n - $answered),
-                        newest_open_message:
-                          ( ($newest_open.message // null)
-                            | if type == "string" then .[0:600] else null end )
-                      }'
+                    --slurpfile replies <(${jqBin} -R 'fromjson? // empty' "$REPLIES_FILE") \
+                    -f ${trustedContextJq}
                 )" || TRUSTED_CONTEXT='{"inbox_count":0,"replies_count":0,"answered":0,"open":0,"newest_open_message":null}'
                 # Non-secret, bounded — safe to log for the Witness closing check.
                 echo "trusted-context: $TRUSTED_CONTEXT"
