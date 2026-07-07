@@ -225,6 +225,87 @@ let
         || echo "WARNING: feed alert line failed" >&2
     fi
   '';
+
+  # ── G2: at-rest verify + decrypt smoke-test (the LIFE check). Runs as root
+  # (needs the recovery private key). Two independent proofs on the newest
+  # archive, either failing loud (non-zero → OnFailure alert):
+  #   (a) REMOTE bit-rot: ask the receiver for its sha256 of the newest remote
+  #       archive (via the same put/sha256/list/prune wrapper) and compare to
+  #       the local sha256. A mismatch means the off-device copy rotted after
+  #       write — the write-time hash can never catch this.
+  #   (b) DECRYPT smoke-test: `age -d -i <recovery-key> <newest local .age>
+  #       | tar -tzf - >/dev/null` — list-only, NO extract, NO plaintext to
+  #       disk. Proves the archive still opens with the recovery key and the
+  #       tar stream is intact (guards silent age/gzip/tar corruption).
+  # Trade-off (documented per spec): we do NOT re-fetch the full remote copy
+  # weekly (heavy over Tailscale for a ~100 MB archive). Instead we do the
+  # remote-sha comparison (cheap, catches remote rot) + a decrypt smoke-test of
+  # the local most-recent archive (catches decrypt/tar corruption). A remote
+  # decrypt would need a full re-fetch; the sha comparison is the proportionate
+  # bit-rot detector, and the local decrypt proves restorability of the copy
+  # the recovery key must open.
+  verifyScript = pkgs.writeShellScript "sancta-self-backup-verify" ''
+    set -euo pipefail
+    umask 077
+
+    OUTDIR=${escapeShellArg cfg.localDir}
+    REMOTE=${escapeShellArg cfg.remoteUser}@${escapeShellArg cfg.remoteHost}
+    REC_KEY=${escapeShellArg cfg.verify.recoveryKeyFile}
+    SSH_KEY=${escapeShellArg cfg.sshKeyFile}
+
+    # ── Self-suppression: safe to enable before provisioning. If there is no
+    # local archive yet, no usable push key, or no recovery key, this is a
+    # no-op (exit 0) rather than a false failure — mirrors the backup script's
+    # no-auth self-suppression so enabling it pre-provision does not storm
+    # OnFailure alerts.
+    NEWEST=$(${cu}/ls -1 "$OUTDIR"/sancta-self-*.tar.gz.age 2>/dev/null \
+      | ${pkgs.coreutils}/bin/sort | ${cu}/tail -n 1 || true)
+    if [ -z "$NEWEST" ] || [ ! -s "$NEWEST" ]; then
+      echo "no local archive to verify in $OUTDIR — self-suppressing (nothing to check)" >&2
+      exit 0
+    fi
+    if [ ! -s "$REC_KEY" ]; then
+      echo "no recovery key present ($REC_KEY) — self-suppressing decrypt smoke-test" >&2
+      exit 0
+    fi
+
+    BASENAME=$(${cu}/basename "$NEWEST")
+    LOCAL_SHA=$(${cu}/sha256sum "$NEWEST" | ${cu}/cut -d' ' -f1)
+    echo "verifying newest archive: $BASENAME (local sha256: $LOCAL_SHA)"
+
+    # ── (a) REMOTE bit-rot check. Only when a usable push key exists; otherwise
+    # skip just this half (the remote copy can't be reached pre-provision) but
+    # still run the local decrypt smoke-test below.
+    if [ -s "$SSH_KEY" ] && ${pkgs.gnugrep}/bin/grep -q "BEGIN OPENSSH PRIVATE KEY" "$SSH_KEY"; then
+      SSH="${openssh}/bin/ssh -i $SSH_KEY -o BatchMode=yes -o StrictHostKeyChecking=${
+        if effectiveKnownHosts != null then "yes -o UserKnownHostsFile=${effectiveKnownHosts}" else "accept-new"
+      } -o ConnectTimeout=30"
+      echo "=== remote sha256 (bit-rot check) → $REMOTE:$BASENAME ==="
+      REMOTE_SHA=$($SSH "$REMOTE" "sha256 $BASENAME" | ${cu}/cut -d' ' -f1)
+      echo "remote sha256: $REMOTE_SHA"
+      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+        echo "ERROR: off-device REMOTE bit-rot — sha256 mismatch (local=$LOCAL_SHA remote=$REMOTE_SHA) on $BASENAME" >&2
+        exit 1
+      fi
+      echo "remote copy still matches (no bit-rot)"
+    else
+      echo "no usable push key — skipping remote bit-rot check (still running decrypt smoke-test)" >&2
+    fi
+
+    # ── (b) DECRYPT smoke-test. List-only; no plaintext ever hits disk. A
+    # pipeline failure (age decrypt OR tar list) fails the run loud. set -o
+    # pipefail (set above via set -euo pipefail) makes either stage's non-zero
+    # propagate.
+    echo "=== decrypt smoke-test (list-only, no extract) → $BASENAME ==="
+    if ! ${age}/bin/age -d -i "$REC_KEY" "$NEWEST" 2>/dev/null \
+        | ${gnutar}/bin/tar -tzf - >/dev/null 2>&1; then
+      echo "ERROR: decrypt smoke-test FAILED — $BASENAME did not decrypt+list cleanly with the recovery key" >&2
+      exit 1
+    fi
+    echo "decrypt smoke-test OK — archive opens and tar stream is intact"
+
+    echo "=== sancta-self-backup-verify OK: $BASENAME (at-rest verified, still decryptable) ==="
+  '';
 in
 {
   options.services.sancta-self-backup = {
@@ -394,6 +475,52 @@ in
       default = "30min";
       description = "RandomizedDelaySec for the timer.";
     };
+
+    # ── G2: recurring AT-REST verify + decrypt smoke-test (LIFE check) ───────
+    # The write-time sha256 above proves pushed==local at BIRTH; it does NOT
+    # prove the off-device copy is still intact (bit-rot) or that the archive
+    # still DECRYPTS. This separate timer re-checks the LIVING backup:
+    #   (a) remote sha256 (via the same forced-command wrapper's `sha256`) ==
+    #       the sha256 the pusher recorded → detects silent bit-rot of the
+    #       off-device copy without a full re-fetch.
+    #   (b) `age -d -i <recovery-key> <newest local .age> | tar -tzf - >/dev/null`
+    #       — a LIST-ONLY decrypt smoke-test that proves the archive still opens
+    #       and the tar stream is intact, with NO plaintext written to disk.
+    # Mirrors services.backup-pull's weekly restic-check: separate timer +
+    # service + loud OnFailure.
+    verify = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Enable the recurring at-rest verify + decrypt smoke-test (the LIFE
+          check). Runs as root (needs the recovery private key). Self-suppresses
+          (no-op exit 0) until both a recovery key and an archive exist, so it
+          is safe to enable before provisioning.
+        '';
+      };
+
+      recoveryKeyFile = mkOption {
+        type = types.str;
+        default = "/root/dr/recovery-sancta-claw.key";
+        description = ''
+          Path to the age RECOVERY PRIVATE key used ONLY to prove the newest
+          archive still decrypts (list-only, no extract). This is the same
+          key the DR tooling uses (rpi5:/root/dr/recovery-sancta-claw.key,
+          also in Bitwarden); its public half is the first recipient in
+          {option}`recipients`. Referenced by PATH, never copied into the store.
+          When absent, the smoke-test self-suppresses (no-op).
+        '';
+      };
+
+      onCalendar = mkOption {
+        type = types.str;
+        # One day after the weekly backup (Sun 03:43) so a fresh archive is in
+        # place to verify; mirrors backup-pull's separate Sunday check timer.
+        default = "Mon *-*-* 04:17:00";
+        description = "systemd OnCalendar for the at-rest verify (weekly by default).";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -404,7 +531,10 @@ in
       # a one-time-first-connect trust rather than a per-run window. (For a
       # fully closed window, set knownHostsEntry to pin the key declaratively.)
       "d /home/${cfg.user}/.ssh 0700 ${cfg.user} - -"
-    ];
+    ]
+    # The G2 verify runs as root and, in the accept-new fallback, persists the
+    # host key to /root/.ssh/known_hosts — ensure that dir exists too.
+    ++ lib.optional cfg.verify.enable "d /root/.ssh 0700 root - -";
 
     # Declarative host-key pin (closes the TOFU/MITM window) when an entry is
     # provided. StrictHostKeyChecking=yes then reads exactly this file.
@@ -488,6 +618,67 @@ in
       wantedBy = [ "timers.target" ];
       timerConfig = {
         OnCalendar = cfg.onCalendar;
+        Persistent = true;
+        RandomizedDelaySec = cfg.randomizedDelaySec;
+      };
+    };
+
+    # ── G2: recurring at-rest verify + decrypt smoke-test (the LIFE check) ──
+    # A separate weekly timer+service (mirrors services.backup-pull's
+    # restic-check): remote bit-rot sha comparison + a list-only decrypt
+    # smoke-test of the newest archive. Runs as ROOT (needs the recovery
+    # private key at cfg.verify.recoveryKeyFile). Fails loud → the SAME
+    # OnFailure alert as the backup, so a dead/rotting backup is surfaced into
+    # the feed, never swallowed.
+    systemd.services.sancta-self-backup-verify = mkIf cfg.verify.enable {
+      description = "At-rest verify + decrypt smoke-test of the newest Sancta self-backup (LIFE check)";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      onFailure = [ "sancta-self-backup-alert@%N.service" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        # Root: reads the recovery PRIVATE key (0600 root) to prove the archive
+        # still decrypts, and the push key (0400 nixos, root-readable) for the
+        # remote sha check. No plaintext is ever written to disk.
+        User = "root";
+        ExecStart = verifyScript;
+        # decrypt+tar-list of a ~100 MB archive plus an SSH round-trip can
+        # exceed the 90s default; give headroom so it is not SIGTERM'd mid-run
+        # (which would fire a false OnFailure alert).
+        TimeoutStartSec = "1h";
+        Nice = 19;
+        IOSchedulingClass = "idle";
+
+        # ── Hardening. The verify only READS (archive, recovery key, push key)
+        # and pipes through age|tar to /dev/null — it writes nothing. Scope it
+        # tight; no ReadWritePaths for the archive dir.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = false;
+        ReadOnlyPaths = [ cfg.localDir cfg.verify.recoveryKeyFile ];
+        # /root/.ssh so the accept-new fallback can persist the host key across
+        # runs (root runs this); unused when knownHostsEntry pins the key.
+        ReadWritePaths = [ "/root/.ssh" ];
+        PrivateTmp = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictNamespaces = true;
+        RestrictSUIDSGID = true;
+        RestrictRealtime = true;
+        LockPersonality = true;
+        # ssh round-trip needs INET; UNIX for local plumbing. No other families.
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+        SystemCallFilter = [ "@system-service" ];
+      };
+    };
+
+    systemd.timers.sancta-self-backup-verify = mkIf cfg.verify.enable {
+      description = "Timer for the weekly Sancta self-backup at-rest verify (LIFE check)";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = cfg.verify.onCalendar;
         Persistent = true;
         RandomizedDelaySec = cfg.randomizedDelaySec;
       };

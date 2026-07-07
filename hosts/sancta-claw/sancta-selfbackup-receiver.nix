@@ -36,6 +36,73 @@ let
 
   remoteDir = "/root/dr";
 
+  # ── G1: STALENESS DEAD-MAN'S-SWITCH (receiver-owned) ────────────────────
+  # OnFailure on the rpi5 pusher fires ONLY when the unit RUNS and exits
+  # non-zero — it can NEVER fire for the #1 backup killer: the run never
+  # happening (rpi5 off, timer gone, state wiped). A dead rpi5 cannot alert
+  # on itself, so the RECEIVER (this always-on VPS) owns the staleness check:
+  # if the newest /root/dr/sancta-self-*.age is older than a threshold
+  # (default 8 days = weekly cadence + one missed beat), FAIL LOUD.
+  #
+  # "Loud" here, per the human gate: no NEW outward notifier is built. It is
+  #   (1) a journal ERROR line (systemd-cat -p err), and
+  #   (2) a durable STAMP FILE the human can see, and
+  #   (3) a BEST-EFFORT reuse of the EXISTING Telegram channel — the same
+  #       token/chat-id already read at runtime from the OpenClaw config by
+  #       hosts/sancta-claw/openclaw-watchers.nix (no new secret, no new
+  #       channel; silently skipped if the token is absent).
+  # (2) always fires so staleness is visible even with no Telegram token.
+  stalenessThresholdDays = 8;
+  stampFile = "/root/dr/.selfbackup-staleness-alert";
+  ocConfig = "/var/lib/openclaw/.openclaw/openclaw.json";
+
+  stalenessScript = pkgs.writeShellScript "sancta-selfbackup-staleness-check" ''
+    set -uo pipefail
+    DIR=${remoteDir}
+    THRESHOLD_DAYS=${toString stalenessThresholdDays}
+    STAMP=${stampFile}
+    OC_CONFIG=${ocConfig}
+
+    NEWEST=$(${pkgs.coreutils}/bin/ls -1t "$DIR"/sancta-self-*.tar.gz.age 2>/dev/null \
+      | ${pkgs.coreutils}/bin/head -n 1 || true)
+
+    fail_loud() {
+      msg="$1"
+      echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t sancta-selfbackup-staleness -p err
+      # Durable, human-visible marker (always). Overwrite with the latest state.
+      ${pkgs.coreutils}/bin/printf '%s %s\n' "$(${pkgs.coreutils}/bin/date -Iseconds)" "$msg" > "$STAMP" || true
+      # Best-effort reuse of the EXISTING Telegram channel (openclaw-watchers
+      # pattern). No new secret/channel; skipped silently if token is absent.
+      TOKEN=$(${pkgs.jq}/bin/jq -r '.channels.telegram.botToken // empty' "$OC_CONFIG" 2>/dev/null || true)
+      CHAT_ID=$(${pkgs.jq}/bin/jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
+      if [ -n "$TOKEN" ]; then
+        ${pkgs.curl}/bin/curl -sf -X POST \
+          "https://api.telegram.org/bot$TOKEN/sendMessage" \
+          -d "chat_id=$CHAT_ID" \
+          -d "text=🔴 [sancta-claw] $msg" \
+          --max-time 10 || true
+      fi
+      exit 1
+    }
+
+    if [ -z "$NEWEST" ]; then
+      fail_loud "self-backup STALE: NO archive found in $DIR — the backup may have never landed or was wiped"
+    fi
+
+    NOW=$(${pkgs.coreutils}/bin/date +%s)
+    MTIME=$(${pkgs.coreutils}/bin/stat -c %Y "$NEWEST")
+    AGE_DAYS=$(( (NOW - MTIME) / 86400 ))
+    echo "newest archive: $(${pkgs.coreutils}/bin/basename "$NEWEST") — age ''${AGE_DAYS}d (threshold ''${THRESHOLD_DAYS}d)"
+
+    if [ "$AGE_DAYS" -gt "$THRESHOLD_DAYS" ]; then
+      fail_loud "self-backup STALE: newest archive is ''${AGE_DAYS}d old (> ''${THRESHOLD_DAYS}d) — rpi5 pusher may be dead/off/timer-gone"
+    fi
+
+    # Fresh again → clear any prior stale marker so it reflects current state.
+    ${pkgs.coreutils}/bin/rm -f "$STAMP" 2>/dev/null || true
+    echo "self-backup fresh (''${AGE_DAYS}d ≤ ''${THRESHOLD_DAYS}d) — dead-man's-switch OK"
+  '';
+
   # Forced-command wrapper: the ONLY thing this key can execute. Dispatches on
   # $SSH_ORIGINAL_COMMAND; every path is basename-confined to remoteDir; any
   # unrecognised command is rejected non-zero.
@@ -119,4 +186,35 @@ in
   systemd.tmpfiles.rules = [
     "d ${remoteDir} 0700 root root -"
   ];
+
+  # ── G1: staleness dead-man's-switch — receiver-owned, runs daily ─────────
+  # Daily is intentional: the check itself must not depend on the rpi5 push
+  # cadence. It flags loud within one day of crossing the threshold. Runs as
+  # root (reads /root/dr + the OpenClaw config for the existing Telegram token).
+  systemd.services.sancta-selfbackup-staleness = {
+    description = "Staleness dead-man's-switch for the off-device self-backup (receiver-owned)";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = stalenessScript;
+      # Read /root/dr + the OpenClaw config; write only the stamp file in
+      # /root/dr. No decryption, no secret handling of its own.
+      NoNewPrivileges = true;
+      ProtectSystem = "strict";
+      ReadWritePaths = [ remoteDir ];
+      ReadOnlyPaths = [ ocConfig ];
+      PrivateTmp = true;
+      RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+      SystemCallFilter = [ "@system-service" ];
+    };
+  };
+
+  systemd.timers.sancta-selfbackup-staleness = {
+    description = "Daily staleness check for the off-device self-backup";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*-*-* 06:30:00";
+      Persistent = true;
+      RandomizedDelaySec = "30min";
+    };
+  };
 }
