@@ -58,6 +58,7 @@ in
     ../../modules/services/gatus.nix # Declarative status monitoring
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
+    ../../modules/services/sancta-self-backup.nix # Durable weekly self-backup (dual-recipient age, off-device)
     ../../modules/services/home-assistant.nix # Home Assistant with Tailscale Serve
     ../../modules/services/home-assistant-mcp-claude.nix # hass-mcp for Claude Code
     ../../modules/system/nix-ld.nix # runtime loader so uvx-spawned hass-mcp interpreter can run
@@ -163,6 +164,16 @@ in
       backup-telegram-env = {
         file = "${self}/secrets/backup-telegram-env.age";
         mode = "0400";
+      };
+
+      # Durable weekly self-backup PUSH key (rpi5 → root@sancta-claw:/root/dr).
+      # Owned by the backup user so the (non-root) sancta-self-backup service
+      # can read it. Ships a PLACEHOLDER until Alexandru provisions the real
+      # key; the service self-suppresses (no-auth) until then.
+      sancta-selfbackup-push-ssh-key = {
+        file = "${self}/secrets/sancta-selfbackup-push-ssh-key.age";
+        mode = "0400";
+        owner = "nixos";
       };
     };
 
@@ -531,6 +542,20 @@ in
       ".node-compile-cache/" # transient Node.js bytecode cache
     ];
     telegramEnvFile = secret "backup-telegram-env";
+  };
+
+  # ── Durable weekly Sancta SELF-backup ──────────────────────────────────
+  # Replaces the fragile session-cron: a hardened systemd timer + service that
+  # tar+gzip+dual-recipient-age-encrypts the self (index + memory + CLAUDE.md),
+  # pushes it OFF-DEVICE to root@sancta-claw:/root/dr, VERIFIES the remote
+  # sha256 end-to-end, prunes to the last 4, and fails LOUD (feed alert via
+  # OnFailure) rather than silently. Dual-recipient (age recovery key +
+  # Alexandru's ssh pubkey) is LOAD-BEARING — a 2026-07-07 restore test proved
+  # a recovery-only archive was unrestorable with the ssh key he holds.
+  # See modules/services/sancta-self-backup.nix.
+  services.sancta-self-backup = {
+    enable = true;
+    sshKeyFile = secret "sancta-selfbackup-push-ssh-key";
   };
 
   # Operator alert when the DNS-watchdog crash-loop breaker opens (#450).
