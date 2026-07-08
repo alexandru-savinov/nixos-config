@@ -153,7 +153,7 @@ let
                   # A simple check (or the deferred ok:false / low-value-streak detector,
                   # backlog sancta-tick-okfalse-streak-detector) can watch this field to
                   # surface a stuck-but-green heartbeat. Minimal by design: one string.
-                  ${jqBin} -n --arg ts "$(${cu}/date -Is)" --argjson ok "$1" \
+                  ${jqBin} -n --arg ts "$(${cu}/date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson ok "$1" \
                     --arg reason "$2" --arg quality "''${3:-}" \
                     '{ts: $ts, ok: $ok, by: "sancta-heartbeat-tick"}
                      + (if $reason != "" then {reason: $reason} else {} end)
@@ -479,7 +479,11 @@ let
     INDEX="${cfg.indexDir}"
     STATE="${stateDir}"
     STAGING="$STATE/staging"
-    TS=$(${cu}/date -Is)
+    # UTC Z, never a local offset: this TS is written into comm-replies.jsonl and
+    # is the answered-computation input in trusted-context.jq. `date -Is` emits a
+    # local +HH:MM offset that the jq epoch parser used to reject → replies never
+    # counted as answered → the tick re-reflected forever (membrane-ts-offset-fix).
+    TS=$(${cu}/date -u +%Y-%m-%dT%H:%M:%SZ)
 
     if [ ! -d "$INDEX" ]; then
       echo "ERROR: index dir $INDEX missing — cannot promote" >&2
@@ -561,7 +565,7 @@ let
     set -euo pipefail
     INDEX="${cfg.indexDir}"
     STATE="${stateDir}"
-    TS=$(${cu}/date -Is)
+    TS=$(${cu}/date -u +%Y-%m-%dT%H:%M:%SZ)
 
     echo "ALERT: sancta-heartbeat-tick.service FAILED — writing feed alert" >&2
 
@@ -645,7 +649,7 @@ let
       if [ "$FSIZE" -gt ${toString cfg.liveFileByteCap} ]; then
         echo "WARNING: $FEED is $FSIZE bytes (> ${toString cfg.liveFileByteCap} cap) — skipping tripwire append; rotate it (follow-up) to resume" >&2
       else
-        ${jqBin} -cn --arg ts "$(${cu}/date -Is)" --arg r "$stale_reason" \
+        ${jqBin} -cn --arg ts "$(${cu}/date -u +%Y-%m-%dT%H:%M:%SZ)" --arg r "$stale_reason" \
           '{ts: $ts, source: "sancta-tick-tripwire", alert: "heartbeat-stale", reason: $r}' \
           >> "$FEED"
       fi
