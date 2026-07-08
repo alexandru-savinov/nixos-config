@@ -201,19 +201,34 @@ let
     #   curl -s https://openrouter.ai/api/v1/endpoints/zdr \
     #     | jq -r '.data[].model_id' | sort -u | grep -F '<id>'
     #
+    # TOOLS CONSTRAINT — every rung MUST also expose a tool-use-capable ZDR
+    # endpoint. OpenClaw is an agentic client: EVERY request carries tools, so a
+    # rung whose only ZDR provider lacks function-calling returns
+    # `404 No endpoints found that support tool use` and DEAD-ENDS the ladder.
+    # A tool-404 is NOT a 429 and NOT a context overflow, so it does not trigger
+    # the ladder's fallback (which fires on rate-limits / long context) — it just
+    # hard-fails the request. ZDR-eligibility alone is insufficient. To re-verify
+    # a rung's provider exposes tools before editing:
+    #   curl -s https://openrouter.ai/api/v1/models/<id>/endpoints \
+    #     | jq -r '.data.endpoints[] | "\(.provider_name) tools=\((.supported_parameters//[])|index("tools")!=null)"'
+    # A rung is safe only if at least one ZDR provider prints tools=true.
+    # hermes-3-llama-3.1-405b:free was removed 2026-07-08 — ZDR-eligible but its
+    # Venice endpoint has tools=false → 404s an agentic client, so it dead-ended
+    # the ladder here (do NOT re-add it as a rung).
+    #
     # Ordering rationale:
-    # - Free-first: rungs 0-3 are all :free (zero cost), tried before any paid
+    # - Free-first: rungs 0-2 are all :free (zero cost), tried before any paid
     #   token is ever spent.
     # - 262K rungs first; the agent's working session can accumulate >131K
     #   tokens. Only two FREE ZDR-eligible rungs offer 262K context (rungs 0-1) —
-    #   no other free ZDR model on OpenRouter exceeds 131K — so rungs 2 (131K) and
-    #   3 (65K) are lower-context free options that a long session will
-    #   "Context overflow" past before they serve a token. That is intended: they
-    #   still catch SHORT sessions for free; long sessions fall straight through
-    #   to the 262K paid anchor.
+    #   no other free ZDR model on OpenRouter exceeds 131K — so rung 2 (65K) is a
+    #   lower-context free option that a long session will "Context overflow" past
+    #   before it serves a token. That is intended: it still catches SHORT
+    #   sessions for free; long sessions fall straight through to the 262K paid
+    #   anchor.
     # - Coder-tuned primary because OpenClaw's main role is an "AI programming
     #   partner".
-    # - Rung 4 is the PAID anchor: qwen/qwen3-coder-30b-a3b-instruct is the
+    # - Rung 3 is the PAID anchor: qwen/qwen3-coder-30b-a3b-instruct is the
     #   cheapest coder-tuned, tools-capable, 262K, ZDR-eligible model on
     #   OpenRouter (~$0.07/M input, ~$0.27/M output). It exists so the ladder
     #   never dead-ends once the free tier is unavailable — whether from 429
@@ -224,7 +239,8 @@ let
     LADDER = [
         {"id": "qwen/qwen3-coder:free",                 "name": "Qwen3 Coder (free, ZDR)",         "ctx": 262144},
         {"id": "qwen/qwen3-next-80b-a3b-instruct:free", "name": "Qwen3 Next 80B (free, ZDR)",       "ctx": 262144},
-        {"id": "nousresearch/hermes-3-llama-3.1-405b:free", "name": "Hermes 3 405B (free, ZDR)",   "ctx": 131072},
+        # hermes-3-llama-3.1-405b:free removed 2026-07-08 — ZDR-eligible but its
+        # Venice endpoint has tools=false → 404s an agentic client (see TOOLS CONSTRAINT above).
         {"id": "meta-llama/llama-3.3-70b-instruct:free", "name": "Llama 3.3 70B (free, ZDR)",      "ctx": 65536},
         {"id": "qwen/qwen3-coder-30b-a3b-instruct",     "name": "Qwen3 Coder 30B (paid anchor, ZDR)", "ctx": 262144},
     ]
