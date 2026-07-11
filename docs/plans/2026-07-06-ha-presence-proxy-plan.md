@@ -6,10 +6,26 @@ Build the HA presence-proxy (PUSH model): Home Assistant aggregates the operator
 >    the human, so this gate is cleared by Alexandru, not by the council).
 > 2. **Alexandru's explicit approval.**
 > 3. **His wife's apex-veto cleared through him.**
+> 4. **Gate 0 — Amputation VERIFIED (structural PRECONDITION).** Sancta must be
+>    structurally UNABLE to reach HA by any path other than the proxy BEFORE this
+>    plan is built or activated: (a) the `home-assistant` MCP server removed from
+>    Sancta's config (no `mcp__home-assistant__*` tool), (b) no SSH/shell to the
+>    HA host/container, (c) no direct network route to the HA API port. Without
+>    Gate 0 the proxy is **theater** — a data-path mediator cannot constrain an
+>    agent that still holds an independent HA capability. See the design's
+>    **"Gate 0 — Amputation"** section for the verifiable amputations + ordering.
+>
+> **Corrected order of operations (design "Gate 0"):**
+> **her assent → his approval → Gate 0 amputation (verified) → build → activation.**
+>
+> **Premise caveat:** the re-gate council (`council-20260706T180259Z-6a0fa5`) was
+> rendered **WITHOUT the amputation premise** — it reasoned about the proxy as the
+> only path to HA, so its verdict is **incomplete without Gate 0**; a re-premised
+> council may be warranted before proceeding.
 >
 > **This touches gated biometric data** — Home Assistant is the most confidential
 > data category the system has reached. This plan is a document to be launched by
-> Alexandru's hand AFTER the three gates clear, from a normal terminal (NOT inside
+> Alexandru's hand AFTER the gates clear, from a normal terminal (NOT inside
 > Claude Code). Do not launch autonomously.
 >
 > **COMMITTED ARCHITECTURE (Alexandru's 2026-07-06 decision — architecture
@@ -144,6 +160,15 @@ guard, STOP and escalate — do not proceed.
 These are inviolable. Any task that would require breaking one must STOP and
 escalate to the human, not work around it.
 
+- **Gate 0 — Amputation is a structural PRECONDITION (design "Gate 0").** The
+  proxy is theater unless Sancta is structurally UNABLE to reach HA by any other
+  path. Three amputations must be VERIFIED before this plan is built/activated:
+  (1) remove the `home-assistant` MCP server from Sancta's config — no
+  `mcp__home-assistant__*` tool (grep → zero `home-assistant`); (2) no SSH/shell
+  to the HA host/container (Sancta → HA host = permission denied); (3) no direct
+  network route to the HA API port (Sancta → `HA:port` = connection refused). This
+  is the AGENT-CAPABILITY wall; the proxy is only the data-path mediator. Ordering:
+  her assent → his approval → **Gate 0 (verified)** → build → activation.
 - **NEITHER Sancta NOR the proxy may hold an HA token.** No long-lived token, no
   scoped token (scoped tokens don't exist for HA), no token file, no HA base URL,
   no HA API client anywhere. The proxy is a dumb sink; it only *receives* pushes.

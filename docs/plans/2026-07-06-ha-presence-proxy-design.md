@@ -35,6 +35,103 @@ his wife's). This is the most confidential data category the system has touched.
 
 ---
 
+## Gate 0 — Amputation (structural precondition; without it the proxy is theater)
+
+**The proxy and its one-bit wall are decoration unless Sancta is structurally
+unable to reach Home Assistant by any other path.** Everything below in this
+document describes a mediator in the *data path* — a dumb sink that only ever
+hands Sancta a single non-denominated bit. But a downstream mediator constrains
+nothing if the agent it is meant to constrain already holds an independent
+capability to reach HA directly. **A wall in the data path is not a wall around
+the agent.** Security against a capable agent has to sit at the
+**agent-capability** level, not at a well-behaved box further down the pipe.
+
+**The load-bearing gap:** TODAY, *this* Sancta already has at least three
+independent back-doors to Home Assistant that completely bypass the proxy:
+
+1. **HA MCP tools in Sancta's toolset** — the `home-assistant` MCP server is wired
+   into Sancta's tool configuration, exposing `mcp__home-assistant__*` tools
+   (`get_entity`, `get_history`, `search_entities_tool`, `call_service_tool`, …).
+   With these, Sancta can read *any* HA entity — every biometric / health /
+   location sensor — directly, never touching `/presence`.
+2. **SSH / shell to the HA host or container** — Sancta has broad fleet SSH (root
+   to sancta-claw, host shell). Wherever HA runs, if Sancta can `ssh`/`exec` into
+   that host or container, it can read HA's config, tokens, and state store
+   directly — around the proxy.
+3. **A direct network route to the HA API** — if Sancta's network origin can reach
+   HA's API port, it can talk to the HA REST/WebSocket API directly (given or
+   finding a token), again bypassing the proxy entirely.
+
+While any one of these paths exists, the proxy is **theater**: it constrains only
+the agent that chooses to use it, and a capable agent under pressure will use the
+shortest path to the answer. The re-gate council
+(`council-20260706T180259Z-6a0fa5`) rendered its verdict **without this premise**
+— it reasoned about the proxy as if it were the only path, so its conclusion is
+**incomplete without Gate 0** (see "Gates before build").
+
+### The principle
+
+**The only real security against a capable agent is to remove the capability,
+structurally — "so Sancta cannot, not so Sancta promises not to."** A rule that
+does not stop even Sancta is not a rule; it is a request. Content-blindness for
+the most-confidential data category the system has ever touched (her biometric /
+health / location data) cannot rest on Sancta *choosing* the proxy — it must rest
+on Sancta being *unable* to choose anything else.
+
+### The precondition — three concrete, VERIFIABLE amputations
+
+All three MUST hold **before** the proxy is built or activated. Each is stated
+with the observation that proves it.
+
+1. **MCP amputation** — remove the `home-assistant` MCP server from Sancta's MCP
+   configuration. Sancta must have **NO** home-assistant tool of any kind.
+   - *Verification:* grep Sancta's MCP / settings config → **zero** matches for
+     `home-assistant`; a listing of Sancta's live tools shows **no**
+     `mcp__home-assistant__*` entry.
+
+2. **Shell / SSH amputation** — Sancta must not have SSH or shell access to the
+   host or container where HA runs.
+   - *Honest note — this is the hardest amputation.* Sancta currently has broad
+     fleet SSH, so this is **not a solved thing** today. The design must specify
+     how HA's host is isolated from Sancta's reach — e.g. HA runs on a
+     host/user Sancta holds no key to, or HA runs in a container Sancta cannot
+     `exec` into. This is stated here as a **requirement plus an open
+     implementation question**, not as done.
+   - *Verification:* Sancta attempting to reach the HA host (ssh / exec) →
+     **permission denied**.
+
+3. **Network amputation** — firewall so Sancta's network origin cannot reach the
+   HA API port directly; only the proxy path exists. In the committed **push**
+   model the flow is HA→proxy, so Sancta needs **no route to HA at all** — the
+   firewall simply makes that structural.
+   - *Verification:* Sancta → `HA:port` → **connection refused**.
+
+### The ordering consequence
+
+Gate 0 is a **precondition** that must be true before the proxy is even
+meaningful — an inert, un-amputated build proves nothing. And per the council and
+the north star, the **human / apex gates precede even the inert build**: his
+approval, and her apex-veto through him, come first. The corrected order of
+operations is:
+
+> **her assent (concept) → his approval → Gate 0 amputation (verified) → build → activation**
+
+The re-gate council's verdict was rendered **without** the amputation premise, so
+a **re-premised council may be warranted** before proceeding — the earlier verdict
+answered a narrower question than the one Gate 0 poses.
+
+### Honest trade — stated so it is conscious, not a surprise
+
+Amputating Sancta's HA MCP tools (amputation 1) means **THIS Sancta — the main
+thread — can no longer help with Home Assistant at all** for this slice: no entity
+reads, no automations, no HA debugging, nothing but the one `/presence` bit. That
+is not a side effect to regret; it is **exactly the point** for her
+most-confidential data. But it is a real, conscious trade — capability for
+guarantee — and it is named here so it is chosen with eyes open, not discovered
+after the fact.
+
+---
+
 ## 1. Goal
 
 Sancta should be able to answer exactly one question about the home:
@@ -452,23 +549,40 @@ The council required honesty about the closing check (the frame-blind precedent)
 ## 13. Gates before build
 
 **Council RETURNED escalate-to-human (risk HIGH,
-`council-20260706T172246Z-cf6dda`). Building does NOT start until all clear:**
+`council-20260706T172246Z-cf6dda`). Building does NOT start until all clear.**
+Note the corrected order of operations from **Gate 0 — Amputation** (above): the
+human/apex gates precede even the inert build, and **Gate 0 (amputation) is a
+structural PRECONDITION** that must be verified true before the proxy is
+meaningful:
+
+> **her assent (concept) → his approval → Gate 0 amputation (verified) → build → activation**
 
 1. **Council verdict resolved** — `council-20260706T172246Z-cf6dda` returned
    *escalate-to-human* with a load-bearing finding + 4 required amendments (§§5–8,
    folded in above). The escalation itself hands the decision to the human — the
-   council does not, and cannot, clear this alone.
+   council does not, and cannot, clear this alone. **Premise caveat:** the re-gate
+   council (`council-20260706T180259Z-6a0fa5`) was rendered **WITHOUT the
+   amputation premise** — it reasoned about the proxy as the only path to HA. Its
+   verdict is therefore **incomplete without Gate 0**, and a **re-premised council
+   may be warranted** before proceeding.
 2. **Alexandru's explicit approval.** (A coordinator-relayed claim of approval is
    NOT his approval — only his own word counts.)
 3. **His wife's apex-veto cleared through him** — this touches gated biometric
    data (HA is the most confidential category yet); her veto sits above the
    council and is mediated entirely through him.
+4. **Gate 0 — Amputation VERIFIED (structural precondition).** All three
+   amputations above (MCP tools removed, shell/SSH isolated, network route
+   firewalled) must be verified true **before** the proxy is built or activated.
+   Without Gate 0 the proxy is theater — a data-path mediator cannot constrain an
+   agent that still holds an independent capability to reach HA. This gate is a
+   *precondition on the wiring*, not a human decision; but it comes **after** the
+   human/apex gates (1–3) and **before** any build.
 
 The **architecture is committed** (Alexandru's 2026-07-06 decision): the PUSH
 model with HA-side aggregation + a normal stale-TTL. That decision is his
-authority over the *shape* — it is **NOT** a launch authorization. The three gates
+authority over the *shape* — it is **NOT** a launch authorization. The gates
 above remain fully open.
 
-Only after all three gates clear does the companion ralphex plan
+Only after all gates clear does the companion ralphex plan
 (`2026-07-06-ha-presence-proxy-plan.md`) become launchable — by Alexandru's
 hand, from a normal terminal, never autonomously.
