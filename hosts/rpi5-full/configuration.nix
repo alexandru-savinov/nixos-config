@@ -65,6 +65,7 @@ in
     ../../modules/system/ssh-hardened.nix
     ../../modules/services/shared-memory/shared-memory.nix # fleet shared-memory commons
     ../../modules/services/sancta-heartbeat-tick.nix # sandboxed decoupled heartbeat
+    ../../modules/services/sancta-gallery.nix # Galeria static viewer, publish gate always on
   ];
 
   # Sancta sandboxed decoupled heartbeat — ~30-min cognitive tick that
