@@ -21,9 +21,13 @@
 #     absent the unit stays inactive instead of crash-looping.
 #   - The unit runs as User=nixos (the index owner), same as the nohup
 #     process it replaces.
-#   - Binding stays 127.0.0.1 (server default); `tailscale serve` already
-#     proxies it onto the tailnet with TLS. Declaring the serve rule is
-#     intentionally out of scope here (per the 2026-07-11 authorization).
+#   - Binding stays 127.0.0.1:8739 (server default) and is ENFORCED at the
+#     systemd level (SocketBindAllow tcp:8739 only + IPAddressAllow
+#     loopback only), so even a modified server.mjs cannot silently listen
+#     on 0.0.0.0 or another port. `tailscale serve` already proxies it onto
+#     the tailnet with TLS (the proxy connects over loopback, which stays
+#     allowed). Declaring the serve rule is intentionally out of scope here
+#     (per the 2026-07-11 authorization).
 { config
 , lib
 , pkgs
@@ -37,7 +41,7 @@ in
     enable = lib.mkEnableOption "Sancta Gallery static viewer with publish gate";
 
     galleryDir = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.path;
       default = "/home/nixos/.claude/index/gallery";
       description = "Directory holding server.mjs, the pieces and their .passed sidecars.";
     };
@@ -61,7 +65,11 @@ in
       environment = {
         # The publish gate: server refuses any artifact without a
         # <file>.passed sidecar (written by publish.mjs after the non-leak
-        # PII test passes).
+        # PII test passes). Trust boundary: env-var DELIVERY is structural
+        # (survives reboot), but the gate CHECK lives in server.mjs —
+        # mutable, outside the Nix store. Integrity of server.mjs is the
+        # responsibility of the painter/publish pipeline (Sancta's index),
+        # not of this unit.
         GALLERY_PUBLISH_GATE = "1";
       };
 
@@ -94,6 +102,18 @@ in
           "AF_INET6"
           "AF_UNIX"
         ];
+
+        # Enforce the loopback-only contract at the systemd level, not just
+        # in server.mjs: the process may bind ONLY tcp:8739 and exchange
+        # packets ONLY with loopback. tailscale serve proxies from the same
+        # host over loopback, so the tailnet path keeps working.
+        SocketBindAllow = "tcp:8739";
+        SocketBindDeny = "any";
+        IPAddressAllow = [
+          "127.0.0.1/32"
+          "::1/128"
+        ];
+        IPAddressDeny = "any";
       };
     };
   };
