@@ -113,21 +113,56 @@ let
     # placeholder is not a usable OpenSSH private key: self-suppress (no-auth)
     # rather than attempt a doomed push that would (correctly) fail loud every
     # week before the key exists. Once the real key is placed, this passes.
-    if ! ${pkgs.gnugrep}/bin/grep -q "BEGIN OPENSSH PRIVATE KEY" "$SSH_KEY"; then
-      echo "push ssh key is a placeholder / not an OpenSSH private key — self-suppressing (reason: no-auth)" >&2
+    # PARSE-validate with `ssh-keygen -y` (derive-pubkey, no secret printed):
+    # the first live run (2026-07-12) proved a header-only grep is NOT enough —
+    # the placeholder .age contained the literal "BEGIN OPENSSH PRIVATE KEY"
+    # header, passed the old grep gate, and the push proceeded with an
+    # unloadable key.
+    if ! ${openssh}/bin/ssh-keygen -y -f "$SSH_KEY" >/dev/null 2>&1; then
+      echo "push ssh key is a placeholder / not a usable OpenSSH private key — self-suppressing (reason: no-auth)" >&2
       exit 0
     fi
 
-    SSH="${openssh}/bin/ssh -i $SSH_KEY -o BatchMode=yes -o StrictHostKeyChecking=${
+    # -o IdentitiesOnly=yes is LOAD-BEARING, not hygiene: without it, ssh also
+    # offers the user's DEFAULT identities (~/.ssh/id_ed25519). On the first
+    # live run that fallback key WAS authorized on root@sancta-claw (DR key,
+    # NO forced command), so sshd ran a plain login shell which tried to
+    # execute `put <name>` as a command → `bash: line 1: put: command not
+    # found`, exit 127. The receiver contract (put/sha256/list/prune) only
+    # exists behind the DEDICATED key's forced-command wrapper — so offer that
+    # key and NOTHING else.
+    SSH="${openssh}/bin/ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=${
       if effectiveKnownHosts != null then "yes -o UserKnownHostsFile=${effectiveKnownHosts}" else "accept-new"
     } -o ConnectTimeout=30"
 
-    # ── 1. tar the self, EXCLUDING regenerable gallery renders, then gzip.
+    # ── 1. tar the self, EXCLUDING regenerable artifacts, then gzip.
     # --dereference (-h): CLAUDE.md is a home-manager symlink into the nix
     # store — without -h the archive would capture a dangling link, not the
     # file's content. --ignore-failed-read tolerates a source that vanished
     # mid-run (e.g. a temp file) without aborting the whole backup.
     # Excludes are relative to each source root.
+    #
+    # Ratified spec excludes (regenerable gallery art):
+    #   gallery/*.png, gallery/*.gif, gallery/*-preview.txt
+    # Extensions beyond the ratified trio — all REGENERABLE, none is "the
+    # self". The first live run (2026-07-12) produced a 483 MB tar stream vs
+    # the ~110 MB spec-compliant archive; the extra was:
+    #   northstar/venv          — 266 MB pip venv (qiskit); `pip install`
+    #                             recreates it; the self is chsh.py+result.json
+    #                             which STAY in the archive.
+    #   painter/catalog3d/raw   — 33 MB downloaded HYG star database
+    #                             (hygdata_v41.csv, public dataset); the
+    #                             derived guarded catalog + scripts STAY.
+    #   painter/sky/*.png       — regenerable sky renders (same class as
+    #                             gallery art); the scene .json sources STAY.
+    #   painter/sky/.roots      — GC-root SYMLINKS into the nix store
+    #                             (stellarium, xvfb-run). THE actual 373 MB:
+    #                             --dereference (needed for CLAUDE.md) follows
+    #                             them and inhales the whole Stellarium package.
+    #                             Created 2026-07-11 19:37 — the night before
+    #                             the first timer run — which is why the manual
+    #                             2026-07-07 archive was spec-sized and the
+    #                             first automated run was not.
     echo "=== tar + gzip → $OUT ==="
     ${gnutar}/bin/tar \
       --dereference \
@@ -135,6 +170,10 @@ let
       --exclude='gallery/*.png' \
       --exclude='gallery/*.gif' \
       --exclude='gallery/*-preview.txt' \
+      --exclude='northstar/venv' \
+      --exclude='painter/catalog3d/raw' \
+      --exclude='painter/sky/*.png' \
+      --exclude='painter/sky/.roots' \
       -cf - \
       -C ${escapeShellArg (builtins.dirOf cfg.indexDir)} ${escapeShellArg (builtins.baseNameOf cfg.indexDir)} \
       -C ${escapeShellArg (builtins.dirOf cfg.memoryDir)} ${escapeShellArg (builtins.baseNameOf cfg.memoryDir)} \
@@ -276,8 +315,12 @@ let
     # ── (a) REMOTE bit-rot check. Only when a usable push key exists; otherwise
     # skip just this half (the remote copy can't be reached pre-provision) but
     # still run the local decrypt smoke-test below.
-    if [ -s "$SSH_KEY" ] && ${pkgs.gnugrep}/bin/grep -q "BEGIN OPENSSH PRIVATE KEY" "$SSH_KEY"; then
-      SSH="${openssh}/bin/ssh -i $SSH_KEY -o BatchMode=yes -o StrictHostKeyChecking=${
+    # Same gate as the backup script: `ssh-keygen -y` PARSE-validation (a
+    # header-only grep passed on a placeholder key, 2026-07-12) and
+    # IdentitiesOnly=yes (never fall back to an unrestricted default identity
+    # — the receiver contract lives behind the dedicated key's forced command).
+    if [ -s "$SSH_KEY" ] && ${openssh}/bin/ssh-keygen -y -f "$SSH_KEY" >/dev/null 2>&1; then
+      SSH="${openssh}/bin/ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=${
         if effectiveKnownHosts != null then "yes -o UserKnownHostsFile=${effectiveKnownHosts}" else "accept-new"
       } -o ConnectTimeout=30"
       echo "=== remote sha256 (bit-rot check) → $REMOTE:$BASENAME ==="
