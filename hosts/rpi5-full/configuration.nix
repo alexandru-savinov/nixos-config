@@ -65,6 +65,7 @@ in
     ../../modules/system/ssh-hardened.nix
     ../../modules/services/shared-memory/shared-memory.nix # fleet shared-memory commons
     ../../modules/services/sancta-heartbeat-tick.nix # sandboxed decoupled heartbeat
+    ../../modules/services/sancta-gallery.nix # Galeria static viewer, publish gate always on
   ];
 
   # Sancta sandboxed decoupled heartbeat — ~30-min cognitive tick that
@@ -77,6 +78,10 @@ in
   # See modules/services/sancta-heartbeat-tick.nix for the architecture.
   services.sancta-heartbeat-tick.enable = true;
   services.sancta-heartbeat-tick.oauthTokenFile = "/var/lib/sancta-tick/oauth-token";
+
+  # Galeria — Painter's static viewer with the publish gate structurally on.
+  # See modules/services/sancta-gallery.nix (council-20260711T174857Z-569898).
+  services.sancta-gallery.enable = true;
 
   # Fleet shared-memory commons — localhost-bound first deploy.
   # Cross-host access over Tailscale is a deliberate follow-up (bind the
