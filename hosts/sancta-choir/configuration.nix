@@ -41,14 +41,18 @@
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
+    ../../modules/services/codex.nix
     ../../modules/services/claude-shared.nix
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
   ];
 
-  # Enable development tools and Claude Code
+  # Enable development tools and agent CLIs.
   customModules.dev-tools.enable = true;
+  # Codex ships from `pkgs-unstable` (nixpkgs-unstable input), NOT the stable
+  # `pkgs` (nixos-25.11) -- the 25.11 branch caps Codex behind upstream.
+  customModules.codex.enable = true;
   customModules.claudeShared = {
     enable = true;
     # `herdr` is included so the dedicated herdr user (which runs the herdr
@@ -58,16 +62,8 @@
   };
 
   # Agent tooling on the system PATH so herdr panes (which inherit the
-  # herdr-server unit's PATH, not a login shell's) can find + launch them:
-  # OpenAI Codex CLI (github.com/openai/codex) as a second coding agent
-  # alongside Claude Code, plus git + curl that the agents and herdr need.
-  # Codex ships from `pkgs-unstable` (nixpkgs-unstable input), NOT the stable
-  # `pkgs` (nixos-25.11) — the 25.11 branch caps codex at 0.92.0, which is far
-  # behind upstream. Scoping codex alone to unstable (same idiom as
-  # dev-tools' github-copilot-cli and nullclaw's zig) keeps the fast-moving
-  # agent CLI current without dragging the whole host onto unstable nixpkgs.
+  # herdr-server unit's PATH, not a login shell's) can find + launch them.
   environment.systemPackages = [
-    pkgs-unstable.codex
     pkgs.git
     pkgs.curl
     # ralphex — multi-step Claude Code plan orchestrator (umputun/ralphex,
