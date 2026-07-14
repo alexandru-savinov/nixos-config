@@ -48,6 +48,8 @@ in
     # Import the base rpi5 configuration
     ../rpi5/configuration.nix
 
+    ../../modules/services/codex.nix
+
     # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
     # ../../modules/system/open-webui-arm-fix.nix
     # ../../modules/services/open-webui.nix
@@ -88,6 +90,10 @@ in
   # tailscale IP / add a tailscale-serve unit) once the allow-all auth seam
   # is reviewed. Today: same-host writers (drop-box + local curl) only.
   services.sharedMemory.enable = true;
+
+  # OpenAI Codex CLI for the full, active Pi profile. Keep this out of the
+  # minimal rpi5 SD-image profile so bootstrap images stay small.
+  customModules.codex.enable = true;
 
   # Package overrides for memory-constrained ARM builds
   nixpkgs.overlays = [
