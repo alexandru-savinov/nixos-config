@@ -27,6 +27,9 @@
 # --max-budget-usd are all present in `claude --help`. The --tools availability
 # boundary plus --allowedTools headless auto-approval matches the deployed
 # sancta-heartbeat-tick pattern in modules/services/sancta-heartbeat-tick.nix.
+# The inline `--mcp-config '{"mcpServers":{}}'` form was also exercised with an
+# isolated, unauthenticated CLAUDE_CONFIG_DIR: it passed MCP parsing and reached
+# the expected auth gate; malformed JSON was rejected as invalid MCP config.
 #
 # Differences from the sancta-core copy: runs as the `sancta` user under
 # /var/lib/sancta on sancta-choir's LIVE ext4 root (NOT a disko LUKS root); the
