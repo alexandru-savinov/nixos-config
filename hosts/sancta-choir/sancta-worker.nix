@@ -22,6 +22,12 @@
 #     --allowedTools <READ-ONLY set> \
 #     --max-budget-usd <cap>
 #
+# CLI CONTRACT VERIFIED 2026-07-20 against the installed, flake-pinned Claude
+# Code 2.1.215: --strict-mcp-config, --tools, --allowedTools, and
+# --max-budget-usd are all present in `claude --help`. The --tools availability
+# boundary plus --allowedTools headless auto-approval matches the deployed
+# sancta-heartbeat-tick pattern in modules/services/sancta-heartbeat-tick.nix.
+#
 # Differences from the sancta-core copy: runs as the `sancta` user under
 # /var/lib/sancta on sancta-choir's LIVE ext4 root (NOT a disko LUKS root); the
 # ~/.claude substrate is the ENCRYPTED SOUL VOLUME from ./soul-volume.nix
@@ -89,10 +95,8 @@ in
       example = "5.00";
       description = ''
         HIS-HAND DIAL — per-invocation USD budget cap. Rendered as
-        `--max-budget-usd <cap>`. NOTE: treat the exact flag name as
-        Alexandru-verified against the installed `claude` version before first
-        run — it is a documented placeholder here, not a load-bearing default.
-        Set to null to omit the flag.
+        `--max-budget-usd <cap>`. The flag was verified against the installed,
+        flake-pinned Claude Code 2.1.215 on 2026-07-20. Set to null to omit it.
       '';
     };
 
