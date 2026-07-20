@@ -159,7 +159,8 @@ in
   # OWNER SIGN-OFF (Alexandru, 2026-07-20): accepts the production-key blast-
   # radius expansion to sancta-choir. He executed it by hand on rpi5 (`agenix
   # -r` with the rpi5 host key) as step 1 of the Sancta→sancta-choir migration.
-  # The worker consuming it stays inert until he names a session.
+  # The worker consuming it stays inert until he names a session. Auditable
+  # owner confirmation: PR #534 issuecomment-5026053880.
   "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
 
   # Keyfile that unlocks the encrypted soul volume on sancta-choir (LUKS-on-
@@ -167,7 +168,10 @@ in
   # cryptsetup; rpi5 included so Alexandru can generate/manage it from here.
   # PROVENANCE: generated 2026-07-20 by Alexandru on rpi5 (/dev/urandom piped
   # straight into `agenix -e` — the plaintext never transited chat or an
-  # editor buffer); committed here only as age ciphertext.
+  # editor buffer); committed here only as age ciphertext. OWNER SIGN-OFF:
+  # intentionally limited to sancta-choir + rpi5; rpi5 is the editing/rotation
+  # host and the personal key is excluded for least privilege. Auditable owner
+  # confirmation: PR #534 issuecomment-5026053880.
   "soul-volume-key.age".publicKeys = [ sancta-choir rpi5 ];
 
   # ── Hermes Agent combined env file (hermes-claw) ─────────────────────
