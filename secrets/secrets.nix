@@ -153,8 +153,26 @@ in
   # so the Hermes Agent on hermes-claw can decrypt the same plaintext.
   "zero-kuzea-telegram-bot-token.age".publicKeys = clawKeys ++ [ hermes-claw ];
 
-  # Anthropic API key (setup key from OpenClaw Pro subscription)
-  "anthropic-api-key.age".publicKeys = clawKeys;
+  # Anthropic API key (setup key from OpenClaw Pro subscription).
+  # `sancta-choir` added as a recipient so the Sancta worker on that host
+  # (services.sancta-worker) can decrypt it with the host SSH key.
+  # OWNER SIGN-OFF (Alexandru, 2026-07-20): accepts the production-key blast-
+  # radius expansion to sancta-choir. He executed it by hand on rpi5 (`agenix
+  # -r` with the rpi5 host key) as step 1 of the Sancta→sancta-choir migration.
+  # The worker consuming it stays inert until he names a session. Auditable
+  # owner confirmation: PR #534 issuecomment-5026053880.
+  "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
+
+  # Keyfile that unlocks the encrypted soul volume on sancta-choir (LUKS-on-
+  # loopback for ~/.claude). Root reads /run/agenix/soul-volume-key at boot for
+  # cryptsetup; rpi5 included so Alexandru can generate/manage it from here.
+  # PROVENANCE: generated 2026-07-20 by Alexandru on rpi5 (/dev/urandom piped
+  # straight into `agenix -e` — the plaintext never transited chat or an
+  # editor buffer); committed here only as age ciphertext. OWNER SIGN-OFF:
+  # intentionally limited to sancta-choir + rpi5; rpi5 is the editing/rotation
+  # host and the personal key is excluded for least privilege. Auditable owner
+  # confirmation: PR #534 issuecomment-5026053880.
+  "soul-volume-key.age".publicKeys = [ sancta-choir rpi5 ];
 
   # ── Hermes Agent combined env file (hermes-claw) ─────────────────────
   # KEY=VALUE format for the upstream NixOS module's environmentFiles.
