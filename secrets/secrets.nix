@@ -156,10 +156,10 @@ in
   # Anthropic API key (setup key from OpenClaw Pro subscription).
   # `sancta-choir` added as a recipient so the Sancta worker on that host
   # (services.sancta-worker) can decrypt it with the host SSH key.
-  # INTENTIONAL blast-radius expansion, executed BY ALEXANDRU'S HAND on rpi5
-  # (`agenix -r` with the rpi5 host key, 2026-07-20) as step 1 of the
-  # Sancta→sancta-choir migration. The worker consuming it stays inert until
-  # he names a session.
+  # OWNER SIGN-OFF (Alexandru, 2026-07-20): accepts the production-key blast-
+  # radius expansion to sancta-choir. He executed it by hand on rpi5 (`agenix
+  # -r` with the rpi5 host key) as step 1 of the Sancta→sancta-choir migration.
+  # The worker consuming it stays inert until he names a session.
   "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
 
   # Keyfile that unlocks the encrypted soul volume on sancta-choir (LUKS-on-
