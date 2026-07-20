@@ -148,28 +148,19 @@
       # substrate where Sancta's live process (claude -p) runs; it connects TO
       # the membrane. Naming kept distinct on purpose.
       # Anthropic API key for the Sancta worker (services.sancta-worker).
-      # STUB: the .age file already exists (secrets/anthropic-api-
-      # key.age) but is keyed to `clawKeys`, which does NOT yet include the
-      # `sancta-choir` host key — so this host cannot decrypt it until Alexandru
-      # re-keys it (see HIS-HAND below). Owned by the `sancta` worker user so
-      # it is chmod-600 to it. This repo writes NO real key value.
-      #   HIS-HAND: add `sancta-choir` to `"anthropic-api-key.age".publicKeys`
-      #   in secrets/secrets.nix, then `cd secrets && agenix -r` (or -e) to
-      #   re-encrypt so sancta-choir's host key is a recipient.
+      # LIVE: secrets/anthropic-api-key.age is re-keyed (recipients now include
+      # the `sancta-choir` host key, done 2026-07-20) so this host decrypts it at
+      # activation. Owned by the `sancta` worker user so it is chmod-600 to it.
+      # This repo holds NO plaintext key — the .age is age-encrypted.
       anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
 
       # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
-      # volume) — DECLARATION COMMENTED OUT until the .age exists. Declaring a
-      # secret whose .age is missing would fail agenix at deploy activation, so
-      # we leave it commented (and `keyFile` null) — the volume stays inert and
-      # nothing references a missing file. This repo writes NO real key value.
-      #   HIS-HAND (option a — agenix unlock):
-      #     1. add `"soul-volume-key.age".publicKeys = [ users sancta-choir ];`
-      #        to secrets/secrets.nix,
-      #     2. `cd secrets && agenix -e soul-volume-key.age`  # paste random bytes
-      #     3. uncomment the line below AND `keyFile` in services.sancta-soul-volume.
-      #   HIS-HAND (option b — hand-placed keyfile): skip this entirely; set
-      #     `keyFile` to a chmod-600 path you scp in (e.g. /root/.soul/soul.key).
+      # volume). LIVE: soul-volume-key.age exists (random 256-bit; recipients
+      # sancta-choir + rpi5 in secrets/secrets.nix) and `keyFile` is wired below
+      # in the service. This is NOT inert-by-null-key anymore — the ONLY remaining
+      # inert-guard is ConditionPathExists on the loopback image, which does not
+      # yet exist (Alexandru creates it once, by hand, in Phase 4). This repo
+      # holds NO plaintext key — the .age is age-encrypted.
       soul-volume-key = secret "soul-volume-key";
     };
 

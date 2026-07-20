@@ -149,6 +149,10 @@ in
         "sancta-soul-mount.service"
       ];
       wants = [ "network-online.target" ];
+      # Encryption integrity: pull in + order after the soul mount so an armed
+      # worker never runs onto the bare (unencrypted) ~/.claude dir. (`after`
+      # alone is only ordering; `requires` also brings the mount into the txn.)
+      requires = [ "sancta-soul-mount.service" ];
       # Intentionally NOT wantedBy multi-user.target: this is a stub. Start is
       # manual (or a future path/timer) once the his-hand dials are set.
 
@@ -158,10 +162,16 @@ in
       # start` is a no-op. Alexandru creates the marker
       # (`touch /var/lib/sancta/session/<name>`) only when he names a real
       # --resume session — that arms the unit.
-      unitConfig.ConditionPathExists =
-        if cfg.session == null
-        then "/var/lib/sancta/session/.__no-session__"
-        else "/var/lib/sancta/session/${cfg.session}";
+      unitConfig = {
+        ConditionPathExists =
+          if cfg.session == null
+          then "/var/lib/sancta/session/.__no-session__"
+          else "/var/lib/sancta/session/${cfg.session}";
+        # Belt-and-suspenders: refuse to start unless the soul volume is actually
+        # MOUNTED — otherwise CLAUDE_CONFIG_DIR (/var/lib/sancta/.claude) would
+        # land on the bare, unencrypted dir, writing soul state in plaintext.
+        ConditionPathIsMountPoint = "/var/lib/sancta/.claude";
+      };
 
       environment = {
         HOME = "/var/lib/sancta";

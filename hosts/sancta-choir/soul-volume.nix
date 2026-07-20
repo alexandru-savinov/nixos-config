@@ -1,7 +1,7 @@
 # sancta-choir — ENCRYPTED SOUL VOLUME for ~/.claude (LUKS-on-loopback-file).
 #
 # ══════════════════════════════════════════════════════════════════════════
-# STAGING NOTE (Sancta→sancta-choir membrane migration): AUTHORED, not deployed.
+# STAGING NOTE (Sancta→sancta-choir migration): AUTHORED, not deployed.
 # Closing check is that it EVALUATES (`nix eval`), NOT that it builds/runs a
 # real machine. Do NOT nixos-rebuild switch / deploy / merge from here. No real
 # key material is written by this repo.
@@ -72,12 +72,12 @@ in
 
     mountPoint = lib.mkOption {
       type = lib.types.path;
-      # The membrane worker's ~/.claude substrate. Matches membrane-worker.nix
+      # The Sancta worker's ~/.claude substrate. Matches sancta-worker.nix
       # CLAUDE_CONFIG_DIR (/var/lib/sancta/.claude).
       default = "/var/lib/sancta/.claude";
       description = ''
         Where the decrypted soul volume is mounted — the Sancta user's
-        ~/.claude. Owned by the membrane-worker user so `claude -p` reads/writes
+        ~/.claude. Owned by the sancta-worker user so `claude -p` reads/writes
         its config + state there, on encrypted storage.
       '';
     };
@@ -85,7 +85,7 @@ in
     owner = lib.mkOption {
       type = lib.types.str;
       default = "sancta";
-      description = "User that owns the mounted soul volume (the membrane-worker user).";
+      description = "User that owns the mounted soul volume (the sancta-worker user).";
     };
   };
 
@@ -108,7 +108,7 @@ in
     systemd.tmpfiles.rules = [
       "d /var/lib/sancta-soul 0700 root root -"
       # Mount point pre-created so the first mount has a target; owned by the
-      # membrane user. (Contents replaced by the volume once mounted.)
+      # sancta worker user. (Contents replaced by the volume once mounted.)
       "d ${cfg.mountPoint} 0700 ${cfg.owner} ${cfg.owner} -"
     ];
 
@@ -136,6 +136,13 @@ in
         ExecStop = pkgs.writeShellScript "sancta-soul-close" ''
           set -euo pipefail
           ${pkgs.cryptsetup}/bin/cryptsetup luksClose ${cfg.mapperName} || true
+          # Defensive: cryptsetup auto-attaches a loop device to back a file-based
+          # LUKS container; older cryptsetup/util-linux may leave it attached after
+          # close. Detach any loop still backing the image so open/close cycles
+          # don't leak loop minors or leave a stale device across restarts.
+          for dev in $(${pkgs.util-linux}/bin/losetup -j ${lib.escapeShellArg (toString cfg.imagePath)} -O NAME -n 2>/dev/null || true); do
+            ${pkgs.util-linux}/bin/losetup -d "$dev" 2>/dev/null || true
+          done
         '';
       };
     };
