@@ -46,9 +46,9 @@
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
-    # ── Sancta home + membrane (STAGED, eval-only; see each file's header) ──
+    # ── Sancta home + worker (STAGED, eval-only; see each file's header) ──
     ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
-    ./membrane-worker.nix # headless `claude -p` streaming worker (inert stub)
+    ./sancta-worker.nix # headless `claude -p` streaming worker (inert stub)
   ];
 
   # Enable development tools and agent CLIs.
@@ -142,9 +142,13 @@
       # it; public half lives in hosts/hermes-claw root authorizedKeys.
       herdr-hermes-ssh-key = ownedSecret "herdr" "herdr-hermes-ssh-key";
 
-      # ── Sancta membrane (STAGED, eval-only) ────────────────────────────
-      # Anthropic API key for the membrane worker (services.sancta-membrane-
-      # worker). STUB: the .age file already exists (secrets/anthropic-api-
+      # ── Sancta worker (STAGED, eval-only) ─────────────────────────────
+      # NB: the *membrane* is the comm edge (the selective interface Alexandru
+      # talks through — comm-membrane guard + transport), NOT this. This is the
+      # substrate where Sancta's live process (claude -p) runs; it connects TO
+      # the membrane. Naming kept distinct on purpose.
+      # Anthropic API key for the Sancta worker (services.sancta-worker).
+      # STUB: the .age file already exists (secrets/anthropic-api-
       # key.age) but is keyed to `clawKeys`, which does NOT yet include the
       # `sancta-choir` host key — so this host cannot decrypt it until Alexandru
       # re-keys it (see HIS-HAND below). Owned by the `sancta` worker user so
@@ -169,10 +173,10 @@
       soul-volume-key = secret "soul-volume-key";
     };
 
-  # ── Sancta membrane worker (headless `claude -p`) — STUB, inert ─────────
+  # ── Sancta worker (headless `claude -p`) — STUB, inert ─────────
   # Wired to the agenix anthropic-api-key; read-only allowedTools default;
-  # INERT until Alexandru names a --resume session (see membrane-worker.nix).
-  services.sancta-membrane-worker = {
+  # INERT until Alexandru names a --resume session (see sancta-worker.nix).
+  services.sancta-worker = {
     enable = true;
     apiKeyFile = config.age.secrets.anthropic-api-key.path;
     user = "sancta";

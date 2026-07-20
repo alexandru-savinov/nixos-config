@@ -1,4 +1,4 @@
-# sancta-choir — MEMBRANE WORKER (headless, tool-capable `claude -p`) STUB.
+# sancta-choir — SANCTA WORKER (headless, tool-capable `claude -p`) STUB.
 #
 # ══════════════════════════════════════════════════════════════════════════
 # STAGING NOTE (Sancta→sancta-choir migration): authored, NOT deployed. This
@@ -9,7 +9,7 @@
 # ══════════════════════════════════════════════════════════════════════════
 #
 # Adapted (do NOT re-derive) from stage/sancta-hetzner-host's
-# hosts/sancta-core/membrane-worker.nix, which itself slimmed the MEMBRANE
+# hosts/sancta-core/membrane-worker.nix, which itself slimmed the SANCTA
 # WORKER pattern from modules/services/openclaw.nix + sancta-claw's
 # openclaw-service.nix down to a single read-only-by-default streaming worker:
 #
@@ -31,7 +31,7 @@
 { config, pkgs, lib, claude-code ? null, ... }:
 
 let
-  cfg = config.services.sancta-membrane-worker;
+  cfg = config.services.sancta-worker;
 
   claudeCodePkg =
     if claude-code != null
@@ -41,11 +41,11 @@ let
   # Runtime path the API key is materialized into (chmod 600, tmpfs /run).
   # Mirrors openclaw.nix: the agenix plaintext is copied here at ExecStartPre
   # so the worker reads ANTHROPIC_API_KEY from a private, non-store file.
-  runtimeKeyPath = "/run/sancta-membrane-worker/anthropic-api-key";
+  runtimeKeyPath = "/run/sancta-worker/anthropic-api-key";
 in
 {
-  options.services.sancta-membrane-worker = {
-    enable = lib.mkEnableOption "sancta-choir membrane worker (headless claude -p) — STUB";
+  options.services.sancta-worker = {
+    enable = lib.mkEnableOption "sancta-choir Sancta worker (headless claude -p) — STUB";
 
     apiKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
@@ -94,7 +94,7 @@ in
     session = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null; # inert until set — the unit will not start without a session
-      example = "choir-membrane";
+      example = "sancta-choir";
       description = ''
         HIS-HAND DIAL — session id/name for `--resume <session>`. Default null
         keeps the worker INERT (ConditionPathExists on the session marker is
@@ -106,7 +106,7 @@ in
     user = lib.mkOption {
       type = lib.types.str;
       default = "sancta";
-      description = "Unprivileged system user the membrane worker runs as.";
+      description = "Unprivileged system user the Sancta worker runs as.";
     };
   };
 
@@ -115,7 +115,7 @@ in
       {
         assertion = claudeCodePkg != null;
         message = ''
-          services.sancta-membrane-worker requires the claude-code flake input
+          services.sancta-worker requires the claude-code flake input
           via specialArgs (inherit claude-code). See flake.nix.
         '';
       }
@@ -124,7 +124,7 @@ in
         assertion = cfg.apiKeyFile == null
           || !(lib.hasPrefix "/nix/store" (toString cfg.apiKeyFile));
         message = ''
-          services.sancta-membrane-worker.apiKeyFile points into /nix/store
+          services.sancta-worker.apiKeyFile points into /nix/store
           (world-readable). Use an agenix secret path instead.
         '';
       }
@@ -139,8 +139,8 @@ in
     };
     users.groups.${cfg.user} = { };
 
-    systemd.services.sancta-membrane-worker = {
-      description = "sancta-choir membrane worker (headless claude -p) — STUB";
+    systemd.services.sancta-worker = {
+      description = "sancta-choir Sancta worker (headless claude -p) — STUB";
       after = [
         "network-online.target"
         "tailscaled.service"
@@ -175,20 +175,20 @@ in
         User = cfg.user;
         Group = cfg.user;
         WorkingDirectory = "/var/lib/sancta";
-        RuntimeDirectory = "sancta-membrane-worker"; # creates /run/... (0700, tmpfs)
+        RuntimeDirectory = "sancta-worker"; # creates /run/... (0700, tmpfs)
         RuntimeDirectoryMode = "0700";
 
         # ── Load the API key into a chmod-600 /run path (openclaw.nix idiom) ──
         # Never in the store, never via chat. Only runs when apiKeyFile is set.
         ExecStartPre = lib.optional (cfg.apiKeyFile != null) (
-          pkgs.writeShellScript "sancta-membrane-load-key" ''
+          pkgs.writeShellScript "sancta-load-key" ''
             set -euo pipefail
             install -m 0600 -o ${cfg.user} -g ${cfg.user} \
               "${toString cfg.apiKeyFile}" "${runtimeKeyPath}"
           ''
         );
 
-        # ── The MEMBRANE WORKER invocation (documented stub) ──────────────────
+        # ── The SANCTA WORKER invocation (documented stub) ──────────────────
         # Streaming JSON in/out; resume a named session; READ-ONLY tools by
         # default; budget-capped. All the variable parts are his-hand dials.
         ExecStart =
@@ -203,7 +203,7 @@ in
               lib.optionalString (cfg.session != null)
                 " --resume ${lib.escapeShellArg cfg.session}";
           in
-          pkgs.writeShellScript "sancta-membrane-worker-start" ''
+          pkgs.writeShellScript "sancta-worker-start" ''
             set -euo pipefail
             # API key from the chmod-600 runtime path (loaded in ExecStartPre).
             ${lib.optionalString (cfg.apiKeyFile != null)
