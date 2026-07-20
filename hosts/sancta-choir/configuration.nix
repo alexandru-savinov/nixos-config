@@ -178,9 +178,9 @@
   };
 
   # ── Sancta encrypted soul volume for ~/.claude — STUB, inert ────────────
-  # LUKS-on-loopback on the existing ext4 root (non-destructive). INERT until
-  # Alexandru wires a real keyFile AND creates the image (see soul-volume.nix
-  # init commands). keyFile left null keeps it a no-op.
+  # LUKS-on-loopback on the existing ext4 root (non-destructive). The real
+  # agenix keyFile is wired; the unit remains INERT only until Alexandru creates
+  # the image by hand (see soul-volume.nix init commands).
   services.sancta-soul-volume = {
     enable = true;
     owner = "sancta";

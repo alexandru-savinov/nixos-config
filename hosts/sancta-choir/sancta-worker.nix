@@ -4,7 +4,7 @@
 # STAGING NOTE (Sancta→sancta-choir migration): authored, NOT deployed. This
 # unit is a DOCUMENTED STUB whose only closing check is that it EVALUATES
 # (`nix eval`). It need not run yet — the `claude` binary, the resumed session,
-# the API-key runtime path, and the allowedTools/budget dials are all his-hand
+# the API-key runtime path, and the tool/budget dials are all his-hand
 # things Alexandru wires before any real start.
 # ══════════════════════════════════════════════════════════════════════════
 #
@@ -17,6 +17,8 @@
 #     --input-format  stream-json \
 #     --output-format stream-json \
 #     --resume <session> \
+#     --strict-mcp-config \
+#     --tools <READ-ONLY set> \
 #     --allowedTools <READ-ONLY set> \
 #     --max-budget-usd <cap>
 #
@@ -71,10 +73,13 @@ in
       default = [ "Read" "Grep" "Glob" ];
       example = [ "Read" "Grep" "Glob" "Bash(git status)" ];
       description = ''
-        HIS-HAND DIAL — Claude Code `--allowedTools` allow-list. Default is a
-        strictly READ-ONLY set (Read/Grep/Glob). Anything mutating or
-        executing (Write, Edit, Bash, MCP tools) is intentionally absent and
-        must be added explicitly by Alexandru. Passed verbatim to `claude -p`.
+        HIS-HAND DIAL — Claude Code tool availability and auto-approval list.
+        The value is passed to both `--tools` (the structural built-in-tool
+        whitelist) and `--allowedTools` (permission-prompt bypass for the same
+        tools). Default is strictly READ-ONLY (Read/Grep/Glob); an empty list
+        disables all built-in tools. MCP tools are independently disabled with
+        `--strict-mcp-config` and an empty MCP config. Anything mutating or
+        executing must be added explicitly by Alexandru.
       '';
     };
 
@@ -208,9 +213,13 @@ in
             budgetFlag =
               lib.optionalString (cfg.maxBudgetUsd != null)
                 " --max-budget-usd ${lib.escapeShellArg cfg.maxBudgetUsd}";
+            toolsCsv = lib.concatStringsSep "," cfg.allowedTools;
             toolsFlag =
-              lib.optionalString (cfg.allowedTools != [ ])
-                " --allowedTools ${lib.escapeShellArg (lib.concatStringsSep "," cfg.allowedTools)}";
+              " --tools ${lib.escapeShellArg toolsCsv}"
+              + " --allowedTools ${lib.escapeShellArg toolsCsv}";
+            emptyMcpConfig = builtins.toJSON { mcpServers = { }; };
+            mcpFlag =
+              " --strict-mcp-config --mcp-config ${lib.escapeShellArg emptyMcpConfig}";
             resumeFlag =
               lib.optionalString (cfg.session != null)
                 " --resume ${lib.escapeShellArg cfg.session}";
@@ -222,7 +231,7 @@ in
               ''export ANTHROPIC_API_KEY="$(cat ${runtimeKeyPath})"''}
             exec ${claudeCodePkg}/bin/claude -p \
               --input-format stream-json \
-              --output-format stream-json${resumeFlag}${toolsFlag}${budgetFlag}
+              --output-format stream-json${resumeFlag}${mcpFlag}${toolsFlag}${budgetFlag}
           '';
 
         Restart = "on-failure";
