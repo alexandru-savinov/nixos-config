@@ -166,7 +166,7 @@
       #     3. uncomment the line below AND `keyFile` in services.sancta-soul-volume.
       #   HIS-HAND (option b — hand-placed keyfile): skip this entirely; set
       #     `keyFile` to a chmod-600 path you scp in (e.g. /root/.soul/soul.key).
-      # soul-volume-key = secret "soul-volume-key";
+      soul-volume-key = secret "soul-volume-key";
     };
 
   # ── Sancta membrane worker (headless `claude -p`) — STUB, inert ─────────
@@ -189,8 +189,9 @@
   services.sancta-soul-volume = {
     enable = true;
     owner = "sancta";
-    # HIS-HAND: uncomment once soul-volume-key.age exists + is keyed to this host:
-    #   keyFile = config.age.secrets.soul-volume-key.path;
+    # keyFile: agenix secret placed at /run/agenix/soul-volume-key, read by root
+    # at boot for cryptsetup. The volume image is created by hand (Phase 4).
+    keyFile = config.age.secrets.soul-volume-key.path;
   };
 
   # ==========================================================================

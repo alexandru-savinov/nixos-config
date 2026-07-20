@@ -160,6 +160,12 @@ in
   # `cd secrets && agenix -r` (needs a private key that can already decrypt).
   "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
 
+  # Keyfile that unlocks the encrypted soul volume on sancta-choir (LUKS-on-
+  # loopback for ~/.claude). Root reads /run/agenix/soul-volume-key at boot for
+  # cryptsetup; rpi5 included so Alexandru can generate/manage it from here.
+  # Content = random bytes, placed by his hand (never via chat).
+  "soul-volume-key.age".publicKeys = [ sancta-choir rpi5 ];
+
   # ── Hermes Agent combined env file (hermes-claw) ─────────────────────
   # KEY=VALUE format for the upstream NixOS module's environmentFiles.
   # Contains OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN (same plaintext as
