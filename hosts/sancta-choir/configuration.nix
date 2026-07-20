@@ -46,6 +46,9 @@
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
+    # ── Sancta home + membrane (STAGED, eval-only; see each file's header) ──
+    ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
+    ./membrane-worker.nix # headless `claude -p` streaming worker (inert stub)
   ];
 
   # Enable development tools and agent CLIs.
@@ -138,7 +141,57 @@
       # wrapper above). owner=herdr so the unprivileged server/panes can read
       # it; public half lives in hosts/hermes-claw root authorizedKeys.
       herdr-hermes-ssh-key = ownedSecret "herdr" "herdr-hermes-ssh-key";
+
+      # ── Sancta membrane (STAGED, eval-only) ────────────────────────────
+      # Anthropic API key for the membrane worker (services.sancta-membrane-
+      # worker). STUB: the .age file already exists (secrets/anthropic-api-
+      # key.age) but is keyed to `clawKeys`, which does NOT yet include the
+      # `sancta-choir` host key — so this host cannot decrypt it until Alexandru
+      # re-keys it (see HIS-HAND below). Owned by the `sancta` worker user so
+      # it is chmod-600 to it. This repo writes NO real key value.
+      #   HIS-HAND: add `sancta-choir` to `"anthropic-api-key.age".publicKeys`
+      #   in secrets/secrets.nix, then `cd secrets && agenix -r` (or -e) to
+      #   re-encrypt so sancta-choir's host key is a recipient.
+      anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
+
+      # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
+      # volume) — DECLARATION COMMENTED OUT until the .age exists. Declaring a
+      # secret whose .age is missing would fail agenix at deploy activation, so
+      # we leave it commented (and `keyFile` null) — the volume stays inert and
+      # nothing references a missing file. This repo writes NO real key value.
+      #   HIS-HAND (option a — agenix unlock):
+      #     1. add `"soul-volume-key.age".publicKeys = [ users sancta-choir ];`
+      #        to secrets/secrets.nix,
+      #     2. `cd secrets && agenix -e soul-volume-key.age`  # paste random bytes
+      #     3. uncomment the line below AND `keyFile` in services.sancta-soul-volume.
+      #   HIS-HAND (option b — hand-placed keyfile): skip this entirely; set
+      #     `keyFile` to a chmod-600 path you scp in (e.g. /root/.soul/soul.key).
+      # soul-volume-key = secret "soul-volume-key";
     };
+
+  # ── Sancta membrane worker (headless `claude -p`) — STUB, inert ─────────
+  # Wired to the agenix anthropic-api-key; read-only allowedTools default;
+  # INERT until Alexandru names a --resume session (see membrane-worker.nix).
+  services.sancta-membrane-worker = {
+    enable = true;
+    apiKeyFile = config.age.secrets.anthropic-api-key.path;
+    user = "sancta";
+    # HIS-HAND DIALS left at safe module defaults:
+    #   allowedTools = [ "Read" "Grep" "Glob" ];  # read-only
+    #   maxBudgetUsd = "1.00";                     # low cap
+    #   session      = null;                        # INERT until he names one
+  };
+
+  # ── Sancta encrypted soul volume for ~/.claude — STUB, inert ────────────
+  # LUKS-on-loopback on the existing ext4 root (non-destructive). INERT until
+  # Alexandru wires a real keyFile AND creates the image (see soul-volume.nix
+  # init commands). keyFile left null keeps it a no-op.
+  services.sancta-soul-volume = {
+    enable = true;
+    owner = "sancta";
+    # HIS-HAND: uncomment once soul-volume-key.age exists + is keyed to this host:
+    #   keyFile = config.age.secrets.soul-volume-key.path;
+  };
 
   # ==========================================================================
   # Open-WebUI — AI chat gateway via OpenRouter

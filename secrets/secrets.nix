@@ -153,8 +153,12 @@ in
   # so the Hermes Agent on hermes-claw can decrypt the same plaintext.
   "zero-kuzea-telegram-bot-token.age".publicKeys = clawKeys ++ [ hermes-claw ];
 
-  # Anthropic API key (setup key from OpenClaw Pro subscription)
-  "anthropic-api-key.age".publicKeys = clawKeys;
+  # Anthropic API key (setup key from OpenClaw Pro subscription).
+  # `sancta-choir` added as a recipient so the membrane worker on that host
+  # (services.sancta-membrane-worker) can decrypt it with the host SSH key.
+  # HIS-HAND: this recipient change is not live until re-encrypted —
+  # `cd secrets && agenix -r` (needs a private key that can already decrypt).
+  "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
 
   # ── Hermes Agent combined env file (hermes-claw) ─────────────────────
   # KEY=VALUE format for the upstream NixOS module's environmentFiles.
