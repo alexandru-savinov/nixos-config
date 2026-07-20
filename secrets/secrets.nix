@@ -154,16 +154,20 @@ in
   "zero-kuzea-telegram-bot-token.age".publicKeys = clawKeys ++ [ hermes-claw ];
 
   # Anthropic API key (setup key from OpenClaw Pro subscription).
-  # `sancta-choir` added as a recipient so the membrane worker on that host
-  # (services.sancta-membrane-worker) can decrypt it with the host SSH key.
-  # HIS-HAND: this recipient change is not live until re-encrypted —
-  # `cd secrets && agenix -r` (needs a private key that can already decrypt).
+  # `sancta-choir` added as a recipient so the Sancta worker on that host
+  # (services.sancta-worker) can decrypt it with the host SSH key.
+  # INTENTIONAL blast-radius expansion, executed BY ALEXANDRU'S HAND on rpi5
+  # (`agenix -r` with the rpi5 host key, 2026-07-20) as step 1 of the
+  # Sancta→sancta-choir migration. The worker consuming it stays inert until
+  # he names a session.
   "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
 
   # Keyfile that unlocks the encrypted soul volume on sancta-choir (LUKS-on-
   # loopback for ~/.claude). Root reads /run/agenix/soul-volume-key at boot for
   # cryptsetup; rpi5 included so Alexandru can generate/manage it from here.
-  # Content = random bytes, placed by his hand (never via chat).
+  # PROVENANCE: generated 2026-07-20 by Alexandru on rpi5 (/dev/urandom piped
+  # straight into `agenix -e` — the plaintext never transited chat or an
+  # editor buffer); committed here only as age ciphertext.
   "soul-volume-key.age".publicKeys = [ sancta-choir rpi5 ];
 
   # ── Hermes Agent combined env file (hermes-claw) ─────────────────────

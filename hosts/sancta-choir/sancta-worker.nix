@@ -168,9 +168,11 @@ in
           then "/var/lib/sancta/session/.__no-session__"
           else "/var/lib/sancta/session/${cfg.session}";
         # Belt-and-suspenders: refuse to start unless the soul volume is actually
-        # MOUNTED — otherwise CLAUDE_CONFIG_DIR (/var/lib/sancta/.claude) would
-        # land on the bare, unencrypted dir, writing soul state in plaintext.
-        ConditionPathIsMountPoint = "/var/lib/sancta/.claude";
+        # MOUNTED — otherwise CLAUDE_CONFIG_DIR would land on the bare,
+        # unencrypted dir, writing soul state in plaintext. Derived from the
+        # soul-volume option (not a duplicated literal) so an override of
+        # mountPoint keeps this guard pointed at the real mount path.
+        ConditionPathIsMountPoint = toString config.services.sancta-soul-volume.mountPoint;
       };
 
       environment = {
@@ -205,7 +207,7 @@ in
           let
             budgetFlag =
               lib.optionalString (cfg.maxBudgetUsd != null)
-                " --max-budget-usd ${cfg.maxBudgetUsd}";
+                " --max-budget-usd ${lib.escapeShellArg cfg.maxBudgetUsd}";
             toolsFlag =
               lib.optionalString (cfg.allowedTools != [ ])
                 " --allowedTools ${lib.escapeShellArg (lib.concatStringsSep "," cfg.allowedTools)}";

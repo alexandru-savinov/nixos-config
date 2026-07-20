@@ -1,10 +1,11 @@
 # sancta-choir — ENCRYPTED SOUL VOLUME for ~/.claude (LUKS-on-loopback-file).
 #
 # ══════════════════════════════════════════════════════════════════════════
-# STAGING NOTE (Sancta→sancta-choir migration): AUTHORED, not deployed.
-# Closing check is that it EVALUATES (`nix eval`), NOT that it builds/runs a
-# real machine. Do NOT nixos-rebuild switch / deploy / merge from here. No real
-# key material is written by this repo.
+# STAGING NOTE (Sancta→sancta-choir migration): AUTHORED first, deployed via
+# the normal PR → CI → main → herdr-deploy path. Merging the PR is fine and
+# expected; what must NOT happen from this repo alone is ARMING — the loopback
+# image is created by hand and the module stays a no-op until it exists
+# (ConditionPathExists). No real key material is written by this repo.
 # ══════════════════════════════════════════════════════════════════════════
 #
 # WHY LOOPBACK-FILE LUKS (not disko / not re-imaging):
@@ -101,6 +102,18 @@ in
           (world-readable). Use an agenix secret path or a hand-placed keyfile.
         '';
       }
+      {
+        # The owner user is not declared by THIS module (sancta-worker.nix
+        # declares `sancta`). Make the cross-module coupling explicit so
+        # enabling the volume without the worker (or with a typo'd owner)
+        # fails at eval, not at tmpfiles activation.
+        assertion = lib.hasAttr cfg.owner config.users.users;
+        message = ''
+          services.sancta-soul-volume.owner ("${cfg.owner}") is not a declared
+          user on this host. Declare it (sancta-worker.nix declares "sancta")
+          or set `owner` to an existing user.
+        '';
+      }
     ];
 
     # Parent dir for the loopback image on the existing ext4 root. Root-owned;
@@ -127,6 +140,16 @@ in
         RemainAfterExit = true;
         ExecStart = pkgs.writeShellScript "sancta-soul-open" ''
           set -euo pipefail
+          # Crash-recovery: a mapper left over from an unclean shutdown is NOT
+          # trusted blindly — verify it is backed by OUR image (cryptsetup
+          # status prints the backing loop file); otherwise close + reopen.
+          if [ -e /dev/mapper/${cfg.mapperName} ]; then
+            if ! ${pkgs.cryptsetup}/bin/cryptsetup status ${cfg.mapperName} \
+                 | grep -qF ${lib.escapeShellArg (toString cfg.imagePath)}; then
+              echo "stale mapper ${cfg.mapperName} not backed by our image; reopening" >&2
+              ${pkgs.cryptsetup}/bin/cryptsetup luksClose ${cfg.mapperName} || true
+            fi
+          fi
           if [ ! -e /dev/mapper/${cfg.mapperName} ]; then
             ${pkgs.cryptsetup}/bin/cryptsetup luksOpen \
               --key-file ${lib.escapeShellArg (toString cfg.keyFile)} \
@@ -162,6 +185,15 @@ in
         ExecStart = pkgs.writeShellScript "sancta-soul-mount" ''
           set -euo pipefail
           if ! ${pkgs.util-linux}/bin/mountpoint -q ${lib.escapeShellArg (toString cfg.mountPoint)}; then
+            # Refuse to mount over a NON-EMPTY dir: mounting would silently
+            # shadow (hide, not destroy) any state already written to the bare
+            # path — for a soul/state dir that is a silent availability loss.
+            # The underlying dir is tmpfiles-created empty; anything else there
+            # means something wrote before the volume mounted — surface it.
+            if [ -n "$(${pkgs.coreutils}/bin/ls -A ${lib.escapeShellArg (toString cfg.mountPoint)} 2>/dev/null)" ]; then
+              echo "refusing to mount over non-empty ${cfg.mountPoint} (would shadow existing data)" >&2
+              exit 1
+            fi
             ${pkgs.util-linux}/bin/mount /dev/mapper/${cfg.mapperName} \
               ${lib.escapeShellArg (toString cfg.mountPoint)}
             ${pkgs.coreutils}/bin/chown ${cfg.owner}:${cfg.owner} \
