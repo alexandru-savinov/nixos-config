@@ -271,11 +271,7 @@ for (;;) {
         unresolvedFailure = { offset, inbox_ts: entry.ts || null, reason: "Claude turn in progress" };
         await runTurn(entry.message, entry.ts, checkpoint, offset, offset + bytes);
         committedCheckpoints.add(checkpoint.key);
-        offset += bytes;
-        await saveCursor(offset);
-        await clearFailure();
-        unresolvedFailure = null;
-        continue;
+        await saveCursor(offset + bytes);
       } catch (error) {
         const reason = /^Claude exited [0-9]+$/.test(error.message)
           ? error.message
@@ -289,6 +285,10 @@ for (;;) {
         log("resumed turn failed; cursor retained at " + offset);
         throw new Error(reason);
       }
+      offset += bytes;
+      await clearFailure();
+      unresolvedFailure = null;
+      continue;
     }
     offset += bytes;
     await saveCursor(offset);
