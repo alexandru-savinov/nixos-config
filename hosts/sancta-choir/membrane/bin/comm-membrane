@@ -210,7 +210,7 @@ function msgHash(msg) {
 
 function appendLog(entry) {
   try {
-    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n', { flag: 'a' });
+    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
   } catch (e) {
     process.stderr.write(`WARN: log write failed: ${e.message}\n`);
   }
@@ -220,7 +220,10 @@ function appendLog(entry) {
 // MAIN
 // ─────────────────────────────────────────────────────────────────────────────
 
-const msg = process.argv.slice(2).join(' ').trim();
+let msg = process.argv.slice(2).join(' ').trim();
+if (!msg && !process.stdin.isTTY) {
+  try { msg = fs.readFileSync(0, 'utf8').trim(); } catch {}
+}
 
 if (!msg) {
   process.stderr.write('usage: comm-membrane "<message>"\n');

@@ -32,8 +32,8 @@ pkgs.runCommand "sancta-membrane-tests"
 
     guard_home="$TMPDIR/guard-home"
     mkdir -p "$guard_home/.claude/index"
-    HOME="$guard_home" node ${membrane} "hello" >/dev/null
-    if HOME="$guard_home" node ${membrane} "sk-dummy-credential-value" >/dev/null; then
+    printf '%s' "hello" | HOME="$guard_home" node ${membrane} >/dev/null
+    if printf '%s' "sk-dummy-credential-value" | HOME="$guard_home" node ${membrane} >/dev/null; then
       echo "membrane accepted a credential-shaped message" >&2
       exit 1
     fi

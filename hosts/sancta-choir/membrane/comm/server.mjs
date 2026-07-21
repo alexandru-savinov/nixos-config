@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // comm/server.mjs — communication membrane iPhone gateway
 // Loopback-only service; Tailscale Serve provides the authenticated HTTPS edge.
-// POST /send {message} → runs comm-membrane via execFile (no shell) → {decision, line}
+// POST /send {message} → runs comm-membrane via stdin (no shell/argv) → {decision, line}
 // GET  /              → index.html
 // GET  /thread-merged → chronological merged thread (PII-redacted)
 // GET  /sim           → membrane-simulation HTML page
@@ -31,10 +31,10 @@ function log(...args) {
   process.stdout.write(new Date().toISOString() + ' ' + args.join(' ') + '\n');
 }
 
-// Run membrane safely via execFile — message is an arg, never interpolated into shell.
+// Run the membrane without exposing message text in shell syntax or process argv.
 function runMembrane(message) {
   return new Promise((resolve) => {
-    execFile('node', [MEMBRANE_PATH, message], { timeout: 10000 }, (err, stdout, stderr) => {
+    const child = execFile('node', [MEMBRANE_PATH], { timeout: 10000 }, (err, stdout, stderr) => {
       const line = (stdout || '').trim();
       // err is set for any non-zero exit; err.code carries the exit code.
       const code = err ? (err.code ?? 2) : 0;
@@ -45,6 +45,8 @@ function runMembrane(message) {
       else                 decision = 'escalate';
       resolve({ decision, line, code });
     });
+    child.stdin.on('error', () => {});
+    child.stdin.end(message);
   });
 }
 
@@ -88,12 +90,21 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
+    let tooLarge = false;
     req.on('data', chunk => {
+      if (tooLarge) return;
       total += chunk.length;
-      if (total > 65536) { reject(new Error('body too large')); return; }
+      if (total > 65536) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
+      }
       chunks.push(chunk);
     });
-    req.on('end',   () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => {
+      if (tooLarge) reject(new Error('body too large'));
+      else resolve(Buffer.concat(chunks).toString('utf8'));
+    });
     req.on('error', reject);
   });
 }
