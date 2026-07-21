@@ -386,7 +386,7 @@ in
         ProtectHome = true;
         PrivateTmp = true;
         PrivateDevices = true;
-        ReadWritePaths = [ "/var/lib/sancta" ];
+        ReadWritePaths = [ indexDir ];
       };
     };
 
