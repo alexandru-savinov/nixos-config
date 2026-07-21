@@ -51,6 +51,7 @@ let
   inboxPath = "${indexDir}/comm-inbox.jsonl";
   repliesPath = "${indexDir}/comm-replies.jsonl";
   cursorPath = "${indexDir}/comm-worker-cursor.json";
+  projectDir = "/home/nixos";
 
   relay = pkgs.writeText "sancta-worker-relay.mjs" ''
     import fs from "fs";
@@ -101,6 +102,7 @@ let
     async function runTurn(message, inboxTs) {
       log("starting resumed turn for inbox ts=" + (inboxTs || "unknown"));
       const child = spawn(claudeBin, claudeArgs, {
+        cwd: process.env.SANCTA_PROJECT_DIR,
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -336,6 +338,7 @@ in
         SANCTA_INBOX = inboxPath;
         SANCTA_REPLIES = repliesPath;
         SANCTA_CURSOR = cursorPath;
+        SANCTA_PROJECT_DIR = projectDir;
         CLAUDE_BIN = "${claudeCodePkg}/bin/claude";
         CLAUDE_ARGS_JSON = builtins.toJSON (
           [
@@ -389,7 +392,10 @@ in
         # ── systemd hardening (mirrors openclaw-service.nix) ─────────────────
         NoNewPrivileges = true;
         ProtectSystem = "strict";
-        ProtectHome = true; # /var/lib/sancta is not under /home
+        # The resumed transcript belongs to the /home/nixos project key.
+        # Expose that empty anchor read-only; all mutable state remains under
+        # the encrypted CLAUDE_CONFIG_DIR in /var/lib/sancta.
+        ProtectHome = "read-only";
         PrivateTmp = true;
         PrivateDevices = true;
         ReadWritePaths = [ "/var/lib/sancta" ];
@@ -445,6 +451,8 @@ in
     # rule below only ensures the parent dir + session-marker dir exist; it does
     # NOT create .claude contents (those live on the encrypted volume, his-hand).
     systemd.tmpfiles.rules = [
+      # Claude resolves --resume within the original transcript's project cwd.
+      "d ${projectDir} 0755 root root -"
       "d /var/lib/sancta 0700 ${cfg.user} ${cfg.user} -"
       # Session-marker dir — presence of a marker file arms the inert unit.
       "d /var/lib/sancta/session 0700 ${cfg.user} ${cfg.user} -"
