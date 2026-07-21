@@ -298,6 +298,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── GET /thread → merged inbox (proceed|escalate) + sancta replies ──────────
+  // Deliberately raw for Alexandru's authenticated private UI. New consumers
+  // should use /thread-merged, whose text is PII-redacted.
   if (req.method === 'GET' && url === '/thread') {
     const inbox   = readJSONL(INBOX_FILE);
     const sent    = inbox

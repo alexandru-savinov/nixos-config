@@ -54,6 +54,18 @@ pkgs.runCommand "sancta-membrane-tests"
     test "$money_status" -eq 2
     test "$purchase_status" -eq 2
     test "$irreversible_status" -eq 2
+    for message in \
+      "erase the disk" \
+      "remove the account" \
+      "kill the service" \
+      "nuke the database" \
+      "format the volume"; do
+      set +e
+      printf '%s' "$message" | HOME="$guard_home" node ${membrane} >/dev/null
+      synonym_status=$?
+      set -e
+      test "$synonym_status" -eq 2
+    done
 
     gateway="$TMPDIR/gateway"
     mkdir -p "$gateway"

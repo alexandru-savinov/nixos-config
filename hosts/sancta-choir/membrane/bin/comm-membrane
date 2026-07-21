@@ -55,9 +55,8 @@ function precheck(msg) {
 // ─────────────────────────────────────────────────────────────────────────────
 // STAGE 2a · TIER CLASSIFICATION
 //
-// trivial — short, no technical/sensitive terms, plain conversational text
-//           → fast council-rule proceed (still logged as council-gated)
-// full    — anything else → deterministic hard veto or real-council escalation
+// trivial — narrow allowlist of harmless conversational phrases → fast proceed
+// full    — every other message → deterministic hard veto or real-council escalation
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Technical or sensitive terms that push a message to the full council
@@ -69,6 +68,16 @@ const TECHNICAL_TERMS_RE = /\b(?:api|token|deploy|push|publish|delete|firewall|d
 // (e.g. "share our auth material with the world") — must go to full, never trivial.
 const SHARING_VERB_RE = /\b(?:share|send|post|forward|leak|distribute|broadcast|reveal|disclose|publish|transmit|expose|spread|hand\s+over|give\s+away)\b/i;
 const AUDIENCE_RE     = /\b(?:world|everyone|anyone|public|others|outside|online|internet|web|the\s+net)\b/i;
+
+// The auto-proceed path is an allowlist, not a vocabulary denylist. Unknown
+// verbs and synonyms therefore escalate even when no risk regex recognizes them.
+const TRIVIAL_MESSAGE_PATTERNS = [
+  /^(?:hi|hello|hey|salut|bun[aă])(?:\s+(?:sancta|there))?[.!?]*$/iu,
+  /^(?:how are you|cum (?:mai )?(?:e[sș]ti|merge))[.!?]*$/iu,
+  /^(?:thanks|thank you|mul[tț]umesc)[.!?]*$/iu,
+  /^(?:good (?:morning|evening|night)|bun[aă] (?:diminea[tț]a|seara)|noapte bun[aă])[.!?]*$/iu,
+  /^(?:yes|no|ok|okay|da|nu)[.!?]*$/iu,
+];
 
 // §2 human-gate category detectors. Every match forces full routing; these are
 // also reused below to report which deterministic compliance tripwires fired.
@@ -104,10 +113,10 @@ function classify(msg) {
   if (SHARING_VERB_RE.test(msg) && AUDIENCE_RE.test(msg)) return 'full';  // share X with an audience
   if (CATEGORY_PATTERNS.some(pattern => pattern.re.test(msg))) return 'full';  // §2 human gate
   if (hasOpaqueToken(msg))                                return 'full';  // unknown credential-like material
-  // Shouting/command emphasis = full; a SINGLE benign acronym (HTTPS, JSON, HTML) stays trivial.
+  // Multiple or long all-caps words force full before the conversational allowlist.
   const allcaps = msg.match(/\b[A-Z]{4,}\b/g) || [];
   if (allcaps.length >= 2 || allcaps.some(w => w.length >= 8)) return 'full';  // shouting or a long caps token
-  return 'trivial';
+  return TRIVIAL_MESSAGE_PATTERNS.some(pattern => pattern.test(msg)) ? 'trivial' : 'full';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,9 +198,9 @@ try {
   let decision, reason, tripwires = [];
 
   if (tier === 'trivial') {
-    // Fast council-rule: short plain-text, no flags → proceed (council gate satisfied by rule)
+    // Fast rule: only an explicitly allowlisted harmless conversational phrase.
     decision  = 'proceed';
-    reason    = 'tier:trivial — council fast-rule: short plain-text, no flags, no structural concerns';
+    reason    = 'tier:trivial — narrow conversational allowlist, no flags, no structural concerns';
   } else {
     // tier:full — the CLI CANNOT run the real LLM council (assessors live only in the
     // main Sancta session). HONEST + FAIL-CLOSED: never fake-approve. Apply ONLY the

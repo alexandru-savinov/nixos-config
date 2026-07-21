@@ -279,7 +279,6 @@ in
         # only a dedicated empty anchor into this service's private namespace;
         # never create or change the real host login home.
         BindReadOnlyPaths = [ "${projectAnchor}:${projectDir}" ];
-        ReadOnlyPaths = [ projectAnchor ];
         PrivateTmp = true;
         PrivateDevices = true;
         ReadWritePaths = [ "/var/lib/sancta" ];

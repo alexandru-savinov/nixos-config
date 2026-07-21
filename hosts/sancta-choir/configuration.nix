@@ -164,6 +164,9 @@
     };
 
   # ── Sancta worker (headless `claude -p`) — LIVE, marker-gated ───────────
+  # ROLLOUT: sancta-choir is a non-atomic GRUB host. Deploy only through
+  # scripts/deploy.sh (or an equivalent build-then-boot/switch sequence) with
+  # --max-jobs 1 --cores 1; never use an unthrottled nixos-rebuild switch.
   # The named session is armed only while its marker exists. The worker keeps
   # the read-only tool boundary and a bounded per-message budget cap.
   services.sancta-worker = {
