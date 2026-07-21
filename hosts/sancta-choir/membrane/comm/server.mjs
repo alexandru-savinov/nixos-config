@@ -148,7 +148,7 @@ function pendingProceedCount() {
   return pending;
 }
 
-function consumeRateLimit(identity) {
+function updateRateLimit(identity, consume = false) {
   const now = Date.now();
   let state = { version: 1, identities: {} };
   try {
@@ -172,12 +172,14 @@ function consumeRateLimit(identity) {
     return { allowed: false, retryAfter };
   }
 
-  recent.push(now);
-  state.identities[identity] = recent;
-  const temporary = RATE_LIMIT_FILE + '.tmp';
-  fs.writeFileSync(temporary, JSON.stringify(state) + '\n', { mode: 0o600 });
-  fs.chmodSync(temporary, 0o600);
-  fs.renameSync(temporary, RATE_LIMIT_FILE);
+  if (consume) {
+    recent.push(now);
+    state.identities[identity] = recent;
+    const temporary = RATE_LIMIT_FILE + '.tmp';
+    fs.writeFileSync(temporary, JSON.stringify(state) + '\n', { mode: 0o600 });
+    fs.chmodSync(temporary, 0o600);
+    fs.renameSync(temporary, RATE_LIMIT_FILE);
+  }
   return { allowed: true, retryAfter: 0 };
 }
 
@@ -426,7 +428,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       let rateLimit;
-      try { rateLimit = consumeRateLimit(identity); } catch (error) {
+      try { rateLimit = updateRateLimit(identity); } catch (error) {
         log('[rate-limit-error]', error.message);
         res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify({ error: 'rate limiter unavailable' }));
@@ -441,6 +443,21 @@ const server = http.createServer(async (req, res) => {
       }
 
       const { decision, line } = await runMembrane(message);
+      if (decision === 'proceed') {
+        try { rateLimit = updateRateLimit(identity, true); } catch (error) {
+          log('[rate-limit-error]', error.message);
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          return res.end(JSON.stringify({ error: 'rate limiter unavailable' }));
+        }
+        if (!rateLimit.allowed) {
+          res.writeHead(429, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'Retry-After': String(rateLimit.retryAfter),
+          });
+          return res.end(JSON.stringify({ error: 'rate limit exceeded' }));
+        }
+      }
       const ts = new Date().toISOString();
       try {
         appendInbox(ts, decision, message);

@@ -365,8 +365,8 @@ in
         SANCTA_CURSOR = cursorPath;
         SANCTA_RATE_LIMIT_FILE = rateLimitPath;
         SANCTA_ALLOWED_LOGIN_SHA256 = if cfg.operatorLoginSha256 == null then "" else cfg.operatorLoginSha256;
-        # Bound worst-case spend to three accepted messages per rolling day and
-        # never allow more than one proceed-classified turn to await the worker.
+        # Bound worst-case spend to three proceed-classified messages per
+        # rolling day and never let more than one await the worker.
         SANCTA_RATE_LIMIT_MAX = "3";
         SANCTA_RATE_LIMIT_WINDOW_MS = "86400000";
         SANCTA_MAX_PENDING_PROCEED = "1";

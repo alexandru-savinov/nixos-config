@@ -158,6 +158,14 @@ pkgs.runCommand "sancta-membrane-tests"
             Authorization: "Basic " + basic,
             "X-Sancta-Request": "send",
           };
+          const blocked = await fetch("http://127.0.0.1:18743/send", {
+            method: "POST",
+            headers: { ...auth, "content-type": "application/json" },
+            body: JSON.stringify({ message: "AKIAABCDEFGHIJKLMNOP" }),
+          });
+          const blockedBody = await blocked.json();
+          if (!blocked.ok || blockedBody.decision !== "block") process.exit(1);
+
           const response = await fetch("http://127.0.0.1:18743/send", {
             method: "POST",
             headers: { ...auth, "content-type": "application/json" },
