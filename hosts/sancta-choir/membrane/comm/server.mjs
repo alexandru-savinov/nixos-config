@@ -31,6 +31,7 @@ const CURSOR_FILE    = process.env.SANCTA_CURSOR || path.join(INDEX_DIR, 'comm-w
 const RATE_LIMIT_FILE = process.env.SANCTA_RATE_LIMIT_FILE || path.join(INDEX_DIR, 'comm-rate-limit.json');
 const MEMBRANE_PATH  = process.env.SANCTA_MEMBRANE_PATH || path.join(__dirname, '..', 'bin', 'comm-membrane');
 const ALLOWED_LOGIN_SHA256 = process.env.SANCTA_ALLOWED_LOGIN_SHA256 || '';
+const AUTH_USERNAME = process.env.SANCTA_AUTH_USERNAME || 'alexandru';
 
 function positiveInteger(name, fallback) {
   const raw = process.env[name] || String(fallback);
@@ -46,6 +47,13 @@ const MAX_PENDING_PROCEED = positiveInteger('SANCTA_MAX_PENDING_PROCEED', 1);
 if (!/^[a-f0-9]{64}$/.test(ALLOWED_LOGIN_SHA256)) {
   throw new Error('SANCTA_ALLOWED_LOGIN_SHA256 must be a lowercase SHA-256 digest');
 }
+if (!process.env.CREDENTIALS_DIRECTORY) throw new Error('systemd credentials directory unavailable');
+const authSecretPath = path.join(process.env.CREDENTIALS_DIRECTORY, 'membrane-auth');
+const AUTH_SECRET_SHA256 = (() => {
+  const value = fs.readFileSync(authSecretPath, 'utf8').trim();
+  if (value.length < 32 || value.length > 512) throw new Error('membrane auth credential invalid');
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+})();
 
 let sendInFlight = false;
 
@@ -56,7 +64,7 @@ function log(...args) {
 // Run the membrane without exposing message text in shell syntax or process argv.
 function runMembrane(message) {
   return new Promise((resolve) => {
-    const child = execFile('node', [MEMBRANE_PATH], { timeout: 10000 }, (err, stdout, stderr) => {
+    const child = execFile(process.execPath, [MEMBRANE_PATH], { timeout: 10000 }, (err, stdout, stderr) => {
       const line = (stdout || '').trim();
       // err is set for any non-zero exit; err.code carries the exit code.
       const code = err ? (err.code ?? 2) : 0;
@@ -96,6 +104,17 @@ function authorizedIdentity(req) {
   const actual = Buffer.from(digest, 'hex');
   const expected = Buffer.from(ALLOWED_LOGIN_SHA256, 'hex');
   return crypto.timingSafeEqual(actual, expected) ? digest : null;
+}
+
+function authorizedPassword(req) {
+  const authorization = req.headers.authorization;
+  if (typeof authorization !== 'string' || !authorization.startsWith('Basic ')) return false;
+  let decoded;
+  try { decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8'); } catch { return false; }
+  const separator = decoded.indexOf(':');
+  if (separator < 1 || decoded.slice(0, separator) !== AUTH_USERNAME) return false;
+  const digest = crypto.createHash('sha256').update(decoded.slice(separator + 1), 'utf8').digest('hex');
+  return crypto.timingSafeEqual(Buffer.from(digest, 'hex'), Buffer.from(AUTH_SECRET_SHA256, 'hex'));
 }
 
 function pendingProceedCount() {
@@ -326,6 +345,16 @@ const server = http.createServer(async (req, res) => {
     log(`[auth-denied] ${req.method} ${url} from ${ip}`);
     res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({ error: 'forbidden' }));
+  }
+  if (!authorizedPassword(req)) {
+    req.resume();
+    log(`[password-denied] ${req.method} ${url} from ${ip}`);
+    res.writeHead(401, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'WWW-Authenticate': 'Basic realm="Sancta membrane", charset="UTF-8"',
+    });
+    return res.end(JSON.stringify({ error: 'authentication required' }));
   }
 
   // ── GET / → index.html ──────────────────────────────────────────────────────

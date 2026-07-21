@@ -161,6 +161,11 @@
       # also requires this mount before it can start. This repo holds NO plaintext
       # key — the .age is age-encrypted.
       soul-volume-key = secret "soul-volume-key";
+
+      # Second factor for the spend-capable membrane gateway. systemd delivers
+      # this root-owned agenix plaintext through the gateway unit's private
+      # credential directory; it is never exposed to sancta-worker.service.
+      sancta-membrane-auth = secret "sancta-membrane-auth";
     };
 
   # ── Sancta worker (headless `claude -p`) — LIVE, marker-gated ───────────
@@ -178,6 +183,7 @@
     # This is an identity selector, not a credential; Serve supplies and
     # anti-spoofs the underlying login header before proxying to loopback.
     operatorLoginSha256 = "4c064ffbc887c819d1e2b6173bc3ce1bf65ea629e02cb10d55f868177b7b2b5b";
+    authSecretFile = config.age.secrets.sancta-membrane-auth.path;
     # This resumed context has a measured ~$1.054 input floor. Keep enough
     # headroom for one reply while retaining a strict per-invocation ceiling.
     maxBudgetUsd = "2.00";

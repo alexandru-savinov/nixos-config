@@ -97,6 +97,24 @@ async function saveFailure(offset, inboxTs, reason) {
   await rename(temporary, failureFile);
 }
 
+async function loadFailure() {
+  let raw;
+  try { raw = await readFile(failureFile, "utf8"); } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const failure = JSON.parse(raw);
+    if (!Number.isSafeInteger(failure.offset) || failure.offset < 0
+        || typeof failure.reason !== "string") {
+      throw new Error("invalid failure marker");
+    }
+    return failure;
+  } catch {
+    throw new Error("failure marker unreadable");
+  }
+}
+
 async function clearFailure() {
   try { await unlink(failureFile); } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -187,14 +205,22 @@ async function runTurn(message, inboxTs, checkpoint, inboxOffset, nextOffset) {
     inbox_hash: checkpoint.hash,
     inbox_checkpoint: checkpoint.key,
   };
-  await appendReply(reply);
-  await clearFailure();
+  try {
+    await appendReply(reply);
+  } catch {
+    throw new Error("reply commit failed after Claude success");
+  }
   log("appended live reply for inbox ts=" + (inboxTs || "unknown"));
 }
 
 validateRuntime();
 let offset = await loadCursor();
 const committedCheckpoints = await loadCommittedCheckpoints();
+let unresolvedFailure = await loadFailure();
+if (unresolvedFailure && unresolvedFailure.offset < offset) {
+  await clearFailure();
+  unresolvedFailure = null;
+}
 markReady();
 log("relay initialized and ready");
 for (;;) {
@@ -231,21 +257,35 @@ for (;;) {
       const checkpoint = checkpointKey(offset, entry.ts, line);
       if (committedCheckpoints.has(checkpoint.key)) {
         log("reply checkpoint already committed; advancing cursor without replay at " + offset);
-        await clearFailure();
         offset += bytes;
         await saveCursor(offset);
+        await clearFailure();
+        unresolvedFailure = null;
         continue;
       }
+      if (unresolvedFailure) {
+        throw new Error("unresolved prior turn requires operator review");
+      }
       try {
+        await saveFailure(offset, entry.ts, "Claude turn in progress");
+        unresolvedFailure = { offset, inbox_ts: entry.ts || null, reason: "Claude turn in progress" };
         await runTurn(entry.message, entry.ts, checkpoint, offset, offset + bytes);
         committedCheckpoints.add(checkpoint.key);
+        offset += bytes;
+        await saveCursor(offset);
+        await clearFailure();
+        unresolvedFailure = null;
+        continue;
       } catch (error) {
         const reason = /^Claude exited [0-9]+$/.test(error.message)
           ? error.message
           : error.message === "Claude completed without assistant text"
             ? error.message
-            : "Claude invocation failed";
+            : error.message === "reply commit failed after Claude success"
+              ? error.message
+              : "Claude invocation failed";
         await saveFailure(offset, entry.ts, reason);
+        unresolvedFailure = { offset, inbox_ts: entry.ts || null, reason };
         log("resumed turn failed; cursor retained at " + offset);
         throw new Error(reason);
       }

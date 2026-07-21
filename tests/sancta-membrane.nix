@@ -6,6 +6,7 @@ let
   membrane = ../hosts/sancta-choir/membrane/bin/comm-membrane;
   authLogin = "owner@example.com";
   authHash = builtins.hashString "sha256" authLogin;
+  authPassword = "test-membrane-password-0123456789abcdef";
 
   fakeSuccess = pkgs.writeShellScript "sancta-fake-success" ''
     ${pkgs.coreutils}/bin/cat >/dev/null
@@ -73,6 +74,9 @@ pkgs.runCommand "sancta-membrane-tests"
     mkdir -p "$gateway"
     ready="$gateway/ready"
     failure_marker="$gateway/failure"
+    mkdir -p "$gateway/credentials"
+    printf '%s\n' '${authPassword}' > "$gateway/credentials/membrane-auth"
+    chmod 0600 "$gateway/credentials/membrane-auth"
     printf '%s\n' null > "$gateway/comm-heartbeat.json"
     printf '%s\n' '{"offset":0}' > "$gateway/cursor"
     HOME="$guard_home" \
@@ -87,12 +91,13 @@ pkgs.runCommand "sancta-membrane-tests"
       SANCTA_RATE_LIMIT_MAX=1 \
       SANCTA_RATE_LIMIT_WINDOW_MS=3600000 \
       SANCTA_MAX_PENDING_PROCEED=1 \
+      CREDENTIALS_DIRECTORY="$gateway/credentials" \
       SANCTA_MEMBRANE_PATH=${membrane} \
       node ${server} > "$gateway/server.log" 2>&1 &
     server_pid=$!
     trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
     for _ in $(seq 1 50); do
-      if node -e 'fetch("http://127.0.0.1:18743/heartbeat", { headers: { "Tailscale-User-Login": "${authLogin}" } }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+      if node -e 'const basic = Buffer.from("alexandru:${authPassword}").toString("base64"); fetch("http://127.0.0.1:18743/heartbeat", { headers: { "Tailscale-User-Login": "${authLogin}", Authorization: "Basic " + basic } }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
         break
       fi
       sleep 0.1
@@ -101,13 +106,21 @@ pkgs.runCommand "sancta-membrane-tests"
     node - <<'NODE'
     (async () => {
       const url = "http://127.0.0.1:18743";
-      const auth = { "Tailscale-User-Login": "owner@example.com" };
+      const basic = Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64");
+      const auth = {
+        "Tailscale-User-Login": "owner@example.com",
+        Authorization: "Basic " + basic,
+      };
       let response = await fetch(url + "/heartbeat");
       if (response.status !== 403) process.exit(1);
       response = await fetch(url + "/heartbeat", {
-        headers: { "Tailscale-User-Login": "intruder@example.com" },
+        headers: { ...auth, "Tailscale-User-Login": "intruder@example.com" },
       });
       if (response.status !== 403) process.exit(1);
+      response = await fetch(url + "/heartbeat", {
+        headers: { "Tailscale-User-Login": "owner@example.com" },
+      });
+      if (response.status !== 401 || !response.headers.get("www-authenticate")) process.exit(1);
 
       response = await fetch(url + "/send", {
         method: "POST",
@@ -127,7 +140,11 @@ NODE
     touch "$ready"
     node - <<'NODE'
     (async () => {
-      const auth = { "Tailscale-User-Login": "owner@example.com" };
+      const basic = Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64");
+      const auth = {
+        "Tailscale-User-Login": "owner@example.com",
+        Authorization: "Basic " + basic,
+      };
       const response = await fetch("http://127.0.0.1:18743/send", {
         method: "POST",
         headers: { ...auth, "content-type": "application/json" },
@@ -161,6 +178,7 @@ NODE
         method: "POST",
         headers: {
           "Tailscale-User-Login": "owner@example.com",
+          Authorization: "Basic " + Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64"),
           "content-type": "application/json",
         },
         body: JSON.stringify({ message: "hello" }),
@@ -178,6 +196,7 @@ NODE
         method: "POST",
         headers: {
           "Tailscale-User-Login": "owner@example.com",
+          Authorization: "Basic " + Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64"),
           "content-type": "application/json",
         },
         body: JSON.stringify({ message: "hello" }),
@@ -191,7 +210,11 @@ NODE
     node - <<'NODE'
     (async () => {
       const url = "http://127.0.0.1:18743";
-      const auth = { "Tailscale-User-Login": "owner@example.com" };
+      const basic = Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64");
+      const auth = {
+        "Tailscale-User-Login": "owner@example.com",
+        Authorization: "Basic " + basic,
+      };
       let response = await fetch(url + "/heartbeat", { headers: auth });
       let body = await response.json();
       if (!response.ok || body.worker?.status !== "failed") process.exit(1);
@@ -241,7 +264,6 @@ NODE
     mkdir -p "$success"
     printf '%s\n' '{"ts":"success-ts","decision":"proceed","message":"test"}' > "$success/inbox"
     printf '%s\n' '{"offset":0}' > "$success/cursor"
-    printf '%s\n' '{"reason":"old"}' > "$success/failure"
     set +e
     timeout 2s env \
       SANCTA_INBOX="$success/inbox" \
@@ -274,7 +296,7 @@ NODE
     mkdir -p "$replay"
     printf '%s\n' '{"ts":"replay-ts","decision":"proceed","message":"test"}' > "$replay/inbox"
     printf '%s\n' '{"offset":0}' > "$replay/cursor"
-    printf '%s\n' '{"reason":"interrupted after reply commit"}' > "$replay/failure"
+    printf '%s\n' '{"offset":0,"inbox_ts":"replay-ts","reason":"interrupted after reply commit"}' > "$replay/failure"
     node -e '
       const crypto = require("crypto");
       const fs = require("fs");
@@ -316,6 +338,54 @@ NODE
       if (cursor.offset !== size || replies.length !== 1) process.exit(1);
       if (fs.existsSync(dir + "/failure")) process.exit(1);
     ' "$replay"
+
+    commit_failure="$TMPDIR/commit-failure"
+    mkdir -p "$commit_failure"
+    printf '%s\n' '{"ts":"commit-failure-ts","decision":"proceed","message":"test"}' > "$commit_failure/inbox"
+    printf '%s\n' '{"offset":0}' > "$commit_failure/cursor"
+    set +e
+    env \
+      SANCTA_INBOX="$commit_failure/inbox" \
+      SANCTA_REPLIES="$commit_failure/missing/replies" \
+      SANCTA_CURSOR="$commit_failure/cursor" \
+      SANCTA_FAILURE="$commit_failure/failure" \
+      SANCTA_WORKER_READY="$commit_failure/ready" \
+      SANCTA_PROJECT_DIR="$TMPDIR" \
+      CLAUDE_BIN=${fakeSuccess} \
+      CLAUDE_ARGS_JSON='[]' \
+      node ${relay} >/dev/null 2>&1
+    first_commit_status=$?
+    set -e
+    test "$first_commit_status" -ne 0
+    node -e '
+      const fs = require("fs");
+      const dir = process.argv[1];
+      const cursor = JSON.parse(fs.readFileSync(dir + "/cursor", "utf8"));
+      const failure = JSON.parse(fs.readFileSync(dir + "/failure", "utf8"));
+      if (cursor.offset !== 0 || failure.offset !== 0) process.exit(1);
+      if (failure.reason !== "reply commit failed after Claude success") process.exit(1);
+    ' "$commit_failure"
+    set +e
+    env \
+      SANCTA_INBOX="$commit_failure/inbox" \
+      SANCTA_REPLIES="$commit_failure/missing/replies" \
+      SANCTA_CURSOR="$commit_failure/cursor" \
+      SANCTA_FAILURE="$commit_failure/failure" \
+      SANCTA_WORKER_READY="$commit_failure/ready" \
+      SANCTA_PROJECT_DIR="$TMPDIR" \
+      CLAUDE_BIN=${fakeFailure} \
+      CLAUDE_ARGS_JSON='[]' \
+      node ${relay} >/dev/null 2>&1
+    retry_commit_status=$?
+    set -e
+    test "$retry_commit_status" -ne 0
+    node -e '
+      const fs = require("fs");
+      const dir = process.argv[1];
+      const cursor = JSON.parse(fs.readFileSync(dir + "/cursor", "utf8"));
+      const failure = JSON.parse(fs.readFileSync(dir + "/failure", "utf8"));
+      if (cursor.offset !== 0 || failure.reason !== "reply commit failed after Claude success") process.exit(1);
+    ' "$commit_failure"
 
     shrink="$TMPDIR/shrink"
     mkdir -p "$shrink"

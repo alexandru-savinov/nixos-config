@@ -146,6 +146,16 @@ in
         denied.
       '';
     };
+
+    authSecretFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Root-readable file containing the membrane HTTP Basic password.
+        systemd copies it into sancta-membrane.service's private credential
+        directory with `LoadCredential`; it must never point into the Nix store.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -167,11 +177,20 @@ in
         '';
       }
       {
-        assertion = cfg.session == null || cfg.operatorLoginSha256 != null;
+        assertion = cfg.authSecretFile == null
+          || !(lib.hasPrefix "/nix/store" (toString cfg.authSecretFile));
         message = ''
-          services.sancta-worker requires operatorLoginSha256 when a live
-          session is configured, so the spend-capable gateway is not
-          tailnet-wide.
+          services.sancta-worker.authSecretFile points into /nix/store
+          (world-readable). Use an agenix secret path instead.
+        '';
+      }
+      {
+        assertion = cfg.session == null
+          || (cfg.operatorLoginSha256 != null && cfg.authSecretFile != null);
+        message = ''
+          services.sancta-worker requires operatorLoginSha256 and
+          authSecretFile when a live session is configured, so the
+          spend-capable gateway is neither tailnet-wide nor header-only.
         '';
       }
     ];
@@ -352,6 +371,7 @@ in
         ExecStart = "${pkgs.nodejs_22}/bin/node ${membraneSrc}/comm/server.mjs";
         Restart = "on-failure";
         RestartSec = 5;
+        LoadCredential = lib.optional (cfg.authSecretFile != null) "membrane-auth:${toString cfg.authSecretFile}";
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
