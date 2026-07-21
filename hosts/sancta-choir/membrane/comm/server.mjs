@@ -32,6 +32,7 @@ const RATE_LIMIT_FILE = process.env.SANCTA_RATE_LIMIT_FILE || path.join(INDEX_DI
 const MEMBRANE_PATH  = process.env.SANCTA_MEMBRANE_PATH || path.join(__dirname, '..', 'bin', 'comm-membrane');
 const ALLOWED_LOGIN_SHA256 = process.env.SANCTA_ALLOWED_LOGIN_SHA256 || '';
 const AUTH_USERNAME = process.env.SANCTA_AUTH_USERNAME || 'alexandru';
+const AUTH_CONTEXT = 'sancta-membrane-basic-auth-v1';
 
 function positiveInteger(name, fallback) {
   const raw = process.env[name] || String(fallback);
@@ -49,10 +50,10 @@ if (!/^[a-f0-9]{64}$/.test(ALLOWED_LOGIN_SHA256)) {
 }
 if (!process.env.CREDENTIALS_DIRECTORY) throw new Error('systemd credentials directory unavailable');
 const authSecretPath = path.join(process.env.CREDENTIALS_DIRECTORY, 'membrane-auth');
-const AUTH_SECRET_SHA256 = (() => {
+const AUTH_SECRET_MAC = (() => {
   const value = fs.readFileSync(authSecretPath, 'utf8').trim();
   if (value.length < 32 || value.length > 512) throw new Error('membrane auth credential invalid');
-  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+  return crypto.createHmac('sha256', value).update(AUTH_CONTEXT, 'utf8').digest();
 })();
 
 let sendInFlight = false;
@@ -113,8 +114,10 @@ function authorizedPassword(req) {
   try { decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8'); } catch { return false; }
   const separator = decoded.indexOf(':');
   if (separator < 1 || decoded.slice(0, separator) !== AUTH_USERNAME) return false;
-  const digest = crypto.createHash('sha256').update(decoded.slice(separator + 1), 'utf8').digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(digest, 'hex'), Buffer.from(AUTH_SECRET_SHA256, 'hex'));
+  const mac = crypto.createHmac('sha256', decoded.slice(separator + 1))
+    .update(AUTH_CONTEXT, 'utf8')
+    .digest();
+  return crypto.timingSafeEqual(mac, AUTH_SECRET_MAC);
 }
 
 function pendingProceedCount() {

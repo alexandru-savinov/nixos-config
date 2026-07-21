@@ -150,7 +150,7 @@
       # Claude credential for the Sancta worker (services.sancta-worker).
       # LIVE: secrets/anthropic-api-key.age is re-keyed (recipients now include
       # the `sancta-choir` host key, done 2026-07-20) so this host decrypts it at
-      # activation. Owned by the `sancta` worker user so it is chmod-600 to it.
+      # activation. Owned by the `sancta` worker user with agenix's 0400 mode.
       # This repo holds NO plaintext key — the .age is age-encrypted.
       anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
 
