@@ -163,10 +163,12 @@ function updateRateLimit(identity, consume = false) {
 
   const cutoff = now - RATE_LIMIT_WINDOW_MS;
   const previous = Array.isArray(state.identities[identity]) ? state.identities[identity] : [];
-  if (previous.some(ts => !Number.isSafeInteger(ts) || ts > now)) {
+  if (previous.some(ts => !Number.isSafeInteger(ts) || ts < 0)) {
     throw new Error('rate limit state invalid');
   }
-  const recent = previous.filter(ts => Number.isSafeInteger(ts) && ts > cutoff && ts <= now);
+  // A backward wall-clock correction must preserve quota without making the
+  // state unreadable until an operator edits it.
+  const recent = previous.map(ts => Math.min(ts, now)).filter(ts => ts > cutoff);
   if (recent.length >= RATE_LIMIT_MAX) {
     const retryAfter = Math.max(1, Math.ceil((recent[0] + RATE_LIMIT_WINDOW_MS - now) / 1000));
     return { allowed: false, retryAfter };

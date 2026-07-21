@@ -211,6 +211,31 @@ pkgs.runCommand "sancta-membrane-tests"
         })().catch(error => { console.error(error); process.exit(1); });
     NODE
 
+        node -e '
+          const fs = require("fs");
+          const file = process.argv[1];
+          const state = JSON.parse(fs.readFileSync(file, "utf8"));
+          const identity = Object.keys(state.identities)[0];
+          state.identities[identity] = [Date.now() + 3600000];
+          fs.writeFileSync(file, JSON.stringify(state) + "\n");
+        ' "$gateway/rate-limit"
+        node - <<'NODE'
+        (async () => {
+          const response = await fetch("http://127.0.0.1:18743/send", {
+            method: "POST",
+            headers: {
+              "Tailscale-User-Login": "owner@example.com",
+              Authorization: "Basic " + Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64"),
+              "X-Sancta-Request": "send",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ message: "hello" }),
+          });
+          const body = await response.json();
+          if (response.status !== 429 || body.error !== "rate limit exceeded") process.exit(1);
+        })().catch(error => { console.error(error); process.exit(1); });
+    NODE
+
         printf '%s\n' '{"version":1,"identities":[]}' > "$gateway/rate-limit"
         node - <<'NODE'
         (async () => {
