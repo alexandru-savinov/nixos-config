@@ -143,7 +143,8 @@ let
         child.on("close", resolve);
       });
       if (exitCode !== 0) {
-        throw new Error("Claude exited " + exitCode + (stderr.trim() ? ": " + stderr.trim() : ""));
+        const detail = (resultText || assistantText || stderr).trim();
+        throw new Error("Claude exited " + exitCode + (detail ? ": " + detail : ""));
       }
 
       const text = (resultText || assistantText).trim();
@@ -348,6 +349,9 @@ in
             "--output-format"
             "stream-json"
             "--verbose"
+            # Disable migrated hooks/plugins/connectors in this unattended,
+            # API-key-authenticated worker. Session history still resumes.
+            "--safe-mode"
             "--strict-mcp-config"
             "--mcp-config"
             (builtins.toJSON { mcpServers = { }; })
