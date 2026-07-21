@@ -1,17 +1,11 @@
-# sancta-choir — SANCTA WORKER (headless, tool-capable `claude -p`) STUB.
-#
-# ══════════════════════════════════════════════════════════════════════════
-# STAGING NOTE (Sancta→sancta-choir migration): authored, NOT deployed. This
-# unit is a DOCUMENTED STUB whose only closing check is that it EVALUATES
-# (`nix eval`). It need not run yet — the `claude` binary, the resumed session,
-# the API-key runtime path, and the tool/budget dials are all his-hand
-# things Alexandru wires before any real start.
-# ══════════════════════════════════════════════════════════════════════════
+# sancta-choir — tailnet membrane gateway + resumed Claude worker.
 #
 # Adapted (do NOT re-derive) from stage/sancta-hetzner-host's
 # hosts/sancta-core/membrane-worker.nix, which itself slimmed the SANCTA
 # WORKER pattern from modules/services/openclaw.nix + sancta-claw's
-# openclaw-service.nix down to a single read-only-by-default streaming worker:
+# openclaw-service.nix. The long-running relay consumes only membrane-approved
+# inbox records, invokes one resumed turn at a time, and writes successful
+# responses to comm-replies.jsonl for /sim.
 #
 #   claude -p \
 #     --input-format  stream-json \
@@ -24,9 +18,11 @@
 #
 # CLI CONTRACT VERIFIED 2026-07-20 against the installed, flake-pinned Claude
 # Code 2.1.215: --strict-mcp-config, --tools, --allowedTools, and
-# --max-budget-usd are all present in `claude --help`. The --tools availability
-# boundary plus --allowedTools headless auto-approval matches the deployed
-# sancta-heartbeat-tick pattern in modules/services/sancta-heartbeat-tick.nix.
+# --max-budget-usd are all present in `claude --help`. The --safe-mode path was
+# exercised by a successful isolated headless invocation. The --tools
+# availability boundary plus --allowedTools headless auto-approval matches the
+# deployed sancta-heartbeat-tick pattern in
+# modules/services/sancta-heartbeat-tick.nix.
 # The inline `--mcp-config '{"mcpServers":{}}'` form was also exercised with an
 # isolated, unauthenticated CLAUDE_CONFIG_DIR: it passed MCP parsing and reached
 # the expected auth gate; malformed JSON was rejected as invalid MCP config.
@@ -36,7 +32,7 @@
 # ~/.claude substrate is the ENCRYPTED SOUL VOLUME from ./soul-volume.nix
 # (LUKS-on-loopback), not a whole-disk LUKS root.
 #
-# The anthropic-api-key is loaded at runtime into a chmod-600 /run path (the
+# The Claude credential is loaded at runtime into a chmod-600 /run path (the
 # openclaw.nix idiom — never via chat, never in the Nix store), and the worker
 # runs as a dedicated unprivileged system user under systemd hardening.
 { config, pkgs, lib, claude-code ? null, ... }:
@@ -49,24 +45,36 @@ let
     then claude-code.packages.${pkgs.system}.default
     else null;
 
-  # Runtime path the API key is materialized into (chmod 600, tmpfs /run).
-  # Mirrors openclaw.nix: the agenix plaintext is copied here at ExecStartPre
-  # so the worker reads ANTHROPIC_API_KEY from a private, non-store file.
-  runtimeKeyPath = "/run/sancta-worker/anthropic-api-key";
+  # Runtime path the credential is materialized into (chmod 600, tmpfs /run).
+  # The agenix plaintext is copied here at ExecStartPre, then classified as an
+  # API key or OAuth token without ever entering the Nix store.
+  runtimeCredentialPath = "/run/sancta-worker/anthropic-credential";
+  runtimeReadyPath = "/run/sancta-worker/ready";
+  indexDir = "/var/lib/sancta/.claude/index";
+  inboxPath = "${indexDir}/comm-inbox.jsonl";
+  repliesPath = "${indexDir}/comm-replies.jsonl";
+  cursorPath = "${indexDir}/comm-worker-cursor.json";
+  failurePath = "${indexDir}/comm-worker-failure.json";
+  rateLimitPath = "${indexDir}/comm-rate-limit.json";
+  projectAnchor = "/var/lib/sancta/project-anchor";
+  projectDir = "/home/nixos";
+  membraneSrc = ./membrane;
+
+  relay = ./membrane/relay.mjs;
 in
 {
   options.services.sancta-worker = {
-    enable = lib.mkEnableOption "sancta-choir Sancta worker (headless claude -p) — STUB";
+    enable = lib.mkEnableOption "sancta-choir live membrane and resumed Claude worker";
 
     apiKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = ''
-        Path to the agenix-decrypted Anthropic API key (e.g.
-        `config.age.secrets.anthropic-api-key.path`). Loaded at runtime into a
-        chmod-600 file under /run — NEVER placed in the Nix store, NEVER passed
-        via chat. HIS-HAND: the .age is filled by Alexandru (see
-        configuration.nix agenix scaffolding).
+        Path to the agenix-decrypted Claude credential (Anthropic API key or
+        Claude Code OAuth token; e.g. `config.age.secrets.anthropic-api-key.path`).
+        Loaded at runtime into a chmod-600 file under /run — NEVER placed in the
+        Nix store, NEVER passed via chat. The runtime loader classifies the
+        prefix and exports only the matching Claude environment variable.
       '';
     };
 
@@ -120,6 +128,34 @@ in
       default = "sancta";
       description = "Unprivileged system user the Sancta worker runs as.";
     };
+
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 8743;
+      description = "Loopback and Tailscale Serve HTTPS port for the membrane gateway.";
+    };
+
+    operatorLoginSha256 = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "^[a-f0-9]{64}$");
+      default = null;
+      description = ''
+        SHA-256 of the lowercase Tailscale Serve user login authorized to use
+        the membrane. The backend listens only on loopback and trusts Serve's
+        anti-spoofed `Tailscale-User-Login` identity header. A live session
+        requires this selector; tagged devices, which have no user header, are
+        denied.
+      '';
+    };
+
+    authSecretFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Root-readable file containing the membrane HTTP Basic password.
+        systemd copies it into sancta-membrane.service's private credential
+        directory with `LoadCredential`; it must never point into the Nix store.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -140,6 +176,30 @@ in
           (world-readable). Use an agenix secret path instead.
         '';
       }
+      {
+        assertion = cfg.authSecretFile == null
+          || !(lib.hasPrefix "/nix/store" (toString cfg.authSecretFile));
+        message = ''
+          services.sancta-worker.authSecretFile points into /nix/store
+          (world-readable). Use an agenix secret path instead.
+        '';
+      }
+      {
+        assertion = cfg.session == null || cfg.apiKeyFile != null;
+        message = ''
+          services.sancta-worker requires apiKeyFile when a live session is
+          configured, so the relay cannot arm without a Claude credential.
+        '';
+      }
+      {
+        assertion = cfg.session == null
+          || (cfg.operatorLoginSha256 != null && cfg.authSecretFile != null);
+        message = ''
+          services.sancta-worker requires operatorLoginSha256 and
+          authSecretFile when a live session is configured, so the
+          spend-capable gateway is neither tailnet-wide nor header-only.
+        '';
+      }
     ];
 
     users.users.${cfg.user} = {
@@ -152,7 +212,8 @@ in
     users.groups.${cfg.user} = { };
 
     systemd.services.sancta-worker = {
-      description = "sancta-choir Sancta worker (headless claude -p) — STUB";
+      description = "Sancta membrane inbox relay (resumed claude -p)";
+      wantedBy = lib.optional (cfg.session != null) "multi-user.target";
       after = [
         "network-online.target"
         "tailscaled.service"
@@ -165,9 +226,6 @@ in
       # worker never runs onto the bare (unencrypted) ~/.claude dir. (`after`
       # alone is only ordering; `requires` also brings the mount into the txn.)
       requires = [ "sancta-soul-mount.service" ];
-      # Intentionally NOT wantedBy multi-user.target: this is a stub. Start is
-      # manual (or a future path/timer) once the his-hand dials are set.
-
       # INERT-BY-DEFAULT: the unit is skipped unless a session marker exists.
       # With session=null the guard points at a marker path that is NEVER
       # created (the literal ".__no-session__"), so even a manual `systemctl
@@ -192,6 +250,36 @@ in
         # ~/.claude substrate lives on the ENCRYPTED SOUL VOLUME (see
         # ./soul-volume.nix — LUKS-on-loopback) — the worker's config/state dir.
         CLAUDE_CONFIG_DIR = "/var/lib/sancta/.claude";
+        SANCTA_INBOX = inboxPath;
+        SANCTA_REPLIES = repliesPath;
+        SANCTA_CURSOR = cursorPath;
+        SANCTA_FAILURE = failurePath;
+        SANCTA_WORKER_READY = runtimeReadyPath;
+        SANCTA_REQUIRE_CREDENTIAL = if cfg.apiKeyFile != null then "1" else "0";
+        SANCTA_PROJECT_DIR = projectDir;
+        CLAUDE_BIN = "${claudeCodePkg}/bin/claude";
+        CLAUDE_ARGS_JSON = builtins.toJSON (
+          [
+            "-p"
+            "--input-format"
+            "stream-json"
+            "--output-format"
+            "stream-json"
+            "--verbose"
+            # Disable migrated hooks/plugins/connectors in this unattended,
+            # credential-authenticated worker. Session history still resumes.
+            "--safe-mode"
+            "--strict-mcp-config"
+            "--mcp-config"
+            (builtins.toJSON { mcpServers = { }; })
+            "--tools"
+            (lib.concatStringsSep "," cfg.allowedTools)
+            "--allowedTools"
+            (lib.concatStringsSep "," cfg.allowedTools)
+          ]
+          ++ lib.optionals (cfg.session != null) [ "--resume" cfg.session ]
+          ++ lib.optionals (cfg.maxBudgetUsd != null) [ "--max-budget-usd" cfg.maxBudgetUsd ]
+        );
       };
 
       serviceConfig = {
@@ -208,51 +296,159 @@ in
           pkgs.writeShellScript "sancta-load-key" ''
             set -euo pipefail
             install -m 0600 -o ${cfg.user} -g ${cfg.user} \
-              "${toString cfg.apiKeyFile}" "${runtimeKeyPath}"
+              "${toString cfg.apiKeyFile}" "${runtimeCredentialPath}"
           ''
         );
 
-        # ── The SANCTA WORKER invocation (documented stub) ──────────────────
-        # Streaming JSON in/out; resume a named session; READ-ONLY tools by
-        # default; budget-capped. All the variable parts are his-hand dials.
-        ExecStart =
-          let
-            budgetFlag =
-              lib.optionalString (cfg.maxBudgetUsd != null)
-                " --max-budget-usd ${lib.escapeShellArg cfg.maxBudgetUsd}";
-            toolsCsv = lib.concatStringsSep "," cfg.allowedTools;
-            toolsFlag =
-              " --tools ${lib.escapeShellArg toolsCsv}"
-              + " --allowedTools ${lib.escapeShellArg toolsCsv}";
-            emptyMcpConfig = builtins.toJSON { mcpServers = { }; };
-            mcpFlag =
-              " --strict-mcp-config --mcp-config ${lib.escapeShellArg emptyMcpConfig}";
-            resumeFlag =
-              lib.optionalString (cfg.session != null)
-                " --resume ${lib.escapeShellArg cfg.session}";
-          in
-          pkgs.writeShellScript "sancta-worker-start" ''
-            set -euo pipefail
-            # API key from the chmod-600 runtime path (loaded in ExecStartPre).
-            ${lib.optionalString (cfg.apiKeyFile != null)
-              ''export ANTHROPIC_API_KEY="$(cat ${runtimeKeyPath})"''}
-            exec ${claudeCodePkg}/bin/claude -p \
-              --input-format stream-json \
-              --output-format stream-json${resumeFlag}${mcpFlag}${toolsFlag}${budgetFlag}
-          '';
+        ExecStart = pkgs.writeShellScript "sancta-worker-start" ''
+          set -euo pipefail
+          ${lib.optionalString (cfg.apiKeyFile != null) ''
+            credential="$(cat ${runtimeCredentialPath})"
+            case "$credential" in
+              sk-ant-api*) export ANTHROPIC_API_KEY="$credential" ;;
+              sk-ant-oat*) export CLAUDE_CODE_OAUTH_TOKEN="$credential" ;;
+              *) echo "unsupported Claude credential type" >&2; exit 1 ;;
+            esac
+            unset credential
+          ''}
+          exec ${pkgs.nodejs_22}/bin/node ${relay}
+        '';
 
-        Restart = "on-failure";
-        RestartSec = 30;
+        # A failed or interrupted turn retains the inbox cursor and requires
+        # operator review. Recovery must compare its offset with committed
+        # reply checkpoints and inspect the resumed transcript/billing before
+        # manually clearing the marker; never auto-clear and re-spend.
+        Restart = "no";
 
         # ── systemd hardening (mirrors openclaw-service.nix) ─────────────────
         NoNewPrivileges = true;
         ProtectSystem = "strict";
-        ProtectHome = true; # /var/lib/sancta is not under /home
+        ProtectHome = true;
+        # The resumed transcript belongs to the /home/nixos project key. Bind
+        # only a dedicated empty anchor into this service's private namespace;
+        # never create or change the real host login home.
+        BindReadOnlyPaths = [ "${projectAnchor}:${projectDir}" ];
         PrivateTmp = true;
         PrivateDevices = true;
         ReadWritePaths = [ "/var/lib/sancta" ];
         # Node.js/Claude Code needs JIT — no MemoryDenyWriteExecute.
       };
+    };
+
+    systemd.services.sancta-membrane = {
+      description = "Sancta tailnet membrane gateway";
+      wantedBy = lib.optional (cfg.session != null) "multi-user.target";
+      after = [ "sancta-worker.service" ];
+      # Keep history and status available after a one-shot worker failure. The
+      # HTTP gateway rejects new messages unless the worker readiness file is
+      # present, so this soft dependency cannot grow an unattended queue.
+      wants = [
+        "sancta-worker.service"
+        "sancta-membrane-serve.service"
+      ];
+      unitConfig = {
+        ConditionPathExists =
+          if cfg.session == null
+          then "/var/lib/sancta/session/.__no-session__"
+          else "/var/lib/sancta/session/${cfg.session}";
+        ConditionPathIsMountPoint = toString config.services.sancta-soul-volume.mountPoint;
+      };
+      environment = {
+        HOME = "/var/lib/sancta";
+        CLAUDE_CONFIG_DIR = "/var/lib/sancta/.claude";
+        BIND = "127.0.0.1";
+        PORT = toString cfg.port;
+        SANCTA_INDEX_DIR = indexDir;
+        SANCTA_MEMBRANE_PATH = "${membraneSrc}/bin/comm-membrane";
+        SANCTA_WORKER_READY = runtimeReadyPath;
+        SANCTA_FAILURE = failurePath;
+        SANCTA_CURSOR = cursorPath;
+        SANCTA_RATE_LIMIT_FILE = rateLimitPath;
+        SANCTA_ALLOWED_LOGIN_SHA256 = if cfg.operatorLoginSha256 == null then "" else cfg.operatorLoginSha256;
+        # Bound worst-case spend to three proceed-classified messages per
+        # rolling day and never let more than one await the worker.
+        SANCTA_RATE_LIMIT_MAX = "3";
+        SANCTA_RATE_LIMIT_WINDOW_MS = "86400000";
+        SANCTA_MAX_PENDING_PROCEED = "1";
+      };
+      path = [ pkgs.nodejs_22 ];
+      serviceConfig = {
+        Type = "simple";
+        User = cfg.user;
+        Group = cfg.user;
+        WorkingDirectory = indexDir;
+        ExecStart = "${pkgs.nodejs_22}/bin/node ${membraneSrc}/comm/server.mjs";
+        Restart = "on-failure";
+        RestartSec = 5;
+        LoadCredential = lib.optional (cfg.authSecretFile != null) "membrane-auth:${toString cfg.authSecretFile}";
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ReadWritePaths = [ indexDir ];
+      };
+    };
+
+    systemd.services.sancta-membrane-serve = {
+      description = "Authenticated Tailscale Serve HTTPS edge for the Sancta membrane";
+      after = [
+        "network-online.target"
+        "tailscaled.service"
+        "sancta-membrane.service"
+      ];
+      wants = [ "network-online.target" ];
+      requires = [
+        "tailscaled.service"
+        "sancta-membrane.service"
+      ];
+      bindsTo = [ "sancta-membrane.service" ];
+      partOf = [ "sancta-membrane.service" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        TimeoutStartSec = 150;
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+      };
+
+      script = ''
+        set -euo pipefail
+
+        timeout=60
+        while ! ${pkgs.tailscale}/bin/tailscale status >/dev/null 2>&1; do
+          timeout=$((timeout - 1))
+          if [ "$timeout" -le 0 ]; then
+            echo "ERROR: tailscaled not ready after 60 seconds" >&2
+            exit 1
+          fi
+          sleep 1
+        done
+
+        timeout=60
+        while ! ${pkgs.netcat}/bin/nc -z 127.0.0.1 ${toString cfg.port} 2>/dev/null; do
+          timeout=$((timeout - 1))
+          if [ "$timeout" -le 0 ]; then
+            echo "ERROR: membrane not listening after 60 seconds" >&2
+            exit 1
+          fi
+          sleep 1
+        done
+
+        if ! ${pkgs.tailscale}/bin/tailscale serve status 2>/dev/null \
+          | ${pkgs.gnugrep}/bin/grep -qE "https?://.*:${toString cfg.port}( |$)"; then
+          ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.port} \
+            http://127.0.0.1:${toString cfg.port}
+        fi
+      '';
+
+      preStop = ''
+        ${pkgs.tailscale}/bin/tailscale serve --bg --https ${toString cfg.port} off || true
+      '';
     };
 
     # State + substrate dirs on the existing ext4 root. NOTE: /var/lib/sancta
@@ -262,6 +458,8 @@ in
     # NOT create .claude contents (those live on the encrypted volume, his-hand).
     systemd.tmpfiles.rules = [
       "d /var/lib/sancta 0700 ${cfg.user} ${cfg.user} -"
+      # Source for the worker-only read-only bind at /home/nixos.
+      "d ${projectAnchor} 0755 root root -"
       # Session-marker dir — presence of a marker file arms the inert unit.
       "d /var/lib/sancta/session 0700 ${cfg.user} ${cfg.user} -"
     ];

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Membrană</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0d0f;
+      --surface:  #1a1a20;
+      --border:   #2a2a32;
+      --text:     #e8e8ee;
+      --muted:    #66667a;
+      --accent:   #8b7fff;
+      --green:    #34d399;
+      --red:      #f87171;
+      --amber:    #fbbf24;
+      --r:        18px;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bot: env(safe-area-inset-bottom, 0px);
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+      font-size: 17px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    #header {
+      flex-shrink: 0;
+      padding: calc(var(--safe-top) + 14px) 20px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+      background: var(--bg);
+    }
+    #header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+    #header p {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* ── Chat scroll area ────────────────────────────────────────────── */
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px 14px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    #chat-empty {
+      margin: auto;
+      font-size: 14px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* ── Bubble rows ──────────────────────────────────────────────────── */
+    .brow {
+      display: flex;
+      flex-direction: column;
+      max-width: 80%;
+    }
+    .brow.right { align-self: flex-end;   align-items: flex-end; }
+    .brow.left  { align-self: flex-start; align-items: flex-start; }
+
+    .sender-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 3px;
+      padding: 0 4px;
+    }
+
+    .bubble {
+      padding: 10px 14px;
+      border-radius: var(--r);
+      font-size: 16px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .bubble.right {
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.left {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-bottom-left-radius: 4px;
+    }
+    .bubble.pending { opacity: 0.6; }
+
+    .bmeta {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 3px;
+      padding: 0 4px;
+    }
+    .brow.right .bmeta { flex-direction: row-reverse; }
+
+    .bts {
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .chip {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .chip.proceed  { background: rgba(52,211,153,.18);  color: var(--green); }
+    .chip.block    { background: rgba(248,113,113,.18);  color: var(--red);   }
+    .chip.escalate { background: rgba(251,191,36,.15);   color: var(--amber); }
+    .chip.pending  { background: rgba(136,136,154,.13);  color: var(--muted); }
+    .chip.error    { background: rgba(248,113,113,.12);  color: var(--red);   }
+
+    /* ── Input bar ───────────────────────────────────────────────────── */
+    #input-bar {
+      flex-shrink: 0;
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 10px 14px calc(var(--safe-bot) + 10px);
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    #msg {
+      flex: 1;
+      min-height: 40px;
+      max-height: 120px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 22px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 16px;
+      line-height: 1.4;
+      resize: none;
+      outline: none;
+      overflow-y: auto;
+      transition: border-color 0.15s;
+      -webkit-appearance: none;
+    }
+    #msg:focus { border-color: var(--accent); }
+    #msg::placeholder { color: var(--muted); }
+
+    #sendBtn {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      color: #fff;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.15s, transform 0.1s;
+      -webkit-appearance: none;
+    }
+    #sendBtn:active   { opacity: 0.72; transform: scale(0.90); }
+    #sendBtn:disabled { opacity: 0.32; cursor: default; }
+
+    /* ── Health pill ─────────────────────────────────────────────────── */
+    #hb-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--muted);
+      padding: 2px 9px;
+      border-radius: 20px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      margin-top: 5px;
+      transition: color 0.3s, border-color 0.3s;
+    }
+    #hb-pill .hb-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    #hb-pill.hb-green { color: var(--green);  border-color: rgba(52,211,153,0.25); }
+    #hb-pill.hb-amber { color: var(--amber);  border-color: rgba(251,191,36,0.25); }
+    #hb-pill.hb-red   { color: var(--red);    border-color: rgba(248,113,113,0.25); }
+  </style>
+</head>
+<body>
+
+  <div id="header">
+    <h1>Membrană 🖤</h1>
+    <p>Mesajul trece prin membrană înainte de a fi trimis.</p>
+    <div id="hb-pill"><span class="hb-dot"></span><span id="hb-text">verificare…</span></div>
+  </div>
+
+  <div id="chat">
+    <div id="chat-empty">Niciun mesaj încă.</div>
+  </div>
+
+  <div id="input-bar">
+    <textarea id="msg" rows="1" placeholder="Scrie mesajul tău…"
+              autocomplete="off" autocorrect="on" spellcheck="true"></textarea>
+    <button id="sendBtn" aria-label="Trimite">↑</button>
+  </div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const chat      = document.getElementById('chat');
+const chatEmpty = document.getElementById('chat-empty');
+const input     = document.getElementById('msg');
+const sendBtn   = document.getElementById('sendBtn');
+
+const rendered   = new Set();   // 'sent:ts' | 'reply:ts'
+const optimistic = new Map();   // message text → { chip, bubble, row }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '<br>');
+}
+
+function fmtTime(iso) {
+  try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+  catch { return ''; }
+}
+
+function chipLabel(d) {
+  if (d === 'proceed')  return '✓ ok';
+  if (d === 'block')    return '⛔ blocat';
+  if (d === 'escalate') return '⏳ escalat';
+  if (d === 'pending')  return '…';
+  return '⚠';
+}
+
+function scrollBottom(smooth) {
+  chat.scrollTo({ top: chat.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
+}
+
+function hideEmpty() {
+  chatEmpty.style.display = 'none';
+}
+
+// ── Add a bubble ─────────────────────────────────────────────────────────────
+// opts: { type:'sent'|'reply', message, text, decision, ts, pending:bool }
+function addBubble(opts) {
+  hideEmpty();
+
+  const row = document.createElement('div');
+
+  if (opts.type === 'sent') {
+    row.className = 'brow right';
+
+    const d = opts.pending ? 'pending' : (opts.decision || 'proceed');
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble right' + (opts.pending ? ' pending' : '');
+    bubble.innerHTML = esc(opts.message || '');
+
+    const chip = document.createElement('span');
+    chip.className = 'chip ' + d;
+    chip.textContent = chipLabel(opts.pending ? 'pending' : d);
+
+    const meta = document.createElement('div');
+    meta.className = 'bmeta';
+    meta.appendChild(chip);
+    if (opts.ts) {
+      const ts = document.createElement('span');
+      ts.className = 'bts';
+      ts.textContent = fmtTime(opts.ts);
+      meta.appendChild(ts);
+    }
+
+    row.appendChild(bubble);
+    row.appendChild(meta);
+    chat.appendChild(row);
+    return { row, chip, bubble };
+  } else {
+    // reply / left
+    row.className = 'brow left';
+
+    const sender = document.createElement('div');
+    sender.className = 'sender-label';
+    sender.textContent = 'Sancta 🖤';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble left';
+    bubble.innerHTML = esc(opts.text || '');
+
+    const meta = document.createElement('div');
+    meta.className = 'bmeta';
+    if (opts.ts) {
+      const ts = document.createElement('span');
+      ts.className = 'bts';
+      ts.textContent = fmtTime(opts.ts);
+      meta.appendChild(ts);
+    }
+
+    row.appendChild(sender);
+    row.appendChild(bubble);
+    row.appendChild(meta);
+    chat.appendChild(row);
+    return { row, bubble };
+  }
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────────
+function sendMsg() {
+  const text = input.value.trim();
+  if (!text || !workerReady) { input.focus(); return; }
+
+  input.value = '';
+  input.style.height = '';
+  sendBtn.disabled = true;
+
+  // 1. Optimistic bubble — appears instantly
+  const { row, chip, bubble } = addBubble({ type: 'sent', message: text, pending: true });
+  optimistic.set(text, { chip, bubble, row });
+  scrollBottom(true);
+
+  // 2. POST to membrane
+  fetch('/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Sancta-Request': 'send' },
+    body: JSON.stringify({ message: text }),
+  })
+    .then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    })
+    .then(data => {
+      const d = data.decision || 'error';
+      chip.className   = 'chip ' + d;
+      chip.textContent = chipLabel(d);
+      bubble.classList.remove('pending');
+    })
+    .catch(() => {
+      optimistic.delete(text);
+      chip.className   = 'chip error';
+      chip.textContent = '⚠';
+      bubble.classList.remove('pending');
+    })
+    .finally(() => {
+      sendBtn.disabled = !workerReady;
+      input.focus();
+    });
+}
+
+// ── Thread poll ───────────────────────────────────────────────────────────────
+async function pollThread() {
+  try {
+    const resp = await fetch('/thread');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    let newItems = false;
+
+    for (const e of (data.sent || [])) {
+      const key = 'sent:' + e.ts;
+      if (rendered.has(key)) continue;
+
+      const msgText = e.message || '';
+      if (optimistic.has(msgText)) {
+        // Already rendered optimistically — register key, add timestamp if missing
+        rendered.add(key);
+        const opt = optimistic.get(msgText);
+        const meta = opt.row.querySelector('.bmeta');
+        if (meta && !meta.querySelector('.bts') && e.ts) {
+          const ts = document.createElement('span');
+          ts.className = 'bts';
+          ts.textContent = fmtTime(e.ts);
+          meta.appendChild(ts);
+        }
+        optimistic.delete(msgText);
+        continue;
+      }
+
+      // New message (e.g. loaded on a fresh page open, or from another device)
+      addBubble({ type: 'sent', ...e });
+      rendered.add(key);
+      newItems = true;
+    }
+
+    for (const e of (data.replies || [])) {
+      const key = 'reply:' + e.ts;
+      if (rendered.has(key)) continue;
+      addBubble({ type: 'reply', ...e });
+      rendered.add(key);
+      newItems = true;
+    }
+
+    if (newItems) scrollBottom(true);
+  } catch (_) { /* network blip — ignore */ }
+}
+
+// ── Input auto-grow ───────────────────────────────────────────────────────────
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+});
+
+// Enter = send   /   Shift+Enter = newline
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMsg();
+  }
+});
+
+sendBtn.addEventListener('click', sendMsg);
+
+// ── Heartbeat pill ────────────────────────────────────────────────────────────
+const hbPill = document.getElementById('hb-pill');
+const hbText = document.getElementById('hb-text');
+let workerReady = false;
+
+async function pollHeartbeat() {
+  try {
+    const r = await fetch('/heartbeat', { cache: 'no-store' });
+    if (!r.ok) throw new Error('status ' + r.status);
+    const d = await r.json();
+    const ageSec = d.ts ? Math.round((Date.now() - new Date(d.ts).getTime()) / 1000) : 9999;
+    let cls, label;
+    workerReady = d.worker?.status === 'ready';
+    if (d.worker?.status === 'failed') {
+      cls = 'hb-red'; label = 'worker oprit: ' + (d.worker.failure?.reason || 'eroare');
+    } else if (!workerReady) {
+      cls = 'hb-red'; label = 'worker oprit';
+    } else if (ageSec < 90) {
+      cls = 'hb-green'; label = 'Sancta · viu de ' + ageSec + 's';
+    } else if (ageSec < 300) {
+      cls = 'hb-amber'; label = 'Sancta · ' + Math.round(ageSec / 60) + 'min inactiv';
+    } else {
+      cls = 'hb-red'; label = 'canal posibil mort (' + Math.round(ageSec / 60) + 'min)';
+    }
+    hbPill.className = 'hb-pill ' + cls;
+    hbText.textContent = label;
+    sendBtn.disabled = !workerReady;
+  } catch (_) {
+    workerReady = false;
+    sendBtn.disabled = true;
+    hbPill.className = 'hb-pill hb-red';
+    hbText.textContent = 'canal posibil mort';
+  }
+}
+
+pollHeartbeat();
+setInterval(pollHeartbeat, 10000);
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+pollThread();
+setInterval(pollThread, 4500);
+</script>
+</body>
+</html>

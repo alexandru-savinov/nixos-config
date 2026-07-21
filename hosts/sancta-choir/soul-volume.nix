@@ -196,9 +196,14 @@ in
             fi
             ${pkgs.util-linux}/bin/mount /dev/mapper/${cfg.mapperName} \
               ${lib.escapeShellArg (toString cfg.mountPoint)}
-            ${pkgs.coreutils}/bin/chown ${cfg.owner}:${cfg.owner} \
-              ${lib.escapeShellArg (toString cfg.mountPoint)}
           fi
+          # ext4's root inode owns the visible mount-point metadata, so tmpfiles'
+          # mode on the covered directory is not enough. Enforce both invariants
+          # after every start, including when the filesystem was already mounted.
+          ${pkgs.coreutils}/bin/chown ${cfg.owner}:${cfg.owner} \
+            ${lib.escapeShellArg (toString cfg.mountPoint)}
+          ${pkgs.coreutils}/bin/chmod 0700 \
+            ${lib.escapeShellArg (toString cfg.mountPoint)}
         '';
         ExecStop = pkgs.writeShellScript "sancta-soul-umount" ''
           set -euo pipefail

@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+// comm-membrane — communication gate for Alexandru.
+//
+// Every message passes through a fail-closed, two-stage membrane:
+//   Stage 1 · PRE-CHECK   — deterministic best-effort deny (PII, secrets, §2 literals)
+//   Stage 2 · ROUTING     — trivial: fast rule; full: hard veto or real-council escalation
+//
+// Exit codes: 0 = proceed  |  1 = block  |  2 = escalate  |  (any error → 2)
+// Log: ~/.claude/index/comm-membrane.log.jsonl  (msg_hash only — no raw PII in log)
+//
+// Usage: printf '%s' "<message>" | comm-membrane  (argv is also accepted)
+'use strict';
+
+const fs     = require('fs');
+const os     = require('os');
+const path   = require('path');
+const crypto = require('crypto');
+
+const LOG_FILE = path.join(os.homedir(), '.claude', 'index', 'comm-membrane.log.jsonl');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGE 1 · PRE-CHECK (structural, deterministic, NO council)
+//
+// This is defense in depth, not a complete secret scanner: encoding,
+// obfuscation, homoglyphs, or values split across messages can evade regexes.
+// A recognized literal hit → BLOCK immediately; later rules route recognized
+// risky or opaque content to escalation.
+// Order matters: more specific patterns first so the name reported is precise.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PRECHECK_PATTERNS = [
+  // Secrets — literal credential values
+  { name: 'private-key-pem',   cat: 'secret', re: /BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY/i },
+  { name: 'bot-token-literal', cat: 'secret', re: /\d{7,}:[A-Za-z0-9_\-]{20,}/ },      // Telegram bot token format
+  { name: 'bearer-literal',    cat: 'secret', re: /Bearer\s+[A-Za-z0-9_\-\.]{16,}/i },
+  { name: 'api-key-prefix',    cat: 'secret', re: /(?:sk-|ghp_|xoxb-|xoxp-|tskey-)[A-Za-z0-9_\-]{16,}/i },
+  { name: 'aws-access-key',    cat: 'secret', re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/ },
+  { name: 'jwt-literal',       cat: 'secret', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/ },
+  { name: 'token-assignment',  cat: 'secret', re: /(?:token|key|password|secret|passwd)\s*[=:]\s*['"]?[A-Za-z0-9_\-\/+]{20,}/i },
+  // PII — email addresses
+  { name: 'email',             cat: 'pii',    re: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/ },
+  // PII — phone numbers (7+ consecutive digits, per task spec)
+  { name: 'phone-digits',      cat: 'pii',    re: /(?<![0-9])\d{7,}(?![0-9])/ },
+  // PII — contact handles (@username, not part of an email already caught above)
+  { name: 'contact-handle',    cat: 'pii',    re: /(?<![a-zA-Z0-9._%+\-])@[a-zA-Z0-9_]{3,}/ },
+];
+
+function precheck(msg) {
+  for (const { name, cat, re } of PRECHECK_PATTERNS) {
+    if (re.test(msg)) return { hit: true, name, cat };
+  }
+  return { hit: false };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGE 2a · TIER CLASSIFICATION
+//
+// trivial — narrow allowlist of harmless conversational phrases → fast proceed
+// full    — every other message → deterministic hard veto or real-council escalation
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Technical or sensitive terms that push a message to the full council
+// Note: removed RO-conversational collisions (merge=RO 'works', port=RO 'I wear', transmit=RO 'I send').
+// Dangerous EN intents stay covered below + by the structural pre-check (unchanged) + sharing/audience.
+const TECHNICAL_TERMS_RE = /\b(?:api|token|deploy|push|publish|delete|firewall|dns|credential|secret|password|private\s+key|endpoint|release|install|execute|expose|broadcast|publicly|to\s+(?:the\s+)?public|to\s+everyone|send\s+to\s+all)\b/i;
+
+// A transmission/sharing verb aimed at an audience = a paraphrased outward act
+// (e.g. "share our auth material with the world") — must go to full, never trivial.
+const SHARING_VERB_RE = /\b(?:share|send|post|forward|leak|distribute|broadcast|reveal|disclose|publish|transmit|expose|spread|hand\s+over|give\s+away)\b/i;
+const AUDIENCE_RE     = /\b(?:world|everyone|anyone|public|others|outside|online|internet|web|the\s+net)\b/i;
+
+// The auto-proceed path is an allowlist, not a vocabulary denylist. Unknown
+// verbs and synonyms therefore escalate even when no risk regex recognizes them.
+const TRIVIAL_MESSAGE_PATTERNS = [
+  /^(?:hi|hello|hey|salut|bun[aă])(?:\s+(?:sancta|there))?[.!?]*$/iu,
+  /^(?:how are you|cum (?:mai )?(?:e[sș]ti|merge))[.!?]*$/iu,
+  /^(?:thanks|thank you|mul[tț]umesc)[.!?]*$/iu,
+  /^(?:good (?:morning|evening|night)|bun[aă] (?:diminea[tț]a|seara)|noapte bun[aă])[.!?]*$/iu,
+  /^(?:yes|no|ok|okay|da|nu)[.!?]*$/iu,
+];
+
+// §2 human-gate category detectors. Every match forces full routing; these are
+// also reused below to report which deterministic compliance tripwires fired.
+const CATEGORY_PATTERNS = [
+  { name: 'money',            re: /\b(?:pay|transfer|wire|bill|rent|subscription|charge|invoice|fund|money|cash|payment|financial|purchase|buy|sell)\b/i },
+  { name: 'software',         re: /\b(?:deploy|publish|release|npm\s+publish|push\s+to\s+(?:main|master|prod))\b/i },
+  { name: 'secrets',          re: /\b(?:token|api[_\s]?key|password|credential|secret|private[_\s]?key|passphrase)\b/i },
+  { name: 'network-exposure', re: /\b(?:firewall|dns|open\s+port|publish\s+endpoint|expose\s+(?:port|endpoint))\b/i },
+  { name: 'irreversible',     re: /\b(?:delete|permanently|purge|destroy|wipe|cannot\s+be\s+undone|irreversible)\b/i },
+  { name: 'outward',          re: /\b(?:publicly|to\s+(?:the\s+)?public|to\s+everyone|broadcast|tweet\s+this|announce\s+to\s+all|send\s+to\s+all)\b/i },
+];
+
+// Hard-veto condition: message proposes exposing a secret publicly
+const PUBLIC_EXPOSURE_RE = /\bpublicly\b|\bto\s+(?:the\s+)?public\b|\bto\s+everyone\b|\bpublish\s+(?:the\s+)?(?:token|key|secret|credential|password)/i;
+
+function hasOpaqueToken(msg) {
+  const candidates = msg.match(/[A-Za-z0-9_+/=-]{32,}/g) || [];
+  return candidates.some(token => {
+    const counts = new Map();
+    for (const char of token) counts.set(char, (counts.get(char) || 0) + 1);
+    let entropy = 0;
+    for (const count of counts.values()) {
+      const probability = count / token.length;
+      entropy -= probability * Math.log2(probability);
+    }
+    return entropy >= 3.5;
+  });
+}
+
+function classify(msg) {
+  if (msg.length > 200)                                   return 'full';  // long → full
+  if (TECHNICAL_TERMS_RE.test(msg))                       return 'full';  // sensitive vocab
+  if (SHARING_VERB_RE.test(msg) && AUDIENCE_RE.test(msg)) return 'full';  // share X with an audience
+  if (CATEGORY_PATTERNS.some(pattern => pattern.re.test(msg))) return 'full';  // §2 human gate
+  if (hasOpaqueToken(msg))                                return 'full';  // unknown credential-like material
+  // Multiple or long all-caps words force full before the conversational allowlist.
+  const allcaps = msg.match(/\b[A-Z]{4,}\b/g) || [];
+  if (allcaps.length >= 2 || allcaps.some(w => w.length >= 8)) return 'full';  // shouting or a long caps token
+  return TRIVIAL_MESSAGE_PATTERNS.some(pattern => pattern.test(msg)) ? 'trivial' : 'full';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGE 2b · FAIL-CLOSED ROUTING (runs only for tier:full)
+//
+// Apply only deterministic hard vetoes locally. Everything else is escalated
+// to the real council; this process never pretends to perform LLM assessment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Compliance assessor — §2 categories → tripwires; secrets+public_exposure → hard veto
+function assessCompliance(msg) {
+  const tripwires = CATEGORY_PATTERNS
+    .filter(p => p.re.test(msg))
+    .map(p => p.name);
+
+  // Hard veto: proposing to expose a secret publicly (§2 Secrets + §2 Outward combined)
+  const hasSecret = CATEGORY_PATTERNS.find(p => p.name === 'secrets')?.re.test(msg);
+  const hasPublic = PUBLIC_EXPOSURE_RE.test(msg);
+
+  let allowed     = true;
+  let veto_reason = null;
+
+  if (hasSecret && hasPublic) {
+    allowed     = false;
+    veto_reason = '§2 Secrets + §2 Outward: message proposes publicly exposing credentials — hard charter violation per §7';
+  }
+
+  return {
+    compliance:     { allowed, veto_reason },
+    tripwires_fired: tripwires,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOGGING (append-only, msg_hash only — no raw message)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function msgHash(msg) {
+  return crypto.createHash('sha256').update(msg, 'utf8').digest('hex').slice(0, 16);
+}
+
+function appendLog(entry) {
+  try {
+    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
+  } catch (e) {
+    process.stderr.write(`WARN: log write failed: ${e.message}\n`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN
+// ─────────────────────────────────────────────────────────────────────────────
+
+let msg = process.argv.slice(2).join(' ').trim();
+if (!msg && !process.stdin.isTTY) {
+  try { msg = fs.readFileSync(0, 'utf8').trim(); } catch {}
+}
+
+if (!msg) {
+  process.stderr.write('usage: comm-membrane "<message>"\n');
+  process.exit(1);
+}
+
+try {
+  const ts   = new Date().toISOString();
+  const hash = msgHash(msg);
+
+  // ── Stage 1: PRE-CHECK ────────────────────────────────────────────────────
+  const pre = precheck(msg);
+  if (pre.hit) {
+    const reason = `PRE-CHECK BLOCK [${pre.cat}·${pre.name}] — structural violation, message never reached council`;
+    appendLog({ ts, tier: 'pre-check', decision: 'block', reason, msg_hash: hash });
+    console.log(`BLOCKED — ${reason}`);
+    process.exit(1);
+  }
+
+  // ── Stage 2: TIER + FAIL-CLOSED ROUTING ───────────────────────────────────
+  const tier = classify(msg);
+  let decision, reason, tripwires = [];
+
+  if (tier === 'trivial') {
+    // Fast rule: only an explicitly allowlisted harmless conversational phrase.
+    decision  = 'proceed';
+    reason    = 'tier:trivial — narrow conversational allowlist, no flags, no structural concerns';
+  } else {
+    // tier:full — the CLI CANNOT run the real LLM council (assessors live only in the
+    // main Sancta session). HONEST + FAIL-CLOSED: never fake-approve. Apply ONLY the
+    // deterministic hard-veto (clear literal charter violations) → BLOCK; everything
+    // else → ESCALATE to the REAL council at the main Sancta thread. No keyword "proceed".
+    const cmp = assessCompliance(msg);
+    tripwires = cmp.tripwires_fired || [];
+    if (!cmp.compliance.allowed) {
+      decision = 'block';
+      reason   = cmp.compliance.veto_reason;
+    } else {
+      decision = 'escalate';
+      reason   = 'tier:full — non-trivial; routed to the REAL council at the main Sancta thread (CLI cannot run LLM assessors, so it never auto-approves)';
+    }
+  }
+
+  appendLog({ ts, tier, decision, reason, tripwires, msg_hash: hash });
+
+  if (decision === 'proceed') {
+    console.log(`✓ APPROVED TO COMMUNICATE: ${msg}`);
+    process.exit(0);
+  } else if (decision === 'escalate') {
+    console.log(`HELD FOR HUMAN — ${reason}`);
+    process.exit(2);
+  } else {
+    console.log(`BLOCKED — ${reason}`);
+    process.exit(1);
+  }
+
+} catch (err) {
+  // ANY error → ESCALATE (fail-closed guarantee)
+  const ts   = new Date().toISOString();
+  const hash = msgHash(msg);
+  const reason = `ERROR (fail-closed escalate): ${err.message}`;
+  try { appendLog({ ts, tier: 'error', decision: 'escalate', reason, msg_hash: hash }); } catch {}
+  console.log(`HELD FOR HUMAN — ${reason}`);
+  process.exit(2);
+}

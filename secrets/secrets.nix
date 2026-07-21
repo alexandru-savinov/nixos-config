@@ -174,6 +174,11 @@ in
   # confirmation: PR #534 issuecomment-5026053880.
   "soul-volume-key.age".publicKeys = [ sancta-choir rpi5 ];
 
+  # Independent HTTP Basic password for the Sancta membrane. Delivered only to
+  # sancta-membrane.service through systemd LoadCredential; the Claude worker
+  # cannot read the unit-private credential directory.
+  "sancta-membrane-auth.age".publicKeys = [ sancta-choir rpi5 ];
+
   # ── Hermes Agent combined env file (hermes-claw) ─────────────────────
   # KEY=VALUE format for the upstream NixOS module's environmentFiles.
   # Contains OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN (same plaintext as

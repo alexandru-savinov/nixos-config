@@ -46,9 +46,9 @@
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
-    # ── Sancta home + worker (STAGED, eval-only; see each file's header) ──
+    # ── Sancta home + live membrane worker ────────────────────────────────
     ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
-    ./sancta-worker.nix # headless `claude -p` streaming worker (inert stub)
+    ./sancta-worker.nix # guarded comm gateway + resumed `claude -p` worker
   ];
 
   # Enable development tools and agent CLIs.
@@ -142,45 +142,58 @@
       # it; public half lives in hosts/hermes-claw root authorizedKeys.
       herdr-hermes-ssh-key = ownedSecret "herdr" "herdr-hermes-ssh-key";
 
-      # ── Sancta worker (STAGED, eval-only) ─────────────────────────────
+      # ── Sancta worker credential ──────────────────────────────────────
       # NB: the *membrane* is the comm edge (the selective interface Alexandru
       # talks through — comm-membrane guard + transport), NOT this. This is the
       # substrate where Sancta's live process (claude -p) runs; it connects TO
       # the membrane. Naming kept distinct on purpose.
-      # Anthropic API key for the Sancta worker (services.sancta-worker).
+      # Claude credential for the Sancta worker (services.sancta-worker).
       # LIVE: secrets/anthropic-api-key.age is re-keyed (recipients now include
       # the `sancta-choir` host key, done 2026-07-20) so this host decrypts it at
-      # activation. Owned by the `sancta` worker user so it is chmod-600 to it.
+      # activation. Owned by the `sancta` worker user with agenix's 0400 mode.
       # This repo holds NO plaintext key — the .age is age-encrypted.
       anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
 
       # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
       # volume). LIVE: soul-volume-key.age exists (random 256-bit; recipients
       # sancta-choir + rpi5 in secrets/secrets.nix) and `keyFile` is wired below
-      # in the service. This is NOT inert-by-null-key anymore — the ONLY remaining
-      # inert-guard is ConditionPathExists on the loopback image, which does not
-      # yet exist (Alexandru creates it once, by hand, in Phase 4). This repo
-      # holds NO plaintext key — the .age is age-encrypted.
+      # in the service. The loopback image is initialized and mounted; the worker
+      # also requires this mount before it can start. This repo holds NO plaintext
+      # key — the .age is age-encrypted.
       soul-volume-key = secret "soul-volume-key";
+
+      # Second factor for the spend-capable membrane gateway. systemd delivers
+      # this root-owned agenix plaintext through the gateway unit's private
+      # credential directory; it is never exposed to sancta-worker.service.
+      sancta-membrane-auth = secret "sancta-membrane-auth";
     };
 
-  # ── Sancta worker (headless `claude -p`) — STUB, inert ─────────
-  # Wired to the agenix anthropic-api-key; read-only allowedTools default;
-  # INERT until Alexandru names a --resume session (see sancta-worker.nix).
+  # ── Sancta worker (headless `claude -p`) — LIVE, marker-gated ───────────
+  # ROLLOUT: sancta-choir is a non-atomic GRUB host. Deploy only through
+  # scripts/deploy.sh (or an equivalent build-then-boot/switch sequence) with
+  # --max-jobs 1 --cores 1; never use an unthrottled nixos-rebuild switch.
+  # The named session is armed only while its marker exists. The worker keeps
+  # the read-only tool boundary and a bounded per-message budget cap.
   services.sancta-worker = {
     enable = true;
     apiKeyFile = config.age.secrets.anthropic-api-key.path;
     user = "sancta";
-    # HIS-HAND DIALS left at safe module defaults:
-    #   allowedTools = [ "Read" "Grep" "Glob" ];  # read-only
-    #   maxBudgetUsd = "1.00";                     # low cap
-    #   session      = null;                        # INERT until he names one
+    session = "666bcb25-8bc5-467a-b603-4eecce495341";
+    # SHA-256 of the authorized Tailscale-User-Login, normalized to lowercase.
+    # This is an identity selector, not a credential; Serve supplies and
+    # anti-spoofs the underlying login header before proxying to loopback.
+    operatorLoginSha256 = "4c064ffbc887c819d1e2b6173bc3ce1bf65ea629e02cb10d55f868177b7b2b5b";
+    authSecretFile = config.age.secrets.sancta-membrane-auth.path;
+    # This resumed context has a measured ~$1.054 input floor. Keep enough
+    # headroom for one reply while retaining a strict per-invocation ceiling.
+    maxBudgetUsd = "2.00";
+    # Safe module tool default remains in force: [ "Read" "Grep" "Glob" ].
   };
 
-  # ── Sancta encrypted soul volume for ~/.claude — STUB, inert ────────────
+  # ── Sancta encrypted soul volume for ~/.claude — LIVE ───────────────────
   # LUKS-on-loopback on the existing ext4 root (non-destructive). The real
-  # agenix keyFile is wired; the unit remains INERT only until Alexandru creates
-  # the image by hand (see soul-volume.nix init commands).
+  # agenix keyFile is wired and the image was initialized out of band using the
+  # documented soul-volume.nix commands.
   services.sancta-soul-volume = {
     enable = true;
     owner = "sancta";
