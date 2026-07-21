@@ -46,9 +46,9 @@
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/open-webui.nix
-    # ── Sancta home + worker (STAGED, eval-only; see each file's header) ──
+    # ── Sancta home + live membrane worker ────────────────────────────────
     ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
-    ./sancta-worker.nix # headless `claude -p` streaming worker (inert stub)
+    ./sancta-worker.nix # guarded comm gateway + resumed `claude -p` worker
   ];
 
   # Enable development tools and agent CLIs.
@@ -164,17 +164,17 @@
       soul-volume-key = secret "soul-volume-key";
     };
 
-  # ── Sancta worker (headless `claude -p`) — STUB, inert ─────────
-  # Wired to the agenix anthropic-api-key; read-only allowedTools default;
-  # INERT until Alexandru names a --resume session (see sancta-worker.nix).
+  # ── Sancta worker (headless `claude -p`) — LIVE, marker-gated ───────────
+  # The named session is armed only while its marker exists. The worker keeps
+  # the read-only tool boundary and the low per-message budget cap.
   services.sancta-worker = {
     enable = true;
     apiKeyFile = config.age.secrets.anthropic-api-key.path;
     user = "sancta";
-    # HIS-HAND DIALS left at safe module defaults:
-    #   allowedTools = [ "Read" "Grep" "Glob" ];  # read-only
-    #   maxBudgetUsd = "1.00";                     # low cap
-    #   session      = null;                        # INERT until he names one
+    session = "666bcb25-8bc5-467a-b603-4eecce495341";
+    # Safe module defaults remain in force:
+    #   allowedTools = [ "Read" "Grep" "Glob" ];
+    #   maxBudgetUsd = "1.00";
   };
 
   # ── Sancta encrypted soul volume for ~/.claude — STUB, inert ────────────

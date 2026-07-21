@@ -1,17 +1,11 @@
-# sancta-choir — SANCTA WORKER (headless, tool-capable `claude -p`) STUB.
-#
-# ══════════════════════════════════════════════════════════════════════════
-# STAGING NOTE (Sancta→sancta-choir migration): authored, NOT deployed. This
-# unit is a DOCUMENTED STUB whose only closing check is that it EVALUATES
-# (`nix eval`). It need not run yet — the `claude` binary, the resumed session,
-# the API-key runtime path, and the tool/budget dials are all his-hand
-# things Alexandru wires before any real start.
-# ══════════════════════════════════════════════════════════════════════════
+# sancta-choir — tailnet membrane gateway + resumed Claude worker.
 #
 # Adapted (do NOT re-derive) from stage/sancta-hetzner-host's
 # hosts/sancta-core/membrane-worker.nix, which itself slimmed the SANCTA
 # WORKER pattern from modules/services/openclaw.nix + sancta-claw's
-# openclaw-service.nix down to a single read-only-by-default streaming worker:
+# openclaw-service.nix. The long-running relay consumes only membrane-approved
+# inbox records, invokes one resumed turn at a time, and writes successful
+# responses to comm-replies.jsonl for /sim.
 #
 #   claude -p \
 #     --input-format  stream-json \
@@ -53,10 +47,159 @@ let
   # Mirrors openclaw.nix: the agenix plaintext is copied here at ExecStartPre
   # so the worker reads ANTHROPIC_API_KEY from a private, non-store file.
   runtimeKeyPath = "/run/sancta-worker/anthropic-api-key";
+  indexDir = "/var/lib/sancta/.claude/index";
+  inboxPath = "${indexDir}/comm-inbox.jsonl";
+  repliesPath = "${indexDir}/comm-replies.jsonl";
+  cursorPath = "${indexDir}/comm-worker-cursor.json";
+
+  relay = pkgs.writeText "sancta-worker-relay.mjs" ''
+    import fs from "fs";
+    import { open, readFile, rename, stat, writeFile } from "fs/promises";
+    import { spawn } from "child_process";
+
+    const inbox = process.env.SANCTA_INBOX;
+    const replies = process.env.SANCTA_REPLIES;
+    const cursorFile = process.env.SANCTA_CURSOR;
+    const claudeBin = process.env.CLAUDE_BIN;
+    const claudeArgs = JSON.parse(process.env.CLAUDE_ARGS_JSON);
+
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const log = message => process.stdout.write(new Date().toISOString() + " " + message + "\n");
+
+    async function saveCursor(offset) {
+      const temporary = cursorFile + ".tmp";
+      await writeFile(temporary, JSON.stringify({ offset }) + "\n", { mode: 0o600 });
+      await rename(temporary, cursorFile);
+    }
+
+    async function loadCursor() {
+      try {
+        const saved = JSON.parse(await readFile(cursorFile, "utf8"));
+        if (Number.isSafeInteger(saved.offset) && saved.offset >= 0) return saved.offset;
+      } catch (error) {
+        if (error.code !== "ENOENT") log("ignoring invalid cursor: " + error.message);
+      }
+
+      let size = 0;
+      try { size = (await stat(inbox)).size; } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await saveCursor(size);
+      log("initialized cursor at current inbox end: " + size);
+      return size;
+    }
+
+    function textFromEvent(event) {
+      if (event.type === "result" && typeof event.result === "string") return event.result;
+      if (event.type !== "assistant" || !Array.isArray(event.message?.content)) return "";
+      return event.message.content
+        .filter(block => block.type === "text" && typeof block.text === "string")
+        .map(block => block.text)
+        .join("\n");
+    }
+
+    async function runTurn(message, inboxTs) {
+      log("starting resumed turn for inbox ts=" + (inboxTs || "unknown"));
+      const child = spawn(claudeBin, claudeArgs, {
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let stdoutBuffer = "";
+      let stderr = "";
+      let assistantText = "";
+      let resultText = "";
+
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", chunk => {
+        stdoutBuffer += chunk;
+        const lines = stdoutBuffer.split("\n");
+        stdoutBuffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const event = JSON.parse(line);
+            const text = textFromEvent(event);
+            if (event.type === "result" && text) resultText = text;
+            else if (event.type === "assistant" && text) assistantText = text;
+          } catch (error) {
+            log("ignoring malformed Claude output event: " + error.message);
+          }
+        }
+      });
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-8192); });
+
+      const input = {
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: message }] },
+      };
+      child.stdin.end(JSON.stringify(input) + "\n");
+
+      const exitCode = await new Promise((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", resolve);
+      });
+      if (exitCode !== 0) {
+        throw new Error("Claude exited " + exitCode + (stderr.trim() ? ": " + stderr.trim() : ""));
+      }
+
+      const text = (resultText || assistantText).trim();
+      if (!text) throw new Error("Claude completed without assistant text");
+      const reply = {
+        ts: new Date().toISOString(),
+        from: "sancta",
+        text,
+        source: "sancta-worker",
+        inbox_ts: inboxTs || null,
+      };
+      fs.appendFileSync(replies, JSON.stringify(reply) + "\n", { mode: 0o600 });
+      log("appended live reply for inbox ts=" + (inboxTs || "unknown"));
+    }
+
+    let offset = await loadCursor();
+    for (;;) {
+      let size;
+      try { size = (await stat(inbox)).size; } catch (error) {
+        if (error.code === "ENOENT") { await sleep(500); continue; }
+        throw error;
+      }
+      if (size < offset) {
+        log("inbox shrank; resetting cursor to zero");
+        offset = 0;
+        await saveCursor(offset);
+      }
+      if (size === offset) { await sleep(500); continue; }
+
+      const length = size - offset;
+      const buffer = Buffer.alloc(length);
+      const handle = await open(inbox, "r");
+      try { await handle.read(buffer, 0, length, offset); } finally { await handle.close(); }
+      const newline = buffer.lastIndexOf(10);
+      if (newline < 0) { await sleep(500); continue; }
+
+      const complete = buffer.subarray(0, newline + 1).toString("utf8");
+      for (const line of complete.slice(0, -1).split("\n")) {
+        const bytes = Buffer.byteLength(line + "\n");
+        try {
+          if (line) {
+            const entry = JSON.parse(line);
+            if (entry.decision === "proceed" && typeof entry.message === "string" && entry.message.trim()) {
+              await runTurn(entry.message, entry.ts);
+            }
+          }
+        } catch (error) {
+          log("inbox record failed: " + error.message);
+        }
+        offset += bytes;
+        await saveCursor(offset);
+      }
+    }
+  '';
 in
 {
   options.services.sancta-worker = {
-    enable = lib.mkEnableOption "sancta-choir Sancta worker (headless claude -p) — STUB";
+    enable = lib.mkEnableOption "sancta-choir live membrane and resumed Claude worker";
 
     apiKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
@@ -152,7 +295,8 @@ in
     users.groups.${cfg.user} = { };
 
     systemd.services.sancta-worker = {
-      description = "sancta-choir Sancta worker (headless claude -p) — STUB";
+      description = "Sancta membrane inbox relay (resumed claude -p)";
+      wantedBy = lib.optional (cfg.session != null) "multi-user.target";
       after = [
         "network-online.target"
         "tailscaled.service"
@@ -165,9 +309,6 @@ in
       # worker never runs onto the bare (unencrypted) ~/.claude dir. (`after`
       # alone is only ordering; `requires` also brings the mount into the txn.)
       requires = [ "sancta-soul-mount.service" ];
-      # Intentionally NOT wantedBy multi-user.target: this is a stub. Start is
-      # manual (or a future path/timer) once the his-hand dials are set.
-
       # INERT-BY-DEFAULT: the unit is skipped unless a session marker exists.
       # With session=null the guard points at a marker path that is NEVER
       # created (the literal ".__no-session__"), so even a manual `systemctl
@@ -192,6 +333,29 @@ in
         # ~/.claude substrate lives on the ENCRYPTED SOUL VOLUME (see
         # ./soul-volume.nix — LUKS-on-loopback) — the worker's config/state dir.
         CLAUDE_CONFIG_DIR = "/var/lib/sancta/.claude";
+        SANCTA_INBOX = inboxPath;
+        SANCTA_REPLIES = repliesPath;
+        SANCTA_CURSOR = cursorPath;
+        CLAUDE_BIN = "${claudeCodePkg}/bin/claude";
+        CLAUDE_ARGS_JSON = builtins.toJSON (
+          [
+            "-p"
+            "--input-format"
+            "stream-json"
+            "--output-format"
+            "stream-json"
+            "--verbose"
+            "--strict-mcp-config"
+            "--mcp-config"
+            (builtins.toJSON { mcpServers = { }; })
+            "--tools"
+            (lib.concatStringsSep "," cfg.allowedTools)
+            "--allowedTools"
+            (lib.concatStringsSep "," cfg.allowedTools)
+          ]
+          ++ lib.optionals (cfg.session != null) [ "--resume" cfg.session ]
+          ++ lib.optionals (cfg.maxBudgetUsd != null) [ "--max-budget-usd" cfg.maxBudgetUsd ]
+        );
       };
 
       serviceConfig = {
@@ -212,34 +376,12 @@ in
           ''
         );
 
-        # ── The SANCTA WORKER invocation (documented stub) ──────────────────
-        # Streaming JSON in/out; resume a named session; READ-ONLY tools by
-        # default; budget-capped. All the variable parts are his-hand dials.
-        ExecStart =
-          let
-            budgetFlag =
-              lib.optionalString (cfg.maxBudgetUsd != null)
-                " --max-budget-usd ${lib.escapeShellArg cfg.maxBudgetUsd}";
-            toolsCsv = lib.concatStringsSep "," cfg.allowedTools;
-            toolsFlag =
-              " --tools ${lib.escapeShellArg toolsCsv}"
-              + " --allowedTools ${lib.escapeShellArg toolsCsv}";
-            emptyMcpConfig = builtins.toJSON { mcpServers = { }; };
-            mcpFlag =
-              " --strict-mcp-config --mcp-config ${lib.escapeShellArg emptyMcpConfig}";
-            resumeFlag =
-              lib.optionalString (cfg.session != null)
-                " --resume ${lib.escapeShellArg cfg.session}";
-          in
-          pkgs.writeShellScript "sancta-worker-start" ''
-            set -euo pipefail
-            # API key from the chmod-600 runtime path (loaded in ExecStartPre).
-            ${lib.optionalString (cfg.apiKeyFile != null)
-              ''export ANTHROPIC_API_KEY="$(cat ${runtimeKeyPath})"''}
-            exec ${claudeCodePkg}/bin/claude -p \
-              --input-format stream-json \
-              --output-format stream-json${resumeFlag}${mcpFlag}${toolsFlag}${budgetFlag}
-          '';
+        ExecStart = pkgs.writeShellScript "sancta-worker-start" ''
+          set -euo pipefail
+          ${lib.optionalString (cfg.apiKeyFile != null)
+            ''export ANTHROPIC_API_KEY="$(cat ${runtimeKeyPath})"''}
+          exec ${pkgs.nodejs_22}/bin/node ${relay}
+        '';
 
         Restart = "on-failure";
         RestartSec = 30;
@@ -252,6 +394,48 @@ in
         PrivateDevices = true;
         ReadWritePaths = [ "/var/lib/sancta" ];
         # Node.js/Claude Code needs JIT — no MemoryDenyWriteExecute.
+      };
+    };
+
+    systemd.services.sancta-membrane = {
+      description = "Sancta tailnet membrane gateway";
+      wantedBy = lib.optional (cfg.session != null) "multi-user.target";
+      after = [ "sancta-worker.service" "tailscaled.service" ];
+      requires = [ "sancta-worker.service" ];
+      unitConfig = {
+        ConditionPathExists =
+          if cfg.session == null
+          then "/var/lib/sancta/session/.__no-session__"
+          else "/var/lib/sancta/session/${cfg.session}";
+        ConditionPathIsMountPoint = toString config.services.sancta-soul-volume.mountPoint;
+      };
+      environment = {
+        HOME = "/var/lib/sancta";
+        CLAUDE_CONFIG_DIR = "/var/lib/sancta/.claude";
+      };
+      path = [ pkgs.nodejs_22 ];
+      serviceConfig = {
+        Type = "simple";
+        User = cfg.user;
+        Group = cfg.user;
+        WorkingDirectory = indexDir;
+        ExecStart = pkgs.writeShellScript "sancta-membrane-start" ''
+          set -euo pipefail
+          test -f ${indexDir}/comm/server.mjs
+          test -x ${indexDir}/bin/comm-membrane
+          bind="$(${pkgs.tailscale}/bin/tailscale ip -4 | ${pkgs.coreutils}/bin/head -n1)"
+          test -n "$bind"
+          exec ${pkgs.coreutils}/bin/env BIND="$bind" PORT=8743 \
+            ${pkgs.nodejs_22}/bin/node ${indexDir}/comm/server.mjs
+        '';
+        Restart = "on-failure";
+        RestartSec = 5;
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ReadWritePaths = [ "/var/lib/sancta" ];
       };
     };
 
