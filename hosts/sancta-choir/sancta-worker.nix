@@ -30,7 +30,7 @@
 # ~/.claude substrate is the ENCRYPTED SOUL VOLUME from ./soul-volume.nix
 # (LUKS-on-loopback), not a whole-disk LUKS root.
 #
-# The anthropic-api-key is loaded at runtime into a chmod-600 /run path (the
+# The Claude credential is loaded at runtime into a chmod-600 /run path (the
 # openclaw.nix idiom — never via chat, never in the Nix store), and the worker
 # runs as a dedicated unprivileged system user under systemd hardening.
 { config, pkgs, lib, claude-code ? null, ... }:
@@ -46,7 +46,7 @@ let
   # Runtime path the API key is materialized into (chmod 600, tmpfs /run).
   # Mirrors openclaw.nix: the agenix plaintext is copied here at ExecStartPre
   # so the worker reads ANTHROPIC_API_KEY from a private, non-store file.
-  runtimeKeyPath = "/run/sancta-worker/anthropic-api-key";
+  runtimeCredentialPath = "/run/sancta-worker/anthropic-credential";
   indexDir = "/var/lib/sancta/.claude/index";
   inboxPath = "${indexDir}/comm-inbox.jsonl";
   repliesPath = "${indexDir}/comm-replies.jsonl";
@@ -208,11 +208,11 @@ in
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = ''
-        Path to the agenix-decrypted Anthropic API key (e.g.
-        `config.age.secrets.anthropic-api-key.path`). Loaded at runtime into a
-        chmod-600 file under /run — NEVER placed in the Nix store, NEVER passed
-        via chat. HIS-HAND: the .age is filled by Alexandru (see
-        configuration.nix agenix scaffolding).
+        Path to the agenix-decrypted Claude credential (Anthropic API key or
+        Claude Code OAuth token; e.g. `config.age.secrets.anthropic-api-key.path`).
+        Loaded at runtime into a chmod-600 file under /run — NEVER placed in the
+        Nix store, NEVER passed via chat. The runtime loader classifies the
+        prefix and exports only the matching Claude environment variable.
       '';
     };
 
@@ -350,7 +350,7 @@ in
             "stream-json"
             "--verbose"
             # Disable migrated hooks/plugins/connectors in this unattended,
-            # API-key-authenticated worker. Session history still resumes.
+            # credential-authenticated worker. Session history still resumes.
             "--safe-mode"
             "--strict-mcp-config"
             "--mcp-config"
@@ -379,14 +379,21 @@ in
           pkgs.writeShellScript "sancta-load-key" ''
             set -euo pipefail
             install -m 0600 -o ${cfg.user} -g ${cfg.user} \
-              "${toString cfg.apiKeyFile}" "${runtimeKeyPath}"
+              "${toString cfg.apiKeyFile}" "${runtimeCredentialPath}"
           ''
         );
 
         ExecStart = pkgs.writeShellScript "sancta-worker-start" ''
           set -euo pipefail
-          ${lib.optionalString (cfg.apiKeyFile != null)
-            ''export ANTHROPIC_API_KEY="$(cat ${runtimeKeyPath})"''}
+          ${lib.optionalString (cfg.apiKeyFile != null) ''
+            credential="$(cat ${runtimeCredentialPath})"
+            case "$credential" in
+              sk-ant-api*) export ANTHROPIC_API_KEY="$credential" ;;
+              sk-ant-oat*) export CLAUDE_CODE_OAUTH_TOKEN="$credential" ;;
+              *) echo "unsupported Claude credential type" >&2; exit 1 ;;
+            esac
+            unset credential
+          ''}
           exec ${pkgs.nodejs_22}/bin/node ${relay}
         '';
 

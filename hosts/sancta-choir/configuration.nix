@@ -142,12 +142,12 @@
       # it; public half lives in hosts/hermes-claw root authorizedKeys.
       herdr-hermes-ssh-key = ownedSecret "herdr" "herdr-hermes-ssh-key";
 
-      # ── Sancta worker (STAGED, eval-only) ─────────────────────────────
+      # ── Sancta worker credential ──────────────────────────────────────
       # NB: the *membrane* is the comm edge (the selective interface Alexandru
       # talks through — comm-membrane guard + transport), NOT this. This is the
       # substrate where Sancta's live process (claude -p) runs; it connects TO
       # the membrane. Naming kept distinct on purpose.
-      # Anthropic API key for the Sancta worker (services.sancta-worker).
+      # Claude credential for the Sancta worker (services.sancta-worker).
       # LIVE: secrets/anthropic-api-key.age is re-keyed (recipients now include
       # the `sancta-choir` host key, done 2026-07-20) so this host decrypts it at
       # activation. Owned by the `sancta` worker user so it is chmod-600 to it.
