@@ -323,7 +323,7 @@ in
         # ── systemd hardening (mirrors openclaw-service.nix) ─────────────────
         NoNewPrivileges = true;
         ProtectSystem = "strict";
-        ProtectHome = true;
+        ProtectHome = "tmpfs";
         # The resumed transcript belongs to the /home/nixos project key. Bind
         # only a dedicated empty anchor into this service's private namespace;
         # never create or change the real host login home.
