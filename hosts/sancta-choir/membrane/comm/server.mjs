@@ -368,6 +368,12 @@ const server = http.createServer(async (req, res) => {
 
   // ── POST /send → membrane ───────────────────────────────────────────────────
   if (req.method === 'POST' && url === '/send') {
+    if (req.headers['x-sancta-request'] !== 'send') {
+      req.resume();
+      res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ error: 'request verification failed' }));
+    }
+
     const worker = workerStatus();
     if (worker.status !== 'ready') {
       req.resume();

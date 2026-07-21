@@ -185,6 +185,13 @@ in
         '';
       }
       {
+        assertion = cfg.session == null || cfg.apiKeyFile != null;
+        message = ''
+          services.sancta-worker requires apiKeyFile when a live session is
+          configured, so the relay cannot arm without a Claude credential.
+        '';
+      }
+      {
         assertion = cfg.session == null
           || (cfg.operatorLoginSha256 != null && cfg.authSecretFile != null);
         message = ''
@@ -307,8 +314,10 @@ in
           exec ${pkgs.nodejs_22}/bin/node ${relay}
         '';
 
-        # A failed turn retains the inbox cursor and requires operator review.
-        # Automatic restart would immediately spend against the same message.
+        # A failed or interrupted turn retains the inbox cursor and requires
+        # operator review. Recovery must compare its offset with committed
+        # reply checkpoints and inspect the resumed transcript/billing before
+        # manually clearing the marker; never auto-clear and re-spend.
         Restart = "no";
 
         # ── systemd hardening (mirrors openclaw-service.nix) ─────────────────

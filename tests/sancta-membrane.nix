@@ -110,6 +110,7 @@ pkgs.runCommand "sancta-membrane-tests"
           const auth = {
             "Tailscale-User-Login": "owner@example.com",
             Authorization: "Basic " + basic,
+            "X-Sancta-Request": "send",
           };
           let response = await fetch(url + "/heartbeat");
           if (response.status !== 403) process.exit(1);
@@ -121,6 +122,17 @@ pkgs.runCommand "sancta-membrane-tests"
             headers: { "Tailscale-User-Login": "owner@example.com" },
           });
           if (response.status !== 401 || !response.headers.get("www-authenticate")) process.exit(1);
+
+          response = await fetch(url + "/send", {
+            method: "POST",
+            headers: {
+              "Tailscale-User-Login": "owner@example.com",
+              Authorization: "Basic " + basic,
+              "content-type": "text/plain",
+            },
+            body: JSON.stringify({ message: "hello" }),
+          });
+          if (response.status !== 403) process.exit(1);
 
           response = await fetch(url + "/send", {
             method: "POST",
@@ -144,6 +156,7 @@ pkgs.runCommand "sancta-membrane-tests"
           const auth = {
             "Tailscale-User-Login": "owner@example.com",
             Authorization: "Basic " + basic,
+            "X-Sancta-Request": "send",
           };
           const response = await fetch("http://127.0.0.1:18743/send", {
             method: "POST",
@@ -179,6 +192,7 @@ pkgs.runCommand "sancta-membrane-tests"
             headers: {
               "Tailscale-User-Login": "owner@example.com",
               Authorization: "Basic " + Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64"),
+              "X-Sancta-Request": "send",
               "content-type": "application/json",
             },
             body: JSON.stringify({ message: "hello" }),
@@ -197,6 +211,7 @@ pkgs.runCommand "sancta-membrane-tests"
             headers: {
               "Tailscale-User-Login": "owner@example.com",
               Authorization: "Basic " + Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64"),
+              "X-Sancta-Request": "send",
               "content-type": "application/json",
             },
             body: JSON.stringify({ message: "hello" }),
@@ -214,6 +229,7 @@ pkgs.runCommand "sancta-membrane-tests"
           const auth = {
             "Tailscale-User-Login": "owner@example.com",
             Authorization: "Basic " + basic,
+            "X-Sancta-Request": "send",
           };
           let response = await fetch(url + "/heartbeat", { headers: auth });
           let body = await response.json();

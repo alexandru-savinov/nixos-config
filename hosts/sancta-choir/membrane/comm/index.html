@@ -354,7 +354,7 @@ function sendMsg() {
   // 2. POST to membrane
   fetch('/send', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Sancta-Request': 'send' },
     body: JSON.stringify({ message: text }),
   })
     .then(async r => {
