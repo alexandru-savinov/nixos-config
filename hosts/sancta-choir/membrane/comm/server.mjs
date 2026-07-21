@@ -27,7 +27,27 @@ const REPLIES_FILE   = path.join(INDEX_DIR, 'comm-replies.jsonl');
 const HEARTBEAT_FILE = path.join(INDEX_DIR, 'comm-heartbeat.json');
 const FAILURE_FILE   = process.env.SANCTA_FAILURE || path.join(INDEX_DIR, 'comm-worker-failure.json');
 const WORKER_READY_FILE = process.env.SANCTA_WORKER_READY || '/run/sancta-worker/ready';
+const CURSOR_FILE    = process.env.SANCTA_CURSOR || path.join(INDEX_DIR, 'comm-worker-cursor.json');
+const RATE_LIMIT_FILE = process.env.SANCTA_RATE_LIMIT_FILE || path.join(INDEX_DIR, 'comm-rate-limit.json');
 const MEMBRANE_PATH  = process.env.SANCTA_MEMBRANE_PATH || path.join(__dirname, '..', 'bin', 'comm-membrane');
+const ALLOWED_LOGIN_SHA256 = process.env.SANCTA_ALLOWED_LOGIN_SHA256 || '';
+
+function positiveInteger(name, fallback) {
+  const raw = process.env[name] || String(fallback);
+  if (!/^[1-9][0-9]*$/.test(raw)) throw new Error(`${name} must be a positive integer`);
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  return value;
+}
+
+const RATE_LIMIT_MAX = positiveInteger('SANCTA_RATE_LIMIT_MAX', 3);
+const RATE_LIMIT_WINDOW_MS = positiveInteger('SANCTA_RATE_LIMIT_WINDOW_MS', 3600000);
+const MAX_PENDING_PROCEED = positiveInteger('SANCTA_MAX_PENDING_PROCEED', 1);
+if (!/^[a-f0-9]{64}$/.test(ALLOWED_LOGIN_SHA256)) {
+  throw new Error('SANCTA_ALLOWED_LOGIN_SHA256 must be a lowercase SHA-256 digest');
+}
+
+let sendInFlight = false;
 
 function log(...args) {
   process.stdout.write(new Date().toISOString() + ' ' + args.join(' ') + '\n');
@@ -64,6 +84,79 @@ function appendInbox(ts, decision, message) {
 
 function messageHash(message) {
   return crypto.createHash('sha256').update(message, 'utf8').digest('hex').slice(0, 16);
+}
+
+// Tailscale Serve removes spoofed identity headers before proxying and injects
+// the authenticated user login. Loopback binding keeps direct header spoofing
+// outside the remote threat model; tagged devices have no login and are denied.
+function authorizedIdentity(req) {
+  const login = req.headers['tailscale-user-login'];
+  if (typeof login !== 'string') return null;
+  const digest = crypto.createHash('sha256').update(login.trim().toLowerCase(), 'utf8').digest('hex');
+  const actual = Buffer.from(digest, 'hex');
+  const expected = Buffer.from(ALLOWED_LOGIN_SHA256, 'hex');
+  return crypto.timingSafeEqual(actual, expected) ? digest : null;
+}
+
+function pendingProceedCount() {
+  let cursor;
+  try {
+    cursor = JSON.parse(fs.readFileSync(CURSOR_FILE, 'utf8')).offset;
+  } catch (error) {
+    throw new Error('worker cursor unavailable');
+  }
+  if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error('worker cursor invalid');
+
+  let raw;
+  try { raw = fs.readFileSync(INBOX_FILE); } catch (error) {
+    if (error.code === 'ENOENT' && cursor === 0) return 0;
+    throw new Error('inbox unavailable');
+  }
+  if (cursor > raw.length) throw new Error('worker cursor beyond inbox');
+
+  const lines = raw.subarray(cursor).toString('utf8').split('\n');
+  lines.pop(); // Ignore an incomplete final record while it is being appended.
+  let pending = 0;
+  for (const line of lines) {
+    if (!line) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { throw new Error('pending inbox record invalid'); }
+    if (entry?.decision === 'proceed') pending += 1;
+  }
+  return pending;
+}
+
+function consumeRateLimit(identity) {
+  const now = Date.now();
+  let state = { version: 1, identities: {} };
+  try {
+    state = JSON.parse(fs.readFileSync(RATE_LIMIT_FILE, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw new Error('rate limit state invalid');
+  }
+  if (!state || state.version !== 1 || typeof state.identities !== 'object'
+      || !state.identities || Array.isArray(state.identities)) {
+    throw new Error('rate limit state invalid');
+  }
+
+  const cutoff = now - RATE_LIMIT_WINDOW_MS;
+  const previous = Array.isArray(state.identities[identity]) ? state.identities[identity] : [];
+  if (previous.some(ts => !Number.isSafeInteger(ts) || ts > now)) {
+    throw new Error('rate limit state invalid');
+  }
+  const recent = previous.filter(ts => Number.isSafeInteger(ts) && ts > cutoff && ts <= now);
+  if (recent.length >= RATE_LIMIT_MAX) {
+    const retryAfter = Math.max(1, Math.ceil((recent[0] + RATE_LIMIT_WINDOW_MS - now) / 1000));
+    return { allowed: false, retryAfter };
+  }
+
+  recent.push(now);
+  state.identities[identity] = recent;
+  const temporary = RATE_LIMIT_FILE + '.tmp';
+  fs.writeFileSync(temporary, JSON.stringify(state) + '\n', { mode: 0o600 });
+  fs.chmodSync(temporary, 0o600);
+  fs.renameSync(temporary, RATE_LIMIT_FILE);
+  return { allowed: true, retryAfter: 0 };
 }
 
 function workerStatus() {
@@ -227,6 +320,14 @@ const server = http.createServer(async (req, res) => {
   const url = (req.url || '/').split('?')[0];
   log(`[req] ${req.method} ${url} from ${ip}`);
 
+  const identity = authorizedIdentity(req);
+  if (!identity) {
+    req.resume();
+    log(`[auth-denied] ${req.method} ${url} from ${ip}`);
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ error: 'forbidden' }));
+  }
+
   // ── GET / → index.html ──────────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/') {
     let html;
@@ -245,40 +346,79 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'worker unavailable', worker }));
     }
 
-    let body;
-    try { body = await readBody(req); }
-    catch (e) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: e.message }));
+    if (sendInFlight) {
+      req.resume();
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '1' });
+      return res.end(JSON.stringify({ error: 'send already in progress' }));
     }
 
-    let parsed;
-    try { parsed = JSON.parse(body); }
-    catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'invalid JSON' }));
-    }
-
-    const message = String(parsed.message || '').trim();
-    if (!message) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'message required' }));
-    }
-
-    const { decision, line } = await runMembrane(message);
-    const ts = new Date().toISOString();
+    sendInFlight = true;
     try {
-      appendInbox(ts, decision, message);
-    } catch (error) {
-      log('[inbox-write-error]', error.message);
-      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
-      return res.end(JSON.stringify({ error: 'message not accepted' }));
+      let pending;
+      try { pending = pendingProceedCount(); } catch (error) {
+        req.resume();
+        log('[queue-state-error]', error.message);
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify({ error: 'queue state unavailable' }));
+      }
+      if (pending >= MAX_PENDING_PROCEED) {
+        req.resume();
+        res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '1' });
+        return res.end(JSON.stringify({ error: 'worker queue full' }));
+      }
+
+      let body;
+      try { body = await readBody(req); }
+      catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'invalid JSON' }));
+      }
+
+      const message = String(parsed.message || '').trim();
+      if (!message) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'message required' }));
+      }
+
+      let rateLimit;
+      try { rateLimit = consumeRateLimit(identity); } catch (error) {
+        log('[rate-limit-error]', error.message);
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify({ error: 'rate limiter unavailable' }));
+      }
+      if (!rateLimit.allowed) {
+        res.writeHead(429, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Retry-After': String(rateLimit.retryAfter),
+        });
+        return res.end(JSON.stringify({ error: 'rate limit exceeded' }));
+      }
+
+      const { decision, line } = await runMembrane(message);
+      const ts = new Date().toISOString();
+      try {
+        appendInbox(ts, decision, message);
+      } catch (error) {
+        log('[inbox-write-error]', error.message);
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: 'message not accepted' }));
+      }
+
+      log(`[membrane] decision=${decision} msg_hash=${messageHash(message)} identity=${identity.slice(0, 12)}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(JSON.stringify({ decision, line }));
+    } finally {
+      sendInFlight = false;
     }
-
-    log(`[membrane] decision=${decision} msg_hash=${messageHash(message)}`);
-
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
-    return res.end(JSON.stringify({ decision, line }));
   }
 
   // ── GET /heartbeat → comm-heartbeat.json ────────────────────────────────────

@@ -174,6 +174,10 @@
     apiKeyFile = config.age.secrets.anthropic-api-key.path;
     user = "sancta";
     session = "666bcb25-8bc5-467a-b603-4eecce495341";
+    # SHA-256 of the authorized Tailscale-User-Login, normalized to lowercase.
+    # This is an identity selector, not a credential; Serve supplies and
+    # anti-spoofs the underlying login header before proxying to loopback.
+    operatorLoginSha256 = "4c064ffbc887c819d1e2b6173bc3ce1bf65ea629e02cb10d55f868177b7b2b5b";
     # This resumed context has a measured ~$1.054 input floor. Keep enough
     # headroom for one reply while retaining a strict per-invocation ceiling.
     maxBudgetUsd = "2.00";

@@ -4,6 +4,8 @@ let
   relay = ../hosts/sancta-choir/membrane/relay.mjs;
   server = ../hosts/sancta-choir/membrane/comm/server.mjs;
   membrane = ../hosts/sancta-choir/membrane/bin/comm-membrane;
+  authLogin = "owner@example.com";
+  authHash = builtins.hashString "sha256" authLogin;
 
   fakeSuccess = pkgs.writeShellScript "sancta-fake-success" ''
     ${pkgs.coreutils}/bin/cat >/dev/null
@@ -72,18 +74,25 @@ pkgs.runCommand "sancta-membrane-tests"
     ready="$gateway/ready"
     failure_marker="$gateway/failure"
     printf '%s\n' null > "$gateway/comm-heartbeat.json"
+    printf '%s\n' '{"offset":0}' > "$gateway/cursor"
     HOME="$guard_home" \
       BIND=127.0.0.1 \
       PORT=18743 \
       SANCTA_INDEX_DIR="$gateway" \
       SANCTA_WORKER_READY="$ready" \
       SANCTA_FAILURE="$failure_marker" \
+      SANCTA_CURSOR="$gateway/cursor" \
+      SANCTA_RATE_LIMIT_FILE="$gateway/rate-limit" \
+      SANCTA_ALLOWED_LOGIN_SHA256=${authHash} \
+      SANCTA_RATE_LIMIT_MAX=1 \
+      SANCTA_RATE_LIMIT_WINDOW_MS=3600000 \
+      SANCTA_MAX_PENDING_PROCEED=1 \
       SANCTA_MEMBRANE_PATH=${membrane} \
       node ${server} > "$gateway/server.log" 2>&1 &
     server_pid=$!
     trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
     for _ in $(seq 1 50); do
-      if node -e 'fetch("http://127.0.0.1:18743/heartbeat").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+      if node -e 'fetch("http://127.0.0.1:18743/heartbeat", { headers: { "Tailscale-User-Login": "${authLogin}" } }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
         break
       fi
       sleep 0.1
@@ -92,15 +101,23 @@ pkgs.runCommand "sancta-membrane-tests"
     node - <<'NODE'
     (async () => {
       const url = "http://127.0.0.1:18743";
-      let response = await fetch(url + "/send", {
+      const auth = { "Tailscale-User-Login": "owner@example.com" };
+      let response = await fetch(url + "/heartbeat");
+      if (response.status !== 403) process.exit(1);
+      response = await fetch(url + "/heartbeat", {
+        headers: { "Tailscale-User-Login": "intruder@example.com" },
+      });
+      if (response.status !== 403) process.exit(1);
+
+      response = await fetch(url + "/send", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { ...auth, "content-type": "application/json" },
         body: JSON.stringify({ message: "hello" }),
       });
       let body = await response.json();
       if (response.status !== 503 || body.worker?.status !== "stopped") process.exit(1);
 
-      response = await fetch(url + "/heartbeat");
+      response = await fetch(url + "/heartbeat", { headers: auth });
       body = await response.json();
       if (!response.ok || body.error !== "invalid heartbeat file") process.exit(1);
       if (body.worker?.status !== "stopped") process.exit(1);
@@ -110,13 +127,63 @@ NODE
     touch "$ready"
     node - <<'NODE'
     (async () => {
+      const auth = { "Tailscale-User-Login": "owner@example.com" };
       const response = await fetch("http://127.0.0.1:18743/send", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { ...auth, "content-type": "application/json" },
         body: JSON.stringify({ message: "hello" }),
       });
       const body = await response.json();
       if (!response.ok || body.decision !== "proceed") process.exit(1);
+
+      const queued = await fetch("http://127.0.0.1:18743/send", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ message: "hello" }),
+      });
+      const queuedBody = await queued.json();
+      if (queued.status !== 429 || queuedBody.error !== "worker queue full") process.exit(1);
+    })().catch(error => { console.error(error); process.exit(1); });
+NODE
+
+    node -e '
+      const fs = require("fs");
+      const dir = process.argv[1];
+      const size = fs.statSync(dir + "/comm-inbox.jsonl").size;
+      fs.writeFileSync(dir + "/cursor", JSON.stringify({ offset: size }) + "\n");
+      const rate = fs.readFileSync(dir + "/rate-limit", "utf8");
+      if (rate.includes("owner@example.com")) process.exit(1);
+      if ((fs.statSync(dir + "/rate-limit").mode & 0o777) !== 0o600) process.exit(1);
+    ' "$gateway"
+    node - <<'NODE'
+    (async () => {
+      const response = await fetch("http://127.0.0.1:18743/send", {
+        method: "POST",
+        headers: {
+          "Tailscale-User-Login": "owner@example.com",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ message: "hello" }),
+      });
+      const body = await response.json();
+      if (response.status !== 429 || body.error !== "rate limit exceeded") process.exit(1);
+      if (!response.headers.get("retry-after")) process.exit(1);
+    })().catch(error => { console.error(error); process.exit(1); });
+NODE
+
+    printf '%s\n' '{"version":1,"identities":[]}' > "$gateway/rate-limit"
+    node - <<'NODE'
+    (async () => {
+      const response = await fetch("http://127.0.0.1:18743/send", {
+        method: "POST",
+        headers: {
+          "Tailscale-User-Login": "owner@example.com",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ message: "hello" }),
+      });
+      const body = await response.json();
+      if (response.status !== 503 || body.error !== "rate limiter unavailable") process.exit(1);
     })().catch(error => { console.error(error); process.exit(1); });
 NODE
 
@@ -124,14 +191,15 @@ NODE
     node - <<'NODE'
     (async () => {
       const url = "http://127.0.0.1:18743";
-      let response = await fetch(url + "/heartbeat");
+      const auth = { "Tailscale-User-Login": "owner@example.com" };
+      let response = await fetch(url + "/heartbeat", { headers: auth });
       let body = await response.json();
       if (!response.ok || body.worker?.status !== "failed") process.exit(1);
       if (body.worker.failure.reason !== "Claude exited 7" || "raw" in body.worker.failure) process.exit(1);
 
       response = await fetch(url + "/send", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { ...auth, "content-type": "application/json" },
         body: JSON.stringify({ message: "hello again" }),
       });
       body = await response.json();

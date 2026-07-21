@@ -55,6 +55,7 @@ let
   repliesPath = "${indexDir}/comm-replies.jsonl";
   cursorPath = "${indexDir}/comm-worker-cursor.json";
   failurePath = "${indexDir}/comm-worker-failure.json";
+  rateLimitPath = "${indexDir}/comm-rate-limit.json";
   projectAnchor = "/var/lib/sancta/project-anchor";
   projectDir = "/home/nixos";
   membraneSrc = ./membrane;
@@ -133,6 +134,18 @@ in
       default = 8743;
       description = "Loopback and Tailscale Serve HTTPS port for the membrane gateway.";
     };
+
+    operatorLoginSha256 = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "^[a-f0-9]{64}$");
+      default = null;
+      description = ''
+        SHA-256 of the lowercase Tailscale Serve user login authorized to use
+        the membrane. The backend listens only on loopback and trusts Serve's
+        anti-spoofed `Tailscale-User-Login` identity header. A live session
+        requires this selector; tagged devices, which have no user header, are
+        denied.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -151,6 +164,14 @@ in
         message = ''
           services.sancta-worker.apiKeyFile points into /nix/store
           (world-readable). Use an agenix secret path instead.
+        '';
+      }
+      {
+        assertion = cfg.session == null || cfg.operatorLoginSha256 != null;
+        message = ''
+          services.sancta-worker requires operatorLoginSha256 when a live
+          session is configured, so the spend-capable gateway is not
+          tailnet-wide.
         '';
       }
     ];
@@ -313,6 +334,14 @@ in
         SANCTA_MEMBRANE_PATH = "${membraneSrc}/bin/comm-membrane";
         SANCTA_WORKER_READY = runtimeReadyPath;
         SANCTA_FAILURE = failurePath;
+        SANCTA_CURSOR = cursorPath;
+        SANCTA_RATE_LIMIT_FILE = rateLimitPath;
+        SANCTA_ALLOWED_LOGIN_SHA256 = if cfg.operatorLoginSha256 == null then "" else cfg.operatorLoginSha256;
+        # Bound worst-case spend to three accepted messages per rolling day and
+        # never allow more than one proceed-classified turn to await the worker.
+        SANCTA_RATE_LIMIT_MAX = "3";
+        SANCTA_RATE_LIMIT_WINDOW_MS = "86400000";
+        SANCTA_MAX_PENDING_PROCEED = "1";
       };
       path = [ pkgs.nodejs_22 ];
       serviceConfig = {
