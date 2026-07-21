@@ -384,6 +384,10 @@
           # counts. Locks the fix so the module and this check can never drift.
           heartbeat-trusted-context = import ./tests/heartbeat-trusted-context.nix { inherit pkgs; };
 
+          # Sancta membrane guard + relay invariants: failed turns retain the
+          # cursor, successful turns commit once, and truncation never replays.
+          sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
+
           # NOTE: the declarative n8n VM test (#42) deliberately lives under
           # packages.<system>.n8n-declarative-test, NOT here. `nix flake
           # check` builds every check inside the resource-constrained
@@ -395,7 +399,7 @@
         };
 
       # aarch64-linux checks: only the architecture-independent, cheap
-      # pure-jq/bash guards that are also meaningful on the actual deploy
+      # guards that are also meaningful on the actual deploy
       # host. `heartbeat-trusted-context` is re-exposed here (same fixture,
       # same shared .jq — no drift) so the guard for the tick, which runs
       # on rpi5-full (aarch64), can be built NATIVELY on the Pi without
@@ -406,6 +410,7 @@
         in
         {
           heartbeat-trusted-context = import ./tests/heartbeat-trusted-context.nix { inherit pkgs; };
+          sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`

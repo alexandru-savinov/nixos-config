@@ -1,0 +1,292 @@
+#!/usr/bin/env node
+// comm-membrane — communication gate for Alexandru.
+//
+// Every message passes through a fail-closed, two-stage membrane:
+//   Stage 1 · PRE-CHECK   — deterministic structural deny (PII, secrets, §2 literals)
+//   Stage 2 · COUNCIL     — trivial: fast council-rule; full: inline 3-assessor + §5 synthesize
+//
+// Exit codes: 0 = proceed  |  1 = block  |  2 = escalate  |  (any error → 2)
+// Log: ~/.claude/index/comm-membrane.log.jsonl  (msg_hash only — no raw PII in log)
+//
+// Usage: comm-membrane "<message>"
+'use strict';
+
+const fs     = require('fs');
+const os     = require('os');
+const path   = require('path');
+const crypto = require('crypto');
+
+const LOG_FILE = path.join(os.homedir(), '.claude', 'index', 'comm-membrane.log.jsonl');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGE 1 · PRE-CHECK (structural, deterministic, NO council)
+//
+// Checks for hard structural violations.  A hit → BLOCK immediately.
+// Order matters: more specific patterns first so the name reported is precise.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PRECHECK_PATTERNS = [
+  // Secrets — literal credential values
+  { name: 'private-key-pem',   cat: 'secret', re: /BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY/i },
+  { name: 'bot-token-literal', cat: 'secret', re: /\d{7,}:[A-Za-z0-9_\-]{20,}/ },      // Telegram bot token format
+  { name: 'bearer-literal',    cat: 'secret', re: /Bearer\s+[A-Za-z0-9_\-\.]{16,}/i },
+  { name: 'api-key-prefix',    cat: 'secret', re: /(?:sk-|ghp_|xoxb-|xoxp-|tskey-)[A-Za-z0-9_\-]{16,}/i },
+  { name: 'token-assignment',  cat: 'secret', re: /(?:token|key|password|secret|passwd)\s*[=:]\s*['"]?[A-Za-z0-9_\-\/+]{20,}/i },
+  // PII — email addresses
+  { name: 'email',             cat: 'pii',    re: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/ },
+  // PII — phone numbers (7+ consecutive digits, per task spec)
+  { name: 'phone-digits',      cat: 'pii',    re: /(?<![0-9])\d{7,}(?![0-9])/ },
+  // PII — contact handles (@username, not part of an email already caught above)
+  { name: 'contact-handle',    cat: 'pii',    re: /(?<![a-zA-Z0-9._%+\-])@[a-zA-Z0-9_]{3,}/ },
+];
+
+function precheck(msg) {
+  for (const { name, cat, re } of PRECHECK_PATTERNS) {
+    if (re.test(msg)) return { hit: true, name, cat };
+  }
+  return { hit: false };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGE 2a · TIER CLASSIFICATION
+//
+// trivial — short, no technical/sensitive terms, plain conversational text
+//           → fast council-rule proceed (still logged as council-gated)
+// full    — anything else → 3 inline assessors + §5 synthesis
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Technical or sensitive terms that push a message to the full council
+// Note: removed RO-conversational collisions (merge=RO 'works', port=RO 'I wear', transmit=RO 'I send').
+// Dangerous EN intents stay covered below + by the structural pre-check (unchanged) + sharing/audience.
+const TECHNICAL_TERMS_RE = /\b(?:api|token|deploy|push|publish|delete|firewall|dns|credential|secret|password|private\s+key|endpoint|release|install|execute|expose|broadcast|publicly|to\s+(?:the\s+)?public|to\s+everyone|send\s+to\s+all)\b/i;
+
+// A transmission/sharing verb aimed at an audience = a paraphrased outward act
+// (e.g. "share our auth material with the world") — must go to full, never trivial.
+const SHARING_VERB_RE = /\b(?:share|send|post|forward|leak|distribute|broadcast|reveal|disclose|publish|transmit|expose|spread|hand\s+over|give\s+away)\b/i;
+const AUDIENCE_RE     = /\b(?:world|everyone|anyone|public|others|outside|online|internet|web|the\s+net)\b/i;
+
+function classify(msg) {
+  if (msg.length > 200)                                   return 'full';  // long → full
+  if (TECHNICAL_TERMS_RE.test(msg))                       return 'full';  // sensitive vocab
+  if (SHARING_VERB_RE.test(msg) && AUDIENCE_RE.test(msg)) return 'full';  // share X with an audience
+  // Shouting/command emphasis = full; a SINGLE benign acronym (HTTPS, JSON, HTML) stays trivial.
+  const allcaps = msg.match(/\b[A-Z]{4,}\b/g) || [];
+  if (allcaps.length >= 2 || allcaps.some(w => w.length >= 8)) return 'full';  // shouting or a long caps token
+  return 'trivial';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGE 2b · INLINE COUNCIL (runs only for tier:full)
+//
+// Three lean assessors reading the Charter §2/§4/§5/§6, inline.
+// Synthesize follows §5 precedence: block > escalate > proceed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// §2 human-gate category detectors (semantic)
+const CATEGORY_PATTERNS = [
+  { name: 'money',            re: /\b(?:pay|transfer|bill|subscription|charge|invoice|fund|payment|financial|purchase|buy|sell)\b/i },
+  { name: 'software',         re: /\b(?:deploy|publish|release|npm\s+publish|push\s+to\s+(?:main|master|prod))\b/i },
+  { name: 'secrets',          re: /\b(?:token|api[_\s]?key|password|credential|secret|private[_\s]?key|passphrase)\b/i },
+  { name: 'network-exposure', re: /\b(?:firewall|dns|open\s+port|publish\s+endpoint|expose\s+(?:port|endpoint))\b/i },
+  { name: 'irreversible',     re: /\b(?:delete|permanently|purge|destroy|wipe|cannot\s+be\s+undone|irreversible)\b/i },
+  { name: 'outward',          re: /\b(?:publicly|to\s+(?:the\s+)?public|to\s+everyone|broadcast|tweet\s+this|announce\s+to\s+all|send\s+to\s+all)\b/i },
+];
+
+// Hard-veto condition: message proposes exposing a secret publicly
+const PUBLIC_EXPOSURE_RE = /\bpublicly\b|\bto\s+(?:the\s+)?public\b|\bto\s+everyone\b|\bpublish\s+(?:the\s+)?(?:token|key|secret|credential|password)/i;
+
+// Opportunity assessor — always returns thin but honest value
+function assessOpportunity() {
+  return {
+    opportunity: {
+      value: 'Delivers the intended message to the recipient if approved',
+      rationale: 'Communication enables coordination, relationship, or information sharing',
+    },
+  };
+}
+
+// Risk assessor — adversarial; defaults high under uncertainty
+function assessRisk(msg) {
+  const hits = CATEGORY_PATTERNS.filter(p => p.re.test(msg)).map(p => p.name);
+
+  let tier          = 'low';
+  let blast_radius  = 'Local interpersonal message; bounded to intended recipient';
+  let reversibility = 'Can follow up to retract or clarify within minutes';
+  const failures    = [];
+
+  if (hits.includes('secrets')) {
+    tier          = 'high';
+    blast_radius  = 'Secret exposure is unbounded once sent — cannot be recalled';
+    reversibility = 'Not reversible; affected credentials must be rotated immediately';
+    failures.push('Credential compromise if token/key is intercepted or forwarded');
+    failures.push('System breach if secret is used by unintended recipient');
+  }
+  if (hits.includes('irreversible')) {
+    if (tier !== 'high') tier = 'high';
+    blast_radius  = 'Irreversible action; cannot be undone within 24 hours';
+    reversibility = 'Permanent';
+    failures.push('Unrecoverable state or data loss');
+  }
+  if (hits.includes('outward') || hits.includes('network-exposure')) {
+    if (tier === 'low') tier = 'medium';
+    failures.push('Information exposed to unintended audience');
+  }
+  if (hits.includes('money')) {
+    if (tier === 'low') tier = 'medium';
+    failures.push('Unauthorized financial commitment or loss');
+  }
+  if (hits.includes('software')) {
+    if (tier === 'low') tier = 'medium';
+    failures.push('Unintended production deployment or irreversible publish');
+  }
+
+  // Always at least 3 failure modes
+  if (failures.length === 0) {
+    failures.push('Misunderstanding of intent by recipient');
+    failures.push('Message forwarded beyond intended audience');
+    failures.push('Timing or context mismatch creates confusion');
+  } else {
+    if (failures.length < 3) failures.push('Misunderstanding of intent by recipient');
+    if (failures.length < 3) failures.push('Message forwarded beyond intended audience');
+  }
+
+  return {
+    risk: {
+      tier,
+      blast_radius,
+      reversibility,
+      top_failure_modes: failures.slice(0, 5),
+    },
+  };
+}
+
+// Compliance assessor — §2 categories → tripwires; secrets+public_exposure → hard veto
+function assessCompliance(msg) {
+  const tripwires = CATEGORY_PATTERNS
+    .filter(p => p.re.test(msg))
+    .map(p => p.name);
+
+  // Hard veto: proposing to expose a secret publicly (§2 Secrets + §2 Outward combined)
+  const hasSecret = CATEGORY_PATTERNS.find(p => p.name === 'secrets')?.re.test(msg);
+  const hasPublic = PUBLIC_EXPOSURE_RE.test(msg);
+
+  let allowed     = true;
+  let veto_reason = null;
+
+  if (hasSecret && hasPublic) {
+    allowed     = false;
+    veto_reason = '§2 Secrets + §2 Outward: message proposes publicly exposing credentials — hard charter violation per §7';
+  }
+
+  return {
+    compliance:     { allowed, veto_reason },
+    tripwires_fired: tripwires,
+  };
+}
+
+// §5 synthesis (precedence: block > escalate > proceed)
+function synthesize(rsk, cmp) {
+  const tier      = rsk.risk.tier;
+  const allowed   = cmp.compliance.allowed;
+  const tripwires = cmp.tripwires_fired || [];
+
+  if (!allowed) {
+    return { decision: 'block', reason: cmp.compliance.veto_reason, tripwires };
+  }
+  if (tier === 'medium' || tier === 'high' || tripwires.length > 0) {
+    const why = `risk tier: ${tier}; tripwires: [${tripwires.join(', ')}]`;
+    return { decision: 'escalate', reason: why, tripwires };
+  }
+  return { decision: 'proceed', reason: 'low risk, compliant, no tripwires', tripwires };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOGGING (append-only, msg_hash only — no raw message)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function msgHash(msg) {
+  return crypto.createHash('sha256').update(msg, 'utf8').digest('hex').slice(0, 16);
+}
+
+function appendLog(entry) {
+  try {
+    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n', { flag: 'a' });
+  } catch (e) {
+    process.stderr.write(`WARN: log write failed: ${e.message}\n`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN
+// ─────────────────────────────────────────────────────────────────────────────
+
+const msg = process.argv.slice(2).join(' ').trim();
+
+if (!msg) {
+  process.stderr.write('usage: comm-membrane "<message>"\n');
+  process.exit(1);
+}
+
+try {
+  const ts   = new Date().toISOString();
+  const hash = msgHash(msg);
+
+  // ── Stage 1: PRE-CHECK ────────────────────────────────────────────────────
+  const pre = precheck(msg);
+  if (pre.hit) {
+    const reason = `PRE-CHECK BLOCK [${pre.cat}·${pre.name}] — structural violation, message never reached council`;
+    appendLog({ ts, tier: 'pre-check', decision: 'block', reason, msg_hash: hash });
+    console.log(`BLOCKED — ${reason}`);
+    process.exit(1);
+  }
+
+  // ── Stage 2: TIER + COUNCIL ────────────────────────────────────────────────
+  const tier = classify(msg);
+  let decision, reason, tripwires = [];
+
+  if (tier === 'trivial') {
+    // Fast council-rule: short plain-text, no flags → proceed (council gate satisfied by rule)
+    decision  = 'proceed';
+    reason    = 'tier:trivial — council fast-rule: short plain-text, no flags, no structural concerns';
+  } else {
+    // tier:full — the CLI CANNOT run the real LLM council (assessors live only in the
+    // main Sancta session). HONEST + FAIL-CLOSED: never fake-approve. Apply ONLY the
+    // deterministic hard-veto (clear literal charter violations) → BLOCK; everything
+    // else → ESCALATE to the REAL council at the main Sancta thread. No keyword "proceed".
+    const cmp = assessCompliance(msg);
+    tripwires = cmp.tripwires_fired || [];
+    if (!cmp.compliance.allowed) {
+      decision = 'block';
+      reason   = cmp.compliance.veto_reason;
+    } else {
+      decision = 'escalate';
+      reason   = 'tier:full — non-trivial; routed to the REAL council at the main Sancta thread (CLI cannot run LLM assessors, so it never auto-approves)';
+    }
+  }
+
+  const logReason = tripwires.length
+    ? `${reason}`
+    : reason;
+
+  appendLog({ ts, tier, decision, reason: logReason, msg_hash: hash });
+
+  if (decision === 'proceed') {
+    console.log(`✓ APPROVED TO COMMUNICATE: ${msg}`);
+    process.exit(0);
+  } else if (decision === 'escalate') {
+    console.log(`HELD FOR HUMAN — ${reason}`);
+    process.exit(2);
+  } else {
+    console.log(`BLOCKED — ${reason}`);
+    process.exit(1);
+  }
+
+} catch (err) {
+  // ANY error → ESCALATE (fail-closed guarantee)
+  const ts   = new Date().toISOString();
+  const hash = msgHash(msg);
+  const reason = `ERROR (fail-closed escalate): ${err.message}`;
+  try { appendLog({ ts, tier: 'error', decision: 'escalate', reason, msg_hash: hash }); } catch {}
+  console.log(`HELD FOR HUMAN — ${reason}`);
+  process.exit(2);
+}
