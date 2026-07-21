@@ -61,7 +61,28 @@
     # `herdr` is included so the dedicated herdr user (which runs the herdr
     # server + agent panes) gets the full Claude Code stack — claude CLI, skills,
     # agents, commands — under /var/lib/herdr/.claude, not just root.
-    users = [ "root" "herdr" ];
+    # `sancta` is included so the soul volume's skills/agents/commands are
+    # built and owned by THIS host's home-manager (clone at
+    # /var/lib/sancta/.claude-shared), replacing the 2026-07-21 hand-copied
+    # rpi5 store paths that seeded the migrated soul.
+    users = [ "root" "herdr" "sancta" ];
+  };
+
+  # The claude-shared settings activation rewrites ~/.claude/settings.json
+  # from the merged declarative set; without these keys it would strip the
+  # runtime-chosen model/verbose that the migrated soul carried over from
+  # rpi5 (and that the sancta-worker's resumed session runs with).
+  home-manager.users.sancta.programs.claude-code.extraSettings = {
+    model = "opus[1m]";
+    verbose = true;
+  };
+
+  # At boot, per-user HM activation must not run before the encrypted soul
+  # volume is mounted at ~/.claude — otherwise its symlinks land on the bare
+  # underlay dir and are shadowed by the later mount.
+  systemd.services.home-manager-sancta = {
+    after = [ "sancta-soul-mount.service" ];
+    wants = [ "sancta-soul-mount.service" ];
   };
 
   # Agent tooling on the system PATH so herdr panes (which inherit the
