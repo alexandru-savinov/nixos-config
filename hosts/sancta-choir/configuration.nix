@@ -157,30 +157,30 @@
       # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
       # volume). LIVE: soul-volume-key.age exists (random 256-bit; recipients
       # sancta-choir + rpi5 in secrets/secrets.nix) and `keyFile` is wired below
-      # in the service. This is NOT inert-by-null-key anymore — the ONLY remaining
-      # inert-guard is ConditionPathExists on the loopback image, which does not
-      # yet exist (Alexandru creates it once, by hand, in Phase 4). This repo
-      # holds NO plaintext key — the .age is age-encrypted.
+      # in the service. The loopback image is initialized and mounted; the worker
+      # also requires this mount before it can start. This repo holds NO plaintext
+      # key — the .age is age-encrypted.
       soul-volume-key = secret "soul-volume-key";
     };
 
   # ── Sancta worker (headless `claude -p`) — LIVE, marker-gated ───────────
   # The named session is armed only while its marker exists. The worker keeps
-  # the read-only tool boundary and the low per-message budget cap.
+  # the read-only tool boundary and a bounded per-message budget cap.
   services.sancta-worker = {
     enable = true;
     apiKeyFile = config.age.secrets.anthropic-api-key.path;
     user = "sancta";
     session = "666bcb25-8bc5-467a-b603-4eecce495341";
-    # Safe module defaults remain in force:
-    #   allowedTools = [ "Read" "Grep" "Glob" ];
-    #   maxBudgetUsd = "1.00";
+    # This resumed context has a measured ~$1.054 input floor. Keep enough
+    # headroom for one reply while retaining a strict per-invocation ceiling.
+    maxBudgetUsd = "2.00";
+    # Safe module tool default remains in force: [ "Read" "Grep" "Glob" ].
   };
 
-  # ── Sancta encrypted soul volume for ~/.claude — STUB, inert ────────────
+  # ── Sancta encrypted soul volume for ~/.claude — LIVE ───────────────────
   # LUKS-on-loopback on the existing ext4 root (non-destructive). The real
-  # agenix keyFile is wired; the unit remains INERT only until Alexandru creates
-  # the image by hand (see soul-volume.nix init commands).
+  # agenix keyFile is wired and the image was initialized out of band using the
+  # documented soul-volume.nix commands.
   services.sancta-soul-volume = {
     enable = true;
     owner = "sancta";

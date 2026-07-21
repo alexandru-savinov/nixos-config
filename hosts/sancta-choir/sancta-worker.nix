@@ -207,6 +207,8 @@ in
         SANCTA_REPLIES = repliesPath;
         SANCTA_CURSOR = cursorPath;
         SANCTA_FAILURE = failurePath;
+        SANCTA_WORKER_READY = runtimeReadyPath;
+        SANCTA_REQUIRE_CREDENTIAL = if cfg.apiKeyFile != null then "1" else "0";
         SANCTA_PROJECT_DIR = projectDir;
         CLAUDE_BIN = "${claudeCodePkg}/bin/claude";
         CLAUDE_ARGS_JSON = builtins.toJSON (
@@ -262,8 +264,6 @@ in
             esac
             unset credential
           ''}
-          : > ${runtimeReadyPath}
-          chmod 0600 ${runtimeReadyPath}
           exec ${pkgs.nodejs_22}/bin/node ${relay}
         '';
 

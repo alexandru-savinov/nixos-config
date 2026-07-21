@@ -1,16 +1,84 @@
 import fs from "fs";
 import { open, readFile, rename, stat, unlink, writeFile } from "fs/promises";
 import { spawn } from "child_process";
+import crypto from "crypto";
+import path from "path";
 
 const inbox = process.env.SANCTA_INBOX;
 const replies = process.env.SANCTA_REPLIES;
 const cursorFile = process.env.SANCTA_CURSOR;
 const failureFile = process.env.SANCTA_FAILURE;
+const readyFile = process.env.SANCTA_WORKER_READY;
 const claudeBin = process.env.CLAUDE_BIN;
 const claudeArgs = JSON.parse(process.env.CLAUDE_ARGS_JSON);
+const projectDir = process.env.SANCTA_PROJECT_DIR;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const log = message => process.stdout.write(new Date().toISOString() + " " + message + "\n");
+
+function validateRuntime() {
+  const required = { inbox, replies, cursorFile, failureFile, claudeBin, projectDir };
+  for (const [name, value] of Object.entries(required)) {
+    if (!value) throw new Error("missing runtime setting: " + name);
+  }
+  if (!Array.isArray(claudeArgs)) throw new Error("CLAUDE_ARGS_JSON must be an array");
+  if (process.env.SANCTA_REQUIRE_CREDENTIAL === "1"
+      && !process.env.ANTHROPIC_API_KEY
+      && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    throw new Error("missing Claude credential");
+  }
+  fs.accessSync(claudeBin, fs.constants.X_OK);
+  fs.accessSync(projectDir, fs.constants.R_OK | fs.constants.X_OK);
+  fs.accessSync(path.dirname(cursorFile), fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+}
+
+function markReady() {
+  if (!readyFile) return;
+  fs.writeFileSync(readyFile, "", { mode: 0o600 });
+  fs.chmodSync(readyFile, 0o600);
+}
+
+function checkpointKey(offset, inboxTs, line) {
+  const hash = crypto.createHash("sha256").update(line, "utf8").digest("hex");
+  return { key: `${offset}:${inboxTs || ""}:${hash}`, hash };
+}
+
+async function loadCommittedCheckpoints() {
+  const committed = new Set();
+  let raw;
+  try { raw = await readFile(replies, "utf8"); } catch (error) {
+    if (error.code === "ENOENT") return committed;
+    throw error;
+  }
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    try {
+      const reply = JSON.parse(line);
+      if (reply.source === "sancta-worker" && typeof reply.inbox_checkpoint === "string") {
+        committed.add(reply.inbox_checkpoint);
+      }
+    } catch (error) {
+      log("ignoring malformed reply checkpoint: " + error.message);
+    }
+  }
+  return committed;
+}
+
+async function appendReply(reply) {
+  let previous = "";
+  try { previous = await readFile(replies, "utf8"); } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const temporary = replies + ".tmp";
+  const handle = await open(temporary, "w", 0o600);
+  try {
+    await handle.writeFile(previous + JSON.stringify(reply) + "\n", "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(temporary, replies);
+}
 
 async function saveCursor(offset) {
   const temporary = cursorFile + ".tmp";
@@ -61,10 +129,10 @@ function textFromEvent(event) {
     .join("\n");
 }
 
-async function runTurn(message, inboxTs) {
+async function runTurn(message, inboxTs, checkpoint, inboxOffset, nextOffset) {
   log("starting resumed turn for inbox ts=" + (inboxTs || "unknown"));
   const child = spawn(claudeBin, claudeArgs, {
-    cwd: process.env.SANCTA_PROJECT_DIR,
+    cwd: projectDir,
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -114,13 +182,21 @@ async function runTurn(message, inboxTs) {
     text,
     source: "sancta-worker",
     inbox_ts: inboxTs || null,
+    inbox_offset: inboxOffset,
+    inbox_next_offset: nextOffset,
+    inbox_hash: checkpoint.hash,
+    inbox_checkpoint: checkpoint.key,
   };
-  fs.appendFileSync(replies, JSON.stringify(reply) + "\n", { mode: 0o600 });
+  await appendReply(reply);
   await clearFailure();
   log("appended live reply for inbox ts=" + (inboxTs || "unknown"));
 }
 
+validateRuntime();
 let offset = await loadCursor();
+const committedCheckpoints = await loadCommittedCheckpoints();
+markReady();
+log("relay initialized and ready");
 for (;;) {
   let size;
   try { size = (await stat(inbox)).size; } catch (error) {
@@ -152,8 +228,17 @@ for (;;) {
       throw new Error("invalid inbox JSON at offset " + offset);
     }
     if (entry?.decision === "proceed" && typeof entry.message === "string" && entry.message.trim()) {
+      const checkpoint = checkpointKey(offset, entry.ts, line);
+      if (committedCheckpoints.has(checkpoint.key)) {
+        log("reply checkpoint already committed; advancing cursor without replay at " + offset);
+        await clearFailure();
+        offset += bytes;
+        await saveCursor(offset);
+        continue;
+      }
       try {
-        await runTurn(entry.message, entry.ts);
+        await runTurn(entry.message, entry.ts, checkpoint, offset, offset + bytes);
+        committedCheckpoints.add(checkpoint.key);
       } catch (error) {
         const reason = /^Claude exited [0-9]+$/.test(error.message)
           ? error.message

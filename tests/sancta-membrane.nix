@@ -168,6 +168,7 @@ NODE
       SANCTA_REPLIES="$success/replies" \
       SANCTA_CURSOR="$success/cursor" \
       SANCTA_FAILURE="$success/failure" \
+      SANCTA_WORKER_READY="$success/ready" \
       SANCTA_PROJECT_DIR="$TMPDIR" \
       CLAUDE_BIN=${fakeSuccess} \
       CLAUDE_ARGS_JSON='[]' \
@@ -182,8 +183,59 @@ NODE
       const cursor = JSON.parse(fs.readFileSync(dir + "/cursor", "utf8"));
       const reply = JSON.parse(fs.readFileSync(dir + "/replies", "utf8").trim());
       if (cursor.offset !== size || reply.text !== "live test reply") process.exit(1);
+      if (reply.inbox_offset !== 0 || reply.inbox_next_offset !== size) process.exit(1);
+      if (!/^[a-f0-9]{64}$/.test(reply.inbox_hash)) process.exit(1);
+      if (typeof reply.inbox_checkpoint !== "string") process.exit(1);
       if (reply.inbox_ts !== "success-ts" || fs.existsSync(dir + "/failure")) process.exit(1);
+      if ((fs.statSync(dir + "/ready").mode & 0o777) !== 0o600) process.exit(1);
     ' "$success"
+
+    replay="$TMPDIR/replay"
+    mkdir -p "$replay"
+    printf '%s\n' '{"ts":"replay-ts","decision":"proceed","message":"test"}' > "$replay/inbox"
+    printf '%s\n' '{"offset":0}' > "$replay/cursor"
+    printf '%s\n' '{"reason":"interrupted after reply commit"}' > "$replay/failure"
+    node -e '
+      const crypto = require("crypto");
+      const fs = require("fs");
+      const dir = process.argv[1];
+      const line = fs.readFileSync(dir + "/inbox", "utf8").trimEnd();
+      const hash = crypto.createHash("sha256").update(line, "utf8").digest("hex");
+      const reply = {
+        ts: "reply-ts",
+        source: "sancta-worker",
+        inbox_ts: "replay-ts",
+        inbox_offset: 0,
+        inbox_next_offset: Buffer.byteLength(line + "\n"),
+        inbox_hash: hash,
+        inbox_checkpoint: `0:replay-ts:''${hash}`,
+        text: "already committed",
+      };
+      fs.writeFileSync(dir + "/replies", JSON.stringify(reply) + "\n");
+    ' "$replay"
+    set +e
+    timeout 1s env \
+      SANCTA_INBOX="$replay/inbox" \
+      SANCTA_REPLIES="$replay/replies" \
+      SANCTA_CURSOR="$replay/cursor" \
+      SANCTA_FAILURE="$replay/failure" \
+      SANCTA_WORKER_READY="$replay/ready" \
+      SANCTA_PROJECT_DIR="$TMPDIR" \
+      CLAUDE_BIN=${fakeFailure} \
+      CLAUDE_ARGS_JSON='[]' \
+      node ${relay}
+    replay_status=$?
+    set -e
+    test "$replay_status" -eq 124
+    node -e '
+      const fs = require("fs");
+      const dir = process.argv[1];
+      const size = fs.statSync(dir + "/inbox").size;
+      const cursor = JSON.parse(fs.readFileSync(dir + "/cursor", "utf8"));
+      const replies = fs.readFileSync(dir + "/replies", "utf8").trim().split("\n");
+      if (cursor.offset !== size || replies.length !== 1) process.exit(1);
+      if (fs.existsSync(dir + "/failure")) process.exit(1);
+    ' "$replay"
 
     shrink="$TMPDIR/shrink"
     mkdir -p "$shrink"

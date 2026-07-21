@@ -2,7 +2,7 @@
 // comm-membrane — communication gate for Alexandru.
 //
 // Every message passes through a fail-closed, two-stage membrane:
-//   Stage 1 · PRE-CHECK   — deterministic structural deny (PII, secrets, §2 literals)
+//   Stage 1 · PRE-CHECK   — deterministic best-effort deny (PII, secrets, §2 literals)
 //   Stage 2 · ROUTING     — trivial: fast rule; full: hard veto or real-council escalation
 //
 // Exit codes: 0 = proceed  |  1 = block  |  2 = escalate  |  (any error → 2)
@@ -21,7 +21,10 @@ const LOG_FILE = path.join(os.homedir(), '.claude', 'index', 'comm-membrane.log.
 // ─────────────────────────────────────────────────────────────────────────────
 // STAGE 1 · PRE-CHECK (structural, deterministic, NO council)
 //
-// Checks for hard structural violations.  A hit → BLOCK immediately.
+// This is defense in depth, not a complete secret scanner: encoding,
+// obfuscation, homoglyphs, or values split across messages can evade regexes.
+// A recognized literal hit → BLOCK immediately; later rules route recognized
+// risky or opaque content to escalation.
 // Order matters: more specific patterns first so the name reported is precise.
 // ─────────────────────────────────────────────────────────────────────────────
 
