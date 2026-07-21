@@ -42,9 +42,18 @@ pkgs.runCommand "sancta-membrane-tests"
     aws_status=$?
     printf '%s' "aB3dE5fG7hJ9kLmNpQrStUvWxYzAbCdEfGhIjKl" | HOME="$guard_home" node ${membrane} >/dev/null
     opaque_status=$?
+    printf '%s' "Send 500 to Ion for rent" | HOME="$guard_home" node ${membrane} >/dev/null
+    money_status=$?
+    printf '%s' "buy the tickets now" | HOME="$guard_home" node ${membrane} >/dev/null
+    purchase_status=$?
+    printf '%s' "wipe the cache" | HOME="$guard_home" node ${membrane} >/dev/null
+    irreversible_status=$?
     set -e
     test "$aws_status" -eq 1
     test "$opaque_status" -eq 2
+    test "$money_status" -eq 2
+    test "$purchase_status" -eq 2
+    test "$irreversible_status" -eq 2
 
     gateway="$TMPDIR/gateway"
     mkdir -p "$gateway"

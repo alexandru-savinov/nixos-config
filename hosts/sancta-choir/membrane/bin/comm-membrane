@@ -67,6 +67,20 @@ const TECHNICAL_TERMS_RE = /\b(?:api|token|deploy|push|publish|delete|firewall|d
 const SHARING_VERB_RE = /\b(?:share|send|post|forward|leak|distribute|broadcast|reveal|disclose|publish|transmit|expose|spread|hand\s+over|give\s+away)\b/i;
 const AUDIENCE_RE     = /\b(?:world|everyone|anyone|public|others|outside|online|internet|web|the\s+net)\b/i;
 
+// §2 human-gate category detectors. Every match forces full routing; these are
+// also reused below to report which deterministic compliance tripwires fired.
+const CATEGORY_PATTERNS = [
+  { name: 'money',            re: /\b(?:pay|transfer|wire|bill|rent|subscription|charge|invoice|fund|money|cash|payment|financial|purchase|buy|sell)\b/i },
+  { name: 'software',         re: /\b(?:deploy|publish|release|npm\s+publish|push\s+to\s+(?:main|master|prod))\b/i },
+  { name: 'secrets',          re: /\b(?:token|api[_\s]?key|password|credential|secret|private[_\s]?key|passphrase)\b/i },
+  { name: 'network-exposure', re: /\b(?:firewall|dns|open\s+port|publish\s+endpoint|expose\s+(?:port|endpoint))\b/i },
+  { name: 'irreversible',     re: /\b(?:delete|permanently|purge|destroy|wipe|cannot\s+be\s+undone|irreversible)\b/i },
+  { name: 'outward',          re: /\b(?:publicly|to\s+(?:the\s+)?public|to\s+everyone|broadcast|tweet\s+this|announce\s+to\s+all|send\s+to\s+all)\b/i },
+];
+
+// Hard-veto condition: message proposes exposing a secret publicly
+const PUBLIC_EXPOSURE_RE = /\bpublicly\b|\bto\s+(?:the\s+)?public\b|\bto\s+everyone\b|\bpublish\s+(?:the\s+)?(?:token|key|secret|credential|password)/i;
+
 function hasOpaqueToken(msg) {
   const candidates = msg.match(/[A-Za-z0-9_+/=-]{32,}/g) || [];
   return candidates.some(token => {
@@ -85,6 +99,7 @@ function classify(msg) {
   if (msg.length > 200)                                   return 'full';  // long → full
   if (TECHNICAL_TERMS_RE.test(msg))                       return 'full';  // sensitive vocab
   if (SHARING_VERB_RE.test(msg) && AUDIENCE_RE.test(msg)) return 'full';  // share X with an audience
+  if (CATEGORY_PATTERNS.some(pattern => pattern.re.test(msg))) return 'full';  // §2 human gate
   if (hasOpaqueToken(msg))                                return 'full';  // unknown credential-like material
   // Shouting/command emphasis = full; a SINGLE benign acronym (HTTPS, JSON, HTML) stays trivial.
   const allcaps = msg.match(/\b[A-Z]{4,}\b/g) || [];
@@ -98,19 +113,6 @@ function classify(msg) {
 // Apply only deterministic hard vetoes locally. Everything else is escalated
 // to the real council; this process never pretends to perform LLM assessment.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// §2 human-gate category detectors (semantic)
-const CATEGORY_PATTERNS = [
-  { name: 'money',            re: /\b(?:pay|transfer|bill|subscription|charge|invoice|fund|payment|financial|purchase|buy|sell)\b/i },
-  { name: 'software',         re: /\b(?:deploy|publish|release|npm\s+publish|push\s+to\s+(?:main|master|prod))\b/i },
-  { name: 'secrets',          re: /\b(?:token|api[_\s]?key|password|credential|secret|private[_\s]?key|passphrase)\b/i },
-  { name: 'network-exposure', re: /\b(?:firewall|dns|open\s+port|publish\s+endpoint|expose\s+(?:port|endpoint))\b/i },
-  { name: 'irreversible',     re: /\b(?:delete|permanently|purge|destroy|wipe|cannot\s+be\s+undone|irreversible)\b/i },
-  { name: 'outward',          re: /\b(?:publicly|to\s+(?:the\s+)?public|to\s+everyone|broadcast|tweet\s+this|announce\s+to\s+all|send\s+to\s+all)\b/i },
-];
-
-// Hard-veto condition: message proposes exposing a secret publicly
-const PUBLIC_EXPOSURE_RE = /\bpublicly\b|\bto\s+(?:the\s+)?public\b|\bto\s+everyone\b|\bpublish\s+(?:the\s+)?(?:token|key|secret|credential|password)/i;
 
 // Compliance assessor — §2 categories → tripwires; secrets+public_exposure → hard veto
 function assessCompliance(msg) {
@@ -203,11 +205,7 @@ try {
     }
   }
 
-  const logReason = tripwires.length
-    ? `${reason}`
-    : reason;
-
-  appendLog({ ts, tier, decision, reason: logReason, msg_hash: hash });
+  appendLog({ ts, tier, decision, reason, tripwires, msg_hash: hash });
 
   if (decision === 'proceed') {
     console.log(`✓ APPROVED TO COMMUNICATE: ${msg}`);
