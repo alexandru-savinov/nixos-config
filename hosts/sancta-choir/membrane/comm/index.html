@@ -340,7 +340,7 @@ function addBubble(opts) {
 // ── Send ──────────────────────────────────────────────────────────────────────
 function sendMsg() {
   const text = input.value.trim();
-  if (!text) { input.focus(); return; }
+  if (!text || !workerReady) { input.focus(); return; }
 
   input.value = '';
   input.style.height = '';
@@ -357,7 +357,11 @@ function sendMsg() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message: text }),
   })
-    .then(r => r.json())
+    .then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    })
     .then(data => {
       const d = data.decision || 'error';
       chip.className   = 'chip ' + d;
@@ -365,12 +369,13 @@ function sendMsg() {
       bubble.classList.remove('pending');
     })
     .catch(() => {
+      optimistic.delete(text);
       chip.className   = 'chip error';
       chip.textContent = '⚠';
       bubble.classList.remove('pending');
     })
     .finally(() => {
-      sendBtn.disabled = false;
+      sendBtn.disabled = !workerReady;
       input.focus();
     });
 }
@@ -440,6 +445,7 @@ sendBtn.addEventListener('click', sendMsg);
 // ── Heartbeat pill ────────────────────────────────────────────────────────────
 const hbPill = document.getElementById('hb-pill');
 const hbText = document.getElementById('hb-text');
+let workerReady = false;
 
 async function pollHeartbeat() {
   try {
@@ -448,7 +454,12 @@ async function pollHeartbeat() {
     const d = await r.json();
     const ageSec = d.ts ? Math.round((Date.now() - new Date(d.ts).getTime()) / 1000) : 9999;
     let cls, label;
-    if (ageSec < 90) {
+    workerReady = d.worker?.status === 'ready';
+    if (d.worker?.status === 'failed') {
+      cls = 'hb-red'; label = 'worker oprit: ' + (d.worker.failure?.reason || 'eroare');
+    } else if (!workerReady) {
+      cls = 'hb-red'; label = 'worker oprit';
+    } else if (ageSec < 90) {
       cls = 'hb-green'; label = 'Sancta · viu de ' + ageSec + 's';
     } else if (ageSec < 300) {
       cls = 'hb-amber'; label = 'Sancta · ' + Math.round(ageSec / 60) + 'min inactiv';
@@ -457,7 +468,10 @@ async function pollHeartbeat() {
     }
     hbPill.className = 'hb-pill ' + cls;
     hbText.textContent = label;
+    sendBtn.disabled = !workerReady;
   } catch (_) {
+    workerReady = false;
+    sendBtn.disabled = true;
     hbPill.className = 'hb-pill hb-red';
     hbText.textContent = 'canal posibil mort';
   }

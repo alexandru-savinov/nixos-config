@@ -25,6 +25,8 @@ const HTML_FILE      = path.join(__dirname, 'index.html');
 const INBOX_FILE     = path.join(INDEX_DIR, 'comm-inbox.jsonl');
 const REPLIES_FILE   = path.join(INDEX_DIR, 'comm-replies.jsonl');
 const HEARTBEAT_FILE = path.join(INDEX_DIR, 'comm-heartbeat.json');
+const FAILURE_FILE   = process.env.SANCTA_FAILURE || path.join(INDEX_DIR, 'comm-worker-failure.json');
+const WORKER_READY_FILE = process.env.SANCTA_WORKER_READY || '/run/sancta-worker/ready';
 const MEMBRANE_PATH  = process.env.SANCTA_MEMBRANE_PATH || path.join(__dirname, '..', 'bin', 'comm-membrane');
 
 function log(...args) {
@@ -62,6 +64,32 @@ function appendInbox(ts, decision, message) {
 
 function messageHash(message) {
   return crypto.createHash('sha256').update(message, 'utf8').digest('hex').slice(0, 16);
+}
+
+function workerStatus() {
+  try {
+    const failure = JSON.parse(fs.readFileSync(FAILURE_FILE, 'utf8'));
+    return {
+      status: 'failed',
+      failure: {
+        ts: typeof failure.ts === 'string' ? failure.ts : null,
+        inbox_ts: typeof failure.inbox_ts === 'string' ? failure.inbox_ts : null,
+        offset: Number.isSafeInteger(failure.offset) ? failure.offset : null,
+        reason: typeof failure.reason === 'string' ? failure.reason.slice(0, 160) : 'worker failure',
+      },
+    };
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      return { status: 'failed', failure: { reason: 'failure marker unreadable' } };
+    }
+  }
+
+  try {
+    fs.accessSync(WORKER_READY_FILE, fs.constants.R_OK);
+    return { status: 'ready' };
+  } catch {
+    return { status: 'stopped' };
+  }
 }
 
 // Read all lines from a JSONL file; returns [] on missing/empty/corrupt file
@@ -210,6 +238,13 @@ const server = http.createServer(async (req, res) => {
 
   // ── POST /send → membrane ───────────────────────────────────────────────────
   if (req.method === 'POST' && url === '/send') {
+    const worker = workerStatus();
+    if (worker.status !== 'ready') {
+      req.resume();
+      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(JSON.stringify({ error: 'worker unavailable', worker }));
+    }
+
     let body;
     try { body = await readBody(req); }
     catch (e) {
@@ -249,10 +284,17 @@ const server = http.createServer(async (req, res) => {
   // ── GET /heartbeat → comm-heartbeat.json ────────────────────────────────────
   if (req.method === 'GET' && url === '/heartbeat') {
     let hb;
-    try { hb = fs.readFileSync(HEARTBEAT_FILE, 'utf8'); }
-    catch { hb = JSON.stringify({ error: 'no heartbeat file', ts: null, status: 'unknown' }); }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(HEARTBEAT_FILE, 'utf8'));
+      hb = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : { error: 'invalid heartbeat file', ts: null, status: 'unknown' };
+    } catch {
+      hb = { error: 'no heartbeat file', ts: null, status: 'unknown' };
+    }
+    hb.worker = workerStatus();
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
-    return res.end(hb);
+    return res.end(JSON.stringify(hb));
   }
 
   // ── GET /thread → merged inbox (proceed|escalate) + sancta replies ──────────

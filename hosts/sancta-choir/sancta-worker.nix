@@ -18,9 +18,11 @@
 #
 # CLI CONTRACT VERIFIED 2026-07-20 against the installed, flake-pinned Claude
 # Code 2.1.215: --strict-mcp-config, --tools, --allowedTools, and
-# --max-budget-usd are all present in `claude --help`. The --tools availability
-# boundary plus --allowedTools headless auto-approval matches the deployed
-# sancta-heartbeat-tick pattern in modules/services/sancta-heartbeat-tick.nix.
+# --max-budget-usd are all present in `claude --help`. The --safe-mode path was
+# exercised by a successful isolated headless invocation. The --tools
+# availability boundary plus --allowedTools headless auto-approval matches the
+# deployed sancta-heartbeat-tick pattern in
+# modules/services/sancta-heartbeat-tick.nix.
 # The inline `--mcp-config '{"mcpServers":{}}'` form was also exercised with an
 # isolated, unauthenticated CLAUDE_CONFIG_DIR: it passed MCP parsing and reached
 # the expected auth gate; malformed JSON was rejected as invalid MCP config.
@@ -47,6 +49,7 @@ let
   # The agenix plaintext is copied here at ExecStartPre, then classified as an
   # API key or OAuth token without ever entering the Nix store.
   runtimeCredentialPath = "/run/sancta-worker/anthropic-credential";
+  runtimeReadyPath = "/run/sancta-worker/ready";
   indexDir = "/var/lib/sancta/.claude/index";
   inboxPath = "${indexDir}/comm-inbox.jsonl";
   repliesPath = "${indexDir}/comm-replies.jsonl";
@@ -259,6 +262,8 @@ in
             esac
             unset credential
           ''}
+          : > ${runtimeReadyPath}
+          chmod 0600 ${runtimeReadyPath}
           exec ${pkgs.nodejs_22}/bin/node ${relay}
         '';
 
@@ -286,9 +291,13 @@ in
       description = "Sancta tailnet membrane gateway";
       wantedBy = lib.optional (cfg.session != null) "multi-user.target";
       after = [ "sancta-worker.service" ];
-      wants = [ "sancta-membrane-serve.service" ];
-      requires = [ "sancta-worker.service" ];
-      bindsTo = [ "sancta-worker.service" ];
+      # Keep history and status available after a one-shot worker failure. The
+      # HTTP gateway rejects new messages unless the worker readiness file is
+      # present, so this soft dependency cannot grow an unattended queue.
+      wants = [
+        "sancta-worker.service"
+        "sancta-membrane-serve.service"
+      ];
       unitConfig = {
         ConditionPathExists =
           if cfg.session == null
@@ -303,6 +312,8 @@ in
         PORT = toString cfg.port;
         SANCTA_INDEX_DIR = indexDir;
         SANCTA_MEMBRANE_PATH = "${membraneSrc}/bin/comm-membrane";
+        SANCTA_WORKER_READY = runtimeReadyPath;
+        SANCTA_FAILURE = failurePath;
       };
       path = [ pkgs.nodejs_22 ];
       serviceConfig = {

@@ -37,6 +37,90 @@ pkgs.runCommand "sancta-membrane-tests"
       echo "membrane accepted a credential-shaped message" >&2
       exit 1
     fi
+    set +e
+    printf '%s' "AKIAABCDEFGHIJKLMNOP" | HOME="$guard_home" node ${membrane} >/dev/null
+    aws_status=$?
+    printf '%s' "aB3dE5fG7hJ9kLmNpQrStUvWxYzAbCdEfGhIjKl" | HOME="$guard_home" node ${membrane} >/dev/null
+    opaque_status=$?
+    set -e
+    test "$aws_status" -eq 1
+    test "$opaque_status" -eq 2
+
+    gateway="$TMPDIR/gateway"
+    mkdir -p "$gateway"
+    ready="$gateway/ready"
+    failure_marker="$gateway/failure"
+    printf '%s\n' null > "$gateway/comm-heartbeat.json"
+    HOME="$guard_home" \
+      BIND=127.0.0.1 \
+      PORT=18743 \
+      SANCTA_INDEX_DIR="$gateway" \
+      SANCTA_WORKER_READY="$ready" \
+      SANCTA_FAILURE="$failure_marker" \
+      SANCTA_MEMBRANE_PATH=${membrane} \
+      node ${server} > "$gateway/server.log" 2>&1 &
+    server_pid=$!
+    trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+    for _ in $(seq 1 50); do
+      if node -e 'fetch("http://127.0.0.1:18743/heartbeat").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    node - <<'NODE'
+    (async () => {
+      const url = "http://127.0.0.1:18743";
+      let response = await fetch(url + "/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "hello" }),
+      });
+      let body = await response.json();
+      if (response.status !== 503 || body.worker?.status !== "stopped") process.exit(1);
+
+      response = await fetch(url + "/heartbeat");
+      body = await response.json();
+      if (!response.ok || body.error !== "invalid heartbeat file") process.exit(1);
+      if (body.worker?.status !== "stopped") process.exit(1);
+    })().catch(error => { console.error(error); process.exit(1); });
+NODE
+
+    touch "$ready"
+    node - <<'NODE'
+    (async () => {
+      const response = await fetch("http://127.0.0.1:18743/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "hello" }),
+      });
+      const body = await response.json();
+      if (!response.ok || body.decision !== "proceed") process.exit(1);
+    })().catch(error => { console.error(error); process.exit(1); });
+NODE
+
+    printf '%s\n' '{"ts":"failure-ts","inbox_ts":"inbox-ts","offset":0,"reason":"Claude exited 7","raw":"must not leak"}' > "$failure_marker"
+    node - <<'NODE'
+    (async () => {
+      const url = "http://127.0.0.1:18743";
+      let response = await fetch(url + "/heartbeat");
+      let body = await response.json();
+      if (!response.ok || body.worker?.status !== "failed") process.exit(1);
+      if (body.worker.failure.reason !== "Claude exited 7" || "raw" in body.worker.failure) process.exit(1);
+
+      response = await fetch(url + "/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "hello again" }),
+      });
+      body = await response.json();
+      if (response.status !== 503 || body.worker?.status !== "failed") process.exit(1);
+    })().catch(error => { console.error(error); process.exit(1); });
+NODE
+
+    kill "$server_pid"
+    wait "$server_pid" || true
+    trap - EXIT
 
     failure="$TMPDIR/failure"
     mkdir -p "$failure"
