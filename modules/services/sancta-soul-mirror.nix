@@ -318,7 +318,8 @@ in
     # file content), keeps its runtime no-auth self-suppress instead.
     assertions = [{
       assertion = builtins.all
-        (r: lib.hasPrefix "age1" r || lib.hasPrefix "ssh-" r) cfg.recipients;
+        (r: lib.hasPrefix "age1" r || lib.hasPrefix "ssh-" r)
+        cfg.recipients;
       message = "services.sancta-soul-mirror.recipients: every entry must be a real age1…/ssh-… public key, not a placeholder.";
     }];
 
