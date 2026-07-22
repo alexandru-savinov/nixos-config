@@ -49,6 +49,7 @@
     # ── Sancta home + live membrane worker ────────────────────────────────
     ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
     ./sancta-worker.nix # guarded comm gateway + resumed `claude -p` worker
+    ../../modules/services/sancta-soul-mirror.nix # choir-local encrypted soul vault (rpi5 pulls)
   ];
 
   # Enable development tools and agent CLIs.
@@ -231,6 +232,19 @@
     # keyFile: agenix secret placed at /run/agenix/soul-volume-key, read by root
     # at boot for cryptsetup. The volume image is created by hand (Phase 4).
     keyFile = config.age.secrets.soul-volume-key.path;
+  };
+
+  # Soul-mirror producer (PULL design): writes a choir-LOCAL dual-recipient age
+  # vault of Sancta's soul and exposes a read-only rrsync endpoint. Makes ZERO
+  # outbound connections — rpi5 dials in over rpi5→choir:22 (ACL-permitted) and
+  # pulls. No sshKeyFile here. pullPubKey stays the module-default placeholder
+  # (endpoint inert) until wired to the real rpi5 pull pubkey below.
+  services.sancta-soul-mirror = {
+    enable = true;
+    user = "sancta";
+    # rpi5's pull public key — authorizes the read-only rrsync pull endpoint.
+    # Private half is agenix secrets/soul-mirror-pull-ssh-key.age (rpi5-only).
+    pullPubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIENdU1AjMRcMptUBi/7BGnOFZjTA11Z0pHFpZt0kbeNO rpi5 -> sancta-choir soul-mirror pull";
   };
 
   # ==========================================================================
