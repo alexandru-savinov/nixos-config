@@ -13,8 +13,9 @@
 # Cloned from hosts/sancta-claw/sancta-selfbackup-receiver.nix; the mechanism is
 # proven in index/backups/soul-mirror-proof.sh (9/9).
 #
-# PLACEHOLDER: replace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILtw8J4mXitlVP7rk/WWSW4T4d4xP+8Ix71rnifahVpK with the real push
-# PUBLIC key AFTER (Alexandru's hand, one-time — see sancta-soul-mirror.nix).
+# PROVISIONED 2026-07-22: backupPushPubKey below is the REAL push public key
+# (matches the private half in secrets/sancta-soul-mirror-push-ssh-key.age,
+# verified end-to-end). No placeholder.
 
 { pkgs, ... }:
 

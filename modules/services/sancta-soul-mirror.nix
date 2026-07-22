@@ -33,21 +33,20 @@
 # dual-recipient restore, forced-command receiver, prune) is proven end-to-end
 # in index/backups/soul-mirror-proof.sh (9/9, throwaway keys).
 #
-# One-time (Alexandru's hand), post-merge:
-#   a. Generate the NEW soul-mirror recovery key OFF rpi5 (option B):
-#        age-keygen -o /tmp/soul-mirror-recovery.key
-#      Store the PRIVATE key in Bitwarden + copy to a keyed host that is NOT
-#      rpi5 (e.g. sancta-claw:/root/.age/), then shred the /tmp copy. Put its
-#      PUBLIC key (age-keygen -y /tmp/soul-mirror-recovery.key) as the first
-#      `recipients` entry above, replacing age1d3qlm08ncrd5ksk4mzypzlx7n8lge2yqd0ejsfvcanz03a9g3csqq2pwtq.
-#   b. Generate the push key + agenix — the push key is choir→rpi5:
-#        ssh-keygen -t ed25519 -C "sancta-choir -> rpi5 soul-mirror" -f /tmp/sm
-#        agenix -e secrets/sancta-soul-mirror-push-ssh-key.age   # paste /tmp/sm (private)
-#   c. Set backupPushPubKey in hosts/rpi5-full/soul-mirror-receiver.nix to /tmp/sm.pub
-#   d. Rebuild rpi5-full (receiver) FIRST, then sancta-choir (producer).
-# Until BOTH the push key and the recovery recipient are provisioned, the
-# producer self-suppresses (no-auth / unprovisioned-recovery) — safe to merge
-# + rebuild before provisioning.
+# PROVISIONED 2026-07-22 (Alexandru's hand): the recovery recipient below is a
+# real age1… key whose PRIVATE half is OFF rpi5 (his Mac + Bitwarden), and the
+# choir→rpi5 push key is in agenix (sancta-soul-mirror-push-ssh-key.age).
+# To RE-PROVISION on another host later:
+#   a. NEW recovery key OFF rpi5:  age-keygen -o recovery.key; age-keygen -y recovery.key
+#      → store the private OFF rpi5 (Bitwarden + a keyed non-rpi5 host); set the
+#        PUBLIC key as the first `recipients` entry below.
+#   b. push key:  ssh-keygen -t ed25519 -f sm
+#      agenix -e secrets/sancta-soul-mirror-push-ssh-key.age   # paste sm (private)
+#      → set backupPushPubKey in hosts/rpi5-full/soul-mirror-receiver.nix to sm.pub.
+#   c. Rebuild rpi5-full (receiver) FIRST, then sancta-choir (producer).
+# A build assertion (config below) rejects any placeholder recipient, so an
+# unprovisioned recovery key can never ship silently. The push key keeps a
+# runtime no-auth self-suppress (its realness is only known at runtime).
 
 { config, lib, pkgs, ... }:
 
@@ -99,16 +98,9 @@ let
       echo "push ssh key is a placeholder / unusable — self-suppressing (no-auth)" >&2; exit 0
     fi
 
-    # ── recovery-recipient provisioning guard (option B): refuse to run while
-    # any recipient is still an unprovisioned placeholder — never silently drop
-    # to a single ssh-only recipient. Safe to merge/deploy before provisioning.
-    RECIPIENTS=( ${lib.concatMapStringsSep " " escapeShellArg cfg.recipients} )
-    for r in "''${RECIPIENTS[@]}"; do
-      case "$r" in
-        age1*|ssh-*) ;;
-        *) echo "recovery recipient not provisioned ($r) — self-suppressing (unprovisioned-recovery)" >&2; exit 0 ;;
-      esac
-    done
+    # (Recipient realness is enforced at BUILD time by a nix assertion in the
+    # config block below — an unprovisioned/placeholder recipient fails the
+    # build rather than being caught here at runtime over static values.)
 
     SSH="${openssh}/bin/ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=${
       if effectiveKnownHosts != null then "yes -o UserKnownHostsFile=${effectiveKnownHosts}" else "accept-new"
@@ -270,10 +262,9 @@ in
         # makes the vault genuinely zero-knowledge: the existing recovery key
         # age1zex0… was DELIBERATELY dropped here because its private half lives
         # on rpi5 (/root/dr/recovery-sancta-claw.key for the self-backup verify),
-        # which would let rpi5 root decrypt the soul it stores. Replace this
-        # sentinel with the new recovery PUBLIC key (age1…) BY HAND. Until then
-        # the producer self-suppresses (unprovisioned-recovery) — it will NOT
-        # silently fall back to a single ssh-only recipient.
+        # which would let rpi5 root decrypt the soul it stores. This is the
+        # PROVISIONED recovery key (2026-07-22); a build assertion rejects any
+        # placeholder here, so the archive can never ship with a single recipient.
         "age1d3qlm08ncrd5ksk4mzypzlx7n8lge2yqd0ejsfvcanz03a9g3csqq2pwtq"
         # Alexandru's ssh pubkey — its private half is NEVER on rpi5. The second,
         # independent restore path (so recovery does not hinge on one key alone).
@@ -319,6 +310,18 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Fail the BUILD if any age recipient is not a real age1…/ssh-… PUBLIC key.
+    # Recipients are static, so this is a build-time property checked at build
+    # time — an unprovisioned/placeholder recovery recipient can never ship
+    # silently (which would drop the archive to a single recipient or break
+    # encryption). The push key, whose realness is only known at runtime (agenix
+    # file content), keeps its runtime no-auth self-suppress instead.
+    assertions = [{
+      assertion = builtins.all
+        (r: lib.hasPrefix "age1" r || lib.hasPrefix "ssh-" r) cfg.recipients;
+      message = "services.sancta-soul-mirror.recipients: every entry must be a real age1…/ssh-… public key, not a placeholder.";
+    }];
+
     systemd.tmpfiles.rules = [
       "d ${cfg.localDir} 0700 ${cfg.user} - -"
       "d ${sshDir} 0700 ${cfg.user} - -"
