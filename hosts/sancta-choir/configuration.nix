@@ -80,9 +80,19 @@
   # At boot, per-user HM activation must not run before the encrypted soul
   # volume is mounted at ~/.claude — otherwise its symlinks land on the bare
   # underlay dir and are shadowed by the later mount.
+  #
+  # Belt-and-suspenders, mirroring sancta-worker.nix's guard for the same
+  # hazard: `after` only sequences and `requires` only pulls the mount into the
+  # transaction — but a ConditionPathExists-skipped soul-mount counts as
+  # satisfied for Requires=, so on a boot where the LUKS chain doesn't complete
+  # HM would still activate onto the bare, unencrypted dir. The
+  # ConditionPathIsMountPoint check refuses activation unless ~/.claude is
+  # actually a mountpoint, closing that hole (Phase-1 guard #1).
   systemd.services.home-manager-sancta = {
     after = [ "sancta-soul-mount.service" ];
-    wants = [ "sancta-soul-mount.service" ];
+    requires = [ "sancta-soul-mount.service" ];
+    unitConfig.ConditionPathIsMountPoint =
+      toString config.services.sancta-soul-volume.mountPoint;
   };
 
   # Agent tooling on the system PATH so herdr panes (which inherit the
