@@ -535,8 +535,14 @@ in
   # ── Backup: pull from sancta-claw ──────────────────────────────────────
   # Daily rsync → tmpfs staging → restic encrypted repo
   # See modules/services/backup-pull.nix for architecture details
+  #
+  # DISABLED 2026-07-22: sancta-claw is intentionally powered down (fate
+  # undecided). With claw offline the daily pull just fails loud every night
+  # (rsync exit 255 → OnFailure alert) with nothing to back up. Re-enable
+  # (enable = true) once claw's disposition is decided; config is otherwise
+  # intact so it's a one-line flip.
   services.backup-pull = {
-    enable = true;
+    enable = false;
     remoteHost = "46.225.168.24"; # sancta-claw public IP (bypasses Tailscale SSH policy)
     remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
     sshKeyFile = secret "rpi5-backup-ssh-key";
