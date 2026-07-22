@@ -78,12 +78,18 @@ in
   #   sudo install -m600 /dev/stdin /var/lib/sancta-tick/oauth-token  # paste, Ctrl-D
   #   sudo nixos-rebuild switch --flake .#rpi5-full
   # See modules/services/sancta-heartbeat-tick.nix for the architecture.
-  services.sancta-heartbeat-tick.enable = true;
+  # CUTOVER 2026-07-22: Sancta migrated to sancta-choir (its soul + worker +
+  # membrane now live on choir's encrypted volume). rpi5's autopilot was still
+  # ticking a now-dead fork of the soul, so the heartbeat tick + gallery are
+  # retired here. Home-system work continues on rpi5 (issue #537), but the
+  # Sancta AGENT does not run here anymore.
+  services.sancta-heartbeat-tick.enable = false;
   services.sancta-heartbeat-tick.oauthTokenFile = "/var/lib/sancta-tick/oauth-token";
 
   # Galeria — Painter's static viewer with the publish gate structurally on.
   # See modules/services/sancta-gallery.nix (council-20260711T174857Z-569898).
-  services.sancta-gallery.enable = true;
+  # Retired in the 2026-07-22 cutover (see above) — Sancta lives on choir now.
+  services.sancta-gallery.enable = false;
 
   # Fleet shared-memory commons — localhost-bound first deploy.
   # Cross-host access over Tailscale is a deliberate follow-up (bind the
@@ -570,8 +576,12 @@ in
   # Alexandru's ssh pubkey) is LOAD-BEARING — a 2026-07-07 restore test proved
   # a recovery-only archive was unrestorable with the ssh key he holds.
   # See modules/services/sancta-self-backup.nix.
+  # CUTOVER 2026-07-22: disabled here — this backed up rpi5's soul (now a dead
+  # fork) and pushed to sancta-claw (powered down). The self-backup will be
+  # re-established ON sancta-choir (protecting the live soul, pushing off-device
+  # to rpi5) as a follow-up, once the choir→rpi5 push key is provisioned.
   services.sancta-self-backup = {
-    enable = true;
+    enable = false;
     sshKeyFile = secret "sancta-selfbackup-push-ssh-key";
   };
 
