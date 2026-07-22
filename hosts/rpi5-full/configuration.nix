@@ -100,7 +100,10 @@ in
 
   # OpenAI Codex CLI for the full, active Pi profile. Keep this out of the
   # minimal rpi5 SD-image profile so bootstrap images stay small.
-  customModules.codex.enable = true;
+  customModules.codex = {
+    enable = true;
+    preserveScrollback = true;
+  };
 
   # Package overrides for memory-constrained ARM builds
   nixpkgs.overlays = [
