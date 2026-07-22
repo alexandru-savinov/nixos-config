@@ -2,6 +2,7 @@
 
 let
   relay = ../hosts/sancta-choir/membrane/relay.mjs;
+  relayHash = builtins.hashFile "sha256" relay;
   server = ../hosts/sancta-choir/membrane/comm/server.mjs;
   membrane = ../hosts/sancta-choir/membrane/bin/comm-membrane;
   authLogin = "owner@example.com";
@@ -18,6 +19,19 @@ let
     ${pkgs.coreutils}/bin/cat >/dev/null
     exit 7
   '';
+
+  fakeCounting = pkgs.writeShellScript "sancta-fake-counting-success" ''
+    set -eu
+    count_file="$SANCTA_TEST_SPAWN_COUNT"
+    count=0
+    if [ -f "$count_file" ]; then
+      count="$(${pkgs.coreutils}/bin/cat "$count_file")"
+    fi
+    ${pkgs.coreutils}/bin/printf '%s\n' "$((count + 1))" > "$count_file"
+    ${pkgs.coreutils}/bin/cat >/dev/null
+    ${pkgs.coreutils}/bin/printf '%s\n' \
+      '{"type":"result","result":"counted test reply"}'
+  '';
 in
 pkgs.runCommand "sancta-membrane-tests"
 {
@@ -32,6 +46,7 @@ pkgs.runCommand "sancta-membrane-tests"
         node --check ${relay}
         node --check ${server}
         node --check ${membrane}
+        test "$(${pkgs.coreutils}/bin/sha256sum ${relay} | ${pkgs.coreutils}/bin/cut -d ' ' -f 1)" = '${relayHash}'
 
         guard_home="$TMPDIR/guard-home"
         mkdir -p "$guard_home/.claude/index"
@@ -340,6 +355,124 @@ pkgs.runCommand "sancta-membrane-tests"
           if (reply.inbox_ts !== "success-ts" || fs.existsSync(dir + "/failure")) process.exit(1);
           if ((fs.statSync(dir + "/ready").mode & 0o777) !== 0o600) process.exit(1);
         ' "$success"
+
+        # Causal crash-window coverage against the exact production relay
+        # source. The managed service never receives these test-only env vars;
+        # module-eval locks that absence.
+        run_crash_window() {
+          local name="$1"
+          local point="$2"
+          local expected_spawns="$3"
+          local committed="$4"
+          local dir="$TMPDIR/crash-$name"
+          local relay_pid
+          local recovery_status
+
+          mkdir -p "$dir"
+          printf '%s\n' '{"ts":"crash-ts","decision":"proceed","message":"test"}' > "$dir/inbox"
+          printf '%s\n' '{"offset":0}' > "$dir/cursor"
+
+          env \
+            SANCTA_INBOX="$dir/inbox" \
+            SANCTA_REPLIES="$dir/replies" \
+            SANCTA_CURSOR="$dir/cursor" \
+            SANCTA_FAILURE="$dir/failure" \
+            SANCTA_WORKER_READY="$dir/worker-ready" \
+            SANCTA_PROJECT_DIR="$TMPDIR" \
+            SANCTA_TEST_SPAWN_COUNT="$dir/spawn-count" \
+            SANCTA_RELAY_TEST_FAULT_POINT="$point" \
+            SANCTA_RELAY_TEST_FAULT_READY="$dir/fault-ready" \
+            SANCTA_RELAY_TEST_FAULT_ACK=sancta-relay-crash-window-v1 \
+            CLAUDE_BIN=${fakeCounting} \
+            CLAUDE_ARGS_JSON='[]' \
+            node ${relay} > "$dir/first.log" 2>&1 &
+          relay_pid=$!
+
+          for _ in $(seq 1 100); do
+            if [ -f "$dir/fault-ready" ]; then
+              break
+            fi
+            if ! kill -0 "$relay_pid" 2>/dev/null; then
+              echo "relay exited before crash point $point" >&2
+              ${pkgs.coreutils}/bin/cat "$dir/first.log" >&2
+              exit 1
+            fi
+            sleep 0.05
+          done
+          if [ ! -f "$dir/fault-ready" ]; then
+            echo "relay never reached crash point $point" >&2
+            kill -KILL "$relay_pid" 2>/dev/null || true
+            wait "$relay_pid" 2>/dev/null || true
+            exit 1
+          fi
+          test "$(${pkgs.coreutils}/bin/cat "$dir/fault-ready")" = "$point"
+          kill -KILL "$relay_pid"
+          wait "$relay_pid" 2>/dev/null || true
+
+          node -e '
+            const fs = require("fs");
+            const dir = process.argv[1];
+            const expected = Number(process.argv[2]);
+            const committed = process.argv[3] === "yes";
+            const count = fs.existsSync(dir + "/spawn-count")
+              ? Number(fs.readFileSync(dir + "/spawn-count", "utf8")) : 0;
+            const cursor = JSON.parse(fs.readFileSync(dir + "/cursor", "utf8"));
+            const failure = JSON.parse(fs.readFileSync(dir + "/failure", "utf8"));
+            if (count !== expected || cursor.offset !== 0) process.exit(1);
+            if (failure.offset !== 0 || failure.reason !== "Claude turn in progress") process.exit(1);
+            if (fs.existsSync(dir + "/replies") !== committed) process.exit(1);
+            if (committed) {
+              const replies = fs.readFileSync(dir + "/replies", "utf8").trim().split("\n");
+              if (replies.length !== 1) process.exit(1);
+            }
+          ' "$dir" "$expected_spawns" "$committed"
+
+          set +e
+          timeout 1s env \
+            SANCTA_INBOX="$dir/inbox" \
+            SANCTA_REPLIES="$dir/replies" \
+            SANCTA_CURSOR="$dir/cursor" \
+            SANCTA_FAILURE="$dir/failure" \
+            SANCTA_WORKER_READY="$dir/worker-ready" \
+            SANCTA_PROJECT_DIR="$TMPDIR" \
+            SANCTA_TEST_SPAWN_COUNT="$dir/spawn-count" \
+            CLAUDE_BIN=${fakeCounting} \
+            CLAUDE_ARGS_JSON='[]' \
+            node ${relay} > "$dir/recovery.log" 2>&1
+          recovery_status=$?
+          set -e
+
+          if [ "$committed" = yes ]; then
+            test "$recovery_status" -eq 124
+          else
+            test "$recovery_status" -ne 0
+            test "$recovery_status" -ne 124
+          fi
+
+          node -e '
+            const fs = require("fs");
+            const dir = process.argv[1];
+            const expected = Number(process.argv[2]);
+            const committed = process.argv[3] === "yes";
+            const count = fs.existsSync(dir + "/spawn-count")
+              ? Number(fs.readFileSync(dir + "/spawn-count", "utf8")) : 0;
+            const cursor = JSON.parse(fs.readFileSync(dir + "/cursor", "utf8"));
+            const size = fs.statSync(dir + "/inbox").size;
+            if (count !== expected) process.exit(1);
+            if (committed) {
+              if (cursor.offset !== size || fs.existsSync(dir + "/failure")) process.exit(1);
+              const replies = fs.readFileSync(dir + "/replies", "utf8").trim().split("\n");
+              if (replies.length !== 1) process.exit(1);
+            } else {
+              if (cursor.offset !== 0 || !fs.existsSync(dir + "/failure")) process.exit(1);
+              if (fs.existsSync(dir + "/replies")) process.exit(1);
+            }
+          ' "$dir" "$expected_spawns" "$committed"
+        }
+
+        run_crash_window marker after-in-progress-marker 0 no
+        run_crash_window provider after-provider-exit 1 no
+        run_crash_window reply after-reply-commit 1 yes
 
         replay="$TMPDIR/replay"
         mkdir -p "$replay"
