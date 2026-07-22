@@ -49,6 +49,7 @@
     # ── Sancta home + live membrane worker ────────────────────────────────
     ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
     ./sancta-worker.nix # guarded comm gateway + resumed `claude -p` worker
+    ../../modules/services/sancta-soul-mirror.nix # choir→rpi5 encrypted soul backup
   ];
 
   # Enable development tools and agent CLIs.
@@ -185,6 +186,12 @@
       # This repo holds NO plaintext key — the .age is age-encrypted.
       anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
 
+      # Push SSH key for the soul-mirror (choir→rpi5 encrypted soul backup).
+      # Owned by the `sancta` user that runs the mirror; recipients are
+      # users + sancta-choir in secrets/secrets.nix. The .age is age-encrypted
+      # (holds no plaintext); rpi5's receiver authorizes the matching public half.
+      sancta-soul-mirror-push-ssh-key = ownedSecret "sancta" "sancta-soul-mirror-push-ssh-key";
+
       # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
       # volume). LIVE: soul-volume-key.age exists (random 256-bit; recipients
       # sancta-choir + rpi5 in secrets/secrets.nix) and `keyFile` is wired below
@@ -231,6 +238,16 @@
     # keyFile: agenix secret placed at /run/agenix/soul-volume-key, read by root
     # at boot for cryptsetup. The volume image is created by hand (Phase 4).
     keyFile = config.age.secrets.soul-volume-key.path;
+  };
+
+  # Soul-mirror: encrypted off-device backup of Sancta's soul, choir → rpi5.
+  # Runs as `sancta`, pushes with the agenix-held push key; rpi5's receiver
+  # (hosts/rpi5-full/soul-mirror-receiver.nix) authorizes the matching public
+  # half. Replaces the retired rpi5→claw self-backup after the 2026-07-22 migration.
+  services.sancta-soul-mirror = {
+    enable = true;
+    user = "sancta";
+    sshKeyFile = config.age.secrets.sancta-soul-mirror-push-ssh-key.path;
   };
 
   # ==========================================================================

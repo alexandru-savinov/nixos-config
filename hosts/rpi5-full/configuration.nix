@@ -61,6 +61,7 @@ in
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
     ../../modules/services/sancta-self-backup.nix # Durable weekly self-backup (dual-recipient age, off-device)
+    ./soul-mirror-receiver.nix # receives the choir→rpi5 soul-mirror push
     ../../modules/services/home-assistant.nix # Home Assistant with Tailscale Serve
     ../../modules/services/home-assistant-mcp-claude.nix # hass-mcp for Claude Code
     ../../modules/system/nix-ld.nix # runtime loader so uvx-spawned hass-mcp interpreter can run
