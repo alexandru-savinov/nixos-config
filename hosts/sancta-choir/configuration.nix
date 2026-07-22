@@ -61,7 +61,38 @@
     # `herdr` is included so the dedicated herdr user (which runs the herdr
     # server + agent panes) gets the full Claude Code stack — claude CLI, skills,
     # agents, commands — under /var/lib/herdr/.claude, not just root.
-    users = [ "root" "herdr" ];
+    # `sancta` is included so the soul volume's skills/agents/commands are
+    # built and owned by THIS host's home-manager (clone at
+    # /var/lib/sancta/.claude-shared), replacing the 2026-07-21 hand-copied
+    # rpi5 store paths that seeded the migrated soul.
+    users = [ "root" "herdr" "sancta" ];
+  };
+
+  # The claude-shared settings activation rewrites ~/.claude/settings.json
+  # from the merged declarative set; without these keys it would strip the
+  # runtime-chosen model/verbose that the migrated soul carried over from
+  # rpi5 (and that the sancta-worker's resumed session runs with).
+  home-manager.users.sancta.programs.claude-code.extraSettings = {
+    model = "opus[1m]";
+    verbose = true;
+  };
+
+  # At boot, per-user HM activation must not run before the encrypted soul
+  # volume is mounted at ~/.claude — otherwise its symlinks land on the bare
+  # underlay dir and are shadowed by the later mount.
+  #
+  # Belt-and-suspenders, mirroring sancta-worker.nix's guard for the same
+  # hazard: `after` only sequences and `requires` only pulls the mount into the
+  # transaction — but a ConditionPathExists-skipped soul-mount counts as
+  # satisfied for Requires=, so on a boot where the LUKS chain doesn't complete
+  # HM would still activate onto the bare, unencrypted dir. The
+  # ConditionPathIsMountPoint check refuses activation unless ~/.claude is
+  # actually a mountpoint, closing that hole (Phase-1 guard #1).
+  systemd.services.home-manager-sancta = {
+    after = [ "sancta-soul-mount.service" ];
+    requires = [ "sancta-soul-mount.service" ];
+    unitConfig.ConditionPathIsMountPoint =
+      toString config.services.sancta-soul-volume.mountPoint;
   };
 
   # Agent tooling on the system PATH so herdr panes (which inherit the
