@@ -527,6 +527,114 @@ in
     }
   ];
 
+  # ── Aspirator: ordered multi-room cleaning queue ───────────────────────
+  # Backs the "Aspirator" storage dashboard's per-room selection (native-app
+  # behaviour: tap appends a room, tap again removes and the rest re-number,
+  # Start cleans the queue in order). A text helper holds a CSV of Roborock
+  # segment ids in tap order; the room buttons toggle membership through
+  # script.vacuum_room_toggle. Declared in Nix (not the UI) because this
+  # configuration.yaml has no `script:` / `input_text:` !include, so
+  # storage/UI-created scripts never load here. Segment ids are authoritative
+  # from the vacuum's get_room_mapping (1 Hol · 2 Dormitor · 3 Dormitor 1 ·
+  # 4 Baie · 5 Dormitor 2 · 6 Living · 7 Bucătărie).
+  services.home-assistant.config.input_text.vacuum_queue = {
+    name = "Vacuum queue";
+    min = 0;
+    max = 255;
+    initial = "";
+    icon = "mdi:playlist-play";
+  };
+
+  services.home-assistant.config.script = {
+    # Toggle one segment in the ordered CSV queue. The whole computation is a
+    # single self-contained template on set_value (no cross-variable refs) —
+    # Nix serialises attrset keys alphabetically, so a multi-key `variables`
+    # block whose entries reference each other would render out of order.
+    # Guarded to the 7 real segment ids: it is a globally-callable HA service,
+    # so an out-of-range/non-numeric `segment` must not poison the queue
+    # (Jinja `int` defaults to 0, which would later send segment 0 to
+    # app_segment_clean) — invalid input is a silent no-op.
+    vacuum_room_toggle = {
+      alias = "Vacuum room toggle";
+      mode = "queued";
+      max = 20;
+      fields.segment = {
+        description = "Roborock segment id to toggle in the queue (1-7)";
+        example = "1";
+      };
+      sequence = [
+        {
+          choose = [
+            {
+              conditions = [
+                {
+                  condition = "template";
+                  value_template = "{{ (segment | int(0)) in [1, 2, 3, 4, 5, 6, 7] }}";
+                }
+              ];
+              sequence = [
+                {
+                  service = "input_text.set_value";
+                  target.entity_id = "input_text.vacuum_queue";
+                  data.value = "{% set q = states('input_text.vacuum_queue').split(',') | select('!=', '') | list %}{% set seg = segment | string %}{% if seg in q %}{{ q | reject('eq', seg) | join(',') }}{% else %}{{ (q + [seg]) | join(',') }}{% endif %}";
+                }
+              ];
+            }
+          ];
+        }
+      ];
+    };
+
+    # Clean the queued segments in order, then clear the queue. No-op when
+    # the queue is empty (never dispatches an empty app_segment_clean). The
+    # queue is read inline in both the guard and params — no shared variable.
+    vacuum_start_queue = {
+      alias = "Vacuum start queue";
+      mode = "single";
+      sequence = [
+        {
+          choose = [
+            {
+              conditions = [
+                {
+                  condition = "template";
+                  value_template = "{{ (states('input_text.vacuum_queue').split(',') | select('!=', '') | list) | length > 0 }}";
+                }
+              ];
+              sequence = [
+                {
+                  service = "vacuum.send_command";
+                  target.entity_id = "vacuum.saros_10";
+                  data = {
+                    command = "app_segment_clean";
+                    params = "{{ states('input_text.vacuum_queue').split(',') | select('!=', '') | map('int') | list }}";
+                  };
+                }
+                {
+                  service = "input_text.set_value";
+                  target.entity_id = "input_text.vacuum_queue";
+                  data.value = "";
+                }
+              ];
+            }
+          ];
+        }
+      ];
+    };
+
+    vacuum_clear_queue = {
+      alias = "Vacuum clear queue";
+      mode = "single";
+      sequence = [
+        {
+          service = "input_text.set_value";
+          target.entity_id = "input_text.vacuum_queue";
+          data.value = "";
+        }
+      ];
+    };
+  };
+
   # HA MCP server for Claude Code. Phase B (post-onboarding): tokenFile points
   # at the agenix-decrypted LLAT, so the per-user oneshot injects HA_TOKEN into
   # the MCP entry. The runtime `if [ -f tokenFile ]` guard in the oneshot reads

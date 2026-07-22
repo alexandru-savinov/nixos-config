@@ -1,0 +1,138 @@
+# Aspirator — simple Roborock vacuum dashboard (for a non-admin family user)
+#
+# Entity:  vacuum.saros_10 (Roborock Saros 10)   ·  battery: sensor.saros_10_battery
+# (The task originally named "vacuum.roborock_s10"; that does not exist here.)
+#
+# Supported vacuum services (supported_features=14140):
+#   start · pause · stop · return_to_base · locate · clean_spot · send_command · set_fan_speed
+#
+# Room -> segment_id (authoritative, from the vacuum's get_room_mapping; bound to
+# names exactly as HA's current_room sensor does). RO labels used on the dashboard:
+#   1 Hol · 2 Dormitor · 3 Dormitor 1 · 4 Baie · 5 Dormitor 2 · 6 Living · 7 Bucătărie
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# V2 adds: (1) ordered multi-room queue (native-app style), (2) error display.
+#
+# HELPERS + SCRIPTS — declared in Nix (NOT the UI), because this HA's
+# configuration.yaml has no `script:` / `input_text:` !include, so UI/storage
+# scripts never load. See hosts/rpi5-full/configuration.nix:
+#   input_text.vacuum_queue         CSV of segment ids in tap order (default "")
+#   script.vacuum_room_toggle(seg)  append seg, or remove it if already queued
+#   script.vacuum_start_queue       app_segment_clean with the ordered list, then clear
+#                                   (no-op guard when the queue is empty)
+#   script.vacuum_clear_queue       reset the queue to ""
+# NOTE: keep each script's queue math as ONE self-contained template — Nix sorts
+# attrset keys alphabetically, so a multi-key `variables:` block whose entries
+# reference each other renders out of order (the 'q is undefined' trap).
+#
+# ERROR DISPLAY — the vacuum entity has no error attribute; Roborock exposes it as
+# the entity sensor.saros_10_vacuum_error (enum: none, robot_trapped, no_dustbin,
+# main_brush_jammed, ...). The vacuum entity goes to state `error` when one is
+# active. The error card (built-in markdown + <ha-alert>, shown via card
+# `visibility`) maps common codes to plain Romanian and falls back to the raw
+# code prefixed with ⚠️; `unavailable`/`unknown` -> "Aspiratorul e offline".
+#
+# PLACEMENT — storage-mode dashboard at /var/lib/hass/.storage/lovelace.aspirator
+# (this HA runs lovelace in storage mode). Registry item "aspirator" in
+# .storage/lovelace_dashboards, require_admin: false -> visible to the family
+# user's sidebar. Owner's dashboards (default + "Map") untouched.
+# Backups: lovelace.aspirator.bak-20260722-queue, lovelace_dashboards.bak-20260722-aspirator
+#
+# This YAML mirrors the stored view config (paste into the raw dashboard editor
+# to recreate, or convert to services.home-assistant.config.lovelace.dashboards).
+
+title: Aspirator
+views:
+  - title: Aspirator
+    path: acasa
+    icon: mdi:robot-vacuum
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          # Error/offline alert — only visible when there is a problem.
+          - type: markdown
+            text_only: true
+            content: >-
+              {% set s = states('vacuum.saros_10') %}{% if s in
+              ['unavailable','unknown'] %}<ha-alert
+              alert-type='warning'>Aspiratorul e offline</ha-alert>{% elif s ==
+              'error' %}{% set e = states('sensor.saros_10_vacuum_error') %}{%
+              set m = {'robot_trapped':'S-a blocat — mută-l și pornește din
+              nou','bumper_stuck':'S-a blocat — mută-l și pornește din
+              nou','no_dustbin':'Coșul e plin sau lipsește','main_brush_jammed':'Peria
+              principală e blocată — curăț-o','filter_blocked':'Filtrul e
+              înfundat — curăț-l','low_battery':'Baterie descărcată — pune-l la
+              încărcat'} %}<ha-alert alert-type='error'>⚠️ {{ m.get(e, e |
+              replace('_', ' ')) }}</ha-alert>{% endif %}
+            visibility:
+              - condition: or
+                conditions:
+                  - condition: state
+                    entity: vacuum.saros_10
+                    state: error
+                  - condition: state
+                    entity: vacuum.saros_10
+                    state: unavailable
+                  - condition: state
+                    entity: vacuum.saros_10
+                    state: unknown
+          - type: heading
+            heading: Aspirator
+            heading_style: title
+          - type: tile
+            entity: vacuum.saros_10
+            name: Stare
+            icon: mdi:robot-vacuum
+          - type: tile
+            entity: sensor.saros_10_battery
+            name: Baterie
+          - type: heading
+            heading: Comenzi
+          - type: button
+            name: Start
+            icon: mdi:play
+            show_state: false
+            tap_action: { action: perform-action, perform_action: vacuum.start, target: { entity_id: vacuum.saros_10 } }
+          - type: button
+            name: Pauză
+            icon: mdi:pause
+            tap_action: { action: perform-action, perform_action: vacuum.pause, target: { entity_id: vacuum.saros_10 } }
+          - type: button
+            name: Dock
+            icon: mdi:home-import-outline
+            tap_action: { action: perform-action, perform_action: vacuum.return_to_base, target: { entity_id: vacuum.saros_10 } }
+      - type: grid
+        cards:
+          - type: heading
+            heading: Camere
+            heading_style: title
+          - type: markdown
+            content: "Apasă o cameră ca s-o adaugi la coadă. Apasă din nou ca s-o scoți. Apoi apasă **Pornește camerele**."
+          # One button per room -> script.vacuum_room_toggle {segment: <id>}
+          - { type: button, name: Hol,        icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 1 } } }
+          - { type: button, name: Dormitor,   icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 2 } } }
+          - { type: button, name: Dormitor 1, icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 3 } } }
+          - { type: button, name: Baie,       icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 4 } } }
+          - { type: button, name: Dormitor 2, icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 5 } } }
+          - { type: button, name: Living,     icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 6 } } }
+          - { type: button, name: Bucătărie,  icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 7 } } }
+          # Live ordered queue readout
+          - type: markdown
+            content: >-
+              {% set q = states('input_text.vacuum_queue').split(',') |
+              select('!=', '') | list %}{% set names =
+              {'1':'Hol','2':'Dormitor','3':'Dormitor 1','4':'Baie','5':'Dormitor
+              2','6':'Living','7':'Bucătărie'} %}{% if q | length == 0
+              %}**Nicio cameră selectată**{% else %}**Ordine:** {% for s in q
+              %}{{ loop.index }}. {{ names.get(s, s) }}{% if not loop.last %} →
+              {% endif %}{% endfor %}{% endif %}
+          - type: button
+            name: Pornește camerele
+            icon: mdi:play-box-multiple
+            tap_action: { action: perform-action, perform_action: script.vacuum_start_queue }
+          - type: button
+            name: Șterge
+            icon: mdi:close
+            tap_action: { action: perform-action, perform_action: script.vacuum_clear_queue }
