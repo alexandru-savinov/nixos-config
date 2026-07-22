@@ -13,8 +13,26 @@ const claudeBin = process.env.CLAUDE_BIN;
 const claudeArgs = JSON.parse(process.env.CLAUDE_ARGS_JSON);
 const projectDir = process.env.SANCTA_PROJECT_DIR;
 
+// Deterministic process-crash interposer for the Nix test only. The production
+// unit never sets these variables (locked by module-eval), so this cannot pause
+// or alter the managed relay. A manually launched same-UID copy can affect only
+// the paths that caller already selected and owns.
+const testFaultPoint = process.env.SANCTA_RELAY_TEST_FAULT_POINT || "";
+const testFaultReady = process.env.SANCTA_RELAY_TEST_FAULT_READY || "";
+const testFaultAck = process.env.SANCTA_RELAY_TEST_FAULT_ACK || "";
+const TEST_FAULT_ACK = "sancta-relay-crash-window-v1";
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const log = message => process.stdout.write(new Date().toISOString() + " " + message + "\n");
+
+function testFault(point) {
+  if (testFaultPoint !== point) return;
+  if (testFaultAck !== TEST_FAULT_ACK || !testFaultReady) {
+    throw new Error("invalid relay test-fault configuration");
+  }
+  fs.writeFileSync(testFaultReady, point + "\n", { mode: 0o600 });
+  process.kill(process.pid, "SIGSTOP");
+}
 
 function validateRuntime() {
   const required = { inbox, replies, cursorFile, failureFile, claudeBin, projectDir };
@@ -194,6 +212,7 @@ async function runTurn(message, inboxTs, checkpoint, inboxOffset, nextOffset) {
 
   const text = (resultText || assistantText).trim();
   if (!text) throw new Error("Claude completed without assistant text");
+  testFault("after-provider-exit");
   const reply = {
     ts: new Date().toISOString(),
     from: "sancta",
@@ -269,7 +288,9 @@ for (;;) {
       try {
         await saveFailure(offset, entry.ts, "Claude turn in progress");
         unresolvedFailure = { offset, inbox_ts: entry.ts || null, reason: "Claude turn in progress" };
+        testFault("after-in-progress-marker");
         await runTurn(entry.message, entry.ts, checkpoint, offset, offset + bytes);
+        testFault("after-reply-commit");
         committedCheckpoints.add(checkpoint.key);
         await saveCursor(offset + bytes);
       } catch (error) {

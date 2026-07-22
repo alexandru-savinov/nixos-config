@@ -3,9 +3,11 @@
 # ══════════════════════════════════════════════════════════════════════════
 # STAGING NOTE (Sancta→sancta-choir migration): AUTHORED first, deployed via
 # the normal PR → CI → main → herdr-deploy path. Merging the PR is fine and
-# expected; what must NOT happen from this repo alone is ARMING — the loopback
-# image is created by hand and the module stays a no-op until it exists
-# (ConditionPathExists). No real key material is written by this repo.
+# expected; what must NOT happen from this repo alone is first-time creation —
+# the loopback image is created by hand and the units remain absent until a key
+# is wired. Once armed, a missing/wrong image fails closed and is never created,
+# truncated, formatted, or replaced by this module. No real key material is
+# written by this repo.
 # ══════════════════════════════════════════════════════════════════════════
 #
 # WHY LOOPBACK-FILE LUKS (not disko / not re-imaging):
@@ -16,7 +18,7 @@
 # root — the least-destructive dedicated-encrypted-volume mechanism that
 # evaluates cleanly and needs no disk surgery. gocryptfs was the alternative
 # (no fixed-size preallocation, per-file overhead) but LUKS gives a real block
-# device + one clean fscrypt boundary and reuses the LUKS idioms already in
+# device + one clean dm-crypt boundary and reuses the LUKS idioms already in
 # this repo (sancta-claw / sancta-core).
 #
 # ── KEY DELIVERY (HIS-HAND — no real key in this repo) ─────────────────────
@@ -36,10 +38,135 @@
 
 let
   cfg = config.services.sancta-soul-volume;
+  mapperPath = "/dev/mapper/${cfg.mapperName}";
+  testFaultAck = "sancta-soul-crash-window-v1";
+
+  # Deterministic booted-VM fault interposer. Production units do not set
+  # either environment variable, and module-eval locks that invariant. The
+  # control file lets one disposable VM exercise multiple causal windows.
+  maybeInjectTestFault = point: ''
+    if [ "''${SANCTA_SOUL_TEST_FAULT_ACK:-}" = ${lib.escapeShellArg testFaultAck} ] \
+      && [ -n "''${SANCTA_SOUL_TEST_FAULT_FILE:-}" ] \
+      && [ -f "''${SANCTA_SOUL_TEST_FAULT_FILE:-}" ] \
+      && [ "$(${pkgs.coreutils}/bin/cat -- \
+        "''${SANCTA_SOUL_TEST_FAULT_FILE}")" = ${lib.escapeShellArg point} ]; then
+      echo "TEST ONLY: injected soul-volume fault at ${point}" >&2
+      exit 97
+    fi
+  '';
+
+  verifyImageTarget = pkgs.writeShellScript "sancta-soul-verify-image-target" ''
+    set -euo pipefail
+
+    if [ -L ${lib.escapeShellArg (toString cfg.imagePath)} ] \
+      || [ ! -f ${lib.escapeShellArg (toString cfg.imagePath)} ]; then
+      echo "soul image must be an existing non-symlink regular file: ${cfg.imagePath}" >&2
+      exit 1
+    fi
+    actual_image="$(${pkgs.coreutils}/bin/readlink -f -- \
+      ${lib.escapeShellArg (toString cfg.imagePath)})"
+    if [ "$actual_image" != ${lib.escapeShellArg (toString cfg.imagePath)} ]; then
+      echo "refusing non-canonical soul image path: ${cfg.imagePath}" >&2
+      exit 1
+    fi
+  '';
+
+  verifyMountTarget = pkgs.writeShellScript "sancta-soul-verify-mount-target" ''
+    set -euo pipefail
+
+    if [ -L ${lib.escapeShellArg (toString cfg.mountPoint)} ] \
+      || [ ! -d ${lib.escapeShellArg (toString cfg.mountPoint)} ]; then
+      echo "soul mount target must be an existing non-symlink directory: ${cfg.mountPoint}" >&2
+      exit 1
+    fi
+    actual_target="$(${pkgs.coreutils}/bin/readlink -f -- \
+      ${lib.escapeShellArg (toString cfg.mountPoint)})"
+    if [ "$actual_target" != ${lib.escapeShellArg (toString cfg.mountPoint)} ]; then
+      echo "refusing non-canonical soul mount target: ${cfg.mountPoint}" >&2
+      exit 1
+    fi
+  '';
+
+  verifyMapper = pkgs.writeShellScript "sancta-soul-verify-mapper" ''
+    set -euo pipefail
+    export LC_ALL=C
+
+    ${verifyImageTarget}
+    if [ ! -e ${lib.escapeShellArg mapperPath} ]; then
+      echo "expected mapper ${mapperPath} is missing" >&2
+      exit 1
+    fi
+
+    expected_image="$(${pkgs.coreutils}/bin/readlink -f -- \
+      ${lib.escapeShellArg (toString cfg.imagePath)})"
+    mapper_status="$(${pkgs.cryptsetup}/bin/cryptsetup status \
+      ${lib.escapeShellArg cfg.mapperName})" || {
+      echo "unable to inspect mapper ${cfg.mapperName}" >&2
+      exit 1
+    }
+    mapper_devices="$(printf '%s\n' "$mapper_status" \
+      | ${pkgs.gawk}/bin/awk '$1 == "device:" { print $2 }')"
+    mapper_device_count="$(printf '%s\n' "$mapper_devices" \
+      | ${pkgs.gawk}/bin/awk 'NF { count++ } END { print count + 0 }')"
+    if [ "$mapper_device_count" -ne 1 ]; then
+      echo "mapper ${cfg.mapperName} must report exactly one backing device" >&2
+      exit 1
+    fi
+    mapper_device="$(printf '%s\n' "$mapper_devices" \
+      | ${pkgs.gawk}/bin/awk 'NF { print; exit }')"
+    backing_files="$(${pkgs.util-linux}/bin/losetup \
+      --noheadings --raw --output BACK-FILE -- "$mapper_device" \
+      2>/dev/null || true)"
+    backing_file_count="$(printf '%s\n' "$backing_files" \
+      | ${pkgs.gawk}/bin/awk 'NF { count++ } END { print count + 0 }')"
+    if [ "$backing_file_count" -ne 1 ]; then
+      echo "mapper ${cfg.mapperName} must resolve to exactly one loopback file" >&2
+      exit 1
+    fi
+    backing_file="$(printf '%s\n' "$backing_files" \
+      | ${pkgs.gawk}/bin/awk 'NF { print; exit }')"
+    actual_image="$(${pkgs.coreutils}/bin/readlink -f -- \
+      "$backing_file" 2>/dev/null || true)"
+    if [ -z "$actual_image" ] || [ "$actual_image" != "$expected_image" ]; then
+      echo "refusing unexpected mapper ${cfg.mapperName} backing" >&2
+      exit 1
+    fi
+  '';
+
+  verifyMount = pkgs.writeShellScript "sancta-soul-verify-mount" ''
+    set -euo pipefail
+
+    ${verifyMountTarget}
+    ${verifyMapper}
+    if ! ${pkgs.util-linux}/bin/mountpoint -q \
+      ${lib.escapeShellArg (toString cfg.mountPoint)}; then
+      echo "expected mountpoint ${cfg.mountPoint} is not mounted" >&2
+      exit 1
+    fi
+    expected_source="$(${pkgs.coreutils}/bin/readlink -f -- \
+      ${lib.escapeShellArg mapperPath})"
+    source_output="$(${pkgs.util-linux}/bin/findmnt -rn -o SOURCE \
+      --mountpoint ${lib.escapeShellArg (toString cfg.mountPoint)})" || {
+      echo "unable to inspect mounted source at ${cfg.mountPoint}" >&2
+      exit 1
+    }
+    source_count="$(printf '%s\n' "$source_output" \
+      | ${pkgs.gawk}/bin/awk 'NF { count++ } END { print count + 0 }')"
+    if [ "$source_count" -ne 1 ]; then
+      echo "expected exactly one mounted source at ${cfg.mountPoint}" >&2
+      exit 1
+    fi
+    actual_source="$(${pkgs.coreutils}/bin/readlink -f -- \
+      "$source_output" 2>/dev/null || true)"
+    if [ -z "$actual_source" ] || [ "$actual_source" != "$expected_source" ]; then
+      echo "refusing unexpected mounted source at ${cfg.mountPoint}" >&2
+      exit 1
+    fi
+  '';
 in
 {
   options.services.sancta-soul-volume = {
-    enable = lib.mkEnableOption "sancta-choir encrypted soul volume (LUKS-on-loopback) — STUB";
+    enable = lib.mkEnableOption "sancta-choir encrypted soul volume (LUKS-on-loopback)";
 
     imagePath = lib.mkOption {
       type = lib.types.path;
@@ -47,9 +174,9 @@ in
       description = ''
         Path to the LUKS2 loopback container file on the existing ext4 root.
         HIS-HAND: created ONCE, out of band, by Alexandru (see init commands).
-        This module never creates or truncates it — it only opens + mounts it,
-        and only if it already exists (ConditionPathExists), so a deploy on a
-        box where the image is missing is a no-op, never destructive.
+        This module never creates or truncates it — it only opens + mounts it.
+        Once a key is wired, a missing image fails the unit and its dependents
+        without creating, replacing, or formatting anything.
       '';
     };
 
@@ -126,64 +253,70 @@ in
     ];
 
     # ── OPEN: cryptsetup luksOpen the loopback image → /dev/mapper/<name> ────
-    # INERT-BY-DEFAULT: skipped unless BOTH the image exists AND a key is wired.
-    # Never formats — luksOpen on a non-LUKS or missing file just fails cleanly
-    # (and ConditionPathExists guards it), so this can NEVER wipe the root.
+    # INERT-BY-DEFAULT: the unit is absent until a key is wired. Once armed, a
+    # missing image or mismatched pre-existing mapper fails loudly so dependents
+    # cannot mistake another device for the soul. This service never formats.
     systemd.services.sancta-soul-open = lib.mkIf (cfg.keyFile != null) {
-      description = "Open sancta-choir encrypted soul volume (LUKS loopback) — STUB";
+      description = "Open sancta-choir encrypted soul volume (LUKS loopback)";
       after = [ "local-fs.target" ];
       before = [ "sancta-soul-mount.service" ];
       requiredBy = [ "sancta-soul-mount.service" ];
-      unitConfig.ConditionPathExists = cfg.imagePath;
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = pkgs.writeShellScript "sancta-soul-open" ''
           set -euo pipefail
-          # Crash-recovery: a mapper left over from an unclean shutdown is NOT
-          # trusted blindly — verify it is backed by OUR image (cryptsetup
-          # status prints the backing loop file); otherwise close + reopen.
-          if [ -e /dev/mapper/${cfg.mapperName} ]; then
-            if ! ${pkgs.cryptsetup}/bin/cryptsetup status ${cfg.mapperName} \
-                 | grep -qF ${lib.escapeShellArg (toString cfg.imagePath)}; then
-              echo "stale mapper ${cfg.mapperName} not backed by our image; reopening" >&2
-              ${pkgs.cryptsetup}/bin/cryptsetup luksClose ${cfg.mapperName} || true
-            fi
+
+          ${verifyImageTarget}
+
+          # Crash-recovery: never close or reuse an unexpected live mapper.
+          # Failing requires explicit operator review and cannot disrupt an
+          # unrelated mapping that happens to have the configured name.
+          if [ -e ${lib.escapeShellArg mapperPath} ]; then
+            ${verifyMapper}
           fi
-          if [ ! -e /dev/mapper/${cfg.mapperName} ]; then
+          if [ ! -e ${lib.escapeShellArg mapperPath} ]; then
             ${pkgs.cryptsetup}/bin/cryptsetup luksOpen \
               --key-file ${lib.escapeShellArg (toString cfg.keyFile)} \
-              ${lib.escapeShellArg (toString cfg.imagePath)} ${cfg.mapperName}
+              ${lib.escapeShellArg (toString cfg.imagePath)} \
+              ${lib.escapeShellArg cfg.mapperName}
+            ${maybeInjectTestFault "after-mapper-open"}
           fi
+          ${verifyMapper}
         '';
         ExecStop = pkgs.writeShellScript "sancta-soul-close" ''
           set -euo pipefail
-          ${pkgs.cryptsetup}/bin/cryptsetup luksClose ${cfg.mapperName} || true
-          # Defensive: cryptsetup auto-attaches a loop device to back a file-based
-          # LUKS container; older cryptsetup/util-linux may leave it attached after
-          # close. Detach any loop still backing the image so open/close cycles
-          # don't leak loop minors or leave a stale device across restarts.
-          for dev in $(${pkgs.util-linux}/bin/losetup -j ${lib.escapeShellArg (toString cfg.imagePath)} -O NAME -n 2>/dev/null || true); do
-            ${pkgs.util-linux}/bin/losetup -d "$dev" 2>/dev/null || true
-          done
+          if [ ! -e ${lib.escapeShellArg mapperPath} ]; then
+            exit 0
+          fi
+          # Never close a mapping with the same name unless it still resolves
+          # to the configured loopback image.
+          ${verifyMapper}
+          ${pkgs.cryptsetup}/bin/cryptsetup luksClose \
+            ${lib.escapeShellArg cfg.mapperName}
+          # cryptsetup owns the loop it auto-attached and is responsible for
+          # releasing it. Never detach `losetup -j image` results here: another
+          # loop may legitimately reference the same file, and guessing during
+          # teardown is more dangerous than surfacing a leaked loop for review.
         '';
       };
     };
 
     # ── MOUNT: /dev/mapper/<name> → ~/.claude ───────────────────────────────
-    # A systemd mount unit (not fileSystems.*) because the backing device is a
+    # A systemd oneshot service (not fileSystems.*) because the backing device is a
     # dynamically-opened mapper, not a boot-time-known disk — keeping it out of
     # fileSystems.* means a missing/locked volume never blocks boot.
     systemd.services.sancta-soul-mount = lib.mkIf (cfg.keyFile != null) {
-      description = "Mount sancta-choir soul volume at ~/.claude — STUB";
+      description = "Mount sancta-choir soul volume at ~/.claude";
       after = [ "sancta-soul-open.service" ];
       requires = [ "sancta-soul-open.service" ];
-      unitConfig.ConditionPathExists = "/dev/mapper/${cfg.mapperName}";
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = pkgs.writeShellScript "sancta-soul-mount" ''
           set -euo pipefail
+
+          ${verifyMountTarget}
           if ! ${pkgs.util-linux}/bin/mountpoint -q ${lib.escapeShellArg (toString cfg.mountPoint)}; then
             # Refuse to mount over a NON-EMPTY dir: mounting would silently
             # shadow (hide, not destroy) any state already written to the bare
@@ -194,9 +327,14 @@ in
               echo "refusing to mount over non-empty ${cfg.mountPoint} (would shadow existing data)" >&2
               exit 1
             fi
-            ${pkgs.util-linux}/bin/mount /dev/mapper/${cfg.mapperName} \
+            ${pkgs.util-linux}/bin/mount ${lib.escapeShellArg mapperPath} \
               ${lib.escapeShellArg (toString cfg.mountPoint)}
+            ${maybeInjectTestFault "after-mount"}
           fi
+          # A mountpoint alone is insufficient: reject a pre-mounted tmpfs,
+          # bind mount, or other mapper before changing ownership or allowing
+          # Home Manager/worker/gateway dependents to run.
+          ${verifyMount}
           # ext4's root inode owns the visible mount-point metadata, so tmpfiles'
           # mode on the covered directory is not enough. Enforce both invariants
           # after every start, including when the filesystem was already mounted.
@@ -207,8 +345,27 @@ in
         '';
         ExecStop = pkgs.writeShellScript "sancta-soul-umount" ''
           set -euo pipefail
-          ${pkgs.util-linux}/bin/umount ${lib.escapeShellArg (toString cfg.mountPoint)} || true
+          if ! ${pkgs.util-linux}/bin/mountpoint -q \
+            ${lib.escapeShellArg (toString cfg.mountPoint)}; then
+            exit 0
+          fi
+          # Never unmount a filesystem that replaced the configured soul.
+          ${verifyMount}
+          ${pkgs.util-linux}/bin/umount ${lib.escapeShellArg (toString cfg.mountPoint)}
         '';
+      };
+    };
+
+    # Re-run the exact source/image check for every dependent start transaction.
+    # The mount service remains active after boot, so depending on it alone would
+    # not notice an operator-side replacement that happened later.
+    systemd.services.sancta-soul-verify = lib.mkIf (cfg.keyFile != null) {
+      description = "Verify sancta-choir soul mapper and mount source";
+      after = [ "sancta-soul-mount.service" ];
+      requires = [ "sancta-soul-mount.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = verifyMount;
       };
     };
   };
