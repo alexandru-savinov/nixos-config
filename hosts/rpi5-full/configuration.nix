@@ -143,6 +143,7 @@ in
       # Open-WebUI (disabled)
       # open-webui-secret-key = secret "open-webui-secret-key";
       openrouter-api-key = secret "openrouter-api-key"; # also used by n8n
+      sancta-port-openrouter-prd = secret "sancta-port-openrouter-prd";
       # tavily-api-key = secret "tavily-api-key";
       openai-api-key = secret "openai-api-key"; # also used by n8n
       # e2e-test-api-key = secret "e2e-test-api-key";
@@ -216,7 +217,7 @@ in
 
     # OpenRouter API key - injected as OPENROUTER_API_KEY environment variable
     # Workflows can reference it using: Bearer {{ $env.OPENROUTER_API_KEY }}
-    openrouterApiKeyFile = secret "openrouter-api-key";
+    openrouterApiKeyFile = secret "sancta-port-openrouter-prd";
 
     # OpenAI API key - for TTS pronunciation audio in image-to-anki workflow
     # Workflows can reference it using: Bearer {{ $env.OPENAI_API_KEY }}
