@@ -188,7 +188,7 @@ in
     randomizedDelaySec = mkOption { type = types.str; default = "30min"; description = "Timer RandomizedDelaySec."; };
 
     knownHostsFile = mkOption { type = types.nullOr types.str; default = null; description = "Optional known_hosts for StrictHostKeyChecking=yes; else accept-new."; };
-    knownHostsEntry = mkOption { type = types.str; default = ""; description = "Declarative known_hosts line for choir; when set, pins the host key (closes TOFU). `ssh-keyscan -t ed25519 sancta-choir`."; };
+    knownHostsEntry = mkOption { type = types.str; default = ""; description = "Declarative known_hosts line for choir; when set, pins the host key (closes TOFU). Must match remoteHost exactly, e.g. `ssh-keyscan -t ed25519 116.203.223.113`."; };
   };
 
   config = mkIf cfg.enable {
