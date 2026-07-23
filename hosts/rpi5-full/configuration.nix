@@ -61,6 +61,7 @@ in
     ../../modules/services/nixframe.nix # Digital photo frame (auto-detects HDMI output)
     ../../modules/services/backup-pull.nix # Pull backups from sancta-claw
     ../../modules/services/sancta-self-backup.nix # Durable weekly self-backup (dual-recipient age, off-device)
+    ./soul-mirror-pull.nix # pulls choir's encrypted soul vault over rpi5→choir:22
     ../../modules/services/home-assistant.nix # Home Assistant with Tailscale Serve
     ../../modules/services/home-assistant-mcp-claude.nix # hass-mcp for Claude Code
     ../../modules/system/nix-ld.nix # runtime loader so uvx-spawned hass-mcp interpreter can run
@@ -192,6 +193,12 @@ in
         mode = "0400";
         owner = "nixos";
       };
+
+      # SSH private key for the soul-mirror PULL (rpi5 → choir:22). rpi5 dials
+      # choir and pulls the choir-local encrypted vault via read-only rrsync.
+      # Recipient rule (secrets/secrets.nix) names rpi5, so only this host
+      # decrypts it. The puller self-suppresses until the .age exists.
+      soul-mirror-pull-ssh-key = secret "soul-mirror-pull-ssh-key";
     };
 
   # Advertise rpi5 as a Tailscale exit node for the tailnet.
@@ -583,6 +590,14 @@ in
   services.sancta-self-backup = {
     enable = false;
     sshKeyFile = secret "sancta-selfbackup-push-ssh-key";
+  };
+
+  # Soul-mirror PULL: rpi5 dials choir over rpi5→choir:22 (ACL-permitted) and
+  # pulls choir's local encrypted soul vault via read-only rrsync. Zero-knowledge
+  # (only ciphertext lands here). Self-suppresses until the pull key .age exists.
+  services.soul-mirror-pull = {
+    enable = true;
+    sshKeyFile = config.age.secrets.soul-mirror-pull-ssh-key.path;
   };
 
   # Operator alert when the DNS-watchdog crash-loop breaker opens (#450).

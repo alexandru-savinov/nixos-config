@@ -129,6 +129,14 @@ in
   # decrypts it at switch time. Until the file exists, do not rebuild rpi5.
   "sancta-selfbackup-push-ssh-key.age".publicKeys = users ++ [ rpi5 ];
 
+  # SSH private key for the soul-mirror PULL (rpi5 → choir:22, ACL-permitted).
+  # rpi5 dials choir and pulls the choir-local encrypted vault via read-only
+  # rrsync; only rpi5 needs to decrypt this (it holds the private half). The
+  # matching PUBLIC half is authorized on choir via
+  # services.sancta-soul-mirror.pullPubKey. Replaces the retired choir→rpi5
+  # push key after the 2026-07-22 tailnet-ACL rework.
+  "soul-mirror-pull-ssh-key.age".publicKeys = users ++ [ rpi5 ];
+
   # ── Home Assistant secrets (rpi5 only) ─────────────────────────────────
   # WARNING: registering a key here is INERT — it does NOT create the .age
   # file. The .age must be created with `agenix -e` BEFORE any host config
