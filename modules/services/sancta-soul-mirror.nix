@@ -116,8 +116,9 @@ let
       | ${gzip}/bin/gzip \
       | ${age}/bin/age ${recipientFlags} -o "$OUT.tmp"
 
-    ${cu}/chmod 600 "$OUT.tmp"; ${cu}/mv "$OUT.tmp" "$OUT"; ${cu}/chmod 600 "$OUT"
-    [ -s "$OUT" ] || { echo "ERROR: empty archive — aborting" >&2; exit 1; }
+    ${cu}/chmod 600 "$OUT.tmp"
+    [ -s "$OUT.tmp" ] || { echo "ERROR: empty archive — aborting (leaving prior good $OUT untouched)" >&2; ${cu}/rm -f "$OUT.tmp"; exit 1; }
+    ${cu}/mv "$OUT.tmp" "$OUT"; ${cu}/chmod 600 "$OUT"
 
     LOCAL_SHA=$(${cu}/sha256sum "$OUT" | ${cu}/cut -d' ' -f1)
     echo "local sha256: $LOCAL_SHA"
@@ -296,6 +297,15 @@ in
     systemd.services.sancta-soul-mirror = {
       description = "Sancta soul-mirror producer (choir-local dual-recipient age vault, zero-knowledge, no outbound connections)";
       onFailure = [ "sancta-soul-mirror-alert@%N.service" ];
+      # The soul volume (cfg.soulRoot, i.e. ~/.claude) must be mounted before
+      # this runs, or `tar --ignore-failed-read` silently exits 0 against the
+      # bare underlay dir, producing a successful-looking but near-empty
+      # archive (a NON-zero-byte one — the guard above does NOT catch this
+      # case, only a literal zero-byte tmp file). Same pattern as
+      # sancta-worker.nix's guard on the same mount.
+      after = [ "sancta-soul-mount.service" ];
+      requires = [ "sancta-soul-mount.service" ];
+      unitConfig.ConditionPathIsMountPoint = toString config.services.sancta-soul-volume.mountPoint;
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;

@@ -89,10 +89,10 @@ let
     # persisted DIRECTLY, no re-encryption. choir's endpoint rejects writes and
     # any path outside REMOTE_DIR, so this can only ever read what choir
     # deliberately published there.
-    echo "=== rsync pull ← $REMOTE:$REMOTE_DIR/ ==="
+    echo "=== rsync pull ← $REMOTE:$REMOTE_DIR ==="
     ${rsync}/bin/rsync -az \
       -e "$SSH" \
-      "$REMOTE:$REMOTE_DIR/" "$VAULT/"
+      "$REMOTE:$REMOTE_DIR" "$VAULT/"
 
     # ── prune: keep newest $KEEP in THIS vault. Independent of choir's own
     # local retention — rpi5 owns its own count on its own schedule.
@@ -156,7 +156,22 @@ in
 
     remoteHost = mkOption { type = types.str; default = "sancta-choir"; description = "The producer host (Tailscale name) to pull from."; };
     remoteUser = mkOption { type = types.str; default = "sancta"; description = "Account on remoteHost the pull key is authorized under (must match services.sancta-soul-mirror.user there)."; };
-    remoteDir = mkOption { type = types.str; default = "/var/lib/sancta/soul-mirror"; description = "The producer's localDir — the ONLY directory its rrsync endpoint exposes read-only."; };
+    remoteDir = mkOption {
+      type = types.str;
+      default = "/";
+      description = ''
+        Source path passed to rsync, INTERPRETED RELATIVE TO THE RESTRICTED
+        ROOT choir's rrsync forced command already chdirs into (that root IS
+        services.sancta-soul-mirror.localDir there — currently
+        /var/lib/sancta/soul-mirror). "/" means "everything under that root".
+        Do NOT set this to an absolute filesystem path like the producer's
+        localDir itself — rrsync 3.4.1 re-anchors an absolute path UNDER the
+        restricted root (so "/var/lib/sancta/soul-mirror" would look for
+        var/lib/sancta/soul-mirror *inside* the vault) and the pull silently
+        finds nothing. Trailing slash matters (rsync "copy contents of dir"
+        semantics) — keep one if overriding to a subdir.
+      '';
+    };
 
     vaultDir = mkOption { type = types.str; default = "/var/lib/soul-mirror"; description = "Local vault dir on rpi5 for the pulled ciphertext (mode 700). NO recovery key ever lives here (zero-knowledge)."; };
 
