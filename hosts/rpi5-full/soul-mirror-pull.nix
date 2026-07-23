@@ -154,7 +154,15 @@ in
       description = "Path to the SSH PRIVATE pull key (from agenix, decrypted only on rpi5). NEVER a store path. Absent/placeholder → self-suppress (no-auth).";
     };
 
-    remoteHost = mkOption { type = types.str; default = "sancta-choir"; description = "The producer host (Tailscale name) to pull from."; };
+    remoteHost = mkOption {
+      type = types.str;
+      # Public IP, not a Tailscale name — sancta-choir runs Tailscale SSH which
+      # would intercept a tailscale0 connection and bypass the rrsync -ro
+      # forced-command restriction (see PR body / backup-pull's identical
+      # pattern for sancta-claw).
+      default = "116.203.223.113";
+      description = "The producer host to pull from. MUST be reachable WITHOUT going through Tailscale SSH on sancta-choir — that interception authenticates by tailnet identity and does not consult authorized_keys, so it would bypass the rrsync -ro forced-command restriction entirely. Use the public IP (matches services.backup-pull.remoteHost's identical pattern for sancta-claw), not a Tailscale name.";
+    };
     remoteUser = mkOption { type = types.str; default = "sancta"; description = "Account on remoteHost the pull key is authorized under (must match services.sancta-soul-mirror.user there)."; };
     remoteDir = mkOption {
       type = types.str;
