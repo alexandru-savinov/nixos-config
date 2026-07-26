@@ -106,6 +106,15 @@ in
         assertion = config.services.sancta-soul-mirror.enable or false;
         message = "services.sancta-doctrine-guard requires services.sancta-soul-mirror — it raises alerts through that module's sancta-soul-mirror-alert@ template, which does not exist when the mirror is disabled.";
       }
+      {
+        # The alert template runs as the MIRROR's user, not this guard's. Both
+        # default to "sancta", so there is no live bug — but changing only one
+        # would silently execute the alert under the other account, and the
+        # symptom would be a missing alert, i.e. the failure this module exists
+        # to detect, hiding the failure this module exists to report.
+        assertion = cfg.user == (config.services.sancta-soul-mirror.user or cfg.user);
+        message = "services.sancta-doctrine-guard.user must equal services.sancta-soul-mirror.user — the shared sancta-soul-mirror-alert@ template runs as the mirror's user, so a mismatch would run this guard's alerts under the wrong account.";
+      }
     ];
 
     systemd.services.sancta-doctrine-guard = {
