@@ -95,6 +95,17 @@ in
         assertion = config.services.sancta-soul-volume.enable or false;
         message = "services.sancta-doctrine-guard requires services.sancta-soul-volume — it asserts content ON that mount.";
       }
+      {
+        # onFailure below targets sancta-soul-mirror-alert@, which is declared
+        # inside sancta-soul-mirror's own `mkIf cfg.enable`. Enable this guard
+        # on a host with the volume but not the mirror and systemd resolves
+        # OnFailure= to a non-existent unit: it records a failed transient job
+        # and the alert script never runs, so a real failure never reaches the
+        # feed. That is silently-lost-signal — the exact thing this module was
+        # written to end — so it fails at BUILD time instead.
+        assertion = config.services.sancta-soul-mirror.enable or false;
+        message = "services.sancta-doctrine-guard requires services.sancta-soul-mirror — it raises alerts through that module's sancta-soul-mirror-alert@ template, which does not exist when the mirror is disabled.";
+      }
     ];
 
     systemd.services.sancta-doctrine-guard = {
