@@ -50,6 +50,7 @@
     ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
     ./sancta-worker.nix # guarded comm gateway + resumed `claude -p` worker
     ../../modules/services/sancta-soul-mirror.nix # choir-local encrypted soul vault (rpi5 pulls)
+    ../../modules/services/sancta-doctrine-guard.nix # assert the authored substrate is present + recoverable
   ];
 
   # Enable development tools and agent CLIs.
@@ -246,6 +247,17 @@
     # Private half is agenix secrets/soul-mirror-pull-ssh-key.age (rpi5-only).
     pullPubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIENdU1AjMRcMptUBi/7BGnOFZjTA11Z0pHFpZt0kbeNO rpi5 -> sancta-choir soul-mirror pull";
   };
+
+  # The mirror above backs up whatever is on the volume — INCLUDING a hole. On
+  # 2026-07-21 six council assessor files were lost in the migration and the
+  # weekly mirror faithfully archived their absence for four days. This unit
+  # asserts the authored substrate is actually PRESENT, daily, and fails loud
+  # into the mirror's existing alert path.
+  #
+  # Its assertion table is derived from `git ls-files` inside the soul volume,
+  # never typed here: a hand-maintained list is the same bug wearing a new hat,
+  # and this repo is PUBLIC so no skill name belongs in it anyway.
+  services.sancta-doctrine-guard.enable = true;
 
   # ==========================================================================
   # Open-WebUI — AI chat gateway via OpenRouter
