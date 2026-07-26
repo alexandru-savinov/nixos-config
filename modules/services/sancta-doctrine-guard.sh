@@ -50,11 +50,25 @@ for repo in "$SKILLS" "$LENSES"; do
     [ "$repo" = "$SKILLS" ] && skills_usable=0
     continue
   fi
+
+  # Capture status separately from output. `git ls-files` can fail for reasons
+  # that are NOT "the repo is empty" — most realistically "detected dubious
+  # ownership" if the volume's uid/gid ever drifts from the unit's User=.
+  # Reporting that as "no tracked files at all" would send whoever is reading
+  # this down a repo-is-empty path when the real answer is ownership.
+  if ! listing=$(git -C "$repo" --no-optional-locks ls-files 2>&1); then
+    miss "git ls-files FAILED in $repo (not an empty repo — check ownership/permissions): $listing"
+    [ "$repo" = "$SKILLS" ] && skills_usable=0
+    continue
+  fi
+
   n=0
   while IFS= read -r f; do
+    [ -z "$f" ] && continue
     n=$((n + 1))
     [ -s "$repo/$f" ] || miss "missing or empty: $repo/$f"
-  done < <(git -C "$repo" --no-optional-locks ls-files)
+  done <<<"$listing"
+
   if [ "$n" -eq 0 ]; then
     miss "no tracked files at all in $repo"
     [ "$repo" = "$SKILLS" ] && skills_usable=0
@@ -74,7 +88,13 @@ else
   committed=$(git -C "$SKILLS" --no-optional-locks ls-files -- '*/SKILL.md' 2>/dev/null | sort)
   ondisk=$(cd "$SKILLS" 2>/dev/null && for d in */; do
     b="${d%/}"
-    [ -L "$b" ] && continue # home-manager symlinks are wiring, not doctrine
+    # home-manager symlinks are wiring, not doctrine. In production these point
+    # at REAL store directories, so they DO match the */ glob above and this
+    # skip is load-bearing: without it every symlinked skill would be reported
+    # as "on disk but NEVER COMMITTED" on every run, and a guard that cries
+    # wolf gets muted. (A *dangling* symlink never matches */ at all, which is
+    # why the test fixture must use a resolvable one to cover this line.)
+    [ -L "$b" ] && continue
     [ -f "$b/SKILL.md" ] && echo "$b/SKILL.md"
   done | sort)
 
@@ -111,9 +131,16 @@ done
 # 2026-07-25 10:32 regression, where a settings writer preserved the key and
 # dropped the contents. So the obvious check passes on the exact bug it was
 # written for. `length > 0` is the fix.
+#
+# Validity is checked FIRST and reported distinctly: malformed JSON and
+# hooks-were-stripped are different incidents with different fixes, and giving
+# them the same message would send whoever reads it looking for the wrong one.
 if [ -s "$CLAUDE/settings.json" ]; then
-  jq -e '(.hooks.UserPromptSubmit // []) | length > 0' "$CLAUDE/settings.json" >/dev/null 2>&1 \
-    || miss "settings.json lost hooks.UserPromptSubmit (empty or absent)"
+  if ! jq -e . "$CLAUDE/settings.json" >/dev/null 2>&1; then
+    miss "settings.json is not valid JSON (parse error — NOT the hooks regression)"
+  elif ! jq -e '(.hooks.UserPromptSubmit // []) | length > 0' "$CLAUDE/settings.json" >/dev/null 2>&1; then
+    miss "settings.json lost hooks.UserPromptSubmit (empty or absent)"
+  fi
 fi
 
 # ── verdict ────────────────────────────────────────────────────────────────

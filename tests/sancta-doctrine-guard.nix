@@ -99,8 +99,19 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
     expect_fail "$R" "missing from disk" "deleted committed skill fires"
 
     echo "== symlinked skills are wiring, not doctrine — must NOT drift =="
-    mkfixture "$R"; ln -s /nonexistent-store-path "$R/skills/zeta"
-    expect_pass "$R" "a dangling symlink skill does not trip drift"
+    # The symlink MUST resolve. Bash's `for d in */` stats each entry, so a
+    # DANGLING symlink never matches the glob at all — an earlier version of
+    # this test used /nonexistent-store-path and therefore passed without ever
+    # executing the `[ -L ] && continue` line it claimed to cover. In production
+    # these point at real home-manager store directories, which do match the
+    # glob and do need the skip. A test that passes for the wrong reason is the
+    # same disease this whole module treats.
+    mkfixture "$R"
+    mkdir -p "$TMPDIR/fake-store/zeta"; echo "# zeta" > "$TMPDIR/fake-store/zeta/SKILL.md"
+    ln -s "$TMPDIR/fake-store/zeta" "$R/skills/zeta"
+    # prove the fixture is actually exercising the branch, not skipping it
+    [ -d "$R/skills/zeta" ] || { echo "fixture broken: symlink does not resolve to a dir"; exit 1; }
+    expect_pass "$R" "a RESOLVABLE symlink skill does not trip drift"
 
     echo "== the settings.json regression the obvious check misses =="
     mkfixture "$R"
@@ -109,6 +120,28 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
 
     mkfixture "$R"; echo '{"hooks":{}}' > "$R/settings.json"
     expect_fail "$R" "lost hooks.UserPromptSubmit" "absent hook key fires"
+
+    echo "== malformed JSON must NOT masquerade as the hooks regression =="
+    mkfixture "$R"; echo '{"hooks": {' > "$R/settings.json"
+    expect_fail "$R" "not valid JSON" "parse error gets its own message"
+
+    echo "== git failing for a NON-empty reason must say so =="
+    # Permission bits do not constrain uid 0, so this case is only meaningful
+    # for an unprivileged builder. Skipped rather than silently passing.
+    if [ "$(id -u)" -eq 0 ]; then
+      echo "  SKIP: running as root, chmod cannot make the repo unreadable"
+    else
+      mkfixture "$R"; chmod 000 "$R/skills/.git"
+      res=$(run "$R" 2>&1 || true)
+      chmod 755 "$R/skills/.git"
+      if echo "$res" | grep -qF "no tracked files at all"; then
+        echo "REGRESSION: an unreadable repo was reported as an empty one"
+        echo "$res"; exit 1
+      fi
+      echo "$res" | grep -qF "ls-files FAILED" || {
+        echo "expected a distinct ls-files failure message"; echo "$res"; exit 1; }
+      echo "  ok: unreadable repo is not mistaken for an empty one"
+    fi
 
     echo "== whole skills repo gone: must fail AND must not print a reassuring drift line =="
     mkfixture "$R"; rm -rf "$R/skills/.git"
