@@ -85,7 +85,12 @@ done
 if [ "$skills_usable" -eq 0 ]; then
   note "drift: SKIPPED — skills repo unusable (see failures above)"
 else
-  committed=$(git -C "$SKILLS" --no-optional-locks ls-files -- '*/SKILL.md' 2>/dev/null | sort)
+  # :(glob) is load-bearing: git's DEFAULT pathspec is wildmatch, where a bare *
+  # crosses '/', so '*/SKILL.md' would also match a/b/SKILL.md while the on-disk
+  # side below enumerates exactly one level. The two sets would then disagree
+  # permanently and drift would fire forever, unfixable by renaming - the
+  # cry-wolf outcome this module exists to avoid.
+  committed=$(git -C "$SKILLS" --no-optional-locks ls-files -- ':(glob)*/SKILL.md' 2>/dev/null | sort)
   ondisk=$(cd "$SKILLS" 2>/dev/null && for d in */; do
     b="${d%/}"
     # home-manager symlinks are wiring, not doctrine. In production these point
