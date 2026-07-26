@@ -388,6 +388,11 @@
           # cursor, successful turns commit once, and truncation never replays.
           sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
 
+          # Doctrine guard branch coverage. Every case asserts a NON-ZERO exit
+          # and the specific message: a guard that cannot be shown to fail is
+          # the 2026-07-21 silent loss with better paperwork.
+          sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
+
           # NOTE: the declarative n8n VM test (#42) deliberately lives under
           # packages.<system>.n8n-declarative-test, NOT here. `nix flake
           # check` builds every check inside the resource-constrained
@@ -411,6 +416,7 @@
         {
           heartbeat-trusted-context = import ./tests/heartbeat-trusted-context.nix { inherit pkgs; };
           sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
+          sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`

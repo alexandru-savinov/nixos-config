@@ -148,11 +148,19 @@ let
   alertScript = pkgs.writeShellScript "sancta-soul-mirror-alert" ''
     set -euo pipefail
     TS=$(${cu}/date -Iseconds)
-    msg="❌ SOUL-MIRROR FAILURE: ''${1:-sancta-soul-mirror} failed at $TS on $(${cu}/hostname)"
+    # The failing unit's name arrives as $1 (systemd %N via the @%N instance).
+    # Everything user-facing is derived from it. Hardcoding "soul-mirror" here
+    # was wrong the moment a second unit reused this handler: the alert would
+    # name the right unit mid-sentence while its title and its suggested
+    # `journalctl` both pointed at the mirror. An operator following that hint
+    # finds an idle journal and concludes false alarm — which is the
+    # signal-gets-missed failure this alert path exists to prevent.
+    UNIT="''${1:-sancta-soul-mirror}"
+    msg="❌ $UNIT FAILURE: failed at $TS on $(${cu}/hostname)"
     echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t sancta-soul-mirror-alert -p err
     if [ -x ${escapeShellArg cfg.feedTool} ]; then
       ${nodejs}/bin/node ${escapeShellArg cfg.feedTool} \
-        "❌ soul-mirror FAILED" "$msg · journalctl -u sancta-soul-mirror" \
+        "❌ $UNIT FAILED" "$msg · journalctl -u $UNIT" \
         || echo "WARNING: feed alert line failed" >&2
     fi
   '';
