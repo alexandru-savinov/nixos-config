@@ -179,6 +179,7 @@ in
         "index"
         "projects/-home-nixos/memory"
         "skills"
+        "lenses"
         "commands"
         "hooks"
         "agents"
