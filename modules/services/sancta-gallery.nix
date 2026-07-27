@@ -19,15 +19,39 @@
 #     credentials, or anything else under /home.
 #   - ConditionPathExists guards the mutable script: if server.mjs is
 #     absent the unit stays inactive instead of crash-looping.
-#   - The unit runs as User=nixos (the index owner), same as the nohup
-#     process it replaces.
-#   - Binding stays 127.0.0.1:8739 (server default) and is ENFORCED at the
-#     systemd level (SocketBindAllow tcp:8739 only + IPAddressAllow
-#     loopback only), so even a modified server.mjs cannot silently listen
-#     on 0.0.0.0 or another port. `tailscale serve` already proxies it onto
-#     the tailnet with TLS (the proxy connects over loopback, which stays
-#     allowed). Declaring the serve rule is intentionally out of scope here
-#     (per the 2026-07-11 authorization).
+#   - The unit runs as the index owner (`user`/`group`): `nixos` on rpi5,
+#     `sancta` on sancta-choir after the 2026-07-22 migration.
+#   - The port is ALWAYS enforced at the systemd level (SocketBindAllow
+#     tcp:8739 only), so even a modified server.mjs cannot silently listen
+#     on another port.
+#
+# TWO BIND SHAPES (2026-07-26). `bind` selects between them and the
+# IPAddressAllow branch follows it:
+#
+#   loopback (default, the 2026-07-11 authorization) — 127.0.0.1:8739 with
+#     IPAddressAllow restricted to loopback, so even a compromised server
+#     cannot reach the network. `tailscale serve` proxies it onto the tailnet
+#     with TLS over loopback. Declaring the serve rule stays out of scope.
+#
+#   own origin (sancta-choir) — the server binds the tailnet address itself
+#     and IPAddressAllow widens to the Tailscale CGNAT/ULA ranges only. Chosen
+#     because on 2026-07-26 a page mounted as a PATH under serve's
+#     `/ -> 127.0.0.1:8080` catch-all failed silently and the URL answered 200
+#     with a DIFFERENT application: longest-prefix routing makes `/` the parent
+#     of every path and an SPA history-fallback answers 200 to anything, so
+#     composed they form a total function over the URL space in which no
+#     mistake is representable. One owner per origin; a dead gallery then fails
+#     as ECONNREFUSED, which cannot be mistaken for content.
+#
+#     This is a DELIBERATE deviation from the repo's documented norm (CLAUDE.md:
+#     "services bind 127.0.0.1, accessed via Tailscale Serve HTTPS"). Traffic
+#     stays inside WireGuard either way; what changes is that a wrong URL now
+#     fails loudly instead of rendering someone else's page.
+#
+#   `bind` is delivered to the server as GALLERY_BIND, which server.mjs reads
+#   (`const BIND = process.env.GALLERY_BIND || '127.0.0.1'`). That script is
+#   mutable and outside this repo, so the binding is a CONTRACT with it, not
+#   something this module can prove — see the closing check in the PR.
 { config
 , lib
 , pkgs
@@ -107,6 +131,20 @@ in
       {
         assertion = cfg.bind != "0.0.0.0" && cfg.bind != "::";
         message = "services.sancta-gallery.bind must not be a wildcard address — the gallery is loopback- or tailnet-only by construction, never by firewall.";
+      }
+      {
+        # The alert template is declared inside sancta-soul-mirror's own mkIf.
+        # Point OnFailure at it on a host without the mirror and systemd resolves
+        # it to a non-existent unit: it records a failed transient job and the
+        # alert never runs — a crashed gallery then fails SILENTLY, which is the
+        # exact failure mode this whole module exists to close.
+        #
+        # sancta-doctrine-guard.nix carries this same assertion, added one day
+        # earlier for the same reason, and it was omitted here. Caught in review.
+        assertion =
+          !(lib.hasInfix "sancta-soul-mirror-alert" (toString (cfg.onFailureUnit or "")))
+          || (config.services.sancta-soul-mirror.enable or false);
+        message = "services.sancta-gallery.onFailureUnit points at sancta-soul-mirror-alert@, which is declared only when services.sancta-soul-mirror.enable = true. Enable the mirror, or use an alert unit that exists on this host.";
       }
     ];
 
