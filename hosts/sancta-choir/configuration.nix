@@ -51,6 +51,7 @@
     ./sancta-worker.nix # guarded comm gateway + resumed `claude -p` worker
     ../../modules/services/sancta-soul-mirror.nix # choir-local encrypted soul vault (rpi5 pulls)
     ../../modules/services/sancta-doctrine-guard.nix # assert the authored substrate is present + recoverable
+    ../../modules/services/sancta-gallery.nix # the rendered surface, declared instead of hand-started
   ];
 
   # Enable development tools and agent CLIs.
@@ -258,6 +259,31 @@
   # never typed here: a hand-maintained list is the same bug wearing a new hat,
   # and this repo is PUBLIC so no skill name belongs in it anyway.
   services.sancta-doctrine-guard.enable = true;
+
+  # The rendered surface. On 2026-07-26 three node processes served Sancta's
+  # work and every one was PPID 1 — orphans of `setsid nohup`, started by hand,
+  # surviving no reboot and announcing no death. Both also ran with the non-leak
+  # publish gate DISARMED, because the gate lived in a shell invocation instead
+  # of in the system. The files were committed; the fact that they ran was not.
+  #
+  # bind: the tailnet address, not loopback-plus-`tailscale serve`. Earlier that
+  # same day a page mounted as a PATH under serve's catch-all failed silently and
+  # the URL answered 200 with a different application. One owner per origin: a
+  # dead gallery then fails as ECONNREFUSED, which cannot be mistaken for content.
+  #
+  # NOT declared here: the loopback instance on 127.0.0.1:8739. That is
+  # bin/gallery-shot's hardcoded and only permitted origin — a structural gate,
+  # "so Sancta cannot, not so it promises not to" — and killing it as a duplicate
+  # would remove Sancta's own eyes on what it renders. Second role, not stray copy.
+  services.sancta-gallery = {
+    enable = true;
+    galleryDir = "/var/lib/sancta/.claude/index/gallery";
+    user = "sancta";
+    group = "sancta";
+    bind = "100.94.191.54";
+    requiresMount = "/var/lib/sancta/.claude";
+    onFailureUnit = "sancta-soul-mirror-alert@%N.service";
+  };
 
   # ==========================================================================
   # Open-WebUI — AI chat gateway via OpenRouter

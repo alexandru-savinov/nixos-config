@@ -45,17 +45,88 @@ in
       default = "/home/nixos/.claude/index/gallery";
       description = "Directory holding server.mjs, the pieces and their .passed sidecars.";
     };
+
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "nixos";
+      description = "Account owning galleryDir. On sancta-choir the index owner is `sancta`, not `nixos`.";
+    };
+
+    group = lib.mkOption {
+      type = lib.types.str;
+      default = "users";
+      description = "Primary group of `user`.";
+    };
+
+    bind = lib.mkOption {
+      type = lib.types.str;
+      default = "127.0.0.1";
+      description = ''
+        Address the server binds. Default loopback, proxied onto the tailnet by
+        `tailscale serve` (the 2026-07-11 shape).
+
+        A tailnet address may be given instead, and on sancta-choir that is the
+        chosen shape — because on 2026-07-26 a page mounted as a PATH under
+        `tailscale serve`'s catch-all silently failed and the URL returned 200
+        with a DIFFERENT application's page. Longest-prefix routing makes `/` the
+        parent of every path, and an SPA history-fallback answers 200 to
+        anything; composed, no URL can produce an error, so no check can observe
+        a mistake. Binding its own origin makes a dead gallery fail as
+        ECONNREFUSED, which cannot be mistaken for content.
+
+        A wildcard (0.0.0.0 / ::) is rejected by assertion: tailnet-only is a
+        property of the binding, not of a firewall rule someone must remember.
+      '';
+    };
+
+    requiresMount = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        If set, the unit requires that path to be a live mountpoint and refuses
+        to start otherwise. On sancta-choir the gallery lives on the LUKS soul
+        volume; serving 404s off the bare underlay would look merely empty
+        instead of broken.
+      '';
+    };
+
+    onFailureUnit = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "sancta-soul-mirror-alert@%N.service";
+      description = ''
+        Optional unit to trigger on failure. Without it a crashed gallery is
+        silent until someone notices the page is gone — the failure mode the
+        hand-started processes had, kept by accident.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.bind != "0.0.0.0" && cfg.bind != "::";
+        message = "services.sancta-gallery.bind must not be a wildcard address — the gallery is loopback- or tailnet-only by construction, never by firewall.";
+      }
+    ];
+
     systemd.services.sancta-gallery = {
       description = "Sancta Gallery — read-only static viewer with publish gate";
-      after = [ "network.target" ];
+      after = [ "network.target" ]
+        ++ lib.optional (cfg.requiresMount != null) "sancta-soul-mount.service";
+      requires = lib.optional (cfg.requiresMount != null) "sancta-soul-mount.service";
       wantedBy = [ "multi-user.target" ];
+      onFailure = lib.optional (cfg.onFailureUnit != null) cfg.onFailureUnit;
 
       # If the (deliberately non-store) server script is missing, stay
       # inactive rather than crash-loop.
-      unitConfig.ConditionPathExists = "${cfg.galleryDir}/server.mjs";
+      unitConfig = {
+        ConditionPathExists = "${cfg.galleryDir}/server.mjs";
+      } // lib.optionalAttrs (cfg.requiresMount != null) {
+        # Unmounted volume → refuse to start rather than serve an empty
+        # directory. A wrong answer is worse than no answer.
+        ConditionPathIsMountPoint = toString cfg.requiresMount;
+      };
 
       # Rate-limit restarts: a persistently crashing server ends up in a
       # loud `systemctl --failed` state instead of oscillating forever.
@@ -71,12 +142,13 @@ in
         # responsibility of the painter/publish pipeline (Sancta's index),
         # not of this unit.
         GALLERY_PUBLISH_GATE = "1";
+        GALLERY_BIND = cfg.bind;
       };
 
       serviceConfig = {
         Type = "simple";
-        User = "nixos";
-        Group = "users";
+        User = cfg.user;
+        Group = cfg.group;
         WorkingDirectory = cfg.galleryDir;
         ExecStart = "${pkgs.nodejs}/bin/node ${cfg.galleryDir}/server.mjs";
         Restart = "always";
@@ -109,7 +181,26 @@ in
         # host over loopback, so the tailnet path keeps working.
         SocketBindAllow = "tcp:8739";
         SocketBindDeny = "any";
+      }
+      // lib.optionalAttrs (cfg.bind == "127.0.0.1" || cfg.bind == "::1") {
+        # Loopback shape (the 2026-07-11 authorization): packets may go nowhere
+        # but loopback, so even a modified server.mjs cannot reach the network.
+        # `tailscale serve` proxies from the same host over loopback.
         IPAddressAllow = [
+          "127.0.0.1/32"
+          "::1/128"
+        ];
+        IPAddressDeny = "any";
+      }
+      // lib.optionalAttrs (cfg.bind != "127.0.0.1" && cfg.bind != "::1") {
+        # Own-origin shape (sancta-choir): the process binds the tailnet address
+        # itself, so loopback-only IP filtering would block the very traffic it
+        # exists to serve. The port restriction above still holds — it may bind
+        # tcp:8739 and nothing else — and the CGNAT range is the tailnet's own,
+        # so this permits Tailscale peers and nothing on the public internet.
+        IPAddressAllow = [
+          "100.64.0.0/10"
+          "fd7a:115c:a1e0::/48"
           "127.0.0.1/32"
           "::1/128"
         ];
