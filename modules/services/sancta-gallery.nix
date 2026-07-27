@@ -129,8 +129,16 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.bind != "0.0.0.0" && cfg.bind != "::";
-        message = "services.sancta-gallery.bind must not be a wildcard address — the gallery is loopback- or tailnet-only by construction, never by firewall.";
+        # Not just "no wildcard": the bind must be an address IPAddressAllow
+        # actually permits. Anything else fails CLOSED — the unit starts, binds,
+        # and silently answers nobody, which is a quieter version of the exact
+        # failure this module exists to make loud.
+        assertion =
+          cfg.bind == "127.0.0.1"
+          || cfg.bind == "::1"
+          || lib.hasPrefix "100." cfg.bind
+          || lib.hasPrefix "fd7a:115c:a1e0:" cfg.bind;
+        message = "services.sancta-gallery.bind must be loopback (127.0.0.1 / ::1) or a Tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48) — those are the only ranges IPAddressAllow permits, so any other value would start, bind, and silently serve nobody. A wildcard is rejected by the same rule.";
       }
       {
         # The alert template is declared inside sancta-soul-mirror's own mkIf.

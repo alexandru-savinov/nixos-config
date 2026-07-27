@@ -116,6 +116,41 @@ else
   fi
 fi
 
+# ── 2b. drift in the LENSES repo — also FATAL ──────────────────────────────
+# Section 1 catches a lens that was committed and then vanished. It cannot catch
+# the opposite: a lens WRITTEN but never committed — and that half is exactly
+# how the 2026-07-21 loss happened. The six assessors sat on disk for days and
+# nothing minded, because nothing was tracking them.
+#
+# Skills are directories with a manifest, so their on-disk set is `*/SKILL.md`.
+# Lenses are flat markdown at the repo root, so theirs is `*.md`, compared
+# against the tracked set filtered the same way. Nested paths (bin/, any future
+# subdirectory) stay covered by section 1's existence check and deliberately not
+# by this one — widening it would make the two sets disagree by construction and
+# the guard would cry wolf on every run.
+if [ ! -d "$LENSES/.git" ]; then
+  note "lens drift: SKIPPED — lenses repo unusable (see failures above)"
+else
+  lens_committed=$(git -C "$LENSES" --no-optional-locks ls-files -- ':(glob)*.md' 2>/dev/null | sort)
+  lens_ondisk=$(cd "$LENSES" 2>/dev/null && for f in *.md; do
+    [ -e "$f" ] || continue # no matches leaves the pattern itself; skip it
+    [ -L "$f" ] && continue # symlinks are wiring, same rule as skills
+    echo "$f"
+  done | sort)
+
+  if [ "$lens_committed" != "$lens_ondisk" ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      case "$line" in
+        \>*) miss "lens on disk but NEVER COMMITTED: ${line#> }" ;;
+        \<*) miss "lens committed but missing from disk: ${line#< }" ;;
+      esac
+    done < <(diff <(echo "$lens_committed") <(echo "$lens_ondisk") | grep -E '^[<>]')
+  else
+    note "lens drift: committed set == on-disk set"
+  fi
+fi
+
 # ── 3. present: lives outside both repos. Small, static. ───────────────────
 # This list does NOT grow when a skill is added — that half is derived above.
 for p in "$CLAUDE/settings.json" "$CLAUDE/CLAUDE.md"; do

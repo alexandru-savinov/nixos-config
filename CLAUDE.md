@@ -91,21 +91,11 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 | `openclaw` (sancta-claw) | 18789 | Official OpenClaw npm package on dedicated VPS |
 | `services.hermes-agent` (hermes-claw) | - | Hermes AI agent in Podman container (upstream module, container mode) |
-| `services.sancta-gallery` (sancta-choir) | 8739 | Rendered surface, publish-gated. **Binds the tailnet address directly** — see the exception below |
+| `services.sancta-gallery` (sancta-choir) | 8739 | Rendered surface, publish-gated. Binds the tailnet address directly — documented exception below |
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. OpenClaw uses a different model: file-based inbox with per-UID nftables network restriction (no listener).
 
-**Documented exception — `sancta-gallery` on sancta-choir.** It binds the tailnet
-address directly instead of loopback + Serve. On 2026-07-26 a page mounted as a *path*
-under Serve's `/ → 127.0.0.1:8080` catch-all failed silently, and the URL returned
-**200 with Open-WebUI's page**: longest-prefix routing makes `/` the parent of every
-path and an SPA history-fallback answers 200 to anything, so composed they form a total
-function over the URL space in which no mistake is representable. Binding its own origin
-makes a dead service fail as `ECONNREFUSED`, which cannot be mistaken for content.
-Traffic stays inside WireGuard either way; `IPAddressAllow` is narrowed to Tailscale's
-CGNAT/ULA ranges and a wildcard bind is rejected by assertion. **New services should
-still follow the loopback + Serve norm** — this exception is for a surface whose whole
-job is that a wrong URL must be visibly wrong.
+**Documented exception — `sancta-gallery` on `sancta-choir`.** It binds its tailnet address directly instead of loopback + Serve. A page mounted as a *path* under Serve's `/ → 127.0.0.1:8080` catch-all failed silently and the URL returned 200 with the proxied app's own page: longest-prefix routing makes `/` the parent of every path, and an SPA history-fallback answers 200 to anything, so composed they form a total function over the URL space in which no mistake is representable. Binding its own origin makes a dead service fail as `ECONNREFUSED`, which cannot be mistaken for content. Traffic stays inside WireGuard either way; `IPAddressAllow` is narrowed to Tailscale's CGNAT/ULA ranges and a non-Tailscale bind is rejected by assertion. **New services should still follow the loopback + Serve norm** — this exception is for a surface whose whole job is that a wrong URL must be visibly wrong.
 
 Access URLs (HTTPS via Tailscale Serve):
 - Open-WebUI: `https://rpi5.tail4249a9.ts.net`
@@ -203,10 +193,10 @@ from the [claude-shared](https://github.com/alexandru-savinov/claude-shared)
 flake. This repo only:
 
 1. Imports the shared module via `modules/services/claude-shared.nix`
-(exposes `customModules.claudeShared.{enable,users}`).
+   (exposes `customModules.claudeShared.{enable,users}`).
 2. Wires it into hosts that should get the full CC stack. Currently:
-`rpi5` / `rpi5-full` (full). `sancta-choir`, `sancta-claw` are still on
-the legacy `customModules.claude` (package install only — no skills/agents).
+   `rpi5` / `rpi5-full` (full). `sancta-choir`, `sancta-claw` are still on
+   the legacy `customModules.claude` (package install only — no skills/agents).
 3. Carries **project-level** skills under `.claude/skills/` — see below.
 
 ### Where to edit Claude Code content
@@ -264,11 +254,11 @@ formatting failures.
 
 1. **State the hypothesis** — one sentence: *"I believe the root cause is X because Y."* Name the exact option, file, or behavior.
 2. **Design a minimal test** — the smallest command that confirms or refutes the hypothesis *without making changes*:
-```bash
-nixos-rebuild dry-build --flake .#rpi5-full 2>&1 | grep -iE "warn|error"  # capture current state
-nix eval .#nixosConfigurations.rpi5-full.config.<option>                   # inspect value
-grep -r "optionName" modules/                                              # find where it's set
-```
+   ```bash
+   nixos-rebuild dry-build --flake .#rpi5-full 2>&1 | grep -iE "warn|error"  # capture current state
+   nix eval .#nixosConfigurations.rpi5-full.config.<option>                   # inspect value
+   grep -r "optionName" modules/                                              # find where it's set
+   ```
 3. **Run the test** — if it refutes the hypothesis, revise and repeat from step 1. Do NOT apply the fix anyway.
 4. **Apply the fix** — minimal change only, exactly what the hypothesis identified.
 5. **Verify** — re-run the same test. Confirm the problem is gone and no new warnings appeared.
@@ -301,9 +291,9 @@ Known pitfalls — do not repeat these:
 
 1. Create module in `modules/services/<name>.nix`
 2. Follow the Tailscale wrapper pattern:
-- Bind to `127.0.0.1` only
-- Create `<name>-tailscale-serve.service` for HTTPS proxy
-- Use `age.secrets` for sensitive config
+   - Bind to `127.0.0.1` only
+   - Create `<name>-tailscale-serve.service` for HTTPS proxy
+   - Use `age.secrets` for sensitive config
 3. Add to host configuration
 4. Add secret to `secrets/secrets.nix` if needed
 
@@ -314,9 +304,9 @@ For long-running n8n workflows (>60s), use the async job pattern to prevent brow
 ### Architecture
 ```
 User → Main Webhook → Create Job ID → Trigger Worker → Return HTTP 202 immediately
-│
-↓ (fire-and-forget)
-Background Worker → Process → Update Status File
+                         │
+                         ↓ (fire-and-forget)
+                   Background Worker → Process → Update Status File
 
 UI Polling → Status Endpoint → Read Status File → Return Progress JSON
 ```
@@ -333,8 +323,8 @@ UI Polling → Status Endpoint → Read Status File → Return Progress JSON
 To trigger background work without blocking:
 ```json
 {
-"options": { "timeout": 1000 },
-"continueOnFail": true
+  "options": { "timeout": 1000 },
+  "continueOnFail": true
 }
 ```
 
@@ -342,7 +332,7 @@ To trigger background work without blocking:
 Enable Node.js built-in modules for file-based status tracking:
 ```nix
 extraEnvironment = {
-NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto";
+  NODE_FUNCTION_ALLOW_BUILTIN = "fs,path,crypto";
 };
 ```
 
@@ -416,7 +406,7 @@ Profile where eval time is spent (built into Nix 2.31+, no extra tools needed):
 ```bash
 # Generate collapsed stack trace
 nix eval --eval-profiler flamegraph --eval-profile-file /tmp/eval.folded \
-.#nixosConfigurations.rpi5-full.config.system.build.toplevel
+  .#nixosConfigurations.rpi5-full.config.system.build.toplevel
 
 # Visualize: upload /tmp/eval.folded to https://speedscope.app
 # Or generate SVG:
@@ -473,8 +463,8 @@ Each service has its own environment variable for binding:
 2. **Service ordering:** Tailscale Serve systemd services use `after` + `requires` on the main service, but this only waits for service start, not for the port to be listening
 
 3. **Idempotent setup:** Check if serve is already configured before adding:
-```bash
-if ! tailscale serve status | grep -q "https:PORT"; then
-tailscale serve --bg --https PORT http://127.0.0.1:PORT
-fi
-```
+   ```bash
+   if ! tailscale serve status | grep -q "https:PORT"; then
+     tailscale serve --bg --https PORT http://127.0.0.1:PORT
+   fi
+   ```

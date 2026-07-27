@@ -98,6 +98,24 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
     mkfixture "$R"; rm -rf "$R/skills/beta"
     expect_fail "$R" "missing from disk" "deleted committed skill fires"
 
+    echo "== lens drift: a lens on disk that was never committed (FATAL) =="
+    # Section 1 only catches a lens that was committed and then vanished. This
+    # is the other half — and it is the half that actually happened on
+    # 2026-07-21, when six assessors sat on disk for days untracked.
+    mkfixture "$R"; echo "# uncommitted" > "$R/lenses/ghost.md"
+    expect_fail "$R" "lens on disk but NEVER COMMITTED" "uncommitted lens is fatal"
+
+    echo "== lens drift: committed but gone from disk =="
+    mkfixture "$R"; rm -f "$R/lenses/somelens.md"
+    expect_fail "$R" "missing or empty" "deleted committed lens fires"
+
+    echo "== lens drift: a nested path must NOT trip it =="
+    # bin/ and any future subdirectory are covered by section 1's existence
+    # check, deliberately not by the flat *.md comparison — otherwise the two
+    # sets disagree by construction and the guard cries wolf on every run.
+    mkfixture "$R"; mkdir -p "$R/lenses/bin"; echo "#!/bin/sh" > "$R/lenses/bin/tool.sh"
+    expect_pass "$R" "an untracked NESTED file does not trip lens drift"
+
     echo "== symlinked skills are wiring, not doctrine — must NOT drift =="
     # The symlink MUST resolve. Bash's `for d in */` stats each entry, so a
     # DANGLING symlink never matches the glob at all — an earlier version of
@@ -147,7 +165,11 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
     mkfixture "$R"; rm -rf "$R/skills/.git"
     res=$(run "$R" 2>&1 || true)
     echo "$res" | grep -qF "not a git repo" || { echo "expected 'not a git repo'"; echo "$res"; exit 1; }
-    if echo "$res" | grep -qF "committed set == on-disk set"; then
+    # Match the SKILLS drift line specifically. Since 2026-07-27 the lenses repo
+    # has its own drift line whose text also contains "committed set == on-disk
+    # set" — and there it is legitimate, because the lenses repo is fine. A
+    # substring match would fail on a true statement about a different repo.
+    if echo "$res" | grep -qE '^ok: +drift: committed set == on-disk set'; then
       echo "REGRESSION: printed a reassuring drift line for the catastrophic case"
       echo "$res"; exit 1
     fi
