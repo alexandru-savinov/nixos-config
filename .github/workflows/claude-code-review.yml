@@ -48,14 +48,40 @@ jobs:
 
             Use the repository's CLAUDE.md for guidance on style and conventions.
 
-            ## Step 3: Post your review
-            Post a detailed review comment via:
-            gh pr comment ${{ github.event.pull_request.number }} --body "YOUR REVIEW"
+            ## Step 3: Post EACH finding as its own review thread
 
-            Include a summary table of findings with severity levels.
+            Post every finding of severity MEDIUM or above as a SEPARATE review
+            comment anchored to the file and line it concerns, using:
+
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments \
+              -f body="**SEVERITY** — the finding, why it is wrong, and the concrete fix" \
+              -f commit_id="${{ github.event.pull_request.head.sha }}" \
+              -f path="path/to/file" -F line=123 -f side=RIGHT
+
+            One finding, one thread. Do NOT bundle several findings into one
+            comment: each has to be resolvable on its own, because whoever
+            disposes of it is answering for that finding alone.
+
+            Why threads and not one comment: with
+            `required_conversation_resolution` enabled on the branch, GitHub
+            blocks the merge until every thread is explicitly resolved by a
+            human with write access. That makes the gate a human act with a
+            name on it, rather than a model's verdict — the disposition is
+            attributable, and a finding the reviewer got wrong is answered by
+            resolving the thread with a reason instead of by editing code to
+            satisfy the model or by weakening the gate.
+
+            If a line-anchored comment fails (a finding about the PR as a whole,
+            or a line outside the diff), fall back to:
+            gh pr comment ${{ github.event.pull_request.number }} --body "..."
+            and say in the body that it could not be anchored.
+
+            LOW findings and anything you consider merely advisory: put them in
+            ONE summary comment via `gh pr comment`, not as threads. A thread is
+            a thing someone must act on; do not manufacture work.
 
             ## Step 4: Write verdict (REQUIRED — do this LAST, as a SEPARATE tool call)
-            After posting your review comment, you MUST execute one of these commands
+            After posting your findings, you MUST execute one of these commands
             as a separate Bash tool call:
 
             If you found any CRITICAL or HIGH severity issues:
@@ -67,7 +93,13 @@ jobs:
             THIS IS MANDATORY. The CI check will fail if you do not write the verdict.
             Do NOT skip this step. Do NOT combine it with the comment step.
 
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
+            NOTE ON WHAT THIS VERDICT IS: it is SELF-REPORTED by you, not derived
+            from your review text — there is no schema and no second opinion. It
+            is therefore deliberately kept at CRITICAL/HIGH only. The MEDIUM gate
+            lives in the review threads above, where a human resolves each one,
+            not in this file.
+
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh api:*),Bash(echo:*),Bash(printf:*),Write"'
 
       - name: Check review verdict
         if: always()
