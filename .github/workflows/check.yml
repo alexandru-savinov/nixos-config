@@ -118,14 +118,33 @@ jobs:
                   save: ${{ github.ref == 'refs/heads/main' }}
                   gc-max-store-size: 5G
 
-            - name: Build sancta-choir (x86_64-linux)
-              run: nix build .#nixosConfigurations.sancta-choir.config.system.build.toplevel
-
-            - name: Build sancta-claw (x86_64-linux)
-              run: nix build .#nixosConfigurations.sancta-claw.config.system.build.toplevel
-
-            - name: Build hermes-claw (x86_64-linux)
-              run: nix build .#nixosConfigurations.hermes-claw.config.system.build.toplevel
+            # One invocation, three targets — NOT three sequential steps.
+            #
+            # These were three separate `nix build` calls, so the runner built
+            # them one after another even though they are independent. Nix
+            # already parallelises across the derivations of a single build:
+            # given all three roots at once it schedules the whole combined
+            # graph across the runner's cores, and the large shared closure
+            # (nixpkgs, hosts/common.nix, the shared modules) is realised once
+            # instead of being waited on three times in series.
+            #
+            # Kept as ONE step in ONE job on purpose. A `strategy.matrix` over
+            # the three hosts would use three runners, but it renames the job
+            # to "Build x86_64 Configs (<host>)" and splits its green/red into
+            # three — and the n8n step below is deliberately a STEP inside this
+            # job, never a separate one (council-20260706T164646Z-c3c904), so
+            # that build-x86's meaning stays single and no phantom job can hang
+            # the branch-protection contract. This gets the parallelism without
+            # reopening that decision.
+            #
+            # --print-build-logs so a failure still names which host broke; the
+            # step name no longer can.
+            - name: Build x86_64 hosts (sancta-choir, sancta-claw, hermes-claw)
+              run: |
+                  nix build --print-build-logs \
+                    .#nixosConfigurations.sancta-choir.config.system.build.toplevel \
+                    .#nixosConfigurations.sancta-claw.config.system.build.toplevel \
+                    .#nixosConfigurations.hermes-claw.config.system.build.toplevel
 
             # Heavy VM test (#42): builds n8n from source (unfree, never
             # binary-cached) + boots a KVM VM. Runs here — after the
