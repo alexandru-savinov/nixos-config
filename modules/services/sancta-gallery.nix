@@ -52,6 +52,27 @@
 #   (`const BIND = process.env.GALLERY_BIND || '127.0.0.1'`). That script is
 #   mutable and outside this repo, so the binding is a CONTRACT with it, not
 #   something this module can prove — see the closing check in the PR.
+#
+# THE OWN-ORIGIN SHAPE HAS A BOOT RACE (found 2026-07-30). A tailnet address is
+# not a property of the host — it is assigned by tailscaled after it comes up.
+# `After=network.target` says nothing about that, so at boot the server calls
+# bind(100.94.191.54:8739) before the address exists and gets EADDRNOTAVAIL;
+# Restart=always then burns startLimitBurst in ~25s and the unit ends up
+# permanently failed. Every other tailnet-dependent unit in this repo already
+# orders after `tailscaled.service` (home-assistant, n8n, gatus, open-webui,
+# sancta-membrane-serve); this module, which binds the address DIRECTLY, was the
+# only one that did not.
+#
+# The cure is ordering plus a probe, not ordering alone: tailscaled can be
+# "active" before the address lands, and `FreeBind=` would make the bind succeed
+# against an address that never arrives — a server that starts and answers nobody,
+# which is the precise failure this module exists to make loud. So the probe
+# performs the EXACT operation that fails (bind tcp:8739 on `bind`), retries, and
+# then exits NON-ZERO so the unit fails and OnFailure fires.
+#
+# Note the probe must use port 8739: SocketBindDeny=any applies to ExecStartPre
+# too, so probing an ephemeral port would be refused with EACCES rather than
+# EADDRNOTAVAIL — the wait would return "ready" immediately and guard nothing.
 { config
 , lib
 , pkgs
@@ -59,6 +80,31 @@
 }:
 let
   cfg = config.services.sancta-gallery;
+
+  isLoopback = cfg.bind == "127.0.0.1" || cfg.bind == "::1";
+
+  # Seconds the probe waits for the tailnet address to be assigned before it
+  # gives up and fails the unit. tailscaled's own consumers in this repo use a
+  # 60s budget for the same wait.
+  bindWaitSec = 60;
+
+  # Probe: attempt the real bind. Exit 1 means ONLY "not here yet"; anything
+  # else exits 0 so the real error surfaces from ExecStart. Kept as its own
+  # file — not an inline heredoc — so tests/sancta-gallery-bind-probe.nix can
+  # execute the same bytes the unit runs (the sancta-doctrine-guard.sh shape).
+  bindProbe = ./sancta-gallery-bind-probe.js;
+
+  waitForBind = pkgs.writeShellScript "sancta-gallery-wait-bind" ''
+    set -eu
+    deadline=$((SECONDS + ${toString bindWaitSec}))
+    until ${pkgs.nodejs}/bin/node ${bindProbe}; do
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "ERROR: sancta-gallery: $GALLERY_BIND:8739 is still not bindable after ${toString bindWaitSec}s (EADDRNOTAVAIL) — the tailnet address never arrived. Check tailscaled." >&2
+        exit 1
+      fi
+      sleep 1
+    done
+  '';
 in
 {
   options.services.sancta-gallery = {
@@ -159,7 +205,11 @@ in
     systemd.services.sancta-gallery = {
       description = "Sancta Gallery — read-only static viewer with publish gate";
       after = [ "network.target" ]
-        ++ lib.optional (cfg.requiresMount != null) "sancta-soul-mount.service";
+        ++ lib.optional (cfg.requiresMount != null) "sancta-soul-mount.service"
+        # Own-origin shape only: the bind address is handed out by tailscaled,
+        # so without this the boot order is a coin flip (see header).
+        ++ lib.optional (!isLoopback) "tailscaled.service";
+      wants = lib.optional (!isLoopback) "tailscaled.service";
       requires = lib.optional (cfg.requiresMount != null) "sancta-soul-mount.service";
       wantedBy = [ "multi-user.target" ];
       onFailure = lib.optional (cfg.onFailureUnit != null) cfg.onFailureUnit;
@@ -228,7 +278,7 @@ in
         SocketBindAllow = "tcp:8739";
         SocketBindDeny = "any";
       }
-      // lib.optionalAttrs (cfg.bind == "127.0.0.1" || cfg.bind == "::1") {
+      // lib.optionalAttrs isLoopback {
         # Loopback shape (the 2026-07-11 authorization): packets may go nowhere
         # but loopback, so even a modified server.mjs cannot reach the network.
         # `tailscale serve` proxies from the same host over loopback.
@@ -238,7 +288,16 @@ in
         ];
         IPAddressDeny = "any";
       }
-      // lib.optionalAttrs (cfg.bind != "127.0.0.1" && cfg.bind != "::1") {
+      // lib.optionalAttrs (!isLoopback) {
+        # Wait for the address tailscaled hands out, and fail LOUD if it never
+        # arrives. Ordering after tailscaled.service is necessary but not
+        # sufficient: the unit can be active before the address is assigned.
+        ExecStartPre = toString waitForBind;
+
+        # The probe may spend up to bindWaitSec seconds; the 90s systemd default
+        # would SIGTERM it mid-wait once ExecStart is added on top.
+        TimeoutStartSec = bindWaitSec + 60;
+
         # Own-origin shape (sancta-choir): the process binds the tailnet address
         # itself, so loopback-only IP filtering would block the very traffic it
         # exists to serve. The port restriction above still holds — it may bind

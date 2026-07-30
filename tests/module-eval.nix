@@ -583,6 +583,62 @@ let
       ];
     };
 
+    # ── Sancta Gallery: the tailnet bind must not race tailscaled ──
+    #
+    # The own-origin shape binds a Tailscale address, which tailscaled assigns
+    # after it starts. `After=network.target` says nothing about that, so on
+    # 2026-07-30 the deployed unit could bind() before the address existed, get
+    # EADDRNOTAVAIL, burn Restart=always/startLimitBurst in ~25s and stay
+    # permanently failed. Assert the ordering AND the probe on the real host
+    # config, so the fix cannot be silently dropped by a later refactor.
+    sancta-gallery-choir-waits-for-tailscaled =
+      let
+        svc = self.nixosConfigurations.sancta-choir.config.systemd.services.sancta-gallery;
+        checks = {
+          bindIsTailnet = nixpkgs.lib.hasPrefix "100." svc.environment.GALLERY_BIND;
+          orderedAfterTailscaled = builtins.elem "tailscaled.service" svc.after;
+          wantsTailscaled = builtins.elem "tailscaled.service" svc.wants;
+          # Ordering alone is not enough: tailscaled can be active before the
+          # address is assigned, so the unit must also wait on the bind itself.
+          hasBindProbe = (svc.serviceConfig.ExecStartPre or null) != null;
+          # The probe may spend 60s; the 90s systemd default would SIGTERM it.
+          timeoutRaised = (svc.serviceConfig.TimeoutStartSec or 90) >= 120;
+        };
+        failed = builtins.filter (name: !checks.${name}) (builtins.attrNames checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir sancta-gallery would race tailscaled at boot — failed checks: ${builtins.toJSON failed}";
+
+    # Negative control for the branch above: the loopback shape must NOT pull in
+    # tailscaled or the probe. Without this, making the ordering unconditional
+    # would pass the test above while adding a dangling dependency on every host
+    # that uses the loopback shape — a check that cannot fail.
+    sancta-gallery-loopback-has-no-tailscaled-dep =
+      let
+        config = evalConfig {
+          modules = [
+            ../modules/services/sancta-gallery.nix
+            {
+              services.sancta-gallery.enable = true;
+              # bind defaults to 127.0.0.1 — the loopback shape.
+              users.users.nixos = {
+                isNormalUser = true;
+                group = "users";
+              };
+            }
+          ];
+        };
+        svc = config.systemd.services.sancta-gallery;
+        leaked = builtins.elem "tailscaled.service" (svc.after ++ svc.wants);
+        probed = (svc.serviceConfig.ExecStartPre or null) != null;
+      in
+      if !leaked && !probed then
+        true
+      else
+        builtins.throw "FAIL: sancta-gallery loopback shape gained tailnet-only wiring (tailscaled dep: ${builtins.toJSON leaked}, bind probe: ${builtins.toJSON probed}) — the own-origin branch is not actually conditional.";
+
     # ── Claude module ─────────────────────────────────────────────
     claude-missing-input = shouldFail "claude: missing claude-code input" {
       modules = [
