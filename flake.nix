@@ -393,6 +393,12 @@
           # the 2026-07-21 silent loss with better paperwork.
           sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
 
+          # The gallery's tailnet bind probe, exercised against real sockets.
+          # module-eval proves the unit is ordered after tailscaled; this proves
+          # the probe tells "address not here yet" apart from every other
+          # bind failure, which is the only part that can be silently wrong.
+          sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
+
           # NOTE: the declarative n8n VM test (#42) deliberately lives under
           # packages.<system>.n8n-declarative-test, NOT here. `nix flake
           # check` builds every check inside the resource-constrained
@@ -417,6 +423,7 @@
           heartbeat-trusted-context = import ./tests/heartbeat-trusted-context.nix { inherit pkgs; };
           sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
           sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
+          sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`
