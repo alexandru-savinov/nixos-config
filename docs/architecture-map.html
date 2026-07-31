@@ -242,8 +242,8 @@
 
 <script id="graph-data" type="application/json">{
   "stats": {
-    "nodes": 142,
-    "edges": 401,
+    "nodes": 141,
+    "edges": 400,
     "subsystems": 7
   },
   "nodes": [
@@ -1393,14 +1393,6 @@
       "file": ".github/workflows/issue-triage.yml",
       "role": "Auto-labels + comments new issues via Claude (model claude-opus-4-5); category + priority labels",
       "details": "Skips bot-authored issues; concurrency per issue number"
-    },
-    {
-      "id": "ci:auto-approve-sancta-claw",
-      "label": "auto-approve-sancta-claw.yml",
-      "kind": "ci",
-      "file": ".github/workflows/auto-approve-sancta-claw.yml",
-      "role": "Autonomous approve+merge of kuzea-bot PRs scoped to hosts/sancta-claw/** + openclaw module; pull_request_target with actor gate, fork rejection, path scoping, nix flake check/eval gate",
-      "details": "Accepted risk: no human review for sancta-claw scope. Relies on check.yml build-x86 as required status check"
     },
     {
       "id": "test:openclaw-zdr-proxy-nix",
@@ -3795,12 +3787,6 @@
       "to": "test:pytest",
       "kind": "ci-builds",
       "label": "pytest (excl e2e)"
-    },
-    {
-      "from": "ci:auto-approve-sancta-claw",
-      "to": "host:sancta-claw",
-      "kind": "ci-builds",
-      "label": "auto-approve+merge scoped PRs"
     },
     {
       "from": "test:module-eval",
