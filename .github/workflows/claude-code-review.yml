@@ -217,11 +217,21 @@ jobs:
               continue
             fi
 
-            if gh api "repos/$REPO/pulls/$PR/comments" \
+            if apierr=$(gh api "repos/$REPO/pulls/$PR/comments" \
                  -f body="$body" -f commit_id="$HEAD_SHA" \
-                 -f path="$path" -F line="$line" -f side="$side" > /dev/null; then
+                 -f path="$path" -F line="$line" -f side="$side" 2>&1 > /dev/null); then
               echo "  posted: $path:$line ($side)"
               posted=$((posted + 1))
+            elif ! grep -q '422' <<< "$apierr"; then
+              # NOT an anchor rejection. A rate limit, a 5xx or a network blip
+              # says nothing about whether the line is in the diff, and the
+              # fallback below would publish a comment asserting "could not be
+              # anchored" — a claim that is simply false, and that the dedup
+              # then preserves across retries. Same distinction the listing
+              # calls above are careful to make; it belongs here too.
+              echo "::error::posting $path:$line failed for a reason unrelated to anchoring: $apierr"
+              failed=$((failed + 1))
+              continue
             else
               # The anchor failed — the line is not in the current diff. A plain
               # comment is NOT an equivalent fallback: it has no "Resolve

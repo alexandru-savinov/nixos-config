@@ -38,7 +38,14 @@ if [ "$1" = "api" ] && [[ " $* " == *" --paginate "* ]]; then
   exit 0
 fi
 if [ "$1" = "api" ]; then
-  [ "${FAIL_ANCHOR:-0}" = "1" ] && exit 1
+  if [ "${FAIL_ANCHOR:-0}" != "0" ]; then
+    if [ "$FAIL_ANCHOR" = "422" ]; then
+      echo "gh: Unprocessable Entity (HTTP 422)" >&2
+    else
+      echo "gh: Bad Gateway (HTTP 502)" >&2
+    fi
+    exit 1
+  fi
   echo "$*" >> "$POST_LOG"
   exit 0
 fi
@@ -152,7 +159,7 @@ fi
 #     the gate this whole step exists to build, so the job must FAIL and say so.
 echo '[{"path":"a.nix","line":9999,"side":"RIGHT","body":"**MEDIUM** — unanchorable"}]' \
   > "$WORK/review-findings.json"
-FAIL_ANCHOR=1 run_case "unanchorable finding -> exit 1, gate not silently skipped" 1 "do NOT participate in required_conversation_resolution"
+FAIL_ANCHOR=422 run_case "unanchorable finding -> exit 1, gate not silently skipped" 1 "do NOT participate in required_conversation_resolution"
 if grep -q '^FALLBACK' "$POST_LOG"; then
   echo "  ok:   the finding was still posted, just not as a gating thread"
 else
@@ -165,7 +172,7 @@ fi
 #      forever — the unbounded duplication the dedup exists to prevent, reached
 #      by going around the dedup.
 printf '**MEDIUM** — unanchorable\n' > "$EXISTING_PLAIN"
-FAIL_ANCHOR=1 run_case "unanchorable already posted -> still exit 1, not duplicated" 1 "unanchored=1"
+FAIL_ANCHOR=422 run_case "unanchorable already posted -> still exit 1, not duplicated" 1 "unanchored=1"
 if grep -q '^FALLBACK' "$POST_LOG"; then
   echo "  FAIL: the unanchorable finding was posted a second time"
   fails=$((fails + 1))
@@ -173,6 +180,21 @@ else
   echo "  ok:   plain comments are deduplicated too"
 fi
 : > "$EXISTING_PLAIN"
+
+# 7c — a TRANSIENT post failure is not an anchoring verdict. A 5xx or a rate
+#      limit says nothing about whether the line is in the diff, so the fallback
+#      must not fire: publishing "could not be anchored to path:line" would be a
+#      false claim, and the plain-comment dedup would then preserve it across
+#      every retry. Must fail the job without posting anything.
+echo '[{"path":"a.nix","line":12,"side":"RIGHT","body":"**HIGH** — transient"}]' \
+  > "$WORK/review-findings.json"
+FAIL_ANCHOR=502 run_case "transient post failure -> exit 1, no false 'unanchorable'" 1 "unrelated to anchoring"
+if grep -q '^FALLBACK' "$POST_LOG"; then
+  echo "  FAIL: a 5xx published a comment claiming the line could not be anchored"
+  fails=$((fails + 1))
+else
+  echo "  ok:   no false unanchorable claim on a transient failure"
+fi
 
 # 8 — listing what is already on the PR FAILS (rate limit, 5xx). Either listing
 #     must stop the job. Swallowing it leaves the list empty, every
@@ -204,4 +226,4 @@ if [ "$fails" -ne 0 ]; then
   echo "claude-review-poster: $fails case(s) FAILED" >&2
   exit 1
 fi
-echo "claude-review-poster: all 16 assertions hold"
+echo "claude-review-poster: all 18 assertions hold"
