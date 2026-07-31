@@ -134,8 +134,9 @@ jobs:
           # restriction at all. So an injection that shapes a finding's WORDS
           # could reach a more privileged job than this one. Two things stop it,
           # and the second is the boundary: the poster below neutralises bot
-          # mentions in the body, and claude.yml now refuses to be summoned by a
-          # Bot author at all.
+          # mentions in the body, and PR #555 makes claude.yml refuse to be
+          # summoned by a Bot author at all. Until #555 lands, the neutralising
+          # below is the only thing standing there, which is why it is tested.
           claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
 
       # Deterministic poster: reads the reviewer's findings file and opens one
@@ -199,7 +200,7 @@ jobs:
             # a TRIGGER, not just text: claude.yml fires on `@claude` anywhere in
             # a comment. Breaking the literal substring costs nothing and the
             # finding stays perfectly readable. claude.yml's Bot-author gate is
-            # the actual boundary; this is the second lock on the same door.
+            # the boundary once PR #555 lands; this is the second lock.
             # Case-insensitive on purpose: GitHub's `contains()` is, so `@CLAUDE`
             # triggers just as well as `@claude`.
             body="${body//@[Cc][Ll][Aa][Uu][Dd][Ee]/@ claude}"
