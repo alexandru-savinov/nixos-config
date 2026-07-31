@@ -165,13 +165,29 @@ jobs:
           # Threads already open on this PR. Without this, every push re-posts
           # every still-applicable finding as a fresh thread, and with
           # required_conversation_resolution that is unbounded human work.
+          #
+          # NO `|| true` HERE. A rate limit or a 5xx would leave this file empty,
+          # every already-posted finding would look absent, and the step would
+          # re-post all of them — the exact unbounded duplication the dedup
+          # exists to prevent, arrived at by the dedup failing quietly. An empty
+          # list from a PR with no comments is a successful call and exits 0;
+          # only a real error stops the job, which is the intended difference.
           gh api --paginate "repos/$REPO/pulls/$PR/comments" \
             --jq '.[] | [(.path // ""), ((.line // .original_line) | tostring), ((.body // "") | split("\n")[0])] | @tsv' \
-            > existing.tsv || true
+            > existing.tsv
+
+          # Plain comments already posted. These are a SEPARATE store: an
+          # unanchorable finding lands here, and it never appears in the review
+          # comments listed above, so without this it would be re-posted on
+          # every push forever.
+          gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '.[] | (.body // "") | split("\n")[0]' \
+            > existing-plain.tsv
 
           posted=0
           skipped=0
           failed=0
+          unanchored=0
           while IFS= read -r finding; do
             path=$(jq -r '.path // ""' <<< "$finding")
             line=$(jq -r '.line // 0' <<< "$finding")
@@ -207,18 +223,36 @@ jobs:
               echo "  posted: $path:$line ($side)"
               posted=$((posted + 1))
             else
-              echo "::warning::could not anchor $path:$line — falling back to a plain comment"
-              if gh pr comment "$PR" --body "$body"$'\n\n'"_(could not be anchored to \`$path:$line\`)_" > /dev/null; then
-                posted=$((posted + 1))
+              # The anchor failed — the line is not in the current diff. A plain
+              # comment is NOT an equivalent fallback: it has no "Resolve
+              # conversation" button, so `required_conversation_resolution` does
+              # not gate on it at all. Posting one and calling the finding
+              # delivered would route the finding around the very gate this step
+              # exists to build, and it is exactly the findings about REMOVED
+              # code that land here. So: still post it, so the text is visible —
+              # then fail the job, so a human learns this one is not gating
+              # rather than discovering it at merge time.
+              plainkey=$(head -n 1 <<< "$body")
+              if grep -Fqx -- "$plainkey" existing-plain.tsv; then
+                echo "  already posted (unanchored): $path:$line"
+              elif gh pr comment "$PR" --body "$body"$'\n\n'"_(could not be anchored to \`$path:$line\` — this comment is NOT a resolvable thread and does NOT block the merge)_" > /dev/null; then
+                echo "  posted unanchored: $path:$line"
               else
+                echo "::error::could not post $path:$line at all, by either route"
                 failed=$((failed + 1))
+                continue
               fi
+              unanchored=$((unanchored + 1))
             fi
           done < <(jq -c '.[]' review-findings.json)
 
-          echo "posted=$posted already-open=$skipped failed=$failed"
+          echo "posted=$posted already-open=$skipped unanchored=$unanchored failed=$failed"
+          if [ "$unanchored" -gt 0 ]; then
+            echo "::error::$unanchored finding(s) could not be anchored to a line in this diff. They were posted as plain comments, which do NOT participate in required_conversation_resolution — so they do not block the merge. Re-anchor them or dispose of them deliberately; do not let them pass as gated."
+            failed=$((failed + unanchored))
+          fi
           if [ "$failed" -gt 0 ]; then
-            echo "::error::$failed finding(s) never reached the PR. A finding that is not posted is a finding that silently does not gate."
+            echo "::error::$failed finding(s) never reached the PR, or reached it without gating. A finding that does not gate is a finding that silently does not gate."
             exit 1
           fi
 
