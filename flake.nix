@@ -429,7 +429,6 @@
           sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
           sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
           sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
-          claude-review-poster = import ./tests/claude-review-poster.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`
