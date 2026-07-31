@@ -378,6 +378,11 @@
           # `id` used to fail only at runtime during ExecStartPost import.
           n8n-workflows-valid = import ./tests/n8n-workflows-valid.nix { inherit pkgs; };
 
+          # The review poster is the merge gate (#550): it turns findings into
+          # threads that `required_conversation_resolution` blocks on. If it
+          # silently stops posting, findings silently stop gating.
+          claude-review-poster = import ./tests/claude-review-poster.nix { inherit pkgs; };
+
           # Heartbeat membrane-reflection guard (#519): runs the shared
           # trusted-context jq against fractional-second (…NNN Z) fixtures —
           # the real new Date().toISOString() form — and asserts the parsed
@@ -424,6 +429,7 @@
           sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
           sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
           sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
+          claude-review-poster = import ./tests/claude-review-poster.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`

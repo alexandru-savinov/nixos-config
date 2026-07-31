@@ -48,19 +48,36 @@ jobs:
 
             Use the repository's CLAUDE.md for guidance on style and conventions.
 
-            ## Step 3: Post EACH finding as its own review thread
+            ## Step 3: Write your findings to review-findings.json
 
-            Post every finding of severity MEDIUM or above as a SEPARATE review
-            comment anchored to the file and line it concerns, using:
+            Write EVERY finding of severity MEDIUM or above to a file named
+            `review-findings.json` in the repository root, using the Write tool.
+            A later workflow step — plain bash, no model — turns each entry into
+            its own resolvable review thread. You do NOT post them yourself.
 
-            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments \
-              -f body="**SEVERITY** — the finding, why it is wrong, and the concrete fix" \
-              -f commit_id="${{ github.event.pull_request.head.sha }}" \
-              -f path="path/to/file" -F line=123 -f side=RIGHT
+            The file must be a JSON array. Write `[]` if you found nothing at
+            MEDIUM or above. Writing it is MANDATORY: a missing file fails the
+            job, because a review that posted nothing must never be mistaken for
+            a review that found nothing.
 
-            One finding, one thread. Do NOT bundle several findings into one
-            comment: each has to be resolvable on its own, because whoever
-            disposes of it is answering for that finding alone.
+            Each element:
+
+            {
+              "path": "path/to/file",        // repository-relative, exactly as in the diff
+              "line": 123,                   // the line the finding is anchored to
+              "side": "RIGHT",               // "RIGHT" for added/unchanged lines,
+                                             // "LEFT" for lines the diff DELETES —
+                                             // GitHub rejects RIGHT on a deleted line
+              "body": "**SEVERITY** — the finding, why it is wrong, and the concrete fix"
+            }
+
+            One finding, one element. Do NOT bundle several findings into one
+            entry: each has to be resolvable on its own, because whoever
+            disposes of it is answering for that finding alone. Start `body`
+            with the severity in bold, and keep its FIRST LINE stable for the
+            same finding across runs — the poster step deduplicates on
+            path + line + first line of body, so an unchanged finding does not
+            reappear as a second thread every time the branch is pushed.
 
             Why threads and not one comment: with
             `required_conversation_resolution` enabled on the branch, GitHub
@@ -71,14 +88,9 @@ jobs:
             resolving the thread with a reason instead of by editing code to
             satisfy the model or by weakening the gate.
 
-            If a line-anchored comment fails (a finding about the PR as a whole,
-            or a line outside the diff), fall back to:
-            gh pr comment ${{ github.event.pull_request.number }} --body "..."
-            and say in the body that it could not be anchored.
-
             LOW findings and anything you consider merely advisory: put them in
-            ONE summary comment via `gh pr comment`, not as threads. A thread is
-            a thing someone must act on; do not manufacture work.
+            ONE summary comment via `gh pr comment`, not in this file. A thread
+            is a thing someone must act on; do not manufacture work.
 
             ## Step 4: Write verdict (REQUIRED — do this LAST, as a SEPARATE tool call)
             After posting your findings, you MUST execute one of these commands
@@ -99,7 +111,89 @@ jobs:
             lives in the review threads above, where a human resolves each one,
             not in this file.
 
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh api:*),Bash(echo:*),Bash(printf:*),Write"'
+          # NOTE: `gh api` is deliberately NOT granted. This job's prompt is fed
+          # the PR diff, which is attacker-influenced content, and the job holds
+          # `pull-requests: write` — an unrestricted `gh api` would let an
+          # injected instruction submit an APPROVING review on the very PR under
+          # review, i.e. rebuild the zero-human merge lane by another door. The
+          # agent therefore writes findings to a file and a deterministic step
+          # below posts them; the worst an injection can now do is put wrong text
+          # in a review comment, which it could already do via `gh pr comment`.
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
+
+      # Deterministic poster: reads the reviewer's findings file and opens one
+      # resolvable thread per finding. Runs before the verdict gate so findings
+      # still reach the PR when the verdict is CRITICAL.
+      - name: Post findings as review threads
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f review-findings.json ]; then
+            echo "::error::The reviewer did not write review-findings.json. Failing as a precaution — a review that posts nothing must not look like a review that found nothing."
+            exit 1
+          fi
+          if ! jq -e 'type == "array"' review-findings.json > /dev/null 2>&1; then
+            echo "::error::review-findings.json is not a JSON array."
+            cat review-findings.json
+            exit 1
+          fi
+          echo "reviewer reported $(jq 'length' review-findings.json) finding(s) at MEDIUM or above"
+
+          # Threads already open on this PR. Without this, every push re-posts
+          # every still-applicable finding as a fresh thread, and with
+          # required_conversation_resolution that is unbounded human work.
+          gh api --paginate "repos/$REPO/pulls/$PR/comments" \
+            --jq '.[] | [(.path // ""), ((.line // .original_line) | tostring), ((.body // "") | split("\n")[0])] | @tsv' \
+            > existing.tsv || true
+
+          posted=0
+          skipped=0
+          failed=0
+          while IFS= read -r finding; do
+            path=$(jq -r '.path // ""' <<< "$finding")
+            line=$(jq -r '.line // 0' <<< "$finding")
+            side=$(jq -r 'if .side == "LEFT" then "LEFT" else "RIGHT" end' <<< "$finding")
+            body=$(jq -r '.body // ""' <<< "$finding")
+
+            if [ -z "$path" ] || [ "$line" = "0" ] || [ -z "$body" ]; then
+              echo "::error::a finding is missing path, line, or body: $finding"
+              failed=$((failed + 1))
+              continue
+            fi
+
+            key=$(printf '%s\t%s\t%s' "$path" "$line" "$(head -n 1 <<< "$body")")
+            if grep -Fqx -- "$key" existing.tsv; then
+              echo "  already open: $path:$line"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            if gh api "repos/$REPO/pulls/$PR/comments" \
+                 -f body="$body" -f commit_id="$HEAD_SHA" \
+                 -f path="$path" -F line="$line" -f side="$side" > /dev/null; then
+              echo "  posted: $path:$line ($side)"
+              posted=$((posted + 1))
+            else
+              echo "::warning::could not anchor $path:$line — falling back to a plain comment"
+              if gh pr comment "$PR" --body "$body"$'\n\n'"_(could not be anchored to \`$path:$line\`)_" > /dev/null; then
+                posted=$((posted + 1))
+              else
+                failed=$((failed + 1))
+              fi
+            fi
+          done < <(jq -c '.[]' review-findings.json)
+
+          echo "posted=$posted already-open=$skipped failed=$failed"
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed finding(s) never reached the PR. A finding that is not posted is a finding that silently does not gate."
+            exit 1
+          fi
 
       - name: Check review verdict
         if: always()
