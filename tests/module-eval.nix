@@ -603,6 +603,21 @@ let
           hasBindProbe = (svc.serviceConfig.ExecStartPre or null) != null;
           # The probe may spend 60s; the 90s systemd default would SIGTERM it.
           timeoutRaised = (svc.serviceConfig.TimeoutStartSec or 90) >= 120;
+
+          # The rate-limit window must be WIDER than the time startLimitBurst
+          # attempts actually take. systemd resets the window whenever the gap
+          # since its start exceeds the interval, so if one attempt (probe wait
+          # + RestartSec) costs more than the interval, the count never reaches
+          # the burst, the unit never enters `failed`, and OnFailure never
+          # fires — it just retries forever, silently. Found on #554 by two
+          # independent reviewers AFTER the fix was written; this assertion is
+          # what ties the three numbers together so the next edit to any one of
+          # them fails CI instead of re-opening the hole.
+          startLimitWindowExhaustible =
+            let
+              attemptCost = 60 + svc.serviceConfig.RestartSec; # probe wait + backoff
+            in
+            svc.startLimitIntervalSec >= attemptCost * svc.startLimitBurst;
         };
         failed = builtins.filter (name: !checks.${name}) (builtins.attrNames checks);
       in

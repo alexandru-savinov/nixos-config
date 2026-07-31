@@ -88,6 +88,12 @@ let
   # 60s budget for the same wait.
   bindWaitSec = 60;
 
+  # Restart cadence. These three are bound together by the rate-limit window
+  # computed below — change one and the derived window follows, and the eval
+  # test asserts the relation still holds.
+  restartSec = 5;
+  startLimitBurst = 5;
+
   # Probe: attempt the real bind. Exit 1 means ONLY "not here yet"; anything
   # else exits 0 so the real error surfaces from ExecStart. Kept as its own
   # file — not an inline heredoc — so tests/sancta-gallery-bind-probe.nix can
@@ -97,7 +103,17 @@ let
   waitForBind = pkgs.writeShellScript "sancta-gallery-wait-bind" ''
     set -eu
     deadline=$((SECONDS + ${toString bindWaitSec}))
-    until ${pkgs.nodejs}/bin/node ${bindProbe}; do
+    while :; do
+      rc=0
+      ${pkgs.nodejs}/bin/node ${bindProbe} || rc=$?
+      [ "$rc" -eq 0 ] && break
+      if [ "$rc" -ne 1 ]; then
+        # Only exit 1 means "not here yet". Anything else is the probe itself
+        # failing, and retrying a broken probe for a minute would report a
+        # missing tailnet address that was never missing.
+        echo "ERROR: sancta-gallery: bind probe failed internally (exit $rc) — this is NOT an absent tailnet address." >&2
+        exit 1
+      fi
       if [ "$SECONDS" -ge "$deadline" ]; then
         echo "ERROR: sancta-gallery: $GALLERY_BIND:8739 is still not bindable after ${toString bindWaitSec}s (EADDRNOTAVAIL) — the tailnet address never arrived. Check tailscaled." >&2
         exit 1
@@ -226,8 +242,24 @@ in
 
       # Rate-limit restarts: a persistently crashing server ends up in a
       # loud `systemctl --failed` state instead of oscillating forever.
-      startLimitIntervalSec = 60;
-      startLimitBurst = 5;
+      #
+      # The window must be WIDER than the time `startLimitBurst` attempts
+      # actually take, or the limiter never trips. systemd resets the window
+      # whenever the gap since its start exceeds the interval
+      # (`ratelimit_below()`), so if one attempt costs more than the interval,
+      # every attempt lands in a fresh window, the count never reaches the
+      # burst, and the unit retries FOREVER without ever entering `failed` —
+      # which means OnFailure never fires and the alert never comes. That is
+      # this module's own silent-failure mode wearing a rate limiter.
+      #
+      # The loopback shape starts instantly, so 60s is fine. The own-origin
+      # shape spends up to `bindWaitSec` in the probe plus RestartSec between
+      # attempts, so the window is DERIVED from those numbers rather than
+      # typed — a hand-picked constant here is the same bug with a new hat.
+      # Caught in review on #554 by two independent reviewers.
+      inherit startLimitBurst;
+      startLimitIntervalSec =
+        if isLoopback then 60 else (bindWaitSec + restartSec) * startLimitBurst;
 
       environment = {
         # The publish gate: server refuses any artifact without a
@@ -248,7 +280,7 @@ in
         WorkingDirectory = cfg.galleryDir;
         ExecStart = "${pkgs.nodejs}/bin/node ${cfg.galleryDir}/server.mjs";
         Restart = "always";
-        RestartSec = 5;
+        RestartSec = restartSec;
 
         # Hardening. The server only ever READS the gallery dir; it gets a
         # read-only view of exactly that and nothing else under /home (see
