@@ -52,6 +52,7 @@
     ../../modules/services/sancta-soul-mirror.nix # choir-local encrypted soul vault (rpi5 pulls)
     ../../modules/services/sancta-doctrine-guard.nix # assert the authored substrate is present + recoverable
     ../../modules/services/sancta-gallery.nix # the rendered surface, declared instead of hand-started
+    ../../modules/services/sancta-statusline-refresh.nix # keep the status bar's cached state true
   ];
 
   # Enable development tools and agent CLIs.
@@ -259,6 +260,14 @@
   # never typed here: a hand-maintained list is the same bug wearing a new hat,
   # and this repo is PUBLIC so no skill name belongs in it anyway.
   services.sancta-doctrine-guard.enable = true;
+
+  # The status bar is the only surface on screen that never scrolls away, so it
+  # shows HIS open asks rather than the agent's token spend. It renders a cached
+  # file and queries nothing itself, because it runs on every prompt. This is the
+  # half that fills the file, written 2026-08-01 after the bar spent fifteen
+  # hours rendering a stale snapshot that looked perfectly current: six asks when
+  # there were fourteen, and a dead unit it never mentioned.
+  services.sancta-statusline-refresh.enable = true;
 
   # The rendered surface. On 2026-07-26 three node processes served Sancta's
   # work and every one was PPID 1 — orphans of `setsid nohup`, started by hand,

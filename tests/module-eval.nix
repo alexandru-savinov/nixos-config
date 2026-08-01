@@ -875,6 +875,90 @@ let
       else
         builtins.throw "FAIL: sancta-claw smokeTestBody missing check titles: ${builtins.toJSON missing}";
 
+    # ── sancta-statusline-refresh ─────────────────────────────────
+    # The status bar renders a cached file and queries nothing itself, because
+    # it runs on every prompt. This unit is the half that fills that file. On
+    # 2026-08-01 only the renderer existed, so the bar showed a fifteen-hour-old
+    # snapshot that looked perfectly current — six asks when there were fourteen.
+    # Nothing was broken in a way any check could see; the renderer worked
+    # correctly on stale input. These assertions pin the wiring that makes the
+    # file get written at all.
+    sancta-statusline-refresh-choir-wiring =
+      let
+        svc = self.nixosConfigurations.sancta-choir.config.systemd.services.sancta-statusline-refresh;
+        timer = self.nixosConfigurations.sancta-choir.config.systemd.timers.sancta-statusline-refresh;
+        soulRoot = toString self.nixosConfigurations.sancta-choir.config.services.sancta-soul-volume.mountPoint;
+        stateFile = "${soulRoot}/index/statusline-state.json";
+
+        checks = {
+          # Mount-gated: without the soul volume the state file's directory does
+          # not exist, and a run would fail every fifteen minutes forever.
+          mountGated = svc.unitConfig.ConditionPathIsMountPoint or null == soulRoot;
+          requiresMount = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
+
+          # Exactly ONE writable path. The unit updates a single file and has no
+          # business touching anything else on the volume; everything else it
+          # needs it only reads. Widening this list is how a refresher becomes a
+          # writer.
+          onlyStateWritable = (svc.serviceConfig.ReadWritePaths or [ ]) == [ stateFile ];
+
+          # Network is REQUIRED here, unlike the doctrine guard: the ask list
+          # comes from GitHub. If this were ever narrowed to AF_UNIX the unit
+          # would still start, still exit 0, and silently write an empty ask
+          # list — which the bar renders as a clear queue.
+          hasNetwork =
+            builtins.elem "AF_INET" (svc.serviceConfig.RestrictAddressFamilies or [ ])
+            && builtins.elem "AF_UNIX" (svc.serviceConfig.RestrictAddressFamilies or [ ]);
+
+          # The cadence has to stay far below the twelve hours after which the
+          # bar starts marking itself stale, or the number means "recently"
+          # rather than "now".
+          timerEvery15 = (timer.timerConfig.OnCalendar or "") == "*:0/15";
+
+          # After a reboot the bar would otherwise render whatever the file held
+          # when the machine went down, with no marker for twelve hours.
+          catchesUp = (timer.timerConfig.Persistent or false) == true;
+
+          # A run that outlives its own cadence stacks refreshes instead of
+          # replacing them.
+          boundedRun = (svc.serviceConfig.TimeoutStartSec or "") == "3m";
+        };
+
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir statusline-refresh wiring — failed checks: ${builtins.toJSON failed}";
+
+    # An empty `units` list makes a host with dead services render identically
+    # to a healthy one: the bar's "down" field can never populate. That is the
+    # exact silent-pass this module family exists to prevent, so it must fail at
+    # build time rather than ship a bar that cannot report.
+    sancta-statusline-refresh-empty-units-rejected =
+      shouldFail "statusline-refresh: empty units list rejected"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-statusline-refresh.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-statusline-refresh = {
+                enable = true;
+                units = [ ];
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
