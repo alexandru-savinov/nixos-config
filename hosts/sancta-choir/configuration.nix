@@ -89,8 +89,14 @@
   # ConditionPathIsMountPoint check refuses activation unless ~/.claude is
   # actually a mountpoint, closing that hole (Phase-1 guard #1).
   systemd.services.home-manager-sancta = {
-    after = [ "sancta-soul-mount.service" ];
-    requires = [ "sancta-soul-mount.service" ];
+    after = [
+      "sancta-soul-mount.service"
+      "sancta-soul-verify.service"
+    ];
+    requires = [
+      "sancta-soul-mount.service"
+      "sancta-soul-verify.service"
+    ];
     unitConfig.ConditionPathIsMountPoint =
       toString config.services.sancta-soul-volume.mountPoint;
   };

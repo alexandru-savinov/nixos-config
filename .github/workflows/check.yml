@@ -127,6 +127,16 @@ jobs:
             - name: Build hermes-claw (x86_64-linux)
               run: nix build .#nixosConfigurations.hermes-claw.config.system.build.toplevel
 
+            # Gate 0-A: deterministic production-relay crash windows plus a
+            # booted systemd/LUKS test using the real soul/worker modules. Keep
+            # the VM in this disk-cleaned, branch-protected x86 job rather than
+            # the resource-constrained generic flake-check job.
+            - name: Run Sancta relay crash-window tests (x86_64-linux)
+              run: nix build .#checks.x86_64-linux.sancta-membrane -L
+
+            - name: Run Sancta soul-volume VM test (x86_64-linux)
+              run: nix build .#sancta-soul-volume-test -L
+
             # Heavy VM test (#42): builds n8n from source (unfree, never
             # binary-cached) + boots a KVM VM. Runs here — after the
             # free-disk step, with nothing concurrent — because adding it

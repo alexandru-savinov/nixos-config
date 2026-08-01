@@ -312,6 +312,11 @@
           # locally with: nix build .#n8n-declarative-test
           n8n-declarative-test = import ./tests/n8n-declarative.nix { inherit pkgs self; };
 
+          # Booted systemd/LUKS proof for the Sancta soul. Kept as a package so
+          # the resource-constrained generic flake-check job does not boot a
+          # second VM; the branch-protected x86 job builds it explicitly.
+          sancta-soul-volume-test = import ./tests/sancta-soul-volume.nix { inherit pkgs; };
+
           # Fresh system installation script
           install = pkgs.writeShellApplication {
             name = "nixos-install";
@@ -388,14 +393,12 @@
           # cursor, successful turns commit once, and truncation never replays.
           sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
 
-          # NOTE: the declarative n8n VM test (#42) deliberately lives under
-          # packages.<system>.n8n-declarative-test, NOT here. `nix flake
-          # check` builds every check inside the resource-constrained
-          # "Check Flake & Formatting" CI job — adding the n8n source build
-          # (unfree, never binary-cached) plus a second KVM VM there killed
-          # the runner with a shutdown signal. CI runs the test as an
-          # explicit step in the "Build x86_64 Configs" job instead, which
-          # frees ~30GB disk first and runs nothing concurrently.
+          # NOTE: booted VM tests deliberately live under packages, NOT here.
+          # `nix flake check` builds every check inside the resource-constrained
+          # "Check Flake & Formatting" CI job; adding the n8n source build
+          # (unfree, never binary-cached) plus a second KVM VM previously killed
+          # that runner with a shutdown signal. CI runs both VM packages as
+          # explicit steps in the disk-cleaned "Build x86_64 Configs" job.
         };
 
       # aarch64-linux checks: only the architecture-independent, cheap

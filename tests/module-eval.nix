@@ -800,6 +800,67 @@ let
       else
         builtins.throw "FAIL: sancta-claw smokeTestBody missing check titles: ${builtins.toJSON missing}";
 
+    # Keep Home Manager from activating onto the bare ~/.claude underlay when
+    # the encrypted soul mount fails or is condition-skipped. This is a pure
+    # host-config wiring check; the live Gate 0 test must additionally prove
+    # that the mounted source is the expected LUKS mapper.
+    sancta-choir-home-manager-soul-mount-guard =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        service = cfg.systemd.services.home-manager-sancta;
+        openService = cfg.systemd.services.sancta-soul-open;
+        mountService = cfg.systemd.services.sancta-soul-mount;
+        verifyService = cfg.systemd.services.sancta-soul-verify;
+        workerService = cfg.systemd.services.sancta-worker;
+        membraneService = cfg.systemd.services.sancta-membrane;
+        mountUnit = "sancta-soul-mount.service";
+        verifyUnit = "sancta-soul-verify.service";
+        homeManagerUnit = "home-manager-sancta.service";
+        checks = {
+          mountUnitExists = builtins.hasAttr "sancta-soul-mount" cfg.systemd.services;
+          verifyUnitExists = builtins.hasAttr "sancta-soul-verify" cfg.systemd.services;
+          orderedAfter = builtins.elem mountUnit service.after;
+          hardRequired = builtins.elem mountUnit service.requires;
+          homeManagerOrderedAfterVerify = builtins.elem verifyUnit service.after;
+          homeManagerRequiresVerify = builtins.elem verifyUnit service.requires;
+          guardedByActualMountPoint =
+            service.unitConfig.ConditionPathIsMountPoint
+            == toString cfg.services.sancta-soul-volume.mountPoint;
+          armedOpenHasNoSkipCondition = !(openService.unitConfig ? ConditionPathExists);
+          armedMountHasNoSkipCondition = !(mountService.unitConfig ? ConditionPathExists);
+          productionSoulUnitsHaveNoCrashTestHook =
+            !(openService.environment ? SANCTA_SOUL_TEST_FAULT_ACK)
+            && !(openService.environment ? SANCTA_SOUL_TEST_FAULT_FILE)
+            && !(mountService.environment ? SANCTA_SOUL_TEST_FAULT_ACK)
+            && !(mountService.environment ? SANCTA_SOUL_TEST_FAULT_FILE);
+          verifierOrderedAfterMount = builtins.elem mountUnit verifyService.after;
+          verifierRequiresMount = builtins.elem mountUnit verifyService.requires;
+          workerOrderedAfterHomeManager = builtins.elem homeManagerUnit workerService.after;
+          workerRequiresHomeManager = builtins.elem homeManagerUnit workerService.requires;
+          workerOrderedAfterVerify = builtins.elem verifyUnit workerService.after;
+          workerRequiresVerify = builtins.elem verifyUnit workerService.requires;
+          workerGuardedByActualMountPoint =
+            workerService.unitConfig.ConditionPathIsMountPoint
+            == toString cfg.services.sancta-soul-volume.mountPoint;
+          workerHasNoCrashTestHook =
+            !(workerService.environment ? SANCTA_RELAY_TEST_FAULT_POINT)
+            && !(workerService.environment ? SANCTA_RELAY_TEST_FAULT_READY)
+            && !(workerService.environment ? SANCTA_RELAY_TEST_FAULT_ACK);
+          gatewayOrderedAfterMount = builtins.elem mountUnit membraneService.after;
+          gatewayRequiresMount = builtins.elem mountUnit membraneService.requires;
+          gatewayOrderedAfterVerify = builtins.elem verifyUnit membraneService.after;
+          gatewayRequiresVerify = builtins.elem verifyUnit membraneService.requires;
+          gatewayGuardedByActualMountPoint =
+            membraneService.unitConfig.ConditionPathIsMountPoint
+            == toString cfg.services.sancta-soul-volume.mountPoint;
+        };
+        failed = builtins.filter (name: !checks.${name}) (builtins.attrNames checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta Home Manager soul-mount guard failed: ${builtins.toJSON failed}";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────

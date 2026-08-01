@@ -220,12 +220,22 @@ in
         # The soul volume (~/.claude) must be mounted before the worker starts
         # so CLAUDE_CONFIG_DIR lands on encrypted storage, not the bare dir.
         "sancta-soul-mount.service"
+        # Revalidate the exact mapper/image/source for this start transaction;
+        # the long-lived mount oneshot may already be active.
+        "sancta-soul-verify.service"
+        # Host-owned skills/settings must finish activating on that mount before
+        # the resumed session reads them.
+        "home-manager-sancta.service"
       ];
       wants = [ "network-online.target" ];
       # Encryption integrity: pull in + order after the soul mount so an armed
       # worker never runs onto the bare (unencrypted) ~/.claude dir. (`after`
       # alone is only ordering; `requires` also brings the mount into the txn.)
-      requires = [ "sancta-soul-mount.service" ];
+      requires = [
+        "sancta-soul-mount.service"
+        "sancta-soul-verify.service"
+        "home-manager-sancta.service"
+      ];
       # INERT-BY-DEFAULT: the unit is skipped unless a session marker exists.
       # With session=null the guard points at a marker path that is NEVER
       # created (the literal ".__no-session__"), so even a manual `systemctl
@@ -338,7 +348,17 @@ in
     systemd.services.sancta-membrane = {
       description = "Sancta tailnet membrane gateway";
       wantedBy = lib.optional (cfg.session != null) "multi-user.target";
-      after = [ "sancta-worker.service" ];
+      after = [
+        "sancta-soul-mount.service"
+        "sancta-soul-verify.service"
+        "sancta-worker.service"
+      ];
+      # The gateway writes inbox/rate-limit state under the encrypted index.
+      # Its soft worker dependency must not let it run on a wrong/bare mount.
+      requires = [
+        "sancta-soul-mount.service"
+        "sancta-soul-verify.service"
+      ];
       # Keep history and status available after a one-shot worker failure. The
       # HTTP gateway rejects new messages unless the worker readiness file is
       # present, so this soft dependency cannot grow an unattended queue.
