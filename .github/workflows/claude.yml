@@ -12,11 +12,19 @@ on:
 
 jobs:
   claude:
+    # A BOT MAY NOT SUMMON THIS JOB. It runs an agent with no --allowed-tools
+    # restriction, holding CLAUDE_CODE_OAUTH_TOKEN and `actions: read`, and it
+    # executes whatever the triggering comment says. Without the author gate,
+    # any workflow that posts a comment becomes a way to reach it: the review
+    # job reads an attacker-influenced PR diff, and a diff crafted to make the
+    # reviewer emit `@claude <instructions>` inside a finding would fire this
+    # job through a comment the repo itself posted. The mention is a request
+    # from a person or it is nothing.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && github.event.review.user.type != 'Bot' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && github.event.issue.user.type != 'Bot' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     permissions:
       contents: read

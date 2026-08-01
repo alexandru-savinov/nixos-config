@@ -70,6 +70,51 @@ pkgs.runCommand "sancta-membrane-tests"
           test "$synonym_status" -eq 2
         done
 
+        # Stage 1 PII pre-check: one case per PII pattern in PRECHECK_PATTERNS.
+        # Every case asserts the exit code AND the reported category-name, so an
+        # email can never be reported (or matched) as a contact-handle instead.
+        # All fixtures are synthetic.
+        set +e
+        pii_email_out=$(printf '%s' "write to fake.person@example-nowhere.test about it" | HOME="$guard_home" node ${membrane})
+        pii_email_status=$?
+        pii_phone_out=$(printf '%s' "call 5550001234 later" | HOME="$guard_home" node ${membrane})
+        pii_phone_status=$?
+        pii_handle_out=$(printf '%s' "ping @fakehandle_zzz today" | HOME="$guard_home" node ${membrane})
+        pii_handle_status=$?
+        # Benign near-misses: 6 digits is below the phone floor and @ab is below
+        # the 3-character handle floor. Over-blocking destroys the channel as
+        # surely as under-blocking leaks through it — these must NOT be blocked.
+        pii_short_digits_out=$(printf '%s' "meeting at 123456" | HOME="$guard_home" node ${membrane})
+        pii_short_digits_status=$?
+        pii_short_handle_out=$(printf '%s' "ping @ab today" | HOME="$guard_home" node ${membrane})
+        pii_short_handle_status=$?
+        set -e
+        case "$pii_email_out" in
+          *"PRE-CHECK BLOCK [pii·email]"*) ;;
+          *) echo "membrane blocked the email for the wrong reason: $pii_email_out" >&2; exit 1 ;;
+        esac
+        case "$pii_phone_out" in
+          *"PRE-CHECK BLOCK [pii·phone-digits]"*) ;;
+          *) echo "membrane blocked the phone number for the wrong reason: $pii_phone_out" >&2; exit 1 ;;
+        esac
+        case "$pii_handle_out" in
+          *"PRE-CHECK BLOCK [pii·contact-handle]"*) ;;
+          *) echo "membrane blocked the handle for the wrong reason: $pii_handle_out" >&2; exit 1 ;;
+        esac
+        case "$pii_short_digits_out" in
+          *"HELD FOR HUMAN"*) ;;
+          *) echo "membrane mishandled a 6-digit number: $pii_short_digits_out" >&2; exit 1 ;;
+        esac
+        case "$pii_short_handle_out" in
+          *"HELD FOR HUMAN"*) ;;
+          *) echo "membrane mishandled a sub-threshold handle: $pii_short_handle_out" >&2; exit 1 ;;
+        esac
+        test "$pii_email_status" -eq 1
+        test "$pii_phone_status" -eq 1
+        test "$pii_handle_status" -eq 1
+        test "$pii_short_digits_status" -eq 2
+        test "$pii_short_handle_status" -eq 2
+
         gateway="$TMPDIR/gateway"
         mkdir -p "$gateway"
         ready="$gateway/ready"
@@ -166,6 +211,24 @@ pkgs.runCommand "sancta-membrane-tests"
           const blockedBody = await blocked.json();
           if (!blocked.ok || blockedBody.decision !== "block") process.exit(1);
 
+          // A PII-shaped message is refused by stage 1, so nothing PII-bearing
+          // ever reaches the persisted record: the inbox keeps the structural
+          // event only. The following node -e asserts the file itself.
+          const pii = await fetch("http://127.0.0.1:18743/send", {
+            method: "POST",
+            headers: { ...auth, "content-type": "application/json" },
+            body: JSON.stringify({ message: "contact fake.person@example-nowhere.test about it" }),
+          });
+          const piiBody = await pii.json();
+          if (!pii.ok || piiBody.decision !== "block") {
+            console.error("PII message was not blocked: " + JSON.stringify(piiBody));
+            process.exit(1);
+          }
+          if (!String(piiBody.line).includes("PRE-CHECK BLOCK [pii·email]")) {
+            console.error("PII message blocked for the wrong reason: " + JSON.stringify(piiBody.line));
+            process.exit(1);
+          }
+
           const response = await fetch("http://127.0.0.1:18743/send", {
             method: "POST",
             headers: { ...auth, "content-type": "application/json" },
@@ -184,6 +247,24 @@ pkgs.runCommand "sancta-membrane-tests"
         })().catch(error => { console.error(error); process.exit(1); });
     NODE
 
+        node -e '
+          const fs = require("fs");
+          const dir = process.argv[1];
+          const raw = fs.readFileSync(dir + "/comm-inbox.jsonl", "utf8");
+          if (raw.includes("fake.person") || raw.includes("example-nowhere.test")) {
+            console.error("blocked PII reached the persisted inbox");
+            process.exit(1);
+          }
+          const blocks = raw.trim().split("\n").map(line => JSON.parse(line)).filter(e => e.decision === "block");
+          if (blocks.length !== 2) {
+            console.error("expected 2 block records, got " + blocks.length);
+            process.exit(1);
+          }
+          if (blocks.some(e => "message" in e)) {
+            console.error("a block record carried raw message text");
+            process.exit(1);
+          }
+        ' "$gateway"
         node -e '
           const fs = require("fs");
           const dir = process.argv[1];
@@ -278,6 +359,94 @@ pkgs.runCommand "sancta-membrane-tests"
           if (response.status !== 503 || body.worker?.status !== "failed") process.exit(1);
         })().catch(error => { console.error(error); process.exit(1); });
     NODE
+
+        # redactPII() at the /thread-merged read boundary. Worker replies never
+        # pass the stage-1 pre-check, so this function is the ONLY guard on that
+        # text — and it is applied to both call sites (inbox + replies).
+        # Fixtures are synthetic: no real address, number or handle.
+        node -e '
+          const fs = require("fs");
+          const dir = process.argv[1];
+          fs.appendFileSync(dir + "/comm-inbox.jsonl", JSON.stringify({
+            ts: "2020-01-01T00:00:01.000Z",
+            decision: "escalate",
+            message: "escalated note for fake.user@nowhere.example and @fake_ping 55512345678",
+          }) + "\n");
+          fs.writeFileSync(dir + "/comm-replies.jsonl", [
+            { ts: "2020-01-01T00:00:02.000Z", text: "reply to fake.person+tag@example-nowhere.test today" },
+            { ts: "2020-01-01T00:00:03.000Z", text: "the fake code is 12345678 and 987654321 too" },
+            { ts: "2020-01-01T00:00:04.000Z", text: "ping @fakehandle_zzz and @second_fake now" },
+            { ts: "2020-01-01T00:00:05.000Z", text: "cod 123456 dragostea e liniștea" },
+          ].map(entry => JSON.stringify(entry) + "\n").join(""));
+        ' "$gateway"
+        node - <<'NODE'
+        (async () => {
+          const auth = {
+            "Tailscale-User-Login": "owner@example.com",
+            Authorization: "Basic " + Buffer.from("alexandru:test-membrane-password-0123456789abcdef").toString("base64"),
+          };
+          const response = await fetch("http://127.0.0.1:18743/thread-merged", { headers: auth });
+          const body = await response.json();
+          if (!response.ok) process.exit(1);
+          const byTs = new Map((body.thread || []).map(entry => [entry.ts, entry]));
+
+          // One case per pattern redactPII() claims to handle, plus the benign
+          // near-miss: a 6-digit number and non-ASCII text must survive intact.
+          const expected = [
+            ["2020-01-01T00:00:01.000Z", "alex", "escalated note for [email] and [handle] [number]"],
+            ["2020-01-01T00:00:02.000Z", "sancta", "reply to [email] today"],
+            ["2020-01-01T00:00:03.000Z", "sancta", "the fake code is [number] and [number] too"],
+            ["2020-01-01T00:00:04.000Z", "sancta", "ping [handle] and [handle] now"],
+            ["2020-01-01T00:00:05.000Z", "sancta", "cod 123456 dragostea e liniștea"],
+          ];
+          for (const [ts, role, text] of expected) {
+            const entry = byTs.get(ts);
+            if (!entry) {
+              console.error("missing thread entry " + ts);
+              process.exit(1);
+            }
+            if (entry.role !== role) {
+              console.error("wrong role for " + ts + ": " + entry.role);
+              process.exit(1);
+            }
+            if (entry.text !== text) {
+              console.error("redaction mismatch at " + ts
+                + "\n  got:    " + JSON.stringify(entry.text)
+                + "\n  wanted: " + JSON.stringify(text));
+              process.exit(1);
+            }
+          }
+          if (byTs.get("2020-01-01T00:00:01.000Z").decision !== "escalate") {
+            console.error("redaction dropped the decision label on the alex entry");
+            process.exit(1);
+          }
+
+          const serialized = JSON.stringify(body);
+          for (const fragment of [
+            "fake.person", "fake.user", "example-nowhere.test", "nowhere.example",
+            "fakehandle_zzz", "second_fake", "fake_ping",
+            "12345678", "987654321", "55512345678",
+          ]) {
+            if (serialized.includes(fragment)) {
+              console.error("PII fragment survived /thread-merged: " + fragment);
+              process.exit(1);
+            }
+          }
+        })().catch(error => { console.error(error); process.exit(1); });
+    NODE
+
+        # The stored records are unchanged: redaction is a read-boundary
+        # transform (/thread is deliberately raw for the authenticated UI), so
+        # the redacted output above can only have come from redactPII().
+        node -e '
+          const fs = require("fs");
+          const dir = process.argv[1];
+          const replies = fs.readFileSync(dir + "/comm-replies.jsonl", "utf8");
+          if (!replies.includes("fake.person+tag@example-nowhere.test")) {
+            console.error("reply fixture was not stored raw — the redaction case proves nothing");
+            process.exit(1);
+          }
+        ' "$gateway"
 
         kill "$server_pid"
         wait "$server_pid" || true
