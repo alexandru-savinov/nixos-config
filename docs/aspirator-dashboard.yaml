@@ -11,14 +11,14 @@
 #   1 Hol · 2 Dormitor · 3 Dormitor 1 · 4 Baie · 5 Dormitor 2 · 6 Living · 7 Bucătărie
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# V2 adds: (1) ordered multi-room queue (native-app style), (2) error display.
+# V2 adds: (1) multi-room selection (native-app style), (2) error display.
 #
 # HELPERS + SCRIPTS — declared in Nix (NOT the UI), because this HA's
 # configuration.yaml has no `script:` / `input_text:` !include, so UI/storage
 # scripts never load. See hosts/rpi5-full/configuration.nix:
-#   input_text.vacuum_queue         CSV of segment ids in tap order (default "")
+#   input_text.vacuum_queue         CSV of selected segment ids (default "")
 #   script.vacuum_room_toggle(seg)  append seg, or remove it if already queued
-#   script.vacuum_start_queue       app_segment_clean with the ordered list, then clear
+#   script.vacuum_start_queue       app_segment_clean with the selected ids, then clear
 #                                   (no-op guard when the queue is empty)
 #   script.vacuum_clear_queue       reset the queue to ""
 # NOTE: keep each script's queue math as ONE self-contained template — Nix sorts
@@ -109,7 +109,7 @@ views:
             heading: Camere
             heading_style: title
           - type: markdown
-            content: "Apasă o cameră ca s-o adaugi la coadă. Apasă din nou ca s-o scoți. Apoi apasă **Pornește camerele**."
+            content: "Apasă o cameră ca s-o selectezi. Apasă din nou ca s-o scoți. Apoi apasă **Pornește camerele** — robotul le face pe toate, în ordinea lui."
           # One button per room -> script.vacuum_room_toggle {segment: <id>}
           - { type: button, name: Hol,        icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 1 } } }
           - { type: button, name: Dormitor,   icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 2 } } }
@@ -118,15 +118,15 @@ views:
           - { type: button, name: Dormitor 2, icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 5 } } }
           - { type: button, name: Living,     icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 6 } } }
           - { type: button, name: Bucătărie,  icon: mdi:floor-plan, tap_action: { action: perform-action, perform_action: script.vacuum_room_toggle, data: { segment: 7 } } }
-          # Live ordered queue readout
+          # Live selection readout
           - type: markdown
             content: >-
               {% set q = states('input_text.vacuum_queue').split(',') |
               select('!=', '') | list %}{% set names =
               {'1':'Hol','2':'Dormitor','3':'Dormitor 1','4':'Baie','5':'Dormitor
               2','6':'Living','7':'Bucătărie'} %}{% if q | length == 0
-              %}**Nicio cameră selectată**{% else %}**Ordine:** {% for s in q
-              %}{{ loop.index }}. {{ names.get(s, s) }}{% if not loop.last %} →
+              %}**Nicio cameră selectată**{% else %}**Selectate:** {% for s in q
+              %}{{ names.get(s, s) }}{% if not loop.last %} ·
               {% endif %}{% endfor %}{% endif %}
           - type: button
             name: Pornește camerele
