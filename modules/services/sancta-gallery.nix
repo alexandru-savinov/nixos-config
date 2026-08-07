@@ -257,9 +257,20 @@ in
       # attempts, so the window is DERIVED from those numbers rather than
       # typed — a hand-picked constant here is the same bug with a new hat.
       # Caught in review on #554 by two independent reviewers.
+      #
+      # It must hold `startLimitBurst + 1` attempts, not `startLimitBurst`.
+      # systemd's ratelimit resets when `begin + interval < now` (STRICT), and
+      # the real per-attempt cost is slightly MORE than the nominal
+      # `bindWaitSec + restartSec` (the probe's `deadline` loop overshoots the
+      # last second, plus restart scheduling latency). A window sized to exactly
+      # `burst * cost` therefore lets the (burst+1)-th start land just PAST the
+      # boundary, where systemd resets the counter instead of denying it — so
+      # the limiter never trips and the unit retries forever. One extra attempt
+      # of headroom absorbs that overshoot; the burst is still reached (terminal
+      # `failed` + OnFailure) at ~`burst` cycles, only now reliably.
       inherit startLimitBurst;
       startLimitIntervalSec =
-        if isLoopback then 60 else (bindWaitSec + restartSec) * startLimitBurst;
+        if isLoopback then 60 else (bindWaitSec + restartSec) * (startLimitBurst + 1);
 
       environment = {
         # The publish gate: server refuses any artifact without a

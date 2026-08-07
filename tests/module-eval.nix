@@ -604,20 +604,24 @@ let
           # The probe may spend 60s; the 90s systemd default would SIGTERM it.
           timeoutRaised = (svc.serviceConfig.TimeoutStartSec or 90) >= 120;
 
-          # The rate-limit window must be WIDER than the time startLimitBurst
-          # attempts actually take. systemd resets the window whenever the gap
-          # since its start exceeds the interval, so if one attempt (probe wait
-          # + RestartSec) costs more than the interval, the count never reaches
-          # the burst, the unit never enters `failed`, and OnFailure never
-          # fires — it just retries forever, silently. Found on #554 by two
-          # independent reviewers AFTER the fix was written; this assertion is
-          # what ties the three numbers together so the next edit to any one of
-          # them fails CI instead of re-opening the hole.
+          # The rate-limit window must hold `startLimitBurst + 1` attempts, not
+          # just `startLimitBurst`. systemd resets the window when
+          # `begin + interval < now` (STRICT), and one attempt actually costs a
+          # little MORE than the nominal `probe wait + RestartSec` (the probe's
+          # deadline loop overshoots the last second, plus restart scheduling).
+          # A window of exactly `burst * cost` therefore lets the (burst+1)-th
+          # start land just past the boundary, where systemd RESETS the counter
+          # instead of denying it — the count never reaches the burst, the unit
+          # never enters `failed`, and OnFailure never fires: it retries forever,
+          # silently. The first fix on #554 used `>= cost * burst` and was STILL
+          # on the wrong side of that boundary; two reviewers flagged it. `+ 1`
+          # attempt of headroom absorbs the overshoot. This assertion ties the
+          # numbers together so the next edit to any one fails CI, not prod.
           startLimitWindowExhaustible =
             let
               attemptCost = 60 + svc.serviceConfig.RestartSec; # probe wait + backoff
             in
-            svc.startLimitIntervalSec >= attemptCost * svc.startLimitBurst;
+            svc.startLimitIntervalSec >= attemptCost * (svc.startLimitBurst + 1);
         };
         failed = builtins.filter (name: !checks.${name}) (builtins.attrNames checks);
       in
