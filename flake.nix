@@ -404,6 +404,16 @@
           # bind failure, which is the only part that can be silently wrong.
           sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
 
+          # Store-reference existence for sancta unit scripts (2026-08-07):
+          # dry-build was green while `switch` failed 127 on `coreutils/bin/hostname`
+          # (hostname is not in coreutils). `${pkg}/bin/X` is a string Nix never
+          # dereferences until it RUNS — invisible to eval and build. This realises
+          # each sancta unit's ExecStart scripts and asserts every store path they
+          # reference exists, catching that class in CI instead of at switch.
+          unit-script-refs = import ./tests/unit-script-refs.nix {
+            inherit pkgs nixpkgs self;
+          };
+
           # NOTE: the declarative n8n VM test (#42) deliberately lives under
           # packages.<system>.n8n-declarative-test, NOT here. `nix flake
           # check` builds every check inside the resource-constrained
