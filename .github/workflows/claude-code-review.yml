@@ -71,6 +71,9 @@ jobs:
             Each element:
 
             {
+              "severity": "CRITICAL",        // one of CRITICAL | HIGH | MEDIUM — the
+                                             // gate is DERIVED from this field, so it
+                                             // must be exact (CRITICAL/HIGH block merge)
               "path": "path/to/file",        // repository-relative, exactly as in the diff
               "line": 123,                   // the line the finding is anchored to
               "side": "RIGHT",               // "RIGHT" for added/unchanged lines,
@@ -100,24 +103,18 @@ jobs:
             ONE summary comment via `gh pr comment`, not in this file. A thread
             is a thing someone must act on; do not manufacture work.
 
-            ## Step 4: Write verdict (REQUIRED — do this LAST, as a SEPARATE tool call)
-            After posting your findings, you MUST execute one of these commands
-            as a separate Bash tool call:
-
-            If you found any CRITICAL or HIGH severity issues:
-            echo CRITICAL > review-verdict
-
-            If no critical/high issues found:
-            echo PASS > review-verdict
-
-            THIS IS MANDATORY. The CI check will fail if you do not write the verdict.
-            Do NOT skip this step. Do NOT combine it with the comment step.
-
-            NOTE ON WHAT THIS VERDICT IS: it is SELF-REPORTED by you, not derived
-            from your review text — there is no schema and no second opinion. It
-            is therefore deliberately kept at CRITICAL/HIGH only. The MEDIUM gate
-            lives in the review threads above, where a human resolves each one,
-            not in this file.
+            ## The verdict is DERIVED — there is no separate step for it.
+            A later plain-bash step reads `review-findings.json` and blocks the
+            merge if ANY entry has `severity` CRITICAL or HIGH. So there is no
+            `review-verdict` file to write and no separate tool call to remember:
+            the `severity` field on each finding IS the verdict. This is
+            deliberate — the old self-reported `echo PASS > review-verdict` step
+            failed the check as UNKNOWN whenever that one separate tool call was
+            skipped or the runtime aborted before it, turning clean PRs red. A
+            gate derived from the mandatory, validated findings file cannot fail
+            that way. Get each finding's `severity` right; that is the whole gate.
+            The MEDIUM findings still gate via their review threads
+            (`required_conversation_resolution`); CRITICAL/HIGH gate here too.
 
           # NOTE: `gh api` is deliberately NOT granted. This job's prompt is fed
           # the PR diff, which is attacker-influenced content, and the job holds
@@ -270,13 +267,22 @@ jobs:
       - name: Check review verdict
         if: always()
         run: |
-          verdict=$(cat review-verdict 2>/dev/null || echo "UNKNOWN")
-          echo "Claude review verdict: $verdict"
-          if [ "$verdict" = "CRITICAL" ]; then
-            echo "::error::Claude Code Review found CRITICAL or HIGH severity issues."
-            echo "Check the review comment on the PR for details."
-            exit 1
-          elif [ "$verdict" = "UNKNOWN" ]; then
-            echo "::error::Claude did not produce a review verdict. Failing as a precaution."
+          # Derive the verdict from review-findings.json — the file the review
+          # step is already REQUIRED to write and that the earlier "validate"
+          # step already proved exists and is a JSON array. Depending on that
+          # file instead of a second, self-reported `review-verdict` file
+          # removes the failure mode where a clean review went red as UNKNOWN
+          # because the separate `echo PASS > review-verdict` tool call was
+          # skipped or the runtime aborted before it.
+          if [ ! -f review-findings.json ] || ! jq -e 'type == "array"' review-findings.json > /dev/null 2>&1; then
+            echo "::error::review-findings.json missing or not a JSON array — cannot derive a verdict. Failing as a precaution."
             exit 1
           fi
+          blocking=$(jq '[.[] | select((.severity // "" | ascii_upcase) as $s | $s == "CRITICAL" or $s == "HIGH")] | length' review-findings.json)
+          echo "blocking (CRITICAL/HIGH) findings: $blocking"
+          if [ "$blocking" -gt 0 ]; then
+            echo "::error::Claude Code Review found $blocking CRITICAL/HIGH finding(s). See the resolvable review threads on the PR."
+            jq -r '.[] | select((.severity // "" | ascii_upcase) as $s | $s == "CRITICAL" or $s == "HIGH") | "  - [\(.severity)] \(.path):\(.line)"' review-findings.json
+            exit 1
+          fi
+          echo "verdict: PASS — no CRITICAL/HIGH findings"
