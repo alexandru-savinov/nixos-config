@@ -156,7 +156,7 @@ let
     # finds an idle journal and concludes false alarm — which is the
     # signal-gets-missed failure this alert path exists to prevent.
     UNIT="''${1:-sancta-soul-mirror}"
-    msg="❌ $UNIT FAILURE: failed at $TS on $(${cu}/hostname)"
+    msg="❌ $UNIT FAILURE: failed at $TS on ${config.networking.hostName}"
     echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t sancta-soul-mirror-alert -p err
     if [ -x ${escapeShellArg cfg.feedTool} ]; then
       ${nodejs}/bin/node ${escapeShellArg cfg.feedTool} \
