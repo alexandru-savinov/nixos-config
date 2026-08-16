@@ -208,6 +208,7 @@ in
       home = "/var/lib/sancta";
       createHome = true;
       shell = pkgs.bash;
+      extraGroups = [ "systemd-journal" ];
     };
     users.groups.${cfg.user} = { };
 
