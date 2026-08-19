@@ -61,6 +61,19 @@ let
   membraneSrc = ./membrane;
 
   relay = ./membrane/relay.mjs;
+
+  # ── Scoped journal export (replaces a host-wide systemd-journal grant) ──
+  # An external review flagged that grant MEDIUM: systemd-journal group
+  # membership reads sshd/tailscaled/EVERY unit's journal (the human's
+  # presence patterns), far broader than "diagnose doctrine-guard". Instead:
+  # a root oneshot exports ONLY the named units' journals to a directory
+  # `sancta` can read (root:sancta 0640) — never a live group grant.
+  journalExportDir = "/var/lib/sancta/journals";
+  exportUnits = [
+    "sancta-doctrine-guard.service"
+    # No separate "surfacer" unit exists in this repo today (verified via
+    # `grep -rni surfacer`); add its real unit name here if/when one lands.
+  ];
 in
 {
   options.services.sancta-worker = {
@@ -208,7 +221,6 @@ in
       home = "/var/lib/sancta";
       createHome = true;
       shell = pkgs.bash;
-      extraGroups = [ "systemd-journal" ];
     };
     users.groups.${cfg.user} = { };
 
@@ -452,6 +464,45 @@ in
       '';
     };
 
+    # ── Scoped journal export (the MEDIUM-finding fix) ─────────────────────
+    # Runs as root — root already reads every journal, so no group grant is
+    # needed. It exports ONLY exportUnits' journals, so sancta gains no read
+    # access to sshd/tailscaled/anything else. Fires (a) on the guard's
+    # failure, so an operator has evidence without live access to journalctl,
+    # and (b) once at deploy (wantedBy multi-user.target below) so the FIRST
+    # activation also dumps whatever history the persistent journal already
+    # holds from past boots, not just future failures.
+    systemd.services.sancta-journal-export = {
+      description = "Export named units' journals for sancta (scoped, replaces systemd-journal group)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sancta-soul-mount.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ReadWritePaths = [ journalExportDir ];
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+      };
+      script = ''
+        set -euo pipefail
+        install -d -m 0750 -o root -g ${cfg.user} ${journalExportDir}
+        ${lib.concatMapStringsSep "\n" (unit: ''
+          logfile="${journalExportDir}/${unit}.log"
+          install -m 0640 -o root -g ${cfg.user} /dev/null "$logfile"
+          ${pkgs.systemd}/bin/journalctl -u ${lib.escapeShellArg unit} --since '30 days ago' --no-pager > "$logfile"
+        '') exportUnits}
+      '';
+    };
+
+    # Wire the guard's failure to the exporter above. This is a list-typed
+    # systemd option, so setting it here CONCATENATES with the
+    # `onFailure = [ "sancta-soul-mirror-alert@%N.service" ]` already declared
+    # in modules/services/sancta-doctrine-guard.nix — both fire, neither
+    # replaces the other.
+    systemd.services.sancta-doctrine-guard.onFailure = [ "sancta-journal-export.service" ];
+
     # State + substrate dirs on the existing ext4 root. NOTE: /var/lib/sancta
     # is created here; /var/lib/sancta/.claude is the MOUNT POINT for the
     # encrypted soul volume (owned there by ./soul-volume.nix). The tmpfiles
@@ -463,6 +514,9 @@ in
       "d ${projectAnchor} 0755 root root -"
       # Session-marker dir — presence of a marker file arms the inert unit.
       "d /var/lib/sancta/session 0700 ${cfg.user} ${cfg.user} -"
+      # Scoped journal export target — root:sancta 0750 so only the exporter
+      # (root) and sancta (read) can enter it. Files inside are 0640 root:sancta.
+      "d ${journalExportDir} 0750 root ${cfg.user} -"
     ];
   };
 }
