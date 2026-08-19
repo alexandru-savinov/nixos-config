@@ -42,7 +42,7 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
         echo "# $a" > "$root/skills/council/assessors/$a.md"
       done
       echo "# claude" > "$root/CLAUDE.md"
-      echo '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"date"}]}]}}' \
+      echo '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"date"}]}]},"statusLine":{"type":"command","command":"date"}}' \
         > "$root/settings.json"
       echo "# a lens" > "$root/lenses/somelens.md"
 
@@ -138,6 +138,28 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
 
     mkfixture "$R"; echo '{"hooks":{}}' > "$R/settings.json"
     expect_fail "$R" "lost hooks.UserPromptSubmit" "absent hook key fires"
+
+    echo "== the Aug-7 eater's twin: statusLine can be lost the same way =="
+    mkfixture "$R"
+    echo '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"date"}]}]},"statusLine":{"command":""}}' \
+      > "$R/settings.json"
+    expect_fail "$R" "lost statusLine" "empty statusLine.command string fires (not just an absent key)"
+
+    mkfixture "$R"
+    echo '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"date"}]}]}}' \
+      > "$R/settings.json"
+    expect_fail "$R" "lost statusLine" "absent statusLine key fires"
+
+    echo "== hooks loss and statusLine loss are SIBLINGS, not exclusive =="
+    # If either check were written as an elif of the other, losing statusLine
+    # while hooks stays fine (or vice versa) would silently hide the OTHER
+    # failure from this same run's output — exactly the "all are printed"
+    # contract this file promises in its own header.
+    mkfixture "$R"; echo '{"hooks":{}}' > "$R/settings.json"
+    res=$(run "$R" 2>&1 || true)
+    echo "$res" | grep -qF "lost hooks.UserPromptSubmit" || { echo "expected hooks loss reported"; echo "$res"; exit 1; }
+    echo "$res" | grep -qF "lost statusLine" || { echo "expected statusLine loss ALSO reported in the same run"; echo "$res"; exit 1; }
+    echo "  ok: both losses reported from a single run, neither hides the other"
 
     echo "== malformed JSON must NOT masquerade as the hooks regression =="
     mkfixture "$R"; echo '{"hooks": {' > "$R/settings.json"

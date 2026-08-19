@@ -889,6 +889,7 @@ let
         timer = self.nixosConfigurations.sancta-choir.config.systemd.timers.sancta-statusline-refresh;
         soulRoot = toString self.nixosConfigurations.sancta-choir.config.services.sancta-soul-volume.mountPoint;
         stateFile = "${soulRoot}/index/statusline-state.json";
+        refreshScript = "${soulRoot}/index/bin/statusline-refresh";
 
         checks = {
           # Mount-gated: without the soul volume the state file's directory does
@@ -922,6 +923,28 @@ let
           # A run that outlives its own cadence stacks refreshes instead of
           # replacing them.
           boundedRun = (svc.serviceConfig.TimeoutStartSec or "") == "3m";
+
+          # Single-source-of-logic (amended 2026-08-19): ExecStart must invoke
+          # the INDEX repo's script directly — this module carries no refresh
+          # logic of its own, only the clock and the contract.
+          execIsIndexScript = (svc.serviceConfig.ExecStart or "") == refreshScript;
+
+          # ExecStart is deliberately NOT a store path (see the module's "WORKS-
+          # BY-LUCK TRAP" comment), so tests/unit-script-refs.nix cannot verify
+          # it resolves. ExecStartPre must be the replacement guard: a real
+          # existence+executable check on the exact script path.
+          hasExistenceGuard = (svc.serviceConfig.ExecStartPre or "") == "${pkgs.coreutils}/bin/test -x ${refreshScript}";
+
+          # The env contract: the three variables the INDEX script requires,
+          # exactly as agreed — a drift here silently breaks the script even
+          # though the unit itself stays green.
+          hasEnvContract =
+            let
+              env = svc.serviceConfig.Environment or [ ];
+            in
+            builtins.elem "SANCTA_STATUSLINE_STATE=${stateFile}" env
+            && builtins.elem "SANCTA_STATUSLINE_REPO=alexandru-savinov/nixos-config" env
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);

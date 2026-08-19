@@ -175,11 +175,25 @@ done
 # Validity is checked FIRST and reported distinctly: malformed JSON and
 # hooks-were-stripped are different incidents with different fixes, and giving
 # them the same message would send whoever reads it looking for the wrong one.
+#
+# The two checks below are SIBLINGS, not an elif chain: hooks and statusLine
+# are independent keys with independent failure histories, and this file's own
+# contract is "exit 1 = at least one failed; all are printed" — chaining them
+# would let one loss silently hide the other from the same run's output.
 if [ -s "$CLAUDE/settings.json" ]; then
   if ! jq -e . "$CLAUDE/settings.json" >/dev/null 2>&1; then
     miss "settings.json is not valid JSON (parse error — NOT the hooks regression)"
-  elif ! jq -e '(.hooks.UserPromptSubmit // []) | length > 0' "$CLAUDE/settings.json" >/dev/null 2>&1; then
-    miss "settings.json lost hooks.UserPromptSubmit (empty or absent)"
+  else
+    if ! jq -e '(.hooks.UserPromptSubmit // []) | length > 0' "$CLAUDE/settings.json" >/dev/null 2>&1; then
+      miss "settings.json lost hooks.UserPromptSubmit (empty or absent)"
+    fi
+    # Twin of the hooks check, same shape of bug: the Aug-7 eater took the
+    # statusLine key once already (statusline died silently for 12 days before
+    # anyone noticed the bar had gone quiet, not loud) — `length > 0` so an
+    # empty-string command, not just a missing key, also fires.
+    if ! jq -e '.statusLine.command // "" | length > 0' "$CLAUDE/settings.json" >/dev/null 2>&1; then
+      miss "settings.json lost statusLine (the Aug-7 eater took this once; statusline died 12 days)"
+    fi
   fi
 fi
 

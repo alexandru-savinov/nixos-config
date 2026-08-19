@@ -13,11 +13,32 @@
 # broken in any way a check could see — the renderer worked perfectly on stale
 # input. This unit is the missing half.
 #
-# THE SCRIPT LIVES IN THIS REPO, NOT ON THE SOUL VOLUME.
-# The gallery module points ExecStart at a program on the mutable volume, so it
-# owns WHETHER the thing runs but not WHAT runs, and a rebuild cannot reproduce
-# it. Not repeating that here: the script is in-tree, materialised into the
-# store, and a rebuild reproduces it byte for byte.
+# THIS MODULE IS THE CLOCK, NOT THE BRAIN (amended 2026-08-19).
+# The refresh LOGIC (oneshot ok-at-rest handling, live `stale` = queue
+# dead-letter + overdue, writing the field into state) lives in exactly ONE
+# place: /var/lib/sancta/.claude/index/bin/statusline-refresh, on the soul
+# volume, in the INDEX repo — not here. An earlier version of this module
+# carried its own 145-line embedded copy of that logic. Two copies of the same
+# refresh logic in two repos is a two-writers problem: they drift the moment
+# either one is edited alone, and the drift is invisible until the bar and
+# whatever else reads the INDEX repo's copy disagree about what "stale" means.
+# This module now supplies only the clock (the timer + cadence), the contract
+# (the three env vars below), and the environment (mount-gate + PATH) — never
+# the logic. A rebuild of this repo cannot regress the refresh behavior,
+# because it no longer contains any.
+#
+# THE WORKS-BY-LUCK TRAP: because ExecStart now points at a path on the soul
+# volume instead of a Nix store path, `tests/unit-script-refs.nix` — the check
+# built to catch exactly this class of bug (a script reference that does not
+# resolve) — CANNOT see it. It only realises and scans `/nix/store/...`
+# references; a `/var/lib/sancta/...` path is invisible to it by construction,
+# the same way `${pkg}/bin/typo` was invisible to `nix build --dry-run` before
+# that check existed. The mount-gate (ConditionPathIsMountPoint, below) plus an
+# explicit `ExecStartPre` existence+executable check on the script itself are
+# what replace that guard for this one unit: if the volume is mounted but the
+# INDEX repo hasn't deployed the script (or it lost its execute bit), the unit
+# fails loudly and immediately instead of silently no-op'ing or crashing deep
+# inside a partially-run refresh.
 #
 # NO OnFailure ALERT, DELIBERATELY.
 # Every other soul unit raises sancta-soul-mirror-alert@ on failure, and that is
@@ -42,7 +63,10 @@ let
   cfg = config.services.sancta-statusline-refresh;
   soulRoot = toString config.services.sancta-soul-volume.mountPoint;
   stateFile = "${soulRoot}/index/statusline-state.json";
-  refreshScript = ./sancta-statusline-refresh.sh;
+  # The single source of the refresh logic. Deliberately NOT a Nix store path —
+  # see "THE WORKS-BY-LUCK TRAP" above for why that is a real, named tradeoff
+  # rather than an oversight.
+  refreshScript = "${soulRoot}/index/bin/statusline-refresh";
 in
 {
   options.services.sancta-statusline-refresh = {
@@ -68,10 +92,9 @@ in
     units = mkOption {
       type = types.listOf types.str;
       default = [
-        "sancta-worker"
-        "sancta-gallery"
-        "sancta-doctrine-guard.timer"
-        "sancta-membrane-gateway"
+        "sancta-gallery.service"
+        "sancta-doctrine-guard.service"
+        "sancta-soul-mirror.timer"
       ];
       description = ''
         Units the bar reports on. Anything not `active` shows in its "down"
@@ -125,6 +148,10 @@ in
       requires = [ "sancta-soul-mount.service" ];
       wants = [ "network-online.target" ];
       unitConfig.ConditionPathIsMountPoint = soulRoot;
+      # The module still owns the ENVIRONMENT the externally-sourced script runs
+      # in — that is provisioning, not logic. The INDEX repo's script expects
+      # these tools on PATH (gh for the ask list, jq for JSON, systemd for unit
+      # status, coreutils for the ExecStartPre existence check below).
       path = with pkgs; [
         gh
         jq
@@ -135,7 +162,13 @@ in
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
-        ExecStart = "${pkgs.bash}/bin/bash ${refreshScript}";
+        # See "THE WORKS-BY-LUCK TRAP" above: ExecStart is not a store path, so
+        # the usual static store-ref check cannot see it. This is the guard that
+        # replaces it — fail loudly, before the timer fires the real work, if
+        # the soul volume is mounted but the script itself is missing or lost
+        # its execute bit (a partial INDEX-repo deploy, a bad chmod, etc.).
+        ExecStartPre = "${pkgs.coreutils}/bin/test -x ${refreshScript}";
+        ExecStart = refreshScript;
         Environment = [
           "SANCTA_STATUSLINE_STATE=${stateFile}"
           "SANCTA_STATUSLINE_REPO=${cfg.repo}"
