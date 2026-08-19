@@ -253,7 +253,7 @@ let
   alertScript = pkgs.writeShellScript "sancta-self-backup-alert" ''
     set -euo pipefail
     TS=$(${cu}/date -Iseconds)
-    msg="❌ SELF-BACKUP FAILURE: ''${1:-sancta-self-backup} failed at $TS on $(${cu}/hostname)"
+    msg="❌ SELF-BACKUP FAILURE: ''${1:-sancta-self-backup} failed at $TS on ${config.networking.hostName}"
     echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t sancta-self-backup-alert -p err
 
     # Loud feed alert (the durable, human-visible signal). Never fatal.

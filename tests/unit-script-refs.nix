@@ -20,6 +20,32 @@
 #   always a `${pkg}/bin/typo` bug — caught here, in CI, before a deploy, instead
 #   of at `switch` on the live host.
 #
+# COVERAGE WIDENED 2026-08-19 (PR #558 review, HIGH + MEDIUM findings):
+#   The original version only scanned `sancta-choir`. Two reviews on #558 found
+#   (a) the identical unfixed bug in `sancta-self-backup.nix`'s alert script, and
+#   (b) that a green check here proved nothing about any OTHER host — a false
+#   sense of coverage is exactly the failure mode this check exists to prevent.
+#
+#   Real scan now covers every `x86_64-linux` host this check itself runs on
+#   (`sancta-choir`, `sancta-claw`, `hermes-claw`, `zero-kuzea`) — Nix can both
+#   EVAL and REALISE (build) their derivations here, so the store-ref existence
+#   check is a real, load-bearing assertion for all four.
+#
+#   `rpi5-full` / `rpi5` (aarch64-linux) are named but DELIBERATELY EXCLUDED from
+#   the real scan, and this is stated in the check's own output, not just here:
+#   `config.systemd.services` evals fine cross-arch (Nix eval is architecture-
+#   agnostic — proven via `nix eval .#nixosConfigurations.rpi5-full.config.
+#   systemd.services`, 2026-08-19), but REALISING an aarch64-linux script
+#   derivation from an `x86_64-linux` check build needs a real aarch64 builder.
+#   Verified this host has none: `nix build` on a real rpi5-full ExecStart store
+#   path fails with "no substituter that can build it" — not a cache miss, no
+#   builder at all. flake.nix's own rpi5-full comment separately warns never to
+#   build it under QEMU (some packages fail there). GitHub's default runners are
+#   x86_64-only too, so CI can't do this either. Overstating coverage for a host
+#   this check cannot actually build against would recreate the exact false-
+#   confidence bug this check was written to close — so it says so, out loud,
+#   every time it runs, instead of silently omitting the host.
+#
 # Run: nix build .#checks.<system>.unit-script-refs
 
 { pkgs
@@ -30,15 +56,19 @@
 
 let
   lib = nixpkgs.lib;
-  services = self.nixosConfigurations.sancta-choir.config.systemd.services;
 
-  # sancta-owned units (services + the @-template instances)
-  sanctaNames = lib.filter (n: lib.hasPrefix "sancta" n) (lib.attrNames services);
+  # Hosts this check can actually REALISE scripts for (see COVERAGE WIDENED
+  # above) — all `x86_64-linux`, same architecture as `checks.x86_64-linux`.
+  scannedHosts = [ "sancta-choir" "sancta-claw" "hermes-claw" "zero-kuzea" ];
+
+  # Named for honesty in the output, never scanned for real — aarch64-linux,
+  # no builder here (see COVERAGE WIDENED above).
+  unscannedHosts = [ "rpi5-full" "rpi5" ];
 
   toList = x: if x == null then [ ] else if lib.isList x then x else [ x ];
 
   cmdsOf =
-    n:
+    services: n:
     let
       sc = services.${n}.serviceConfig or { };
     in
@@ -49,16 +79,31 @@ let
     ++ toList (sc.ExecStop or null)
     ++ toList (sc.ExecStopPost or null);
 
-  # Raw Exec* command strings for every sancta unit. An entry may be a plain
-  # string ("@/nix/store/…-script %N") OR a bare derivation (`ExecStart =
-  # writeShellScript …`); `toString` normalises both. CRUCIAL: we keep the FULL
-  # strings and never run splitString/match on them, because those string ops
-  # strip the store-path *context* — and without context Nix never realises the
-  # script into the check's sandbox, so grep would read an absent file and the
-  # check would pass on nothing. Concatenating the toString'd values carries the
-  # combined context, so every referenced script is a real build input.
-  cmdList = map toString (lib.concatMap cmdsOf sanctaNames);
+  # Per scanned host: sancta-owned units (services + the @-template instances),
+  # then their Exec* command strings. An entry may be a plain string
+  # ("@/nix/store/…-script %N") OR a bare derivation (`ExecStart = writeShellScript
+  # …`); `toString` normalises both. CRUCIAL: we keep the FULL strings and never
+  # run splitString/match on them, because those string ops strip the store-path
+  # *context* — and without context Nix never realises the script into the
+  # check's sandbox, so grep would read an absent file and the check would pass
+  # on nothing. Concatenating the toString'd values carries the combined
+  # context, so every referenced script is a real build input.
+  perHost = map
+    (host:
+      let
+        services = self.nixosConfigurations.${host}.config.systemd.services;
+        sanctaNames = lib.filter (n: lib.hasPrefix "sancta" n) (lib.attrNames services);
+        cmdList = map toString (lib.concatMap (cmdsOf services) sanctaNames);
+      in
+      { inherit host; nUnits = builtins.length sanctaNames; inherit cmdList; }
+    )
+    scannedHosts;
+
+  cmdList = lib.concatMap (h: h.cmdList) perHost;
   cmds = lib.concatStringsSep "\n" cmdList;
+
+  # e.g. "sancta-choir=10 sancta-claw=1 hermes-claw=0 zero-kuzea=0"
+  hostSummary = lib.concatStringsSep " " (map (h: "${h.host}=${toString h.nUnits}") perHost);
 in
 pkgs.runCommand "sancta-unit-script-refs"
 {
@@ -66,6 +111,9 @@ pkgs.runCommand "sancta-unit-script-refs"
   # realises them all into this derivation's sandbox (readable below).
   inherit cmds;
   nCmds = toString (builtins.length cmdList);
+  nHostsScanned = toString (builtins.length scannedHosts);
+  hostSummary = hostSummary;
+  unscannedHosts = lib.concatStringsSep " " unscannedHosts;
 } ''
     # Store-path token: 32 base32 chars, name, then valid store-path chars only.
     # The class naturally excludes space, paren, quotes and dollar, so there is no
@@ -101,6 +149,9 @@ pkgs.runCommand "sancta-unit-script-refs"
       exit 1
     fi
 
+    echo "hosts scanned (real build+scan): $hostSummary"
+    echo "hosts NOT scanned (aarch64-linux, no builder here): $unscannedHosts"
+
     # ── REAL SCAN ───────────────────────────────────────────────────────────
     # Each line is a full Exec* command. Strip systemd prefix chars (@ ! : + ~ -),
     # take the first token as the program, and — if it is a store path — scan it.
@@ -134,7 +185,7 @@ pkgs.runCommand "sancta-unit-script-refs"
       echo "SELF-TEST FAILED: 0 store-path scripts were actually read — the scan proved nothing." >&2
       exit 1
     fi
-    echo "sancta-unit-script-refs: read $scanned script(s), $checked store-ref(s)"
+    echo "sancta-unit-script-refs: read $scanned script(s), $checked store-ref(s) across $nHostsScanned host(s)"
     if [ "$fail" -ne 0 ]; then
       echo "FAILED — a sancta unit script references a store path that does not exist." >&2
       echo "This is the class that passes eval+build and only fails at switch/runtime" >&2

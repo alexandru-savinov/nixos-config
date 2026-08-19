@@ -249,7 +249,7 @@ in
             # script file and pass the instance via %i → $1; no inline quoting for
             # systemd to misparse.
             alertScript = pkgs.writeShellScript "backup-failure-alert" ''
-              msg="❌ BACKUP FAILURE: $1 failed at $(date -Iseconds) on $(hostname)"
+              msg="❌ BACKUP FAILURE: $1 failed at $(date -Iseconds) on ${config.networking.hostName}"
               echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t backup-alert -p err
               ${telegramCmd}
             '';
