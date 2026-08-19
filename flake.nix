@@ -404,12 +404,16 @@
           # bind failure, which is the only part that can be silently wrong.
           sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
 
-          # Store-reference existence for sancta unit scripts (2026-08-07):
-          # dry-build was green while `switch` failed 127 on `coreutils/bin/hostname`
-          # (hostname is not in coreutils). `${pkg}/bin/X` is a string Nix never
-          # dereferences until it RUNS — invisible to eval and build. This realises
-          # each sancta unit's ExecStart scripts and asserts every store path they
-          # reference exists, catching that class in CI instead of at switch.
+          # Store-reference existence for sancta unit scripts (2026-08-07, widened
+          # 2026-08-19): dry-build was green while `switch` failed 127 on
+          # `coreutils/bin/hostname` (hostname is not in coreutils). `${pkg}/bin/X`
+          # is a string Nix never dereferences until it RUNS — invisible to eval
+          # and build. This realises each sancta unit's ExecStart scripts across
+          # every x86_64-linux host (sancta-choir, sancta-claw, hermes-claw,
+          # zero-kuzea) and asserts every store path they reference exists,
+          # catching that class in CI instead of at switch. rpi5/rpi5-full
+          # (aarch64-linux) are named but not realised — no aarch64 builder here
+          # or in CI; see tests/unit-script-refs.nix for the honest limit.
           unit-script-refs = import ./tests/unit-script-refs.nix {
             inherit pkgs nixpkgs self;
           };
