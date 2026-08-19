@@ -58,22 +58,27 @@ jobs:
 
             ## Step 3: Write your findings to review-findings.json
 
-            Write EVERY finding of severity MEDIUM or above to a file named
+            Write EVERY finding, of ANY severity including LOW, to a file named
             `review-findings.json` in the repository root, using the Write tool.
             A later workflow step — plain bash, no model — turns each entry into
-            its own resolvable review thread. You do NOT post them yourself.
+            either its own resolvable review thread (CRITICAL/HIGH/MEDIUM) or a
+            bundled advisory summary comment (LOW). You do NOT post anything
+            yourself: you have no PR-commenting tool at all, by design (see the
+            note above `claude_args` below).
 
-            The file must be a JSON array. Write `[]` if you found nothing at
-            MEDIUM or above. Writing it is MANDATORY: a missing file fails the
-            job, because a review that posted nothing must never be mistaken for
-            a review that found nothing.
+            The file must be a JSON array. Write `[]` if you found nothing.
+            Writing it is MANDATORY: a missing file fails the job, because a
+            review that posted nothing must never be mistaken for a review that
+            found nothing.
 
             Each element:
 
             {
-              "severity": "CRITICAL",        // one of CRITICAL | HIGH | MEDIUM — the
-                                             // gate is DERIVED from this field, so it
-                                             // must be exact (CRITICAL/HIGH block merge)
+              "severity": "CRITICAL",        // one of CRITICAL | HIGH | MEDIUM | LOW —
+                                             // the gate is DERIVED from this field, so
+                                             // it must be exact (CRITICAL/HIGH block merge;
+                                             // MEDIUM becomes a resolvable thread; LOW is
+                                             // bundled into one advisory comment)
               "path": "path/to/file",        // repository-relative, exactly as in the diff
               "line": 123,                   // the line the finding is anchored to
               "side": "RIGHT",               // "RIGHT" for added/unchanged lines,
@@ -82,15 +87,17 @@ jobs:
               "body": "**SEVERITY** — the finding, why it is wrong, and the concrete fix"
             }
 
-            One finding, one element. Do NOT bundle several findings into one
-            entry: each has to be resolvable on its own, because whoever
-            disposes of it is answering for that finding alone. Start `body`
-            with the severity in bold, and keep its FIRST LINE stable for the
-            same finding across runs — the poster step deduplicates on
-            path + line + first line of body, so an unchanged finding does not
-            reappear as a second thread every time the branch is pushed.
+            One finding, one element, at EVERY severity — including LOW. Do NOT
+            bundle several findings into one entry yourself; the poster step
+            does the bundling for LOW. Each entry has to be resolvable (or, for
+            LOW, readable) on its own, because whoever disposes of it is
+            answering for that finding alone. Start `body` with the severity in
+            bold, and keep its FIRST LINE stable for the same finding across
+            runs — the poster step deduplicates on path + line + first line of
+            body, so an unchanged finding does not reappear as a second thread
+            every time the branch is pushed.
 
-            Why threads and not one comment: with
+            Why threads and not one comment for CRITICAL/HIGH/MEDIUM: with
             `required_conversation_resolution` enabled on the branch, GitHub
             blocks the merge until every thread is explicitly resolved by a
             human with write access. That makes the gate a human act with a
@@ -99,9 +106,13 @@ jobs:
             resolving the thread with a reason instead of by editing code to
             satisfy the model or by weakening the gate.
 
-            LOW findings and anything you consider merely advisory: put them in
-            ONE summary comment via `gh pr comment`, not in this file. A thread
-            is a thing someone must act on; do not manufacture work.
+            LOW findings and anything you consider merely advisory: still write
+            them as entries in review-findings.json with `"severity": "LOW"`.
+            The poster step bundles all of them into ONE advisory comment
+            instead of individual resolvable threads — a LOW finding is not a
+            thing someone must act on, so it must not manufacture the same kind
+            of mandatory work a CRITICAL/HIGH/MEDIUM thread does. You do not
+            call `gh pr comment` yourself for these, or for anything else.
 
             ## The verdict is DERIVED — there is no separate step for it.
             A later plain-bash step reads `review-findings.json` and blocks the
@@ -124,21 +135,30 @@ jobs:
           # agent therefore writes findings to a file and a deterministic step
           # below posts them.
           #
-          # The residual risk is NOT "wrong text in a comment", which is how an
-          # earlier version of this note put it. Text is a trigger here: the
-          # finding body is posted as a real review comment, and claude.yml fires
-          # on any comment containing `@claude`, running an agent with no tool
-          # restriction at all. So an injection that shapes a finding's WORDS
-          # could reach a more privileged job than this one. Two things stop it,
-          # and the second is the boundary: the poster below neutralises bot
-          # mentions in the body, and PR #555 makes claude.yml refuse to be
-          # summoned by a Bot author at all. Until #555 lands, the neutralising
-          # below is the only thing standing there, which is why it is tested.
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
+          # NOR is `gh pr comment` (or any other raw PR-comment channel)
+          # granted, for the same reason at one more remove. It used to be, so
+          # the model could post a LOW-findings advisory summary directly — but
+          # the finding body is attacker-influenced (it is written by a model
+          # that just read the PR diff), and claude.yml fires on any comment
+          # containing `@claude`, running an agent with no tool restriction at
+          # all. A raw, ungated comment channel is therefore a live escalation
+          # path: an injected diff can shape a LOW finding's WORDS into a
+          # working `@claude <instructions>` mention, and that channel had no
+          # defusal on it at all, unlike the findings-file path below. Removing
+          # the grant closes it BY CONSTRUCTION rather than by trusting the
+          # prompt text alone to keep the model in-lane: the agent now has no
+          # tool that can put text in front of a human (or another workflow)
+          # except by writing review-findings.json, and every entry in that
+          # file — LOW included — passes through the same deterministic
+          # neutralisation below before it becomes a real comment. claude.yml's
+          # Bot-author gate (PR #555, merged) is the other lock; this is the
+          # one that does not depend on the model choosing to use it correctly.
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
 
       # Deterministic poster: reads the reviewer's findings file and opens one
-      # resolvable thread per finding. Runs before the verdict gate so findings
-      # still reach the PR when the verdict is CRITICAL.
+      # resolvable thread per finding (CRITICAL/HIGH/MEDIUM), or bundles all
+      # LOW findings into one advisory comment. Runs before the verdict gate so
+      # findings still reach the PR when the verdict is CRITICAL.
       - name: Post findings as review threads
         if: always()
         env:
@@ -158,7 +178,7 @@ jobs:
             cat review-findings.json
             exit 1
           fi
-          echo "reviewer reported $(jq 'length' review-findings.json) finding(s) at MEDIUM or above"
+          echo "reviewer reported $(jq 'length' review-findings.json) finding(s) total"
 
           # Threads already open on this PR. Without this, every push re-posts
           # every still-applicable finding as a fresh thread, and with
@@ -186,7 +206,10 @@ jobs:
           skipped=0
           failed=0
           unanchored=0
+          low=0
+          : > low-findings.txt
           while IFS= read -r finding; do
+            severity=$(jq -r '.severity // ""' <<< "$finding")
             path=$(jq -r '.path // ""' <<< "$finding")
             line=$(jq -r '.line // 0' <<< "$finding")
             side=$(jq -r 'if .side == "LEFT" then "LEFT" else "RIGHT" end' <<< "$finding")
@@ -196,8 +219,10 @@ jobs:
             # PR diff, and it is about to become a real review comment — which is
             # a TRIGGER, not just text: claude.yml fires on `@claude` anywhere in
             # a comment. Breaking the literal substring costs nothing and the
-            # finding stays perfectly readable. claude.yml's Bot-author gate is
-            # the boundary once PR #555 lands; this is the second lock.
+            # finding stays perfectly readable. claude.yml's Bot-author gate
+            # (PR #555, merged) is the other lock. Applied to EVERY severity,
+            # including LOW — the LOW-bundle branch below relies on this having
+            # already run, since it is the only defusal that bundle ever gets.
             # Case-insensitive on purpose: GitHub's `contains()` is, so `@CLAUDE`
             # triggers just as well as `@claude`.
             body="${body//@[Cc][Ll][Aa][Uu][Dd][Ee]/@ claude}"
@@ -205,6 +230,20 @@ jobs:
             if [ -z "$path" ] || [ "$line" = "0" ] || [ -z "$body" ]; then
               echo "::error::a finding is missing path, line, or body: $finding"
               failed=$((failed + 1))
+              continue
+            fi
+
+            # LOW findings never become a resolvable thread — required_conversation_
+            # resolution must not gate merge on style nits. They are collected here
+            # and posted as ONE bundled advisory comment after the loop, by this same
+            # deterministic step — never by the model, which holds no PR-comment tool
+            # at all (see the note above claude_args). $body is already defused above.
+            if [ "$(printf '%s' "$severity" | tr '[:lower:]' '[:upper:]')" = "LOW" ]; then
+              {
+                printf -- '- **%s:%s**\n' "$path" "$line"
+                printf '%s\n\n' "$body"
+              } >> low-findings.txt
+              low=$((low + 1))
               continue
             fi
 
@@ -254,7 +293,31 @@ jobs:
             fi
           done < <(jq -c '.[]' review-findings.json)
 
-          echo "posted=$posted already-open=$skipped unanchored=$unanchored failed=$failed"
+          # Post the bundled LOW/advisory comment, if there is one. ONE comment,
+          # not one thread per finding — see the note in the loop above for why.
+          #
+          # Dedup granularity here is coarser than the per-finding dedup above:
+          # the header line carries the count, so an unchanged set of LOW
+          # findings is not re-posted on an unrelated push, but a same-COUNT
+          # different-CONTENT set would be skipped too. That is an accepted,
+          # deliberate tradeoff for advisory-only content with no correctness
+          # stakes — the alternative (editing a prior comment via the REST API,
+          # or hashing full content) is real complexity this severity does not
+          # warrant. Nothing here participates in required_conversation_resolution
+          # either way.
+          if [ "$low" -gt 0 ]; then
+            low_header=$(printf '**LOW / advisory findings from this review (%s found):**' "$low")
+            if grep -Fqx -- "$low_header" existing-plain.tsv; then
+              echo "  LOW bundle already posted for this count ($low): skipped"
+            elif gh pr comment "$PR" --body "$low_header"$'\n\n'"$(cat low-findings.txt)" > /dev/null; then
+              echo "  posted LOW bundle: $low finding(s)"
+            else
+              echo "::error::could not post the bundled LOW/advisory comment"
+              failed=$((failed + 1))
+            fi
+          fi
+
+          echo "posted=$posted already-open=$skipped unanchored=$unanchored low=$low failed=$failed"
           if [ "$unanchored" -gt 0 ]; then
             echo "::error::$unanchored finding(s) could not be anchored to a line in this diff. They were posted as plain comments, which do NOT participate in required_conversation_resolution — so they do not block the merge. Re-anchor them or dispose of them deliberately; do not let them pass as gated."
             failed=$((failed + unanchored))
