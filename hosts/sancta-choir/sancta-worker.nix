@@ -69,6 +69,9 @@ let
   # a root oneshot exports ONLY the named units' journals to a directory
   # `sancta` can read (root:sancta 0640) — never a live group grant.
   journalExportDir = "/var/lib/sancta/journals";
+  # Any unit added here hands its FULL 30-day journal to sancta at 0640.
+  # Audit that the unit never logs secret material (tokens, credential-bearing
+  # URLs, raw env contents) BEFORE adding it — this bypasses no redaction.
   exportUnits = [
     "sancta-doctrine-guard.service"
     # No separate "surfacer" unit exists in this repo today (verified via
@@ -484,6 +487,22 @@ in
         ProtectHome = true;
         PrivateTmp = true;
         PrivateDevices = true;
+        # ── Hardening raised to the sibling convention in
+        # modules/services/sancta-doctrine-guard.nix:154-170 (security review,
+        # WARNING). No CapabilityBoundingSet here: the sibling doesn't set one
+        # either, and `journalctl` as root needs CAP_SYSLOG-adjacent access to
+        # the journal files/socket that a minimal allow-list risks breaking —
+        # left out rather than guessed at.
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictNamespaces = true;
+        RestrictSUIDSGID = true;
+        RestrictRealtime = true;
+        LockPersonality = true;
+        # journalctl + install/mkdir need no network at all.
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallFilter = [ "@system-service" ];
       };
       script = ''
         set -euo pipefail
