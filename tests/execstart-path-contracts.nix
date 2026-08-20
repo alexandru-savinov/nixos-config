@@ -6,21 +6,40 @@
 # build sandbox, and CI never passes --impure — see that file's header for the
 # full, tested chain of reasoning, recon 2026-08-20).
 #
-# Each entry under `hosts.<host>.<unit>` says: which interpreter the shebang
-# names, and which EXTERNAL commands (bare names resolved via $PATH — NOT
-# absolute paths, NOT shell builtins) the script invokes. This is filled in BY
-# HAND by reading the real script on the host that carries it. It can go
-# stale the moment someone edits the script without updating this file — nix
-# eval has no way to notice that on its own. The runtime probe (wq-tick's
-# execstart-contract-check handler, INDEX repo, committed separately) exists
-# specifically to close that gap: it re-derives the same facts from the live
-# script on sancta-choir, on a schedule, and reports drift.
+# Each entry under `hosts.<host>.<scope>.<unit>` (scope = "system" or "user",
+# unit name WITHOUT the ".service" suffix) says: which interpreter the
+# shebang names (or `null` if the unit's ExecStart already invokes the
+# interpreter via a full /nix/store path, so there is no $PATH lookup for the
+# interpreter itself — e.g. sancta-gallery's `${pkgs.nodejs}/bin/node
+# <script>`), and which EXTERNAL commands (bare names resolved via $PATH —
+# NOT absolute paths, NOT shell builtins) the script invokes. Filled in BY
+# HAND by reading the real script. It can go stale the moment someone edits
+# the script without updating this file — nix eval has no way to notice that
+# on its own. The runtime probe (wq-tick's execstart-contract-check handler,
+# INDEX repo, committed separately) exists specifically to close that gap: it
+# re-derives the same facts from the live script on sancta-choir, on a
+# schedule, and reports drift.
 #
-# THIS FILE COVERS EXACTLY THE UNITS RECON FOUND (2026-08-20, all 3 hosts,
-# nix eval). If a future PR adds a new custom unit with a non-/nix/store
-# ExecStart and does not add an entry here, tests/execstart-path-contract.nix
-# fails the build with UNDECLARED — that is the point: the absence of an
-# entry is a hard stop, not a silent gap.
+# RECON 2026-08-21 (adversarial review of PR #568, all-verb / all-scope
+# widen): tests/execstart-path-contract.nix now reads the unit's actual
+# RENDERED text (`config.systemd.units."<n>.service".text` /
+# `config.systemd.user.units."<n>.service".text`) across all 7 Exec verbs
+# (ExecStartPre/Start/StartPost/Stop/StopPost/Reload/Condition) and both
+# system + user scope, on all 3 hosts — see that file's header for exactly
+# what "in scope" means now (any Exec* line whose PROGRAM token is non-store,
+# OR whose later token is an absolute non-store path — the latter closes the
+# "store-path wrapper" escape a narrower first version had). That recon is
+# what produced the entries and vendor exceptions below; it superset the
+# 2026-08-20 recon this file originally shipped with (that one only checked
+# ExecStart/Pre/Post/Stop and only the first token — see PR #568 review).
+#
+# If a future PR adds a new custom unit with a non-/nix/store Exec* reference
+# and does not add an entry here, tests/execstart-path-contract.nix fails the
+# build with UNDECLARED. If a declared unit's Exec* references stop being
+# non-store entirely (e.g. refactored to a pure store-path wrapper with no
+# off-store argument), the SAME check fails with ORPHANED-CONTRACT — a
+# manifest entry that stops covering anything is a hard stop too, not a
+# silent gap.
 
 {
   hosts = {
@@ -46,54 +65,116 @@
     # contract command here, and this file does not recurse into ITS
     # dependencies (see tests/execstart-path-contract.nix, "what this does not
     # cover", for why that recursion is out of scope).
+    #
+    # NOTE on falsifiability (adversarial review, 2026-08-21): mktemp, chmod,
+    # mv, dirname, rm, date (coreutils) and grep (gnugrep) and systemctl
+    # (systemd) are provided by NixOS's OWN unconditional
+    # `systemd.services.<n>.path` defaults — they are appended to $PATH for
+    # EVERY service regardless of what this module's own `path =` lists, so
+    # in NORMAL operation these 7 commands can never be individually
+    # falsified by a module edit. That is a true platform fact, not a checker
+    # gap — the checker states it out loud in its report line rather than
+    # pretending all declared commands are equally load-bearing. What CAN
+    # falsify all of them at once is `environment.PATH` being overridden or
+    # unset entirely (the #564 class one level up), which the checker reads
+    # from the unit's REAL rendered text and so does catch (self-test
+    # "REGRESSION: environment.PATH override must be flagged").
     sancta-choir = {
-      sancta-statusline-refresh = {
-        interpreter = "bash";
-        commands = [
-          "mktemp"
-          "gh"
-          "jq"
-          "systemctl"
-          "node"
-          "grep"
-          "date"
-          "chmod"
-          "mv"
-          "dirname"
-          "rm"
-        ];
+      system = {
+        sancta-statusline-refresh = {
+          interpreter = "bash";
+          commands = [
+            "mktemp"
+            "gh"
+            "jq"
+            "systemctl"
+            "node"
+            "grep"
+            "date"
+            "chmod"
+            "mv"
+            "dirname"
+            "rm"
+          ];
+        };
+
+        # sancta-gallery — modules/services/sancta-gallery.nix. ExecStart is
+        # `${pkgs.nodejs}/bin/node ${cfg.galleryDir}/server.mjs` — the
+        # INTERPRETER (node) is already a full /nix/store path (no $PATH
+        # lookup needed for it, hence `interpreter = null`), but the script
+        # argument itself is off-store (soul volume), so the unit is in scope
+        # by this checker's "later non-store absolute token" rule. Read
+        # /var/lib/sancta/.claude/index/gallery/server.mjs in full (56 lines,
+        # 2026-08-21): no `child_process`/`exec`/`spawn` call anywhere — a
+        # pure Node http static-file server with a publish-gate check. It
+        # shells out to NOTHING, so `commands = []` is a real fact, not an
+        # oversight. If that script ever grows a subprocess call, this entry
+        # must grow with it — the runtime probe cannot see this one either
+        # (it only reads statusline-refresh today; extending it is future
+        # work, named in the PR body's limits section).
+        sancta-gallery = {
+          interpreter = null;
+          commands = [ ];
+        };
       };
+      user = { };
     };
 
     # No custom non-store-path units found on either aarch64 host at recon
-    # time (2026-08-20, nix eval on both). Kept as explicit empty entries —
-    # not omitted — so a reviewer sees these hosts were considered, not
-    # skipped, and so `classifyStale` (execstart-path-contract.nix) has a real
-    # attrset to compare against rather than `{}` defaulting silently.
-    rpi5-full = { };
-    rpi5 = { };
+    # time (2026-08-21, nix eval on both, all 7 verbs, both scopes). Kept as
+    # explicit empty entries — not omitted — so a reviewer sees these hosts
+    # were considered, not skipped, and so classifyStale has a real attrset
+    # to compare against rather than `{}` defaulting silently.
+    rpi5-full = {
+      system = { };
+      user = { };
+    };
+    rpi5 = {
+      system = { };
+      user = { };
+    };
   };
 
-  # Units with a non-store ExecStart that this repo does not own and does not
-  # declare a contract for. Verified by recon (2026-08-20): `systemd-
-  # tmpfiles-resetup` ships from nixpkgs itself — identical bare
-  # `systemd-tmpfiles --create --remove --exclude-prefix=/dev` on all three
-  # hosts — and resolves through systemd's own compiled-in DEFAULT_PATH, NOT
-  # through this unit's `path=`/`Environment=PATH`. That is a different
-  # mechanism this check is not built to reason about (it would need to know
-  # systemd's own compile-time default, not anything Nix-visible here).
-  # Excluding it BY NAME, with this comment, is the honest choice — excluding
-  # it silently (e.g. filtering all "systemd-*" units) would not be, because
-  # it would also hide a REAL future sancta-owned unit that happened to start
-  # with the same prefix.
-  vendorExceptions = [ "systemd-tmpfiles-resetup" ];
+  # Units with a non-store Exec* reference that this repo does not own and
+  # does not declare a contract for — verified by recon (2026-08-21, all 3
+  # hosts, all 7 verbs):
+  #   systemd-tmpfiles-resetup — ships from nixpkgs; identical bare
+  #     `systemd-tmpfiles --create --remove --exclude-prefix=/dev` on all
+  #     three hosts; resolves through systemd's own compiled DEFAULT_PATH,
+  #     not through this unit's declared path=/PATH=.
+  #   generate-shutdown-ramfs — nixpkgs' initrd-ng module; ExecStart's second
+  #     token is `/run/initramfs`, a runtime MOUNT TARGET, not a script.
+  #   lastlog2-import — nixpkgs' lastlog2 module; ExecStartPost is
+  #     `mv /var/log/lastlog /var/log/lastlog.migrated` — both non-store
+  #     tokens are DATA FILE paths, not commands looked up on $PATH.
+  #   reload-systemd-vconsole-setup — NixOS's own generated
+  #     X-Restart-Triggers reload mechanism; ExecReload is
+  #     `/run/current-system/systemd/bin/systemctl restart
+  #     systemd-vconsole-setup` — `/run/current-system/systemd` is a
+  #     deterministic symlink into the BOOTED system's own systemd, refreshed
+  #     by every activation; not a script this repo authors or could break by
+  #     editing `path=`.
+  #   sshd / sshd@ — nixpkgs' openssh module; ExecStart's non-store token is
+  #     `/etc/ssh/sshd_config`, a CONFIG FILE argument, not a $PATH-resolved
+  #     command.
+  # Excluding these BY NAME, each with its own reason above, is the honest
+  # choice — excluding by a shared pattern (e.g. "not sancta-*") would also
+  # silently hide a real future sancta-owned unit that happened to match.
+  vendorExceptions = [
+    "systemd-tmpfiles-resetup"
+    "generate-shutdown-ramfs"
+    "lastlog2-import"
+    "reload-systemd-vconsole-setup"
+    "sshd"
+    "sshd@"
+  ];
 
   # Maintainer-curated map: nixpkgs package `pname` (verified empirically —
   # `nix eval .#nixosConfigurations.sancta-choir.pkgs --apply '...v.pname...'`
   # 2026-08-20 — NOT assumed from the `with pkgs; [ … ]` attribute name, which
   # can differ: `pkgs.bash`'s pname is `bash-interactive`, not `bash`) ->
   # external command names it is known to provide. NOT exhaustive by design —
-  # extend it the day a module's `path` gains a package this check needs to
+  # extend it the day a unit's real PATH= gains a package this check needs to
   # recognize. This is exactly the class of hand-maintained fact that #564
   # itself got wrong once (assuming coreutils provides `hostname`; it doesn't
   # — net-tools/inetutils does) — kept deliberately small and per-command
@@ -138,4 +219,10 @@
     "curl" = [ "curl" ];
     "git" = [ "git" ];
   };
+
+  # Commands satisfied by NixOS's OWN unconditional systemd.services.<n>.path
+  # defaults, appended to every service's PATH regardless of the module's own
+  # declared `path =` — see the falsifiability note on sancta-statusline-refresh
+  # above. Report-only annotation, not a pass/fail input.
+  alwaysPresentPnames = [ "coreutils" "findutils" "gnugrep" "gnused" "systemd" ];
 }

@@ -11,21 +11,17 @@
 # a store path. This class of bug is different by construction: the script
 # lives at /var/lib/sancta/.claude/index/bin/statusline-refresh, on a LUKS
 # volume, and is NOT a Nix store path — there is nothing for a build sandbox
-# to realise. Proven, not assumed, 2026-08-20 recon:
+# to realise. Proven, not assumed, 2026-08-20 recon (repeated verbatim in the
+# 2026-08-21 review, still holds):
 #   1. `nix build --impure --expr '... runCommand ... "cat /var/lib/sancta/…"'`
 #      fails ENOENT — even ON THE HOST WHERE THE FILE DEMONSTRABLY EXISTS, a
 #      sandboxed build sees only /nix/store + declared inputs, never arbitrary
-#      host paths. `builtins.pathExists` at EVAL time on the same path
-#      correctly returns true, proving this is the eval/build boundary, not a
-#      fluke.
+#      host paths.
 #   2. Even an eval-time `builtins.readFile` on that path needs `--impure`
 #      (pure-eval-by-default rejects `/var/...` path literals outright), and
-#      `grep -rn impure .github/workflows/` finds zero uses — CI never passes
-#      it, so a check depending on it would never even reach "does the file
-#      exist" before failing the pure-eval guard.
-#   3. Even if `--impure` WERE passed, GitHub's runner is a different,
-#      ephemeral machine with no LUKS soul volume mounted at all — ENOENT
-#      either way.
+#      CI never passes it.
+#   3. Even if `--impure` WERE passed, GitHub's runner has no LUKS soul volume
+#      mounted at all — ENOENT either way.
 # So: nothing wired into `checks.<system>.*` / `nix flake check` can ever read
 # this script's real bytes. Pretending otherwise would recreate the exact
 # false-confidence bug this whole check family exists to close.
@@ -36,53 +32,120 @@
 #   (a) THIS FILE — an eval-time check over a small, COMMITTED, human-written
 #       contract (tests/execstart-path-contracts.nix): "this unit's script
 #       needs interpreter X and commands [Y, Z, …]". It cross-references that
-#       contract against the unit's Nix-visible `path=` (mapped through a
-#       curated pname->commands table) and FAILS if the declared need is not
-#       provided. It also fails if a non-store unit exists with NO declared
-#       contract at all (UNDECLARED) — so a *future* PR that introduces a new
-#       off-store unit cannot pass silently just because nobody thought to add
-#       an entry.
+#       contract against the unit's REAL, FULLY-RENDERED systemd unit text —
+#       `config.systemd.units."<n>.service".text` /
+#       `config.systemd.user.units."<n>.service".text` — the exact bytes
+#       systemd itself will read, not an approximation reconstructed from
+#       Nix options. It FAILS if the declared need is not provided. It also
+#       fails if a non-store unit exists with NO declared contract at all
+#       (UNDECLARED), and if a declared contract's unit stops being non-store
+#       or stops existing at all (ORPHANED-CONTRACT / STALE-MANIFEST) — so
+#       coverage can never silently drop without the build noticing.
 #   (b) A RUNTIME PROBE (wq-tick's `execstart-contract-check` handler, INDEX
-#       repo, committed separately — see the task this check was built under)
-#       that reads the REAL script on sancta-choir, on a schedule, and checks
-#       the committed contract still matches reality. That is the only piece
-#       that can ever see the actual bytes; this file cannot, and does not
-#       pretend to.
-# This file proves internal consistency between the manifest and the module's
-# `path=`. It does NOT prove the manifest is telling the truth about the
-# script — only (b) can do that. Both halves are named here so the limit is
-# never implicit.
+#       repo, committed separately) that reads the REAL script on
+#       sancta-choir, on a schedule, and checks the committed contract still
+#       matches reality. That is the only piece that can ever see the actual
+#       bytes; this file cannot, and does not pretend to.
+#
+# WHY THE RENDERED-TEXT SOURCE (2026-08-21 rewrite, adversarial review of the
+# first version, PR #568)
+# -----------------------------------------------------------------------
+# The first version of this check read `svc.path` (a package list) and
+# `svc.serviceConfig.Environment` (for a raw PATH= override) directly.  Both
+# were WRONG in ways that produced false greens:
+#   - `svc.serviceConfig.Environment` never contains PATH on NixOS — the
+#     `path =` option writes to `svc.environment.PATH` instead, a DIFFERENT
+#     attribute the old code never read. Proof (still reproducible):
+#     `nix eval .#nixosConfigurations.sancta-choir.config.systemd.services.
+#     sancta-statusline-refresh.serviceConfig.Environment` never has PATH;
+#     `…environment.PATH` does. A `lib.mkForce "/nonexistent/bin"` override —
+#     the literal #564 bug, reproduced live — passed the old check with
+#     BIT-IDENTICAL derivation output to the healthy case.
+#   - `svc.path` (a package LIST) is a Nix-side abstraction one step removed
+#     from what systemd actually gets — an `ExecStart = "${pkgs.bash}/bin/bash
+#     ${script}"` refactor moves the unit's program token onto a store path,
+#     making the whole unit look "in scope: no" to a check that only looks at
+#     the first token of `path`'s package list, even though the SECOND token
+#     (the script argument) is still off-store and still needs `bash` on
+#     $PATH inside the script.
+# Reading `config.systemd.units."<n>.service".text` sidesteps both: it is the
+# literal string NixOS will write to the unit file, generated by PURE Nix
+# string interpolation — proven to need no realisation and no --impure (`nix
+# eval '.#nixosConfigurations.sancta-choir.config.systemd.units.
+# "sancta-statusline-refresh.service".text'` succeeds in plain `nix eval`,
+# 2026-08-21). Any override, any wrapper, any Environment= mechanism NixOS
+# supports is already resolved in that string — there is no second attribute
+# to forget to read, because there is only one ground truth.
+#
+# WHAT "IN SCOPE" MEANS NOW (widened 2026-08-21)
+# ------------------------------------------------
+# A unit is in scope if ANY line for ANY of the 7 Exec verbs (ExecStartPre,
+# ExecStart, ExecStartPost, ExecStop, ExecStopPost, ExecReload,
+# ExecCondition — the first version only read 4 of these, missing a live unit
+# on all 3 hosts, reload-systemd-vconsole-setup's ExecReload) contains:
+#   - a PROGRAM token (the first word, after stripping leading `@ - + ! : ~ "`
+#     modifiers) that does not start with `/nix/store` — bare command OR
+#     off-store absolute path, both resolve outside the Nix-managed world; or
+#   - a LATER token that is an absolute path not starting with `/nix/store` —
+#     this is what catches the store-path-wrapper case above: the program can
+#     be a full store path while its argument (the actual script) is not.
+# Both `systemd.services` (system scope) and `systemd.user.services` (user
+# scope) are scanned — the first version scanned only system scope; nothing
+# in-scope currently exists in user scope on any of the 3 hosts (verified
+# 2026-08-21), but the scan runs there too so a future user unit cannot land
+# uncovered by omission.
 #
 # WHAT THIS DOES NOT COVER (state it, don't imply otherwise)
 # ------------------------------------------------------------
+#  - The contract is PER UNIT, not per Exec-line: once a unit has ONE
+#    declared, verified off-store reference, any OTHER off-store script added
+#    to the same unit (a second ExecStartPost, say) is covered by the same
+#    contract rather than needing its own entry. A per-line manifest key
+#    would close this more tightly; not done here (time-boxed), named as an
+#    accepted limitation in the PR body.
 #  - Scripts invoked BY a contract-covered script via an absolute/relative
 #    path (not looked up on $PATH) are not recursed into. Example:
 #    statusline-refresh calls `$HERE/sidequest` directly — a missing sidequest
 #    binary is an ENOENT the script's own code already handles, not a $PATH
 #    resolution failure, so it is out of scope for a $PATH contract by
 #    definition, not by oversight.
-#  - A unit whose Environment= carries a raw `PATH=...` override is NOT
-#    reasoned about — this checker only understands the `path=` NixOS option.
-#    Rather than silently trust or silently ignore such a unit, it FAILS
-#    CLOSED with an explicit "cannot verify — raw PATH override" reason (self-
-#    tested below).
-#  - systemd's own compiled-in DEFAULT_PATH (what a BARE command with no
-#    leading `/` resolves through, e.g. the vendor systemd-tmpfiles-resetup
-#    unit present on every host) is a different resolution mechanism this
-#    checker does not model; such units are named in an explicit exception
-#    list (tests/execstart-path-contracts.nix `vendorExceptions`), never
-#    silently filtered by a pattern that could also hide a real sancta unit.
+#  - Naive whitespace tokenization of Exec lines: no quote-awareness. None of
+#    this repo's current units need it (verified by the real scan below
+#    running clean); a future Exec line with a quoted, space-containing
+#    argument could mis-tokenize. Flagged, not fixed — the failure mode of a
+#    mis-tokenization is EXTRA false positives (a token that looks like a
+#    non-store path when it isn't), which fails safe (loud), never silent.
+#  - systemd's own compiled-in DEFAULT_PATH (what a unit with NO PATH=
+#    environment line at all would fall back to) is not modeled — a unit with
+#    no PATH= line found is treated as FAIL (cannot verify), not as "trust
+#    the compiled default", which is the fail-closed choice.
+#  - A committed contract's command LIST is trusted as complete — this file
+#    can prove PATH satisfies what's declared, never that the declaration
+#    itself is the full truth. Only the runtime probe ((b) above) can ever
+#    compare against the real script bytes.
+#  - Several of a contract's commands (see execstart-path-contracts.nix's
+#    "falsifiability" note) are supplied by NixOS's own unconditional
+#    systemd path defaults regardless of module config, and so cannot
+#    individually be falsified by anything short of a PATH= override — stated
+#    in the report line for each unit, not hidden behind an inflated count.
 #
 # COVERAGE, STATED OUT LOUD
 # ---------------------------
-# Unlike unit-script-refs.nix, this check needs no REALISATION — it reads only
-# Nix-visible option values (Exec* strings, `path=`, `serviceConfig.Environment`),
-# the same category of fact module-eval.nix already treats as architecture-
-# independent. So — verified by running it — this check evaluates all THREE
-# configured hosts for real, including both aarch64 hosts this repo has no
-# local builder for (sancta-choir, rpi5-full, rpi5). That is MORE coverage
-# than unit-script-refs.nix gets, for a cheaper reason: there is nothing to
-# build, only attributes to read.
+# This check needs no REALISATION — it reads only Nix-visible option values
+# (unit `.text`), the same category of fact module-eval.nix already treats as
+# architecture-independent. So — verified by running it — this check
+# evaluates all THREE configured hosts for real, including both aarch64 hosts
+# this repo has no local builder for (sancta-choir, rpi5-full, rpi5). It does
+# NOT build anything on those hosts, only reads option values, ever — unlike
+# unit-script-refs.nix, which realises scripts and is bound to sancta-choir
+# (its only x86_64-linux host) for that reason.
+#
+# A COVERAGE FLOOR is asserted at the bottom: if the real scan across all
+# hosts finds zero in-scope units, or zero units that reach `ok`, the build
+# fails — "nothing to report" must never look identical to "everything
+# passed". (2026-08-21 review: an `allHosts = []` mutation, and the
+# store-wrapper escape above, both independently produced a green build with
+# zero real coverage before this floor existed.)
 #
 # Run: nix build .#checks.x86_64-linux.execstart-path-contract -L
 
@@ -96,26 +159,21 @@ let
   lib = nixpkgs.lib;
   data = import ./execstart-path-contracts.nix;
 
-  # All configured hosts. Pure eval — see COVERAGE above for why all three are
-  # safe and cheap to include, unlike the realisation-bound unit-script-refs.nix.
+  # All configured hosts. Pure eval — see COVERAGE above.
   allHosts = [ "sancta-choir" "rpi5-full" "rpi5" ];
 
-  toList = x: if x == null then [ ] else if lib.isList x then x else [ x ];
-
-  cmdsOf =
-    services: n:
-    let
-      sc = services.${n}.serviceConfig or { };
-    in
-    toList (sc.ExecStartPre or null)
-    ++ toList (sc.ExecStart or null)
-    ++ toList (sc.ExecStartPost or null)
-    ++ toList (sc.ExecStop or null);
+  verbs = [
+    "ExecStartPre"
+    "ExecStart"
+    "ExecStartPost"
+    "ExecStop"
+    "ExecStopPost"
+    "ExecReload"
+    "ExecCondition"
+  ];
 
   # Strip systemd's leading exec-modifier characters (`@ - + ! : ~ "`) one at a
-  # time — several can stack (e.g. a templated, non-blocking, root-run unit) —
-  # until none remain. Mirrors tests/unit-script-refs.nix's stripping, widened
-  # with `~` and `"` per this task's own wording of the modifier set.
+  # time — several can stack — until none remain.
   stripLeading =
     s:
     let
@@ -128,171 +186,301 @@ let
     in
     go s;
 
-  # True for a single Exec* line whose PROGRAM token (after stripping
-  # modifiers) is non-empty and does not start with /nix/store. Empty strings
-  # are the standard NixOS idiom for masking a templated unit (getty@, etc.)
-  # and are correctly excluded, matching the 2026-08-20 recon's confirmed
-  # false-positive list.
-  isNonStoreLine =
-    raw:
-    let
-      s = stripLeading raw;
-    in
-    s != "" && !(lib.hasPrefix "/nix/store" s);
+  tokenize = raw: lib.filter (t: t != "") (lib.splitString " " (stripLeading raw));
 
-  # nixpkgs `pname` for a `path=` list entry. Entries are normally packages
-  # (`with pkgs; [ bash … ]`); a bare string is treated as the command name
-  # itself. VERIFIED EMPIRICALLY (2026-08-20, `nix eval
-  # .#nixosConfigurations.sancta-choir.pkgs --apply '...pname...'`) that
-  # `pkgs.bash`'s pname is `bash-interactive`, NOT `bash` — this function (and
-  # the provides table it feeds) is keyed on the real pname, never the
-  # `with pkgs;` attribute name, because those two are proven to differ.
-  pkgNameOf =
-    item:
-    if builtins.isString item then item
-    else if item ? pname then item.pname
-    else if item ? name then (lib.strings.parseDrvName item.name).name
-    else toString item;
+  # A token list is "interesting" (references something off-store worth
+  # reasoning about) if its PROGRAM token (first) is non-store — bare command
+  # or off-store absolute path both count — OR any LATER token is an absolute
+  # path outside /nix/store (catches the store-path-wrapper case: a store
+  # program invoked with an off-store script/config argument).
+  tokensInteresting =
+    ts:
+    if ts == [ ] then false
+    else
+      let
+        prog = lib.head ts;
+        rest = lib.drop 1 ts;
+      in
+      !(lib.hasPrefix "/nix/store" prog)
+      || lib.any (t: lib.hasPrefix "/" t && !(lib.hasPrefix "/nix/store" t)) rest;
+
+  # Pull every Exec* line (any of the 7 verbs) out of a rendered unit's .text,
+  # with the "Verb=" prefix stripped from each.
+  execLinesOf =
+    text:
+    let
+      lines = lib.splitString "\n" text;
+    in
+    lib.concatMap
+      (v: map (l: lib.removePrefix (v + "=") l) (lib.filter (l: lib.hasPrefix (v + "=") l) lines))
+      verbs;
+
+  inScopeOf = text: lib.any (l: tokensInteresting (tokenize l)) (execLinesOf text);
+
+  # The rendered PATH=, exactly as systemd will read it — quoted or bare, both
+  # forms appear in practice (NixOS quotes an Environment= value only when it
+  # thinks it needs to). `null` means no PATH= line was found at all (the
+  # unit relies on systemd's own compiled DEFAULT_PATH, which this checker
+  # does not model — see header, fails closed on that).
+  pathStringOf =
+    text:
+    let
+      lines = lib.splitString "\n" text;
+      pathLine = lib.findFirst
+        (l: lib.hasPrefix "Environment=\"PATH=" l || lib.hasPrefix "Environment=PATH=" l)
+        null
+        lines;
+    in
+    if pathLine == null then null
+    else if lib.hasPrefix "Environment=\"PATH=" pathLine then
+      lib.removeSuffix "\"" (lib.removePrefix "Environment=\"PATH=" pathLine)
+    else
+      lib.removePrefix "Environment=PATH=" pathLine;
+
+  pathEntriesOf = text:
+    let s = pathStringOf text; in
+    if s == null then [ ] else lib.filter (e: e != "") (lib.splitString ":" s);
+
+  # nixpkgs `pname` for a "/nix/store/<32charhash>-<name>-<version>/bin(-or-sbin)"
+  # PATH entry — parsed from the REAL rendered string, not assumed from a
+  # `with pkgs; […]` attribute name (verified empirically 2026-08-20:
+  # `pkgs.bash`'s pname is `bash-interactive`, not `bash`). `null` for any
+  # entry that is not a /nix/store path at all (e.g. a security-wrapper
+  # entry under /run/wrappers) — providedCommandsOf simply credits nothing
+  # for those, which is fail-closed, not a crash.
+  pnameOfPathEntry =
+    entry:
+    if !(lib.hasPrefix "/nix/store/" entry) then null
+    else
+      let
+        noPrefix = lib.removePrefix "/nix/store/" entry; # "<hash>-<name-version>/bin"
+        stripBinSuffix = s:
+          if lib.hasSuffix "/bin" s then lib.removeSuffix "/bin" s
+          else if lib.hasSuffix "/sbin" s then lib.removeSuffix "/sbin" s
+          else s;
+        nameVersion = stripBinSuffix noPrefix;
+        len = builtins.stringLength nameVersion;
+        # 32-char store hash + "-" = 33 chars to skip.
+        afterHash = if len > 33 then lib.substring 33 (len - 33) nameVersion else nameVersion;
+      in
+      (lib.strings.parseDrvName afterHash).name;
 
   providedCommandsOf =
-    pathList: lib.unique (lib.concatMap (item: data.provides.${pkgNameOf item} or [ ]) pathList);
+    pathEntries:
+    lib.unique (
+      lib.concatMap
+        (e: let p = pnameOfPathEntry e; in if p == null then [ ] else data.provides.${p} or [ ])
+        pathEntries
+    );
 
-  # The core assertion: does `path` (mapped through the provides table)
-  # supply the contract's interpreter and every command it declares? Fails
-  # closed (never silently passes) on a raw PATH= Environment override, since
-  # this function has no model for what such an override would actually put
-  # on $PATH.
+  # The core assertion: does the unit's REAL rendered PATH= (mapped through
+  # the provides table) supply the contract's interpreter (if any — `null`
+  # means the interpreter is already invoked via a full store path, no $PATH
+  # lookup needed for it) and every declared command? Reads the SAME
+  # `providedNames` for both real scan and self-tests — no reimplementation.
   checkContract =
-    { path, environment ? [ ], contract }:
+    { providedNames, hasPath, contract }:
     let
-      hasRawPathOverride = lib.any (e: lib.hasPrefix "PATH=" (toString e)) environment;
-      providedNames = providedCommandsOf path;
-      needed = [ contract.interpreter ] ++ contract.commands;
+      needed = (if contract.interpreter == null then [ ] else [ contract.interpreter ]) ++ contract.commands;
       missing = lib.filter (c: !(lib.elem c providedNames)) needed;
+      alwaysOn = lib.filter (c: lib.any (pn: lib.elem c (data.provides.${pn} or [ ])) data.alwaysPresentPnames) needed;
     in
-    if hasRawPathOverride then
+    if !hasPath then
       {
         ok = false;
-        reason = "cannot verify — Environment carries a raw PATH= override; this checker only understands the declarative path= option (fail-closed, not a silent pass)";
+        reason = "no PATH= line in the unit's rendered text — resolves via systemd's compiled DEFAULT_PATH only, which this checker does not model (fail-closed, not a silent pass)";
       }
     else if missing != [ ] then
-      { ok = false; reason = "path= does not provide: ${lib.concatStringsSep ", " missing}"; }
+      { ok = false; reason = "PATH= does not provide: ${lib.concatStringsSep ", " missing}"; }
     else
       {
         ok = true;
-        reason = "path= provides interpreter '${contract.interpreter}' + ${toString (lib.length contract.commands)} command(s)";
+        reason =
+          "PATH= (real rendered text) provides "
+          + (if contract.interpreter == null then "no-$PATH-lookup interpreter" else "interpreter '${contract.interpreter}'")
+          + " + ${toString (lib.length contract.commands)} command(s)"
+          + (if alwaysOn == [ ] then "" else " (note: ${toString (lib.length alwaysOn)} of these — ${lib.concatStringsSep ", " alwaysOn} — come from NixOS's own unconditional path defaults and are not individually falsifiable by this module's config, only by a PATH= override; see execstart-path-contracts.nix)");
       };
 
-  # Classify ONE unit on ONE host: excluded-vendor / UNDECLARED / ok / FAIL.
-  # Returns null for units whose Exec* is entirely inside /nix/store — those
-  # are unit-script-refs.nix's job, not this file's, and are silently in-scope
-  # for THAT check rather than out-of-scope-and-unmentioned for this one.
+  # Statuses that make the build FAIL. Named once, self-tested below, and
+  # used for BOTH the real-scan failure count and the report — so a future
+  # one-line drop of a status from this list (demonstrated live in review:
+  # dropping "FAIL" let a real, present regression print [FAIL] and still
+  # exit 0) breaks a self-test instead of shipping silently.
+  isFailingStatus = s: lib.elem s [ "FAIL" "UNDECLARED" "STALE-MANIFEST" "ORPHANED-CONTRACT" ];
+
+  # Classify ONE unit's rendered text on ONE host/scope.
   classifyOne =
-    host: services: n:
+    host: scope: n: text:
     let
-      execLines = map toString (cmdsOf services n);
-      inScope = lib.any isNonStoreLine execLines;
+      inScope = inScopeOf text;
     in
     if !inScope then null
     else if lib.elem n data.vendorExceptions then
       {
         unit = n;
-        inherit host;
+        inherit host scope;
         status = "excluded-vendor";
-        detail = "vendor unit — resolves via systemd's own compiled DEFAULT_PATH, not this unit's path=/Environment; see execstart-path-contracts.nix vendorExceptions.";
+        detail = "vendor unit — see execstart-path-contracts.nix vendorExceptions for the per-unit reason.";
       }
     else
       let
-        contract = (data.hosts.${host} or { }).${n} or null;
+        contract = ((data.hosts.${host} or { }).${scope} or { }).${n} or null;
       in
       if contract == null then
         {
           unit = n;
-          inherit host;
+          inherit host scope;
           status = "UNDECLARED";
-          detail = "non-store Exec* with no committed contract in tests/execstart-path-contracts.nix — add one.";
+          detail = "non-store Exec* reference with no committed contract in tests/execstart-path-contracts.nix — add one.";
         }
       else
         let
-          svc = services.${n};
+          pathEntries = pathEntriesOf text;
           res = checkContract {
-            path = svc.path or [ ];
-            environment = svc.serviceConfig.Environment or [ ];
+            providedNames = providedCommandsOf pathEntries;
+            hasPath = pathStringOf text != null;
             contract = contract;
           };
         in
         {
           unit = n;
-          inherit host;
+          inherit host scope;
           status = if res.ok then "ok" else "FAIL";
           detail = res.reason;
         };
 
-  # The other direction: a manifest entry whose unit no longer exists on that
-  # host is a STALE declaration — worth failing on, because a rename that
-  # drops the old name silently loses coverage for whatever the new unit is
-  # called (it would land in UNDECLARED only if someone thinks to check;
-  # STALE-MANIFEST makes that failure loud instead of just quietly wrong).
-  classifyStale =
-    host: services:
+  # Declared-but-vanished: a contract entry whose unit no longer exists at
+  # all on that host/scope.
+  classifyStaleFor =
+    host: scope: presentNames:
     let
-      declared = lib.attrNames (data.hosts.${host} or { });
-      present = lib.attrNames services;
+      declared = lib.attrNames ((data.hosts.${host} or { }).${scope} or { });
     in
     map
       (n: {
         unit = n;
-        inherit host;
+        inherit host scope;
         status = "STALE-MANIFEST";
-        detail = "declared in tests/execstart-path-contracts.nix but no unit by this name exists on ${host} — a rename may have silently dropped coverage.";
+        detail = "declared in tests/execstart-path-contracts.nix but no ${scope} unit by this name exists on ${host} — a rename may have silently dropped coverage.";
       })
-      (lib.filter (n: !(lib.elem n present)) declared);
+      (lib.filter (n: !(lib.elem n presentNames)) declared);
 
-  classifyServices =
-    host: services:
-    (lib.filter (r: r != null) (map (classifyOne host services) (lib.attrNames services)))
-    ++ classifyStale host services;
+  # Declared-but-no-longer-in-scope: the unit still exists, but its rendered
+  # text no longer references anything off-store (e.g. refactored fully onto
+  # /nix/store) — the contract entry now covers nothing and would otherwise
+  # sit there silently, looking like coverage.
+  classifyOrphanedFor =
+    host: scope: unitTexts:
+    let
+      declared = lib.attrNames ((data.hosts.${host} or { }).${scope} or { });
+    in
+    lib.concatMap
+      (n:
+      if !(unitTexts ? ${n}) then [ ]
+      else if inScopeOf unitTexts.${n} then [ ]
+      else
+        [{
+          unit = n;
+          inherit host scope;
+          status = "ORPHANED-CONTRACT";
+          detail = "declared in tests/execstart-path-contracts.nix but the unit's rendered Exec* text is entirely /nix/store now — the contract covers nothing; remove the entry (or this is unit-script-refs.nix's job now).";
+        }]
+      )
+      declared;
 
   # ── REAL SCAN ──────────────────────────────────────────────────────────
+  # unitTextsFor gives {name -> text} for every "<name>.service" unit in a
+  # given host/scope's config.systemd(.user).units, with the ".service"
+  # suffix dropped to match the manifest's bare-name convention. Only
+  # ".service" keys are considered — verified by the 2026-08-21 recon that no
+  # other unit type (.socket/.mount/.path/.timer/.target) currently carries a
+  # non-store Exec* line on any host; a future one would not be silently
+  # skipped so much as simply not yet supported, named here rather than
+  # implied covered.
+  unitTextsFor =
+    units:
+    lib.listToAttrs (
+      lib.concatMap
+        (full:
+        if lib.hasSuffix ".service" full then
+        # Discard string context immediately: `.text` is generated via Nix
+        # string interpolation of real store paths, so it carries a
+        # dependency context. This check only ever INSPECTS the text — it
+        # never re-derives a build input from it — so the context is
+        # pure overhead here, and left attached it makes derivation
+        # attrs like `report`/`realFailureCount` implicitly depend on
+        # REALISING every referenced package before this check can even
+        # be evaluated (defeating "pure eval, no realisation needed"),
+        # and trips a hard Nix error the moment such a substring is fed
+        # through `parseDrvName` (`... is not allowed to refer to a
+        # store path`) — reproduced while building this check.
+          [{ name = lib.removeSuffix ".service" full; value = builtins.unsafeDiscardStringContext (units.${full}.text or ""); }]
+        else [ ]
+        )
+        (lib.attrNames units)
+    );
+
+  scanHostScope =
+    host: scope: units:
+    let
+      unitTexts = unitTextsFor units;
+      names = lib.attrNames unitTexts;
+      classified = lib.filter (r: r != null) (map (n: classifyOne host scope n unitTexts.${n}) names);
+    in
+    classified
+    ++ classifyStaleFor host scope names
+    ++ classifyOrphanedFor host scope unitTexts;
+
   realResults = lib.concatMap
-    (h: classifyServices h self.nixosConfigurations.${h}.config.systemd.services)
+    (h:
+      let cfg = self.nixosConfigurations.${h}.config; in
+      scanHostScope h "system" cfg.systemd.units
+      ++ scanHostScope h "user" cfg.systemd.user.units
+    )
     allHosts;
 
   # ── NEGATIVE / REGRESSION SELF-TESTS — run on EVERY invocation ──────────
   # A check that cannot be shown to fail is worthless (same doctrine as
-  # unit-script-refs.nix's probe.txt and sancta-doctrine-guard.nix's
-  # expect_fail cases). Each case below states what it expects and is
-  # compared against what checkContract/classifyServices actually returns.
-  fullSancataPath = [
-    pkgs.bash
-    pkgs.nodejs
-    pkgs.gh
-    pkgs.jq
-    pkgs.systemd
-    pkgs.gnugrep
-    pkgs.coreutils
-  ];
-  goodContract = data.hosts.sancta-choir.sancta-statusline-refresh;
+  # unit-script-refs.nix's probe.txt). Each case states what it expects and
+  # is compared against what the SAME functions the real scan uses actually
+  # return — no reimplementation, so the self-tests can't drift from what
+  # runs for real.
+  goodContract = data.hosts.sancta-choir.system.sancta-statusline-refresh;
+  goodPathString =
+    "/nix/store/im5106h2hx9al158rz6bfa4zbmbidim7-bash-interactive-5.3p3/bin:"
+    + "/nix/store/31sh8fzcbg4sjahp3zj002j0ca8sfvvr-nodejs-22.22.0/bin:"
+    + "/nix/store/h47p0bap84nlnx8232ay46l1f09xrc8b-gh-2.83.2/bin:"
+    + "/nix/store/mw4v8f537imvfb6xj7zhv81qcxqpmd9z-jq-1.8.1-bin/bin:"
+    + "/nix/store/bigkpra9jw48fip69q4wndsf4kb3d2w9-systemd-258.3/bin:"
+    + "/nix/store/d4c56s8wa6rz2dnw6ridg7r1dvax1gky-gnugrep-3.12/bin:"
+    + "/nix/store/wkkwxc04gdw6b263l1h29pjarjnjdyb6-coreutils-9.8/bin";
+  goodUnitText = ''
+    [Service]
+    Environment="PATH=${goodPathString}"
+    ExecStart=/var/lib/sancta/.claude/index/bin/statusline-refresh
+  '';
 
   contractSelfTests = [
     {
-      name = "positive control: real path= + real contract passes";
+      name = "positive control: real rendered PATH= + real contract passes";
       result = checkContract {
-        path = fullSancataPath;
-        environment = [ ];
+        providedNames = providedCommandsOf (pathEntriesOf goodUnitText);
+        hasPath = true;
         contract = goodContract;
       };
       expectOk = true;
     }
     {
-      # THE EXACT PRE-#564 SHAPE: bash was missing from `path=`. This is not a
-      # synthetic worst case — it is what shipped and exited 127 on every
-      # timer tick before PR #564. It must go red here, permanently, on every
-      # invocation of this check, not just once during development.
-      name = "REGRESSION pre-#564: bash missing from path= must be flagged";
+      # THE EXACT PRE-#564 SHAPE: bash missing from PATH=. Must go red here,
+      # permanently, on every invocation, not just once during development.
+      name = "REGRESSION pre-#564: bash missing from PATH= must be flagged";
       result = checkContract {
-        path = [ pkgs.nodejs pkgs.gh pkgs.jq pkgs.systemd pkgs.gnugrep pkgs.coreutils ];
-        environment = [ ];
+        providedNames = providedCommandsOf (pathEntriesOf (lib.replaceStrings
+          [ "/nix/store/im5106h2hx9al158rz6bfa4zbmbidim7-bash-interactive-5.3p3/bin:" ]
+          [ "" ]
+          goodUnitText));
+        hasPath = true;
         contract = goodContract;
       };
       expectOk = false;
@@ -300,102 +488,199 @@ let
     {
       name = "detector fires on a missing non-interpreter command (gh removed)";
       result = checkContract {
-        path = [ pkgs.bash pkgs.nodejs pkgs.jq pkgs.systemd pkgs.gnugrep pkgs.coreutils ];
-        environment = [ ];
+        providedNames = providedCommandsOf (pathEntriesOf (lib.replaceStrings
+          [ "/nix/store/h47p0bap84nlnx8232ay46l1f09xrc8b-gh-2.83.2/bin:" ]
+          [ "" ]
+          goodUnitText));
+        hasPath = true;
         contract = goodContract;
       };
       expectOk = false;
     }
     {
-      name = "fail-closed on a raw PATH= Environment override";
+      # THE ADVERSARIAL FINDING THIS REWRITE EXISTS TO CLOSE: an
+      # `environment.PATH = lib.mkForce "/nonexistent/bin"` override renders
+      # to exactly this text (proven live against the real module,
+      # 2026-08-21) and the OLD check (reading serviceConfig.Environment)
+      # passed it. This check reads the real rendered PATH= line, so it
+      # cannot miss it.
+      name = "REGRESSION: environment.PATH override (mkForce) must be flagged";
       result = checkContract {
-        path = fullSancataPath;
-        environment = [ "PATH=/some/hand-rolled/path" ];
+        providedNames = providedCommandsOf (pathEntriesOf ''
+          [Service]
+          Environment="PATH=/nonexistent/bin"
+          ExecStart=/var/lib/sancta/.claude/index/bin/statusline-refresh
+        '');
+        hasPath = true;
         contract = goodContract;
       };
       expectOk = false;
     }
+    {
+      name = "fail-closed when no PATH= line exists at all";
+      result = checkContract {
+        providedNames = [ ];
+        hasPath = false;
+        contract = goodContract;
+      };
+      expectOk = false;
+    }
+    {
+      name = "null interpreter (already-store-resolved) contract with satisfied commands passes";
+      result = checkContract {
+        providedNames = [ "jq" ];
+        hasPath = true;
+        contract = { interpreter = null; commands = [ "jq" ]; };
+      };
+      expectOk = true;
+    }
   ];
   contractSelfTestFailures = lib.filter (t: t.result.ok != t.expectOk) contractSelfTests;
 
-  # Classification self-tests: fully synthetic fixture services, exercised
-  # through the SAME classifyServices function the real scan uses (not a
-  # reimplementation — a reimplementation could drift from what actually runs).
-  fixtureUndeclaredResults = classifyServices "sancta-choir" {
-    "sancta-fixture-undeclared" = {
-      serviceConfig.ExecStart = "/opt/not-in-store/run.sh";
-      path = [ pkgs.bash ];
-    };
-  };
-  fixtureUndeclared = lib.findFirst (r: r.unit == "sancta-fixture-undeclared") null fixtureUndeclaredResults;
+  # isFailingStatus self-tests: pins exactly which statuses count as a
+  # failure, closing the "one-word drop from the filter list ships a real
+  # regression as green" finding from review (dropping "FAIL" let a live
+  # [FAIL] line print and still exit 0).
+  statusSelfTests = [
+    { name = "isFailingStatus: FAIL counts as failing"; ok = isFailingStatus "FAIL"; }
+    { name = "isFailingStatus: UNDECLARED counts as failing"; ok = isFailingStatus "UNDECLARED"; }
+    { name = "isFailingStatus: STALE-MANIFEST counts as failing"; ok = isFailingStatus "STALE-MANIFEST"; }
+    { name = "isFailingStatus: ORPHANED-CONTRACT counts as failing"; ok = isFailingStatus "ORPHANED-CONTRACT"; }
+    { name = "isFailingStatus: ok does NOT count as failing"; ok = !(isFailingStatus "ok"); }
+    { name = "isFailingStatus: excluded-vendor does NOT count as failing"; ok = !(isFailingStatus "excluded-vendor"); }
+  ];
 
-  fixtureVendorResults = classifyServices "sancta-choir" {
-    "systemd-tmpfiles-resetup" = {
-      serviceConfig.ExecStart = "systemd-tmpfiles --create --remove --exclude-prefix=/dev";
-    };
-  };
-  fixtureVendor = lib.findFirst (r: r.unit == "systemd-tmpfiles-resetup") null fixtureVendorResults;
+  # Classification self-tests: fully synthetic fixture unit TEXT, exercised
+  # through the SAME classifyOne/inScopeOf functions the real scan uses.
+  fixtureUndeclared = classifyOne "sancta-choir" "system" "sancta-fixture-undeclared" ''
+    [Service]
+    Environment="PATH=${goodPathString}"
+    ExecStart=/opt/not-in-store/run.sh
+  '';
 
-  # Empty fixture (no units at all) still carries the real manifest's
-  # sancta-choir entry, which the fixture host doesn't have -> STALE-MANIFEST.
-  fixtureStaleResults = classifyServices "sancta-choir" { };
+  fixtureVendor = classifyOne "sancta-choir" "system" "systemd-tmpfiles-resetup" ''
+    [Service]
+    ExecStart=systemd-tmpfiles --create --remove --exclude-prefix=/dev
+  '';
+
+  fixtureStaleResults = classifyStaleFor "sancta-choir" "system" [ ];
   fixtureStale = lib.findFirst (r: r.unit == "sancta-statusline-refresh") null fixtureStaleResults;
 
-  # A fully in-store unit must classify as out-of-scope (null / filtered),
-  # proving this check does not duplicate unit-script-refs.nix's job.
-  fixtureStorePathResults = classifyServices "sancta-choir" {
-    "sancta-fixture-store-unit" = {
-      serviceConfig.ExecStart = "/nix/store/00000000000000000000000000000000-fixture/bin/run";
-    };
+  fixtureStorePathResult = classifyOne "sancta-choir" "system" "sancta-fixture-store-unit" ''
+    [Service]
+    ExecStart=/nix/store/00000000000000000000000000000000-fixture/bin/run
+  '';
+
+  # THE STORE-WRAPPER ESCAPE, closed: program token is a store path, but the
+  # SECOND token (the script argument) is off-store — must still be in scope.
+  # Reuses the REAL declared unit name so this exercises the actual contract
+  # lookup, not just inScopeOf in isolation: proves the wrapped shape is both
+  # (a) recognized as in-scope and (b) still correctly validated.
+  fixtureWrapperResult = classifyOne "sancta-choir" "system" "sancta-statusline-refresh" ''
+    [Service]
+    Environment="PATH=${goodPathString}"
+    ExecStart=/nix/store/im5106h2hx9al158rz6bfa4zbmbidim7-bash-interactive-5.3p3/bin/bash /var/lib/sancta/.claude/index/bin/statusline-refresh
+  '';
+
+  # A declared unit whose text has been refactored to be entirely in-store —
+  # the contract entry now covers nothing and must fail loudly.
+  fixtureOrphanedResults = classifyOrphanedFor "sancta-choir" "system" {
+    sancta-statusline-refresh = ''
+      [Service]
+      ExecStart=/nix/store/im5106h2hx9al158rz6bfa4zbmbidim7-bash-interactive-5.3p3/bin/bash
+    '';
   };
-  fixtureStoreUnitFlagged = lib.any (r: r.unit == "sancta-fixture-store-unit") fixtureStorePathResults;
+  fixtureOrphaned = lib.findFirst (r: r.unit == "sancta-statusline-refresh") null fixtureOrphanedResults;
+
+  # ExecReload / ExecCondition / ExecStopPost — the 3 verbs the first version
+  # of this check did not read at all (missed a live unit on every host,
+  # reload-systemd-vconsole-setup). Each must independently make a unit
+  # in-scope.
+  fixtureExecReload = inScopeOf ''
+    [Service]
+    ExecReload=/run/current-system/systemd/bin/systemctl restart foo
+  '';
+  fixtureExecCondition = inScopeOf ''
+    [Service]
+    ExecCondition=/var/lib/sancta/.claude/index/bin/probe-cond
+  '';
+  fixtureExecStopPost = inScopeOf ''
+    [Service]
+    ExecStopPost=/var/lib/sancta/.claude/index/bin/probe-stoppost
+  '';
 
   classificationSelfTests = [
     { name = "classifier fires UNDECLARED on a fresh non-store unit"; ok = fixtureUndeclared != null && fixtureUndeclared.status == "UNDECLARED"; }
     { name = "classifier excludes the named vendor unit"; ok = fixtureVendor != null && fixtureVendor.status == "excluded-vendor"; }
     { name = "classifier fires STALE-MANIFEST when a declared unit vanishes"; ok = fixtureStale != null && fixtureStale.status == "STALE-MANIFEST"; }
-    { name = "classifier does not flag a plain /nix/store unit (that's unit-script-refs.nix's job)"; ok = !fixtureStoreUnitFlagged; }
+    { name = "classifier does not flag a plain /nix/store unit (that's unit-script-refs.nix's job)"; ok = fixtureStorePathResult == null; }
+    { name = "STORE-WRAPPER ESCAPE closed: store-path program + off-store argument is still in scope"; ok = fixtureWrapperResult != null && fixtureWrapperResult.status == "ok"; }
+    { name = "classifier fires ORPHANED-CONTRACT when a declared unit's text goes fully in-store"; ok = fixtureOrphaned != null && fixtureOrphaned.status == "ORPHANED-CONTRACT"; }
+    { name = "ExecReload alone makes a unit in-scope (missed by the first version — live on all 3 hosts, reload-systemd-vconsole-setup)"; ok = fixtureExecReload; }
+    { name = "ExecCondition alone makes a unit in-scope"; ok = fixtureExecCondition; }
+    { name = "ExecStopPost alone makes a unit in-scope"; ok = fixtureExecStopPost; }
   ];
-  classificationSelfTestFailures = lib.filter (t: !t.ok) classificationSelfTests;
 
-  selfTestFailureCount =
-    lib.length contractSelfTestFailures + lib.length classificationSelfTestFailures;
+  allSelfTests =
+    (map (t: { inherit (t) name; ok = t.result.ok == t.expectOk; }) contractSelfTests)
+    ++ statusSelfTests
+    ++ classificationSelfTests;
+  selfTestFailures = lib.filter (t: !t.ok) allSelfTests;
 
-  realFailures = lib.filter (r: lib.elem r.status [ "FAIL" "UNDECLARED" "STALE-MANIFEST" ]) realResults;
+  realFailures = lib.filter (r: isFailingStatus r.status) realResults;
+  realOkCount = lib.length (lib.filter (r: r.status == "ok") realResults);
 
-  fmtResult = r: "  [${r.status}] ${r.host}/${r.unit}: ${r.detail}";
+  fmtResult = r: "  [${r.status}] ${r.host}/${r.scope}/${r.unit}: ${r.detail}";
 
   report = lib.concatStringsSep "\n" (
     [
       "execstart-path-contract: eval-time declared-contract check (see file header for scope + limits)"
       "hosts evaluated (pure eval, no realisation needed): ${lib.concatStringsSep " " allHosts}"
+      "scopes scanned per host: system, user"
       ""
-      "-- self-tests (run every invocation) --"
+      "-- self-tests (run every invocation; result reflects what ACTUALLY happened) --"
     ]
-    ++ (map (t: "  ok: ${t.name}") contractSelfTests)
-    ++ (map (t: "  ok: ${t.name}") classificationSelfTests)
-    ++ [ "" "-- real scan, all in-scope units across all hosts --" ]
-    ++ (if realResults == [ ] then [ "  (no non-/nix/store Exec* units found on any host)" ] else map fmtResult realResults)
-    ++ [ "" ]
+    ++ (map (t: "  ${if t.ok then "ok" else "FAIL"}: ${t.name}") allSelfTests)
+    ++ [ "" "-- real scan, all in-scope units across all hosts/scopes --" ]
+    ++ (if realResults == [ ] then [ "  (no non-/nix/store Exec* units found on any host/scope)" ] else map fmtResult realResults)
+    ++ [ "" "real coverage: ${toString realOkCount} unit(s) reached [ok]" "" ]
   );
 in
 pkgs.runCommand "execstart-path-contract"
 {
   inherit report;
   passAsFile = [ "report" ];
-  selfTestFailureCount = toString selfTestFailureCount;
+  selfTestFailureCount = toString (lib.length selfTestFailures);
+  selfTestFailureNames = lib.concatStringsSep "; " (map (t: t.name) selfTestFailures);
   realFailureCount = toString (lib.length realFailures);
+  realOkCount = toString realOkCount;
+  hostsCount = toString (lib.length allHosts);
 }
   ''
     cat "$reportPath"
     if [ "$selfTestFailureCount" -ne 0 ]; then
-      echo "SELF-TEST FAILED: $selfTestFailureCount self-test(s) did not match their expected result — the detector cannot be trusted, see above." >&2
+      echo "SELF-TEST FAILED: $selfTestFailureCount self-test(s) did not match their expected result — the detector cannot be trusted, see [FAIL] lines above." >&2
+      echo "  failing: $selfTestFailureNames" >&2
       exit 1
     fi
     if [ "$realFailureCount" -ne 0 ]; then
-      echo "FAILED: $realFailureCount real unit(s) failed their declared-path contract (or are UNDECLARED / STALE-MANIFEST) — see [FAIL]/[UNDECLARED]/[STALE-MANIFEST] lines above." >&2
+      echo "FAILED: $realFailureCount real unit(s) failed their declared-path contract (or are UNDECLARED / STALE-MANIFEST / ORPHANED-CONTRACT) — see the lines above." >&2
       exit 1
     fi
-    echo "execstart-path-contract: ok — self-tests passed, all in-scope units satisfy their declared contract."
+    # ── COVERAGE FLOOR ──────────────────────────────────────────────────
+    # A green run with zero hosts evaluated, or zero real units ever
+    # reaching [ok], is indistinguishable from "nothing was checked" —
+    # demonstrated live in review via an `allHosts = []` mutation and the
+    # (now-closed) store-wrapper escape. Both must be impossible to pass
+    # silently.
+    if [ "$hostsCount" -lt 1 ]; then
+      echo "FAILED: coverage floor — zero hosts evaluated." >&2
+      exit 1
+    fi
+    if [ "$realOkCount" -lt 1 ]; then
+      echo "FAILED: coverage floor — zero real unit(s) reached [ok]; a check with no positive coverage proves nothing." >&2
+      exit 1
+    fi
+    echo "execstart-path-contract: ok — self-tests passed, all in-scope units satisfy their declared contract, coverage floor met ($realOkCount unit(s))."
     echo ok > $out
   ''
