@@ -852,6 +852,82 @@ let
           ];
         };
 
+    # ── claude-code-managed-settings ────────────────────────────────
+    # /etc/claude-code/managed-settings.json exists specifically because a
+    # running Claude Code session rewrites ~/.claude/settings.json from its
+    # own in-memory copy and silently drops any key it never saw — proven
+    # live on 2026-08-20 (statusLine + hooks.UserPromptSubmit both gone twice
+    # in one day). These assertions pin that exactly the four agreed keys
+    # render, and nothing else — since managed settings OVERRIDE the owner's
+    # own file, a fifth key here is a silent capability-removal from him, not
+    # a cosmetic drift.
+    claude-code-managed-settings-choir-wiring =
+      let
+        etcEntry =
+          self.nixosConfigurations.sancta-choir.config.environment.etc."claude-code/managed-settings.json";
+        rendered = builtins.fromJSON etcEntry.text;
+
+        checks = {
+          # World-readable, not writable by anything but root/Nix — see the
+          # module header's FILE MODE note (upstream leaves this
+          # undocumented; 0644 is the chosen conservative default).
+          modeIsReadOnly = etcEntry.mode == "0644";
+
+          hasStatusLine =
+            rendered.statusLine or null
+            == {
+              type = "command";
+              command = "/var/lib/sancta/.claude/statusline.sh";
+            };
+
+          hasClockHook =
+            (rendered.hooks.UserPromptSubmit or [ ])
+            == [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = "date '+Now: %A %Y-%m-%d %H:%M %Z'";
+                  }
+                ];
+              }
+            ];
+
+          hasMemoryIndexHook =
+            (rendered.hooks.PostToolUse or [ ])
+            == [
+              {
+                matcher = "Write|Edit";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "/var/lib/sancta/.claude/index/bin/memory-index-hook";
+                  }
+                ];
+              }
+            ];
+
+          spinnerTipsOff = rendered.spinnerTipsEnabled or null == false;
+
+          # The hard limit this module promises in its own header: managed
+          # settings override the owner's file, so a key beyond the four
+          # agreed ones is a silent capability-removal, not a convenience.
+          # This fails loudly the moment a fifth key is added without also
+          # updating this assertion — the reviewing human, not a rebuild.
+          exactlyFourKeys = (builtins.attrNames rendered) == [
+            "hooks"
+            "spinnerTipsEnabled"
+            "statusLine"
+          ];
+        };
+
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir claude-code-managed-settings wiring — failed checks: ${builtins.toJSON failed}";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────

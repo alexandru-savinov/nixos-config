@@ -53,6 +53,7 @@
     ../../modules/services/sancta-doctrine-guard.nix # assert the authored substrate is present + recoverable
     ../../modules/services/sancta-gallery.nix # the rendered surface, declared instead of hand-started
     ../../modules/services/sancta-statusline-refresh.nix # keep the status bar's cached state true
+    ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
   ];
 
   # Enable development tools and agent CLIs.
@@ -80,6 +81,11 @@
     model = "opus[1m]";
     verbose = true;
   };
+
+  # The four keys the interactive harness cannot silently erase (status bar,
+  # clock hook, memory-index hook, spinner tips off) — see the module's own
+  # header for the 2026-08-20 evidence and the hard limit on what lives here.
+  services.claudeCodeManagedSettings.enable = true;
 
   # At boot, per-user HM activation must not run before the encrypted soul
   # volume is mounted at ~/.claude — otherwise its symlinks land on the bare
