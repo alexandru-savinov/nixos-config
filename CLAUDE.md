@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current Environment
 
-**You are running on rpi5** (Raspberry Pi 5, aarch64-linux). The **primary deploy target** is `rpi5-full`. The `sancta-choir` VPS hosts the OpenClaw AI gateway.
+**You are running on rpi5** (Raspberry Pi 5, aarch64-linux). The **primary deploy target** is `rpi5-full`. The `sancta-choir` VPS is the always-on agent host (Sancta worker + herdr).
 
 | Task | Command | Notes |
 |------|---------|-------|
@@ -17,9 +17,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **When the user says "deploy", "build", or "rebuild" without specifying a target, ALWAYS use `rpi5-full`.**
 
-The `sancta-choir` configuration (x86_64 Hetzner VPS) hosts the **OpenClaw AI gateway**. It is built in CI but deployed separately. Only build or deploy `sancta-choir` when the user explicitly asks for it by name.
+The `sancta-choir` configuration (x86_64 Hetzner VPS) hosts the **Sancta worker + herdr** (always-on agent host). It is built in CI but deployed separately. Only build or deploy `sancta-choir` when the user explicitly asks for it by name.
 
-> **⚠️ Remote VPS deploys are NOT atomic.** On the GRUB-based Hetzner hosts (`sancta-choir`, `sancta-claw`, `hermes-claw`), `nixos-rebuild switch` builds → updates GRUB → activates; an OOM-killed build on a small-RAM box can leave an unbootable system (the ~10h #252 outage). For any remote VPS deploy: gate the switch on a successful build **and throttle it** — `nixos-rebuild build --flake .#<host> --max-jobs 1 --cores 1 && nixos-rebuild switch …` — and prefer `nixos-rebuild boot` (or `system.autoUpgrade.operation = "boot"`) for risky changes, so a bad generation only needs a reboot. `scripts/deploy.sh` and `scripts/install.sh` already apply the `--max-jobs 1 --cores 1` throttle; all three VPS hosts carry a swapfile.
+> **⚠️ Remote VPS deploys are NOT atomic.** On the GRUB-based Hetzner host `sancta-choir`, `nixos-rebuild switch` builds → updates GRUB → activates; an OOM-killed build on a small-RAM box can leave an unbootable system (the ~10h #252 outage). For any remote VPS deploy: gate the switch on a successful build **and throttle it** — `nixos-rebuild build --flake .#<host> --max-jobs 1 --cores 1 && nixos-rebuild switch …` — and prefer `nixos-rebuild boot` (or `system.autoUpgrade.operation = "boot"`) for risky changes, so a bad generation only needs a reboot. `scripts/deploy.sh` and `scripts/install.sh` already apply the `--max-jobs 1 --cores 1` throttle; `sancta-choir` carries a swapfile. (`sancta-claw` and `hermes-claw` were the other two Hetzner VPS hosts this warning covered; both retired 2026-08-20 — see docs/retired.md.)
 
 **Tailscale hostname:**
 - `rpi5` or `rpi5.tail4249a9.ts.net`
@@ -29,9 +29,9 @@ The `sancta-choir` configuration (x86_64 Hetzner VPS) hosts the **OpenClaw AI ga
 Flake-based NixOS configuration:
 - **rpi5-full** (aarch64-linux): Raspberry Pi 5 ← **You are here** (only active host)
 - **rpi5** (aarch64-linux): Minimal config for SD image builds only
-- **sancta-choir** (x86_64-linux): Hetzner VPS — OpenClaw AI gateway
-- **sancta-claw** (x86_64-linux): Hetzner VPS — Dedicated OpenClaw host (Official npm package, Pro subscription)
-- **hermes-claw** (x86_64-linux): Hetzner VPS — Dedicated Hermes Agent (Nous Research) in Podman container
+- **sancta-choir** (x86_64-linux): Hetzner VPS — Sancta worker + herdr, always-on agent host
+
+Retired 2026-08-20 (destroyed, not coming back — see `docs/retired.md`): `sancta-claw` (dedicated OpenClaw host), `hermes-claw` (dedicated Hermes Agent host), `zero-kuzea` (dedicated NullClaw host).
 
 ## Commands
 
@@ -87,10 +87,8 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.nixframe` | VT 7 / HDMI | Digital photo frame with n8n upload |
 | `services.gatus-tailscale` | 3001 | Declarative status monitoring |
 | `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
-| `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) |
+| `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) — module kept, no live host imports it (its only consumer, `sancta-claw`, retired 2026-08-20) |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
-| `openclaw` (sancta-claw) | 18789 | Official OpenClaw npm package on dedicated VPS |
-| `services.hermes-agent` (hermes-claw) | - | Hermes AI agent in Podman container (upstream module, container mode) |
 | `services.sancta-gallery` (sancta-choir) | 8739 | Rendered surface, publish-gated. Binds the tailnet address directly — documented exception below |
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. OpenClaw uses a different model: file-based inbox with per-UID nftables network restriction (no listener).
@@ -103,7 +101,6 @@ Access URLs (HTTPS via Tailscale Serve):
 - NixFrame upload: `https://rpi5.tail4249a9.ts.net:5678/webhook/nixframe-ui`
 - Gatus: `https://rpi5.tail4249a9.ts.net:3001`
 - Qdrant: `https://rpi5.tail4249a9.ts.net:6333`
-- OpenClaw: `https://sancta-claw.tail4249a9.ts.net:18789` (pending Tailscale Serve setup)
 
 ## Secrets (Agenix)
 
@@ -119,7 +116,7 @@ Current secrets: `openrouter-api-key`, `openai-api-key`, `tavily-api-key`, `n8n-
 
 ## CI/CD
 
-GitHub Actions on push/PR: `nix flake check`, build sancta-choir + sancta-claw + hermes-claw (x86_64), evaluate rpi5 + rpi5-full (aarch64), format check. Main branch protected - use PRs.
+GitHub Actions on push/PR: `nix flake check`, build sancta-choir (x86_64), evaluate rpi5 + rpi5-full (aarch64), format check. Main branch protected - use PRs.
 
 ## Git Workflow
 
@@ -195,8 +192,8 @@ flake. This repo only:
 1. Imports the shared module via `modules/services/claude-shared.nix`
    (exposes `customModules.claudeShared.{enable,users}`).
 2. Wires it into hosts that should get the full CC stack. Currently:
-   `rpi5` / `rpi5-full` (full). `sancta-choir`, `sancta-claw` are still on
-   the legacy `customModules.claude` (package install only — no skills/agents).
+   `rpi5` / `rpi5-full` (full, via `rpi5-full` importing `rpi5`'s config) and
+   `sancta-choir` (migrated from the legacy `customModules.claude` in #469).
 3. Carries **project-level** skills under `.claude/skills/` — see below.
 
 ### Where to edit Claude Code content

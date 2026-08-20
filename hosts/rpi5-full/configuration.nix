@@ -332,10 +332,6 @@ in
       # rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
       rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 
-      # sancta-claw services (remote VPS via Tailscale)
-      sancta-claw-openclaw = remoteHttpEndpoint "sancta-claw" "OpenClaw Gateway" "https://sancta-claw.tail4249a9.ts.net:18789/healthz";
-      sancta-claw-tailscale = icmpEndpoint "sancta-claw" "Tailscale" "icmp://sancta-claw.tail4249a9.ts.net";
-
       # External services
       external-openrouter = {
         name = "OpenRouter API";
@@ -549,14 +545,15 @@ in
   # Daily rsync → tmpfs staging → restic encrypted repo
   # See modules/services/backup-pull.nix for architecture details
   #
-  # DISABLED 2026-07-22: sancta-claw is intentionally powered down (fate
-  # undecided). With claw offline the daily pull just fails loud every night
-  # (rsync exit 255 → OnFailure alert) with nothing to back up. Re-enable
-  # (enable = true) once claw's disposition is decided; config is otherwise
-  # intact so it's a one-line flip.
+  # DISABLED 2026-07-22, now PERMANENT: sancta-claw was destroyed and
+  # retired for good (see docs/retired.md, 2026-08-20) — it is not coming
+  # back, so this is no longer "disposition undecided." This is NOT a
+  # one-line flip back to enable = true: remoteHost/sshKeyFile below still
+  # point at the dead sancta-claw box, so re-enabling backup-pull means
+  # re-pointing it at a new backup source, not just flipping the flag.
   services.backup-pull = {
     enable = false;
-    remoteHost = "46.225.168.24"; # sancta-claw public IP (bypasses Tailscale SSH policy)
+    remoteHost = "46.225.168.24"; # sancta-claw public IP (bypasses Tailscale SSH policy) — RETIRED, box no longer exists
     remotePaths = [ "/" ]; # relative to rrsync root (/var/lib/openclaw)
     sshKeyFile = secret "rpi5-backup-ssh-key";
     resticPasswordFile = secret "restic-password";

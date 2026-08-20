@@ -1,5 +1,15 @@
 # Disaster Recovery — sancta-claw
 
+> **RETIRED 2026-08-20.** `sancta-claw` was destroyed and retired for good
+> (no tailnet response, confirmed gone — see [retired.md](retired.md)); every
+> command below targets a flake output, host directory, and secrets that no
+> longer exist (`.#sancta-claw` was removed from `flake.nix`,
+> `hosts/sancta-claw/` was deleted, `openclaw-service.nix` with it). Do not
+> run these against a live system. Kept as a reference procedure for
+> standing up a similar Hetzner VPS host from scratch via nixos-anywhere +
+> agenix `--extra-files` — the *shape* of the recovery is still correct,
+> only the specific host name/target is dead. Adapt, don't run verbatim.
+
 > **Before touching secrets after a re-image:** read
 > [SECRETS-ROTATION.md](SECRETS-ROTATION.md) — running `agenix -r`/`-e` on a
 > host whose SSH host key rotated corrupts secrets (fail-open, empty

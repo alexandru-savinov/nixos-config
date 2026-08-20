@@ -1,4 +1,5 @@
 {
+  "_stale_notice": "STALE as of the 2026-08-20 host retirement (PR #565, see docs/retired.md): this graph was generated before sancta-claw, hermes-claw, and zero-kuzea were destroyed and removed from the flake, and still lists them as live nodes/hosts. No regeneration command exists in this repo (verified: no script builds docs/architecture-{map.html,graph.json,analysis.md}). Treat any node/edge referencing those three hosts as historical, not current.",
   "stats": {
     "nodes": 142,
     "edges": 401,

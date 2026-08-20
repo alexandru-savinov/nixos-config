@@ -523,8 +523,13 @@ let
     # nullclaw-injection-key-paths / nullclaw-injection-guard-fires: retired
     # 2026-08-20 with zero-kuzea, the only host that ever built
     # nullclawConfigInjection (see docs/retired.md). The module-level tests
-    # above (nullclaw-minimal, nullclaw-disabled, etc.) still guard
-    # modules/services/nullclaw.nix directly and are unaffected.
+    # above (nullclaw-minimal, nullclaw-disabled, etc.) still guard the
+    # OPTION SURFACE of modules/services/nullclaw.nix in isolation — but with
+    # zero-kuzea gone, no host imports this module anymore, so nothing here
+    # actually exercises the real injection contract (nullclawConfigInjection
+    # against a live nullclaw binary) end to end. That coverage is gone, not
+    # "unaffected" — it only comes back if/when a host imports nullclaw.nix
+    # again.
 
     # ── UniFi MCP ─────────────────────────────────────────────────
     unifi-mcp-minimal = shouldEval "unifi-mcp: minimal config" {
