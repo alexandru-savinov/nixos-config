@@ -62,7 +62,17 @@ let
   inherit (lib) mkIf mkOption mkEnableOption types concatStringsSep;
   cfg = config.services.sancta-statusline-refresh;
   soulRoot = toString config.services.sancta-soul-volume.mountPoint;
-  stateFile = "${soulRoot}/index/statusline-state.json";
+  # 2026-08-20: moved from index/statusline-state.json into its own
+  # directory. Reproduced live: with ProtectSystem=strict and
+  # ReadWritePaths naming a single FILE, the refresher's atomic-write
+  # pattern (mktemp a sibling temp file, then mv -f into place) fails —
+  # rename(2) needs write access on the containing DIRECTORY, not just the
+  # file being replaced. Least-privilege (one writable file) and atomicity
+  # (rename) cannot both be satisfied by a ReadWritePaths entry that names
+  # a single file; one of the two had to give. See stateDir below for the
+  # resolution and why it is still least-privilege.
+  stateDir = "${soulRoot}/index/statusline";
+  stateFile = "${stateDir}/state.json";
   # The single source of the refresh logic. Deliberately NOT a Nix store path —
   # see "THE WORKS-BY-LUCK TRAP" above for why that is a real, named tradeoff
   # rather than an oversight.
@@ -213,46 +223,39 @@ in
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = false;
-        # ONE writable path. This unit updates a single file and has no business
-        # touching anything else on the volume; everything it reads — the gh
-        # credentials, the sidequest log — it reads without needing write access.
+        # THE DIRECTORY, not the file (changed 2026-08-20 — see stateDir/stateFile
+        # above for the failure this fixes). ReadWritePaths naming a single FILE
+        # is what broke: the refresher's atomic-write pattern is mktemp a sibling
+        # temp file in the same directory, then `mv -f` it over the target —
+        # rename(2) requires write permission on the containing DIRECTORY, not
+        # merely on the file being replaced. Reproduced live: with the old
+        # single-file ReadWritePaths and the state directory chmod 555, the
+        # refresher's own mktemp failed with "Permission denied" and the unit
+        # exited 1, leaving the state untouched every 15 minutes.
         #
-        # `-` prefix, not a bare path (review finding, 2026-08-19): every OTHER
-        # sancta module's ReadWritePaths in this repo points at a DIRECTORY
-        # (heartbeat-tick's stateDir/indexDir, self-backup's feedDir, soul-mirror's
-        # feedDir/localDir, nullclaw's /var/lib/nullclaw) — those units write
-        # several files, or don't know the exact filename ahead of time. This unit
-        # is the deliberate exception: exactly one file, chosen for a tighter
-        # blast radius than a directory would give. Widening to
-        # `"${soulRoot}/index"` to sidestep the bug below would put the INDEX
-        # repo's `bin/`, `orchestrator/queue.db` and everything else under it
-        # inside the writable scope — undoing the narrowing this module already
-        # argued for, to fix a problem that does not need it.
+        # STILL least-privilege, not a widening: `stateDir` (index/statusline/)
+        # holds exactly ONE file — state.json — and nothing else, by construction
+        # (it was carved out of index/ specifically so this grant could stay
+        # narrow). Compare the alternative rejected below: naming
+        # `"${soulRoot}/index"` would put the INDEX repo's `bin/`,
+        # `orchestrator/queue.db` and everything else under it inside the
+        # writable scope. Naming `stateDir` gives the unit exactly the same
+        # practical reach it always had — one file's worth of blast radius —
+        # while finally matching what rename(2) actually needs.
         #
-        # The actual failure: with ProtectSystem=strict, systemd bind-mounts each
-        # ReadWritePaths entry into the unit's private mount namespace, and a bare
-        # path that does not exist on the host makes that bind-mount — and so unit
-        # start — fail, BEFORE the script ever runs. On a fresh host the state
-        # file plausibly does not exist yet (the script's own contract refuses to
-        # create one from nothing: "refusing to create one from nothing, because
-        # the schema note and any human-set deadline live in it"), so the very
-        # first activation could fail opaquely at the systemd layer instead of
-        # with the script's own clear stderr message. `-` is systemd's documented
-        # "ignore if this path does not exist" prefix (systemd.exec(5)) — it
-        # removes exactly that failure mode without widening the writable set at
-        # all: once the file DOES exist, it is writable, same as before; until
-        # then, the unit still starts, and the script's own check produces the
-        # honest error instead of systemd's.
-        #
-        # A tmpfiles rule pre-creating an EMPTY placeholder was considered and
-        # rejected: the script requires real, structured content (the `_schema`
-        # note, any human-set `deadline`) that only a human or a deploy step can
-        # provide, so an empty file would not let a genuine first run succeed —
-        # it would only trade one clean failure ("cannot read $STATE") for a
-        # worse one ("produced malformed state") without ever bootstrapping
-        # anything. Bootstrapping the file's initial content stays outside this
-        # module's job, same as it already was.
-        ReadWritePaths = [ "-${stateFile}" ];
+        # `-` prefix, not a bare path (review finding, 2026-08-19; still applies
+        # to a directory the same way it applied to the file): with
+        # ProtectSystem=strict, systemd bind-mounts each ReadWritePaths entry
+        # into the unit's private mount namespace, and a bare path that does not
+        # exist on the host makes that bind-mount — and so unit start — fail
+        # BEFORE the script ever runs. In practice `stateDir` should exist
+        # whenever the INDEX repo is checked out at all (state.json is a
+        # committed file inside it, so git materializes the directory), but `-`
+        # costs nothing and keeps the same fresh-host safety margin the
+        # single-file version had: the unit still starts, and the script's own
+        # check ("cannot read $STATE") produces the honest error instead of
+        # systemd's opaque bind-mount failure.
+        ReadWritePaths = [ "-${stateDir}/" ];
         PrivateTmp = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;

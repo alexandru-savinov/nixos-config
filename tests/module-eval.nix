@@ -523,8 +523,13 @@ let
     # nullclaw-injection-key-paths / nullclaw-injection-guard-fires: retired
     # 2026-08-20 with zero-kuzea, the only host that ever built
     # nullclawConfigInjection (see docs/retired.md). The module-level tests
-    # above (nullclaw-minimal, nullclaw-disabled, etc.) still guard
-    # modules/services/nullclaw.nix directly and are unaffected.
+    # above (nullclaw-minimal, nullclaw-disabled, etc.) still guard the
+    # OPTION SURFACE of modules/services/nullclaw.nix in isolation — but with
+    # zero-kuzea gone, no host imports this module anymore, so nothing here
+    # actually exercises the real injection contract (nullclawConfigInjection
+    # against a live nullclaw binary) end to end. That coverage is gone, not
+    # "unaffected" — it only comes back if/when a host imports nullclaw.nix
+    # again.
 
     # ── UniFi MCP ─────────────────────────────────────────────────
     unifi-mcp-minimal = shouldEval "unifi-mcp: minimal config" {
@@ -735,7 +740,14 @@ let
         svc = self.nixosConfigurations.sancta-choir.config.systemd.services.sancta-statusline-refresh;
         timer = self.nixosConfigurations.sancta-choir.config.systemd.timers.sancta-statusline-refresh;
         soulRoot = toString self.nixosConfigurations.sancta-choir.config.services.sancta-soul-volume.mountPoint;
-        stateFile = "${soulRoot}/index/statusline-state.json";
+        # 2026-08-20: state.json moved into its own directory (index/statusline/)
+        # so ReadWritePaths could target the DIRECTORY — atomic rename needs
+        # directory-write, which a single-file entry cannot grant. See the
+        # module's own comment on stateDir/ReadWritePaths for the reproduced
+        # failure and why a directory holding exactly one file is still
+        # least-privilege.
+        stateDir = "${soulRoot}/index/statusline";
+        stateFile = "${stateDir}/state.json";
         refreshScript = "${soulRoot}/index/bin/statusline-refresh";
 
         checks = {
@@ -744,14 +756,22 @@ let
           mountGated = svc.unitConfig.ConditionPathIsMountPoint or null == soulRoot;
           requiresMount = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
 
-          # Exactly ONE writable path. The unit updates a single file and has no
-          # business touching anything else on the volume; everything else it
-          # needs it only reads. Widening this list is how a refresher becomes a
-          # writer. `-` prefixed (review finding, 2026-08-19): a bare path that
-          # does not exist yet fails the ProtectSystem=strict bind-mount before
-          # the unit ever starts; `-` is systemd's documented "ignore if absent"
-          # marker, not a widening — the path is still the ONLY writable one.
-          onlyStateWritable = (svc.serviceConfig.ReadWritePaths or [ ]) == [ "-${stateFile}" ];
+          # Exactly ONE writable path, and it must be the state DIRECTORY, not
+          # the state file (changed 2026-08-20): the refresher's atomic write is
+          # mktemp-a-sibling-then-mv, and rename(2) needs write on the
+          # containing directory, not just the file being replaced — a
+          # single-file ReadWritePaths entry cannot satisfy that, which is
+          # exactly the bug this move fixes (reproduced live: state dir chmod
+          # 555, refresher's mktemp fails, unit exits 1). Still least-privilege:
+          # `stateDir` holds exactly one file (state.json) and nothing else, so
+          # the writable blast radius is unchanged in practice — only the grant
+          # now matches what rename(2) actually requires. `-` prefixed (review
+          # finding, 2026-08-19, still applies to the directory form): a bare
+          # path that does not exist yet fails the ProtectSystem=strict
+          # bind-mount before the unit ever starts; `-` is systemd's documented
+          # "ignore if absent" marker, not a widening — the directory is still
+          # the ONLY writable path, and it holds nothing but the one file.
+          onlyStateWritable = (svc.serviceConfig.ReadWritePaths or [ ]) == [ "-${stateDir}/" ];
 
           # Network is REQUIRED here, unlike the doctrine guard: the ask list
           # comes from GitHub. If this were ever narrowed to AF_UNIX the unit

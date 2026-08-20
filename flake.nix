@@ -38,11 +38,6 @@
     nixos-raspberrypi = {
       url = "github:nvmd/nixos-raspberrypi";
     };
-    # Declarative disk partitioning
-    disko = {
-      url = "github:nix-community/disko/latest";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     # Claude Code - auto-updated hourly from npm
     # See: https://github.com/sadjow/claude-code-nix
     claude-code = {
@@ -57,10 +52,6 @@
       inputs.home-manager.follows = "home-manager";
       inputs.claude-code.follows = "claude-code";
     };
-    kuzea-workspace = {
-      url = "github:alexandru-savinov/kuzea-workspace";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     # Open-WebUI OpenRouter cost tracking filter function.
     # Displays per-request cost (from OpenRouter's generation endpoint),
     # tokens, speed, and remaining credits in the message status area.
@@ -68,27 +59,9 @@
       url = "github:karamanliev/open-webui-openrouter-stats";
       flake = false;
     };
-    # Hermes Agent (Nous Research) — AI agent framework with NixOS module.
-    # Container mode: uv2nix-built binary bind-mounted into Ubuntu, writable layer.
-    # Pinned to v0.16.0 release commit (3c231eb, 2026-06-05). v0.16 ships
-    # locales/ in $out/share/hermes-agent/ and sets HERMES_BUNDLED_LOCALES
-    # in the wrapper, fixing /status etc. rendering as raw i18n keys
-    # (gateway.status.header, …). Earlier releases (incl. v0.14.0 /
-    # v2026.5.16) ship the locales as setuptools data-files, which the
-    # uv2nix venv places where agent.i18n._locales_dir() does NOT look —
-    # so /status was returning literal key strings to Telegram before
-    # this upgrade. Upstream nix/lib.nix on 3c231eb pins a stale
-    # npmDepsHash for hermes-tui; we patch it in `outputs` via
-    # runCommand+callPackage (see `hermesAgentPatched` below) so the fix
-    # stays in git, not /tmp. Drop the overlay once upstream's
-    # auto-fix-lockfiles CI catches up.
-    hermes-agent = {
-      url = "github:NousResearch/hermes-agent/3c231eb3979ab9c57d5cd6d02f1d577a3b718b43";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, disko, nixos-raspberrypi, claude-code, claude-shared, kuzea-workspace, owui-openrouter-stats, hermes-agent, ... }@inputs:
+  outputs = { self, nixpkgs, nixpkgs-unstable, home-manager, vscode-server, agenix, nixos-raspberrypi, claude-code, claude-shared, owui-openrouter-stats, ... }@inputs:
     let
       # Systems that can run our scripts and packages
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -290,11 +263,6 @@
           module-eval = import ./tests/module-eval.nix {
             inherit pkgs nixpkgs self;
           };
-
-          # End-to-end ZDR proxy test: boots a VM with the proxy + a stub
-          # OpenRouter, verifies provider.zdr=true is injected on the wire
-          # and non-ZDR models are rejected before reaching the upstream.
-          openclaw-zdr-proxy = pkgs.testers.nixosTest (import ./tests/openclaw-zdr-proxy.nix { inherit pkgs; });
 
           # Agenix recipient-drift + fail-open corruption guard (#448):
           # on-disk `-> ` stanza counts must match secrets.nix declarations,
