@@ -1,4 +1,4 @@
-# claude-code-managed-settings — the four keys a running session cannot erase.
+# claude-code-managed-settings — the three keys a running session cannot erase.
 #
 # WHY THIS EXISTS
 # ----------------
@@ -35,8 +35,8 @@
 # --------------------------------------------
 # Managed settings OVERRIDE the owner's own settings.json for any key they
 # set. That makes this file a standing capability grant, not a convenience —
-# so it carries EXACTLY the four keys below and nothing else. Do not add a
-# fifth without re-litigating this comment: anything more turns "the harness
+# so it carries EXACTLY the three keys below and nothing else. Do not add a
+# fourth without re-litigating this comment: anything more turns "the harness
 # can't erase infrastructure" into "Nix quietly outranks the owner's own
 # preferences," which is the opposite of what this module is for.
 #
@@ -48,10 +48,63 @@
 #   3. hooks.PostToolUse (memory-index-hook) — keeps MEMORY.md derived from
 #                      the memory files' frontmatter; without it the recall
 #                      index silently drifts from what is actually on disk.
-#   4. spinnerTipsEnabled = false — the owner's own standing preference (the
-#                      generic CC tips, off), included here only because it
-#                      happens to live at this same layer; NOT infrastructure,
-#                      kept minimal and explicit rather than smuggled in.
+#
+# spinnerTipsEnabled is deliberately NOT in this file — see the P1
+# CROSS-USER SAFETY section below for why (a PREFERENCE, not infrastructure,
+# that a single machine-wide JSON literal cannot scope to one account; its
+# durable home is home-manager.users.sancta.programs.claude-code.extraSettings
+# in hosts/sancta-choir/configuration.nix instead).
+#
+# CROSS-USER SAFETY (2026-08-20, PR #569 finding P1)
+# ----------------------------------------------------
+# This file is MACHINE-WIDE — every account Claude Code is installed for on
+# this host (root, herdr, sancta; hosts/sancta-choir/configuration.nix:64-73)
+# reads the SAME copy. Each of the three keys was audited for what a NON-
+# sancta session does with it:
+#
+#   - hooks.UserPromptSubmit (`date ...`) — no filesystem path, no soul-volume
+#     dependency. Confirmed harmless for any account; left unguarded.
+#   - statusLine and hooks.PostToolUse (memory-index-hook) both point at
+#     scripts under /var/lib/sancta, which is 0700 sancta:sancta at every
+#     level (sancta-worker.nix's tmpfiles rule — the LUKS soul volume's
+#     privacy boundary, never to be loosened for this). A non-sancta account's
+#     exec of either path fails at the KERNEL's path-resolution step, before
+#     the target script's own code ever runs — so no in-script defense can
+#     close this; the guard has to live in the command Nix renders here. Both
+#     are wrapped in `guardedSoulCommand` below: `id -un` is safe to run as
+#     any account and touches nothing under /var/lib/sancta, so it gates the
+#     `exec` before the unreachable (herdr) or meaningless (root, which
+#     bypasses DAC and WOULD reach the script, just with no sancta state to
+#     render) path is ever touched.
+#
+# HOOK PRECEDENCE IS UNVERIFIED — AND THE MODULE IS DESIGNED NOT TO CARE
+# ------------------------------------------------------------------------
+# (2026-08-20, PR #569 finding MEDIUM) It was never established empirically
+# whether the managed layer MERGES its hooks.UserPromptSubmit / PostToolUse
+# arrays with a same-event array in ~/.claude/settings.json, or replaces that
+# top-level key wholesale. That could not be tested on this host: Claude
+# Code's managed-settings path (/etc/claude-code/managed-settings.json on
+# Linux) has no documented environment-variable override — confirmed via
+# claude-code-guide 2026-08-20 and independently checked by grepping the
+# installed 2.1.219 binary for any "managed"-related string (none found) —
+# and CLAUDE_CONFIG_DIR affects only the USER config directory, not the
+# managed one. Redirecting it for a real empirical test would require writing
+# to the real /etc, i.e. root, which this session does not have. The one
+# documented signal (settings.md, "Merge Semantics for Arrays and Objects":
+# arrays concatenate and de-duplicate across scopes) is a GENERAL rule, not a
+# hooks-specific confirmation, so it is evidence, not proof.
+#
+# Rather than ship on that assumption, THIS MODULE DOES NOT DEPEND ON THE
+# ANSWER: it makes no assumption that any hook a user adds to
+# ~/.claude/settings.json for UserPromptSubmit or PostToolUse will keep
+# firing once this module is enabled. Verified 2026-08-20: sancta's own
+# settings.json currently has `"hooks": null` (`jq '.hooks' settings.json`)
+# — the interactive-harness regression this whole module exists to fix had
+# already erased whatever was there, so there is nothing at stake today under
+# either interpretation. If a user-side UserPromptSubmit/PostToolUse hook is
+# ever added by hand in the future, whether it ALSO fires depends on this
+# unresolved question — that risk is named here deliberately rather than
+# discovered by a hook silently going quiet.
 #
 # THE WORKS-BY-LUCK TRAP (same class as sancta-statusline-refresh.nix)
 # ----------------------------------------------------------------------
@@ -85,10 +138,37 @@ let
   inherit (lib) mkIf mkEnableOption mkOption types;
   cfg = config.services.claudeCodeManagedSettings;
 
+  # 2026-08-20, PR #569 finding P1: this /etc file is MACHINE-WIDE, but
+  # hosts/sancta-choir/configuration.nix installs Claude Code for root, herdr
+  # AND sancta. statuslineScript and memoryIndexHookScript both point under
+  # /var/lib/sancta, which is 0700 sancta:sancta at every level down to
+  # .claude (sancta-worker.nix's tmpfiles rule — the LUKS soul volume's
+  # privacy boundary, not to be loosened for this or any other reason). That
+  # means a non-sancta account's attempt to exec either script fails at the
+  # KERNEL's path-resolution step (EACCES on the missing search bit on the
+  # parent directories) before a single line of the target script ever runs —
+  # no amount of defensive code INSIDE those scripts can catch that, because
+  # they are never reached. Root is the other half of the problem: root
+  # bypasses DAC checks entirely, so it WOULD reach the scripts, just with no
+  # meaningful state to render (its own $HOME, not sancta's).
+  #
+  # The fix has to live in the command Nix renders here, not in the target
+  # scripts: `id -un` costs nothing, touches nothing under /var/lib/sancta,
+  # and is safe to run as literally any account — so it can gate the `exec`
+  # BEFORE the unreachable/meaningless path is ever touched. For herdr this
+  # turns "permission-denied noise on every render/every Write-Edit" into a
+  # true instant no-op; for root it turns "renders with no sancta state" into
+  # the same no-op, closing both halves of the P1 finding with one mechanism.
+  # Verified 2026-08-20: rendering this exact guard and running it under a
+  # PATH-shimmed `id` reporting a foreign user touches nothing (history file
+  # md5 unchanged) and exits 0; under the real `sancta` identity it reaches
+  # the `exec`. See the PR thread for the transcript.
+  guardedSoulCommand = path: ''[ "$(id -un)" = sancta ] && exec ${path}; exit 0'';
+
   settings = {
     statusLine = {
       type = "command";
-      command = cfg.statuslineScript;
+      command = guardedSoulCommand cfg.statuslineScript;
     };
     hooks = {
       UserPromptSubmit = [
@@ -96,6 +176,9 @@ let
           hooks = [
             {
               type = "command";
+              # Bare `date` — no filesystem path, no soul-volume dependency,
+              # confirmed harmless for any account: it prints a timestamp and
+              # nothing else, so it is deliberately left UNguarded.
               command = cfg.clockCommand;
             }
           ];
@@ -107,21 +190,37 @@ let
           hooks = [
             {
               type = "command";
-              command = cfg.memoryIndexHookScript;
+              command = guardedSoulCommand cfg.memoryIndexHookScript;
             }
           ];
         }
       ];
     };
-    spinnerTipsEnabled = false;
+    # spinnerTipsEnabled deliberately does NOT live here — see finding P1's
+    # resolution below: a single /etc file cannot condition a plain JSON
+    # boolean per invoking user (unlike a "command" string, a literal has no
+    # runtime identity check available to it), and this key is a PREFERENCE,
+    # not infrastructure (this module's own header already said so). Applying
+    # it machine-wide would take the choice from herdr/root with no way to
+    # scope it, for a key whose loss is low-stakes if the interactive harness
+    # ever eats it. Its durable home is
+    # home-manager.users.sancta.programs.claude-code.extraSettings in
+    # hosts/sancta-choir/configuration.nix, sancta-scoped, alongside the
+    # model/verbose keys that already live there on the same trade-off.
   };
 in
 {
   options.services.claudeCodeManagedSettings = {
     enable = mkEnableOption ''
-      /etc/claude-code/managed-settings.json — the four Claude Code settings
+      /etc/claude-code/managed-settings.json — the three Claude Code settings
       keys the interactive harness must never be able to silently erase
-      (status bar, clock hook, memory-index hook, spinner tips off)
+      (status bar, clock hook, memory-index hook). Machine-wide by
+      construction (Claude Code has no per-user managed-settings location) —
+      the status bar and memory-index hook are self-guarded to the sancta
+      identity via `id -un` (see guardedSoulCommand / the P1 CROSS-USER
+      SAFETY header section) so herdr and root sessions on this same host get
+      an instant no-op instead of a permission-denied path under the 0700
+      soul volume.
     '';
 
     statuslineScript = mkOption {
@@ -132,6 +231,9 @@ in
         Nix store — see the module header's WORKS-BY-LUCK TRAP note: this
         path is invisible to tests/unit-script-refs.nix, so a missing file
         or a lost execute bit here fails silently at runtime, not at build.
+        Wrapped in guardedSoulCommand before rendering, so only a session
+        running as `sancta` ever attempts to exec it (see the P1 CROSS-USER
+        SAFETY header section).
       '';
     };
 
@@ -157,7 +259,12 @@ in
       description = ''
         Path to the hook that keeps MEMORY.md derived from the memory files'
         frontmatter after every Write/Edit. Lives on the soul volume — same
-        works-by-luck caveat as statuslineScript.
+        works-by-luck caveat as statuslineScript. Its own JS logic already
+        no-ops (and always exits 0) for any file_path outside the memory
+        store regardless of the invoking account's $HOME — verified
+        2026-08-20 — but that logic is unreachable from a non-sancta account
+        anyway (0700 parent dirs), so it is ALSO wrapped in
+        guardedSoulCommand before rendering, same as statuslineScript.
       '';
     };
 

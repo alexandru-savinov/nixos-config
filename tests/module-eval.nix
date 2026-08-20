@@ -857,15 +857,28 @@ let
     # running Claude Code session rewrites ~/.claude/settings.json from its
     # own in-memory copy and silently drops any key it never saw — proven
     # live on 2026-08-20 (statusLine + hooks.UserPromptSubmit both gone twice
-    # in one day). These assertions pin that exactly the four agreed keys
+    # in one day). These assertions pin that exactly the three agreed keys
     # render, and nothing else — since managed settings OVERRIDE the owner's
-    # own file, a fifth key here is a silent capability-removal from him, not
+    # own file, a fourth key here is a silent capability-removal from him, not
     # a cosmetic drift.
+    #
+    # 2026-08-20, PR #569 finding P1: statusLine and the memory-index hook are
+    # rendered as GUARDED commands, not bare paths — see the module header's
+    # CROSS-USER SAFETY section. This file is machine-wide (root, herdr,
+    # sancta all read it) and both scripts live under the 0700-sancta-only
+    # soul volume, so each command self-checks `id -un` = sancta before
+    # exec'ing; a non-sancta account gets an instant no-op instead of a
+    # permission-denied path. spinnerTipsEnabled moved OUT of this file
+    # entirely (a preference, not infrastructure — a single machine-wide JSON
+    # literal cannot be scoped to one account the way a command string can);
+    # its durable home is now
+    # home-manager.users.sancta.programs.claude-code.extraSettings.
     claude-code-managed-settings-choir-wiring =
       let
         etcEntry =
           self.nixosConfigurations.sancta-choir.config.environment.etc."claude-code/managed-settings.json";
         rendered = builtins.fromJSON etcEntry.text;
+        guarded = path: ''[ "$(id -un)" = sancta ] && exec ${path}; exit 0'';
 
         checks = {
           # World-readable, not writable by anything but root/Nix — see the
@@ -877,7 +890,7 @@ let
             rendered.statusLine or null
             == {
               type = "command";
-              command = "/var/lib/sancta/.claude/statusline.sh";
+              command = guarded "/var/lib/sancta/.claude/statusline.sh";
             };
 
           hasClockHook =
@@ -901,22 +914,31 @@ let
                 hooks = [
                   {
                     type = "command";
-                    command = "/var/lib/sancta/.claude/index/bin/memory-index-hook";
+                    command = guarded "/var/lib/sancta/.claude/index/bin/memory-index-hook";
                   }
                 ];
               }
             ];
 
-          spinnerTipsOff = rendered.spinnerTipsEnabled or null == false;
+          # Both guarded commands must actually mention the `id -un = sancta`
+          # check — a belt-and-braces assertion that the wiring didn't
+          # silently degrade back into a bare path (the exact P1 regression
+          # this all exists to prevent) if the module is ever refactored.
+          statusLineIsGuarded =
+            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta'' rendered.statusLine.command;
+          memoryHookIsGuarded =
+            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
+              (builtins.head (builtins.head (rendered.hooks.PostToolUse)).hooks).command;
+
+          spinnerTipsNotInManagedFile = !(rendered ? spinnerTipsEnabled);
 
           # The hard limit this module promises in its own header: managed
-          # settings override the owner's file, so a key beyond the four
+          # settings override the owner's file, so a key beyond the three
           # agreed ones is a silent capability-removal, not a convenience.
-          # This fails loudly the moment a fifth key is added without also
+          # This fails loudly the moment a fourth key is added without also
           # updating this assertion — the reviewing human, not a rebuild.
-          exactlyFourKeys = (builtins.attrNames rendered) == [
+          exactlyThreeKeys = (builtins.attrNames rendered) == [
             "hooks"
-            "spinnerTipsEnabled"
             "statusLine"
           ];
         };
@@ -927,6 +949,22 @@ let
         true
       else
         builtins.throw "FAIL: sancta-choir claude-code-managed-settings wiring — failed checks: ${builtins.toJSON failed}";
+
+    # spinnerTipsEnabled's new, sancta-scoped home (2026-08-20, PR #569
+    # finding P1) — moved out of the machine-wide managed file specifically
+    # because it is a preference no single JSON literal there can scope to
+    # one account; confirm it actually landed where the header now says it
+    # does, not just that it left the managed file above.
+    claude-code-managed-settings-spinner-tips-scoped-home =
+      let
+        extra =
+          self.nixosConfigurations.sancta-choir.config.home-manager.users.sancta.programs.claude-code.extraSettings
+            or { };
+      in
+      if (extra.spinnerTipsEnabled or null) == false then
+        true
+      else
+        builtins.throw "FAIL: spinnerTipsEnabled did not land in home-manager.users.sancta.programs.claude-code.extraSettings (got: ${builtins.toJSON extra})";
 
   };
 
