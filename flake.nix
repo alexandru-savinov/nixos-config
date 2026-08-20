@@ -346,6 +346,24 @@
             inherit pkgs nixpkgs self;
           };
 
+          # Declared-contract check for the OTHER half of the same bug class:
+          # ExecStart pointing OUTSIDE /nix/store entirely (e.g. a script on
+          # the LUKS soul volume), where unit-script-refs.nix's realise-and-
+          # grep approach cannot apply — there is no store derivation to
+          # realise. sancta-statusline-refresh exited 127 on every tick (PR
+          # #564) because its `path=` didn't include bash, its own shebang
+          # interpreter. This is a pure eval-time check (no build sandbox can
+          # read the soul-volume script — proven, see the file header) over a
+          # committed, hand-written contract (tests/execstart-path-
+          # contracts.nix); a runtime probe on sancta-choir (wq-tick, INDEX
+          # repo, committed separately) verifies that contract still matches
+          # the real script. Because it needs no realisation, unlike
+          # unit-script-refs.nix, it evaluates all three hosts for real,
+          # including both aarch64 ones this repo has no builder for.
+          execstart-path-contract = import ./tests/execstart-path-contract.nix {
+            inherit pkgs nixpkgs self;
+          };
+
           # NOTE: the declarative n8n VM test (#42) deliberately lives under
           # packages.<system>.n8n-declarative-test, NOT here. `nix flake
           # check` builds every check inside the resource-constrained
