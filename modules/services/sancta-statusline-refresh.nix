@@ -168,6 +168,21 @@ in
       # these tools on PATH (gh for the ask list, jq for JSON, systemd for unit
       # status, coreutils for the ExecStartPre existence check below).
       path = with pkgs; [
+        # bash FIRST, and not optional: the refresh script's shebang is
+        # `#!/usr/bin/env bash`, so the INTERPRETER itself is resolved through
+        # this PATH. While the script lived here as a `writeShellScript`, Nix
+        # baked an absolute bash into the shebang and PATH never mattered. It
+        # does now: the unit exited 127 on its first real run and the missing
+        # command was the interpreter, not any tool. Same shape as "THE
+        # WORKS-BY-LUCK TRAP" above, one level deeper — the store-ref check
+        # cannot see ExecStart, and nothing at all sees what its shebang needs.
+        bash
+        # nodejs: the script derives `stale` (queue dead-letter + overdue
+        # periodic tasks) by reading orchestrator/queue.db via node:sqlite.
+        # Without it the value degrades to -1, rendered "⚠ stale ?" — a bar that
+        # cannot count its own staleness is the frozen-keeper class this unit
+        # exists to prevent.
+        nodejs
         gh
         jq
         systemd
