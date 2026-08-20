@@ -298,8 +298,12 @@
   # Open-WebUI — AI chat gateway via OpenRouter
   # ==========================================================================
   # Access: https://sancta-choir-1.tail4249a9.ts.net (via Tailscale Serve)
+  # RETIRED 2026-08-20: unused since ~2026-07-29 (29 days idle before this
+  # switch). Turned off — NOT deleted — so re-enabling is exactly this one
+  # flag flipping back to `true`. Data untouched at /var/lib/open-webui.
+  # Secrets, config, and this whole block are left intact on purpose.
   services.open-webui-tailscale = {
-    enable = true;
+    enable = false;
     webuiUrl = "https://sancta-choir-1.tail4249a9.ts.net";
     secretKeyFile = config.age.secrets.open-webui-secret-key.path;
 
