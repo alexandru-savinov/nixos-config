@@ -26,10 +26,12 @@
 #   (b) that a green check here proved nothing about any OTHER host — a false
 #   sense of coverage is exactly the failure mode this check exists to prevent.
 #
-#   Real scan now covers every `x86_64-linux` host this check itself runs on
-#   (`sancta-choir`, `sancta-claw`, `hermes-claw`, `zero-kuzea`) — Nix can both
-#   EVAL and REALISE (build) their derivations here, so the store-ref existence
-#   check is a real, load-bearing assertion for all four.
+#   Real scan now covers every `x86_64-linux` host this check itself runs on.
+#   NARROWED 2026-08-20: sancta-claw, hermes-claw, and zero-kuzea were
+#   destroyed machines and are retired (see docs/retired.md) — the real scan
+#   list is back down to `sancta-choir`, the only x86_64-linux host left. Nix
+#   can both EVAL and REALISE (build) its derivation here, so the store-ref
+#   existence check is a real, load-bearing assertion for it.
 #
 #   `rpi5-full` / `rpi5` (aarch64-linux) are named but DELIBERATELY EXCLUDED from
 #   the real scan, and this is stated in the check's own output, not just here:
@@ -59,7 +61,7 @@ let
 
   # Hosts this check can actually REALISE scripts for (see COVERAGE WIDENED
   # above) — all `x86_64-linux`, same architecture as `checks.x86_64-linux`.
-  scannedHosts = [ "sancta-choir" "sancta-claw" "hermes-claw" "zero-kuzea" ];
+  scannedHosts = [ "sancta-choir" ];
 
   # Named for honesty in the output, never scanned for real — aarch64-linux,
   # no builder here (see COVERAGE WIDENED above).
@@ -102,7 +104,7 @@ let
   cmdList = lib.concatMap (h: h.cmdList) perHost;
   cmds = lib.concatStringsSep "\n" cmdList;
 
-  # e.g. "sancta-choir=10 sancta-claw=1 hermes-claw=0 zero-kuzea=0"
+  # e.g. "sancta-choir=10"
   hostSummary = lib.concatStringsSep " " (map (h: "${h.host}=${toString h.nUnits}") perHost);
 in
 pkgs.runCommand "sancta-unit-script-refs"
