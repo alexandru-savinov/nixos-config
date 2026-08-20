@@ -109,12 +109,21 @@
 #    binary is an ENOENT the script's own code already handles, not a $PATH
 #    resolution failure, so it is out of scope for a $PATH contract by
 #    definition, not by oversight.
-#  - Naive whitespace tokenization of Exec lines: no quote-awareness. None of
-#    this repo's current units need it (verified by the real scan below
-#    running clean); a future Exec line with a quoted, space-containing
-#    argument could mis-tokenize. Flagged, not fixed — the failure mode of a
-#    mis-tokenization is EXTRA false positives (a token that looks like a
-#    non-store path when it isn't), which fails safe (loud), never silent.
+#  - CORRECTED (2026-08-21 review): an earlier draft of this note claimed
+#    naive whitespace tokenization "fails safe (loud), never silent" — that
+#    was WRONG. A naive `splitString " "` breaks a quoted argument
+#    containing a space (e.g. `"/var/lib/some dir/x.py"`) into two tokens,
+#    NEITHER starting with `/` (the first starts with a literal `"`), so the
+#    whole unit silently fell out of scope — no UNDECLARED, no FAIL, nothing.
+#    That is a SILENT FALSE NEGATIVE, exactly the failure class this file
+#    exists to prevent, and it is now FIXED: `tokenize` is quote-aware (single
+#    and double quotes, no nesting) and any line with an unterminated quote
+#    fails CLOSED (treated as in-scope, forcing a contract/UNDECLARED rather
+#    than silent exclusion). Proven by a permanent regression self-test below
+#    (`fixtureQuotedArgWithSpace`) that was RED against the naive tokenizer
+#    before this fix and is GREEN after it. Backslash-escaped quotes inside a
+#    quoted value are still not modeled — no current unit's Exec line needs
+#    it (real scan runs clean) — a residual, named limit, not a silent one.
 #  - systemd's own compiled-in DEFAULT_PATH (what a unit with NO PATH=
 #    environment line at all would fall back to) is not modeled — a unit with
 #    no PATH= line found is treated as FAIL (cannot verify), not as "trust
@@ -186,23 +195,63 @@ let
     in
     go s;
 
-  tokenize = raw: lib.filter (t: t != "") (lib.splitString " " (stripLeading raw));
+  # Quote-aware whitespace tokenizer for one Exec* line (systemd.service(5)
+  # "Command lines": a value may be single- or double-quoted to include a
+  # space). A naive `splitString " "` (the pre-2026-08-21-review version of
+  # this function) breaks a quoted argument like `"/var/lib/some dir/x.py"`
+  # into TWO tokens — `"/var/lib/some` and `dir/x.py"` — NEITHER of which
+  # starts with `/` (the first starts with a literal `"`), so the check
+  # silently classified the whole unit out of scope: no UNDECLARED, no FAIL,
+  # nothing. That is a SILENT FALSE NEGATIVE, not the "fails safe (loud)"
+  # false-positive this file's header used to claim (review finding, this
+  # file, line ~205 — the claim was wrong; corrected below and here).
+  # Backslash escaping inside quotes is NOT modeled (time-boxed) — no current
+  # unit's Exec line needs it (the real scan below runs clean), and if a
+  # future one does, `unterminatedQuote` only catches a genuinely unbalanced
+  # quote count, not a mis-parsed escape; that residual gap is named, not
+  # hidden, in "WHAT THIS DOES NOT COVER" below.
+  tokenize =
+    raw:
+    let
+      chars = lib.stringToCharacters (stripLeading raw);
+      step = acc: c:
+        if c == "\"" || c == "'" then
+          if acc.quote == null then acc // { quote = c; }
+          else if acc.quote == c then acc // { quote = null; }
+          else acc // { cur = acc.cur + c; }
+        else if c == " " && acc.quote == null then
+          if acc.cur == "" then acc
+          else { tokens = acc.tokens ++ [ acc.cur ]; cur = ""; quote = acc.quote; }
+        else acc // { cur = acc.cur + c; };
+      final = lib.foldl' step { tokens = [ ]; cur = ""; quote = null; } chars;
+      tokens = if final.cur == "" then final.tokens else final.tokens ++ [ final.cur ];
+    in
+    { inherit tokens; unterminatedQuote = final.quote != null; };
 
-  # A token list is "interesting" (references something off-store worth
-  # reasoning about) if its PROGRAM token (first) is non-store — bare command
-  # or off-store absolute path both count — OR any LATER token is an absolute
-  # path outside /nix/store (catches the store-path-wrapper case: a store
-  # program invoked with an off-store script/config argument).
+  # A line is "interesting" (references something off-store worth reasoning
+  # about) if:
+  #   - it cannot be confidently tokenized (an unterminated quote) — FAIL
+  #     CLOSED: treat as in-scope rather than silently dropping it, or
+  #   - its PROGRAM token (first) is non-store — bare command or off-store
+  #     absolute path both count — or
+  #   - any LATER token is an absolute path outside /nix/store (catches the
+  #     store-path-wrapper case: a store program invoked with an off-store
+  #     script/config argument, quoted or not).
   tokensInteresting =
-    ts:
-    if ts == [ ] then false
+    raw:
+    let
+      t = tokenize raw;
+      ts = t.tokens;
+    in
+    if t.unterminatedQuote then true
+    else if ts == [ ] then false
     else
       let
         prog = lib.head ts;
         rest = lib.drop 1 ts;
       in
       !(lib.hasPrefix "/nix/store" prog)
-      || lib.any (t: lib.hasPrefix "/" t && !(lib.hasPrefix "/nix/store" t)) rest;
+      || lib.any (tok: lib.hasPrefix "/" tok && !(lib.hasPrefix "/nix/store" tok)) rest;
 
   # Pull every Exec* line (any of the 7 verbs) out of a rendered unit's .text,
   # with the "Verb=" prefix stripped from each.
@@ -215,7 +264,7 @@ let
       (v: map (l: lib.removePrefix (v + "=") l) (lib.filter (l: lib.hasPrefix (v + "=") l) lines))
       verbs;
 
-  inScopeOf = text: lib.any (l: tokensInteresting (tokenize l)) (execLinesOf text);
+  inScopeOf = text: lib.any (l: tokensInteresting l) (execLinesOf text);
 
   # The rendered PATH=, exactly as systemd will read it — quoted or bare, both
   # forms appear in practice (NixOS quotes an Environment= value only when it
@@ -609,6 +658,20 @@ let
     ExecStopPost=/var/lib/sancta/.claude/index/bin/probe-stoppost
   '';
 
+  # THE QUOTED-ARGUMENT SILENT-MISS (2026-08-21 review finding on this file,
+  # thread live at line ~205): a store-path interpreter invoked with a
+  # QUOTED off-store argument that contains a space. Naive whitespace
+  # splitting breaks `"/var/lib/some dir/script.py"` into two tokens —
+  # `"/var/lib/some` and `dir/script.py"` — NEITHER of which starts with `/`
+  # (the first starts with a literal `"`), so the old tokenizer silently
+  # dropped this unit out of scope: no UNDECLARED, no FAIL, nothing. Proven
+  # RED against the pre-fix tokenizer (build log captured 2026-08-21); must
+  # be `true` (in scope) permanently from here on.
+  fixtureQuotedArgWithSpace = inScopeOf ''
+    [Service]
+    ExecStart=/nix/store/im5106h2hx9al158rz6bfa4zbmbidim7-bash-interactive-5.3p3/bin/python3 "/var/lib/some dir/script.py"
+  '';
+
   classificationSelfTests = [
     { name = "classifier fires UNDECLARED on a fresh non-store unit"; ok = fixtureUndeclared != null && fixtureUndeclared.status == "UNDECLARED"; }
     { name = "classifier excludes the named vendor unit"; ok = fixtureVendor != null && fixtureVendor.status == "excluded-vendor"; }
@@ -619,6 +682,7 @@ let
     { name = "ExecReload alone makes a unit in-scope (missed by the first version — live on all 3 hosts, reload-systemd-vconsole-setup)"; ok = fixtureExecReload; }
     { name = "ExecCondition alone makes a unit in-scope"; ok = fixtureExecCondition; }
     { name = "ExecStopPost alone makes a unit in-scope"; ok = fixtureExecStopPost; }
+    { name = "REGRESSION: quoted off-store argument containing a space is not silently dropped out of scope"; ok = fixtureQuotedArgWithSpace; }
   ];
 
   allSelfTests =

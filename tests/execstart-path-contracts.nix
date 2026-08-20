@@ -157,6 +157,23 @@
   #   sshd / sshd@ — nixpkgs' openssh module; ExecStart's non-store token is
   #     `/etc/ssh/sshd_config`, a CONFIG FILE argument, not a $PATH-resolved
   #     command.
+  #   bluetooth — nixpkgs' bluetooth module (rpi5-full only); ExecStart's
+  #     non-store token is `/etc/bluetooth/main.conf`, a CONFIG FILE argument
+  #     to `bluetoothd` (already invoked via full /nix/store path). Newly
+  #     visible ONLY after the 2026-08-21 quote-aware-tokenizer fix (PR #568
+  #     review, thread live at execstart-path-contract.nix:~205) — the prior
+  #     naive `splitString " "` tokenizer split `"/etc/bluetooth/main.conf"`
+  #     on no internal space (this one has none) but still failed to strip
+  #     the surrounding quote characters, so the token read as
+  #     `"/etc/bluetooth/main.conf"` (leading `"`) and never matched
+  #     `hasPrefix "/"` — a real, live silent-miss on this exact repo, not a
+  #     hypothetical one, confirming the review finding.
+  #   home-assistant — nixpkgs' home-assistant module (rpi5-full only);
+  #     ExecStart's non-store token is `/var/lib/hass`, a DATA DIRECTORY
+  #     argument to `hass` (already invoked via full /nix/store path);
+  #     ExecReload's `kill "-HUP" $MAINPID` has no off-store token at all
+  #     (`$MAINPID` is a systemd-substituted PID, not a path). Same
+  #     newly-visible-after-the-tokenizer-fix history as bluetooth above.
   # Excluding these BY NAME, each with its own reason above, is the honest
   # choice — excluding by a shared pattern (e.g. "not sancta-*") would also
   # silently hide a real future sancta-owned unit that happened to match.
@@ -167,6 +184,8 @@
     "reload-systemd-vconsole-setup"
     "sshd"
     "sshd@"
+    "bluetooth"
+    "home-assistant"
   ];
 
   # Maintainer-curated map: nixpkgs package `pname` (verified empirically —
