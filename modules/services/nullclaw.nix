@@ -4,11 +4,19 @@
 # NullClaw is a 3MB static binary using ~4MB RAM with 20 channels,
 # 14 built-in tools, and markdown memory.
 #
+# NOT currently imported by any host. Originally deployed on `zero-kuzea`,
+# which was destroyed and retired 2026-08-20 (see docs/retired.md); the
+# secret referenced in the example below (zero-kuzea-telegram-bot-token)
+# is dead weight kept only for the deferred secrets-cleanup phase. The
+# module itself still evaluates and is covered in isolation by
+# tests/module-eval.nix — kept as a ready-to-reuse module, not because
+# anything currently imports it.
+#
 # Usage in host configuration:
 #   services.nullclaw = {
 #     enable = true;
 #     apiKeyFile = config.age.secrets.anthropic-api-key.path;
-#     telegram.botTokenFile = config.age.secrets.zero-kuzea-telegram-bot-token.path;
+#     telegram.botTokenFile = config.age.secrets.<your-bot-token>.path;
 #     telegram.allowedUsers = [ "364749075" ];
 #   };
 #
@@ -232,15 +240,24 @@ in
     # ── Config-injection acceptance contract (eval-time guard) ───────
     # Exposes the exact JSON key paths this module injects secrets into,
     # plus the canonical upstream schema paths the pinned nullclaw
-    # (rev e94ffb0 / v2026.2.26) actually parses. The module-eval test
-    # pins these substrings so a future rev bump or template refactor that
-    # moves/renames a key fails CI LOUDLY instead of silently dropping a
-    # secret at runtime — nullclaw parses with ignore_unknown_fields=true
-    # and skips unparseable accounts, and its validate() does NOT check
-    # telegram, so a stale key would otherwise yield an unauthenticated
-    # Telegram bot. Pure string via system.build — no IFD, no build.
+    # (rev e94ffb0 / v2026.2.26) actually parses. nullclaw parses with
+    # ignore_unknown_fields=true and skips unparseable accounts, and its
+    # validate() does NOT check telegram, so a stale key would otherwise
+    # yield an unauthenticated Telegram bot. Pure string via system.build
+    # — no IFD, no build.
+    # STALE CLAIM CORRECTED 2026-08-20: this comment used to say "the
+    # module-eval test pins these substrings so a future rev bump ...
+    # fails CI LOUDLY" — that test (nullclaw-injection-key-paths /
+    # nullclaw-injection-guard-fires in tests/module-eval.nix) read
+    # self.nixosConfigurations.zero-kuzea.config.system.build.
+    # nullclawConfigInjection and was retired with zero-kuzea (see
+    # docs/retired.md). No host currently imports this module, so NOTHING
+    # currently pins these substrings against a real config — this string
+    # is honest documentation of the contract, not a guarded one.
     # MAINTAINER: when bumping `rev`, re-confirm these paths against the
-    # new config.example.json and update this string in the SAME commit.
+    # new config.example.json and update this string in the SAME commit —
+    # and if a host imports nullclaw.nix again, re-add an injection-pin
+    # test like the retired one so this goes back to being guarded.
     system.build.nullclawConfigInjection = ''
       schema-rev: e94ffb0
       provider-api-key-path: models.providers.${cfg.provider}.api_key

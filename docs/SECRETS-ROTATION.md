@@ -69,11 +69,11 @@ in `clawKeys` — edits happen on rpi5-full).
 
 | Host | Decryption identity | Rotation risk |
 |------|--------------------|---------------|
-| sancta-claw | stable `age1…` recovery key (`/root/.age/recovery.key`) | decoupled from host key — safe |
-| hermes-claw | stable recovery key (`/root/.age/recovery.key`) | decoupled — safe |
-| zero-kuzea | stable recovery key (shared with sancta-claw) | decoupled — safe |
-| **rpi5 / rpi5-full** | **SSH host key** (`secrets.nix` `rpi5`) | **accepted risk** — see below |
-| **sancta-choir** | **SSH host key** (`secrets.nix` `sancta-choir`) | **accepted risk** — see below |
+| sancta-claw — **RETIRED 2026-08-20, destroyed** (see `docs/retired.md`) | was: stable `age1…` recovery key (`/root/.age/recovery.key`) | N/A — machine is gone. `secrets/secrets.nix` still declares this identity as a recipient on 11 `.age` files (deferred cleanup phase, owner-gated, not done here). |
+| hermes-claw — **RETIRED 2026-08-20, destroyed** (see `docs/retired.md`) | was: stable recovery key (`/root/.age/recovery.key`) | N/A — machine is gone. Declared as a recipient on 4 `.age` files. Same deferred-cleanup status as sancta-claw. |
+| zero-kuzea — **RETIRED 2026-08-20, destroyed** (see `docs/retired.md`) | was: shared sancta-claw's recovery key (never had a distinct age recipient of its own) | N/A — machine is gone. Same deferred-cleanup status. |
+| **rpi5 / rpi5-full** (live) | **SSH host key** (`secrets.nix` `rpi5`) | **accepted risk** — see below |
+| **sancta-choir** (live) | **SSH host key** (`secrets.nix` `sancta-choir`) | **accepted risk** — see below |
 
 **Accepted risk (recorded 2026-06, #448):** rpi5 and sancta-choir still use
 their SSH host keys as agenix recipients. A host-key rotation there (rare:

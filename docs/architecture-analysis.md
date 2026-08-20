@@ -1,5 +1,12 @@
 # nixos-config — architecture analysis
 
+> **STALE as of the 2026-08-20 host retirement** (PR #565, see
+> [retired.md](retired.md)): this analysis predates `sancta-claw`,
+> `hermes-claw`, and `zero-kuzea` being destroyed and removed from the
+> flake, and still describes them as live. No regeneration command exists
+> in this repo — treat any mention of those three hosts below as
+> historical, not current.
+
 > Generated companion to the interactive **Fleet Matrix** (`architecture-map.html`). Open that file in a browser for the live hosts×modules view; this file is the readable, git-diffable summary.
 
 **Map accuracy:** 92% (trustworthy-with-fixes) — independently re-verified by a 6-auditor + 12-finding adversarial pass. 9 simplification findings hold, 3 refuted.
