@@ -97,10 +97,25 @@ in
         "sancta-soul-mirror.timer"
       ];
       description = ''
-        Units the bar reports on. Anything not `active` shows in its "down"
-        field. A unit ABSENT from this list is not tracked at all and will never
-        appear — so removing one here is a decision to stop watching it, not a
-        cosmetic change.
+        Units the bar reports on. A unit ABSENT from this list is not tracked at
+        all and will never appear — so removing one here is a decision to stop
+        watching it, not a cosmetic change.
+
+        `sancta-doctrine-guard.service` is `Type=oneshot` with no
+        `RemainAfterExit`, so it is `inactive` BY DESIGN after a successful run —
+        that is not "down". This is intentionally kept in the default rather than
+        dropped (review finding, 2026-08-19): the INDEX repo's
+        `bin/statusline-refresh` — the one place the reader logic for this file
+        lives, see the module header — maps a unit through `systemctl is-failed`
+        first, then treats `inactive` + `Result=success` + `Type=oneshot` as
+        `"ok-at-rest"` rather than `down`; only `is-failed` or any OTHER
+        non-active/non-ok-at-rest state lands in the bar's "down" field. Removing
+        this oneshot from the default would have silently stopped watching a unit
+        worth watching, to work around a bug that is already fixed on the reader
+        side. If this module is ever pointed at a different oneshot unit that
+        does NOT set `Result=success` cleanly on its normal exit path, verify the
+        reader-side mapping still holds before adding it here — the mapping lives
+        outside this repo and this option cannot assert it.
       '';
     };
 
@@ -186,7 +201,43 @@ in
         # ONE writable path. This unit updates a single file and has no business
         # touching anything else on the volume; everything it reads — the gh
         # credentials, the sidequest log — it reads without needing write access.
-        ReadWritePaths = [ stateFile ];
+        #
+        # `-` prefix, not a bare path (review finding, 2026-08-19): every OTHER
+        # sancta module's ReadWritePaths in this repo points at a DIRECTORY
+        # (heartbeat-tick's stateDir/indexDir, self-backup's feedDir, soul-mirror's
+        # feedDir/localDir, nullclaw's /var/lib/nullclaw) — those units write
+        # several files, or don't know the exact filename ahead of time. This unit
+        # is the deliberate exception: exactly one file, chosen for a tighter
+        # blast radius than a directory would give. Widening to
+        # `"${soulRoot}/index"` to sidestep the bug below would put the INDEX
+        # repo's `bin/`, `orchestrator/queue.db` and everything else under it
+        # inside the writable scope — undoing the narrowing this module already
+        # argued for, to fix a problem that does not need it.
+        #
+        # The actual failure: with ProtectSystem=strict, systemd bind-mounts each
+        # ReadWritePaths entry into the unit's private mount namespace, and a bare
+        # path that does not exist on the host makes that bind-mount — and so unit
+        # start — fail, BEFORE the script ever runs. On a fresh host the state
+        # file plausibly does not exist yet (the script's own contract refuses to
+        # create one from nothing: "refusing to create one from nothing, because
+        # the schema note and any human-set deadline live in it"), so the very
+        # first activation could fail opaquely at the systemd layer instead of
+        # with the script's own clear stderr message. `-` is systemd's documented
+        # "ignore if this path does not exist" prefix (systemd.exec(5)) — it
+        # removes exactly that failure mode without widening the writable set at
+        # all: once the file DOES exist, it is writable, same as before; until
+        # then, the unit still starts, and the script's own check produces the
+        # honest error instead of systemd's.
+        #
+        # A tmpfiles rule pre-creating an EMPTY placeholder was considered and
+        # rejected: the script requires real, structured content (the `_schema`
+        # note, any human-set `deadline`) that only a human or a deploy step can
+        # provide, so an empty file would not let a genuine first run succeed —
+        # it would only trade one clean failure ("cannot read $STATE") for a
+        # worse one ("produced malformed state") without ever bootstrapping
+        # anything. Bootstrapping the file's initial content stays outside this
+        # module's job, same as it already was.
+        ReadWritePaths = [ "-${stateFile}" ];
         PrivateTmp = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;

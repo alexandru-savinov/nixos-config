@@ -900,8 +900,11 @@ let
           # Exactly ONE writable path. The unit updates a single file and has no
           # business touching anything else on the volume; everything else it
           # needs it only reads. Widening this list is how a refresher becomes a
-          # writer.
-          onlyStateWritable = (svc.serviceConfig.ReadWritePaths or [ ]) == [ stateFile ];
+          # writer. `-` prefixed (review finding, 2026-08-19): a bare path that
+          # does not exist yet fails the ProtectSystem=strict bind-mount before
+          # the unit ever starts; `-` is systemd's documented "ignore if absent"
+          # marker, not a widening — the path is still the ONLY writable one.
+          onlyStateWritable = (svc.serviceConfig.ReadWritePaths or [ ]) == [ "-${stateFile}" ];
 
           # Network is REQUIRED here, unlike the doctrine guard: the ask list
           # comes from GitHub. If this were ever narrowed to AF_UNIX the unit
