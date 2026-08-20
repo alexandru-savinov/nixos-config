@@ -165,37 +165,102 @@ for a in compliance opportunity risk; do
   [ -s "$p" ] || miss "missing or empty public assessor: council/assessors/$a.md"
 done
 
-# ── 4. the settings.json hook block ────────────────────────────────────────
+# ── 4. hooks.UserPromptSubmit + statusLine — asserted on the EFFECTIVE config ──
 # `jq -e '.hooks.UserPromptSubmit'` PASSES on {"UserPromptSubmit":[]} — jq -e
 # fails only on null/false. An empty array is the most likely shape of the
 # 2026-07-25 10:32 regression, where a settings writer preserved the key and
 # dropped the contents. So the obvious check passes on the exact bug it was
 # written for. `length > 0` is the fix.
 #
-# Validity is checked FIRST and reported distinctly: malformed JSON and
-# hooks-were-stripped are different incidents with different fixes, and giving
-# them the same message would send whoever reads it looking for the wrong one.
+# 2026-08-20 retarget (PR #569, finding P1): before claude-code-managed-settings
+# existed, ~/.claude/settings.json WAS the only copy of these two keys, so
+# checking it here was checking the real thing. That module now renders the
+# authoritative copy to /etc/claude-code/managed-settings.json specifically
+# BECAUSE the interactive harness proved (twice, same day) that it rewrites
+# settings.json from a stale in-memory copy and erases any key added after the
+# session started — the managed file is immune to that by design, read fresh
+# off disk every time. Continuing to require these two keys in settings.json
+# after that module ships would make this guard fail EVERY DAY: the file it
+# is guarding is now allowed — expected — to go without them. A guard that
+# cries wolf on a known-benign state gets muted within a fortnight (this
+# module's own header, rule 3), and a muted guard is worse than none. So the
+# source of truth here follows the SAME precedence Claude Code itself applies:
+# the managed file when it exists and parses, the user file as a fallback for
+# a host that has not enabled that module (or mid-migration).
 #
-# The two checks below are SIBLINGS, not an elif chain: hooks and statusLine
-# are independent keys with independent failure histories, and this file's own
-# contract is "exit 1 = at least one failed; all are printed" — chaining them
-# would let one loss silently hide the other from the same run's output.
-if [ -s "$CLAUDE/settings.json" ]; then
-  if ! jq -e . "$CLAUDE/settings.json" >/dev/null 2>&1; then
-    miss "settings.json is not valid JSON (parse error — NOT the hooks regression)"
+# When the managed file exists and parses, it is AUTHORITATIVE for this check
+# — not a first-of-two-tries fallback source. A managed file that renders but
+# has lost a key is a real regression in that module and must fail here even
+# if settings.json happens to still carry a stale copy of the same key from
+# before the module was enabled; treating the user file as a safety net in
+# that case would hide exactly the class of loss this guard exists to catch.
+#
+# Validity is checked FIRST, per file, and reported distinctly from key-loss:
+# malformed JSON and hooks-were-stripped are different incidents with
+# different fixes, and giving them the same message would send whoever reads
+# it looking for the wrong one.
+#
+# The two key checks below (hooks.UserPromptSubmit, statusLine) are SIBLINGS,
+# not an elif chain: they are independent keys with independent failure
+# histories, and this file's own contract is "exit 1 = at least one failed;
+# all are printed" — chaining them would let one loss silently hide the other
+# from the same run's output.
+MANAGED="${SANCTA_DOCTRINE_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"
+
+managed_valid=0
+if [ -s "$MANAGED" ]; then
+  if jq -e . "$MANAGED" >/dev/null 2>&1; then
+    managed_valid=1
   else
-    if ! jq -e '(.hooks.UserPromptSubmit // []) | length > 0' "$CLAUDE/settings.json" >/dev/null 2>&1; then
-      miss "settings.json lost hooks.UserPromptSubmit (empty or absent)"
-    fi
-    # Twin of the hooks check, same shape of bug: the Aug-7 eater took the
-    # statusLine key once already (statusline died silently for 12 days before
-    # anyone noticed the bar had gone quiet, not loud) — `length > 0` so an
-    # empty-string command, not just a missing key, also fires.
-    if ! jq -e '.statusLine.command // "" | length > 0' "$CLAUDE/settings.json" >/dev/null 2>&1; then
-      miss "settings.json lost statusLine (the Aug-7 eater took this once; statusline died 12 days)"
-    fi
+    miss "managed settings ($MANAGED) is not valid JSON (parse error — NOT the hooks regression)"
   fi
 fi
+
+user_valid=0
+if [ -s "$CLAUDE/settings.json" ]; then
+  if jq -e . "$CLAUDE/settings.json" >/dev/null 2>&1; then
+    user_valid=1
+  else
+    miss "settings.json is not valid JSON (parse error — NOT the hooks regression)"
+  fi
+fi
+
+# $1 = key label (for messages)   $2 = jq boolean predicate   $3 = loss message
+check_effective_key() {
+  keylabel="$1" pred="$2" losemsg="$3"
+  if [ "$managed_valid" = 1 ] && jq -e "$pred" "$MANAGED" >/dev/null 2>&1; then
+    note "$keylabel present in managed settings ($MANAGED)"
+    return
+  fi
+  if [ "$managed_valid" = 1 ]; then
+    # Managed file exists and parses but does not have this key: authoritative
+    # and failing — no fallback to the user file (see the note above this
+    # function; falling back here would mask the exact regression this exists
+    # to catch).
+    miss "$losemsg — managed settings ($MANAGED) present but missing $keylabel"
+    return
+  fi
+  # No usable managed file (absent, empty, or malformed — already reported
+  # above if malformed): fall back to settings.json, the pre-managed-module
+  # source of truth, for a host that has not enabled that module yet.
+  if [ "$user_valid" = 1 ] && jq -e "$pred" "$CLAUDE/settings.json" >/dev/null 2>&1; then
+    note "$keylabel present in settings.json (no usable managed file on this host)"
+    return
+  fi
+  miss "$losemsg — checked both managed ($MANAGED) and user ($CLAUDE/settings.json) settings; $keylabel missing/empty in both"
+}
+
+check_effective_key "hooks.UserPromptSubmit" \
+  '(.hooks.UserPromptSubmit // []) | length > 0' \
+  "lost hooks.UserPromptSubmit (empty or absent)"
+
+# Twin of the hooks check, same shape of bug: the Aug-7 eater took the
+# statusLine key once already (statusline died silently for 12 days before
+# anyone noticed the bar had gone quiet, not loud) — `length > 0` so an
+# empty-string command, not just a missing key, also fires.
+check_effective_key "statusLine" \
+  '.statusLine.command // "" | length > 0' \
+  "lost statusLine (the Aug-7 eater took this once; statusline died 12 days)"
 
 # ── verdict ────────────────────────────────────────────────────────────────
 if [ "$fails" -gt 0 ]; then

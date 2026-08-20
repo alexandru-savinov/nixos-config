@@ -165,6 +165,89 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
     mkfixture "$R"; echo '{"hooks": {' > "$R/settings.json"
     expect_fail "$R" "not valid JSON" "parse error gets its own message"
 
+    echo "== PR #569 finding P1: guard retargeted to the EFFECTIVE config =="
+    # Before claude-code-managed-settings existed, settings.json WAS the only
+    # copy of these two keys. That module now renders the authoritative copy
+    # to /etc/claude-code/managed-settings.json (immune to the interactive
+    # harness's settings.json rewrite) — so the guard must follow the SAME
+    # precedence Claude Code itself applies: managed file when it exists and
+    # parses, settings.json only as a fallback. All three cases below point
+    # SANCTA_DOCTRINE_MANAGED_SETTINGS at an explicit fixture path rather than
+    # relying on the real /etc not existing in the build sandbox — the exact
+    # "works by luck" trap this codebase keeps naming.
+    run_m() { SANCTA_DOCTRINE_ROOT="$1" SANCTA_DOCTRINE_MANAGED_SETTINGS="$2" bash ${guard}; }
+
+    expect_pass_m() {
+      root="$1"; managed="$2"; label="$3"
+      if ! res=$(run_m "$root" "$managed" 2>&1); then
+        echo "EXPECTED PASS but guard failed: $label"; echo "$res"; exit 1
+      fi
+      echo "  ok: $label"
+    }
+
+    expect_fail_m() {
+      root="$1"; managed="$2"; want="$3"; label="$4"
+      if res=$(run_m "$root" "$managed" 2>&1); then
+        echo "EXPECTED FAIL but guard passed: $label"; echo "$res"; exit 1
+      fi
+      if ! echo "$res" | grep -qF "$want"; then
+        echo "FAILED for the wrong reason: $label"
+        echo "  wanted substring: $want"
+        echo "$res"; exit 1
+      fi
+      echo "  ok: $label"
+    }
+
+    M="$TMPDIR/managed-settings.json"
+    NO_MANAGED="$TMPDIR/no-managed-settings-here.json"
+
+    echo "-- managed present + user missing the keys -> PASS --"
+    mkfixture "$R"
+    # "user missing" = settings.json exists (home-manager always writes SOME
+    # settings.json) but has legitimately lost hooks/statusLine — the exact
+    # post-PR steady state, not a missing FILE (section 3 already requires the
+    # file itself to exist; that is an orthogonal, unrelated invariant).
+    echo '{"model":"opus"}' > "$R/settings.json"
+    echo '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"date"}]}]},"statusLine":{"type":"command","command":"/var/lib/sancta/.claude/statusline.sh"}}' \
+      > "$M"
+    expect_pass_m "$R" "$M" \
+      "managed file covers both keys; settings.json lacking them is no longer a failure"
+
+    echo "-- managed present but missing a key -> FAIL (no fallback to user) --"
+    mkfixture "$R" # settings.json here is fully healthy — must NOT rescue this
+    echo '{"hooks":{}}' > "$M"
+    expect_fail_m "$R" "$M" "managed settings ($M) present but missing hooks.UserPromptSubmit" \
+      "managed missing hooks.UserPromptSubmit fails even though settings.json still has it"
+
+    mkfixture "$R"
+    echo '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"date"}]}]}}' \
+      > "$M"
+    expect_fail_m "$R" "$M" "managed settings ($M) present but missing statusLine" \
+      "managed missing statusLine fails even though settings.json still has it"
+
+    echo "-- both missing -> FAIL, naming both checked sources --"
+    mkfixture "$R"
+    echo '{"model":"opus"}' > "$R/settings.json" # neither key present
+    expect_fail_m "$R" "$NO_MANAGED" \
+      "checked both managed ($NO_MANAGED) and user ($R/settings.json) settings; hooks.UserPromptSubmit missing/empty in both" \
+      "neither source has hooks.UserPromptSubmit; message names both paths"
+    expect_fail_m "$R" "$NO_MANAGED" \
+      "checked both managed ($NO_MANAGED) and user ($R/settings.json) settings; statusLine missing/empty in both" \
+      "neither source has statusLine; message names both paths"
+
+    echo "-- bonus: no managed file, user file HAS the keys -> PASS via fallback --"
+    mkfixture "$R" # healthy settings.json, no managed module on this host
+    expect_pass_m "$R" "$NO_MANAGED" \
+      "a host without the managed module still passes via settings.json"
+
+    echo "-- bonus: malformed managed JSON gets its own message, and does not silently pass --"
+    mkfixture "$R"
+    echo '{"hooks": {' > "$M"
+    res=$(run_m "$R" "$M" 2>&1 || true)
+    echo "$res" | grep -qF "managed settings ($M) is not valid JSON" || {
+      echo "expected a distinct managed-JSON parse-error message"; echo "$res"; exit 1; }
+    echo "  ok: malformed managed JSON reported distinctly, falls back to (healthy) settings.json"
+
     echo "== git failing for a NON-empty reason must say so =="
     # Permission bits do not constrain uid 0, so this case is only meaningful
     # for an unprivileged builder. Skipped rather than silently passing.

@@ -87,6 +87,21 @@ in
       default = "10m";
       description = "systemd RandomizedDelaySec, so the guard never lands exactly on another unit's minute.";
     };
+
+    managedSettingsPath = mkOption {
+      type = types.str;
+      default = "/etc/claude-code/managed-settings.json";
+      description = ''
+        Where the guard checks for the EFFECTIVE hooks.UserPromptSubmit and
+        statusLine keys (2026-08-20, PR #569 finding P1) — Claude Code's own
+        hardcoded managed-settings location on Linux, not configurable on its
+        side, so hardcoded here to match rather than cross-referencing
+        services.claudeCodeManagedSettings.etcPath (that module need not be
+        imported, let alone enabled, on every host that runs this guard).
+        Left overridable only so tests/sancta-doctrine-guard.nix can point it
+        at a fixture file instead of a real, root-owned /etc path.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -146,6 +161,7 @@ in
           # Belt and braces beside ConditionPathIsMountPoint above; the unit
           # gate is the real one, this only makes the script safe standalone.
           "SANCTA_DOCTRINE_REQUIRE_MOUNT=1"
+          "SANCTA_DOCTRINE_MANAGED_SETTINGS=${cfg.managedSettingsPath}"
           "HOME=${builtins.dirOf soulRoot}"
         ];
         TimeoutStartSec = "5m";

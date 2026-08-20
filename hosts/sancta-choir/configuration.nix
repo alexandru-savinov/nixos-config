@@ -77,14 +77,28 @@
   # from the merged declarative set; without these keys it would strip the
   # runtime-chosen model/verbose that the migrated soul carried over from
   # rpi5 (and that the sancta-worker's resumed session runs with).
+  #
+  # spinnerTipsEnabled lives HERE, not in services.claudeCodeManagedSettings
+  # (2026-08-20, PR #569 finding P1): that module is machine-wide (root,
+  # herdr, sancta all read the same /etc file), and this key is a PREFERENCE
+  # — a single JSON literal there cannot be scoped to sancta only the way the
+  # module's two script-backed commands were (a plain boolean has no runtime
+  # identity check available to it). Its loss on a harness rewrite is
+  # low-stakes compared to the clock hook or the memory-index hook, so it
+  # rides the same tolerated-loss trade-off as model/verbose below rather than
+  # being force-fit into the guarded machine-wide file.
   home-manager.users.sancta.programs.claude-code.extraSettings = {
     model = "opus[1m]";
     verbose = true;
+    spinnerTipsEnabled = false;
   };
 
-  # The four keys the interactive harness cannot silently erase (status bar,
-  # clock hook, memory-index hook, spinner tips off) — see the module's own
-  # header for the 2026-08-20 evidence and the hard limit on what lives here.
+  # The three keys the interactive harness cannot silently erase (status bar,
+  # clock hook, memory-index hook) — see the module's own header for the
+  # 2026-08-20 evidence, the hard limit on what lives here, and the P1
+  # CROSS-USER SAFETY section (statusLine + memory-index hook are guarded to
+  # the sancta identity; herdr/root get an instant no-op, not a permission
+  # error, from the 0700 soul volume).
   services.claudeCodeManagedSettings.enable = true;
 
   # At boot, per-user HM activation must not run before the encrypted soul
