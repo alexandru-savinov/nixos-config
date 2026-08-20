@@ -117,36 +117,10 @@
         ];
       };
 
-      # Patched hermes-agent package: upstream v0.16.0 nix/lib.nix pins an
-      # npmDepsHash for hermes-tui that is stale (FOD hash mismatch breaks
-      # the build). We materialize the upstream source, bump the hash in
-      # place via substituteInPlace, then call the upstream build recipe
-      # directly via callPackage (avoids getFlake — which pure-eval rejects
-      # on store paths). The recipe's inputs (uv2nix, pyproject-nix, etc.)
-      # are re-used from hermes-agent's own flake inputs.
-      # Remove this overlay once upstream's auto-fix-lockfiles CI catches up.
-      hermesAgentPatched = system:
-        let
-          pkgs = nixpkgsFor.${system};
-          # Patcher runs on target arch (x86_64 for hermes-claw): native on
-          # GitHub CI runners; on rpi5 (aarch64) the nixos-rebuild
-          # `--build-host root@hermes-claw` flag delegates the IFD build
-          # over SSH-ng. If you ever `nix eval` this output directly on
-          # rpi5 without --builders, add hermes-claw to nix.buildMachines.
-          patchedSrc = pkgs.runCommand "hermes-agent-patched-src" { } ''
-            cp -r ${hermes-agent} $out
-            chmod -R +w $out
-            substituteInPlace $out/nix/lib.nix \
-              --replace-fail \
-                'sha256-cY+gM1FnTBjmld/uqt7RsqRtW9uQGs8LGokCcxu7bjQ=' \
-                'sha256-hgnqcpKRPztHhDEpwC7HJrALuJp9wsrV4+GJ6t6HI2c='
-          '';
-        in
-        pkgs.callPackage "${patchedSrc}/nix/hermes-agent.nix" {
-          inherit (hermes-agent.inputs) uv2nix pyproject-nix pyproject-build-systems;
-          npm-lockfile-fix = hermes-agent.inputs.npm-lockfile-fix.packages.${system}.default;
-          rev = null;
-        };
+      # hermesAgentPatched (the hermes-claw hash-patch overlay) was removed
+      # 2026-08-20 with the host it existed solely to serve — see
+      # docs/retired.md. Restore from git history if hermes-agent ever
+      # returns to a live host.
     in
     {
       # Formatter for `nix fmt`
@@ -195,56 +169,9 @@
           ];
         };
 
-        # x86_64 VPS server - Dedicated OpenClaw host (Official npm package)
-        sancta-claw = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          specialArgs = {
-            pkgs-unstable = pkgs-unstable-x86;
-            kuzea-ws = kuzea-workspace.packages.x86_64-linux;
-            inherit self claude-code;
-          };
-          modules = [
-            ./hosts/sancta-claw/configuration.nix
-            disko.nixosModules.disko
-            home-manager.nixosModules.home-manager
-            agenix.nixosModules.default
-            agenixModule
-          ];
-        };
-
-        # x86_64 VPS server - Dedicated Hermes Agent host (Nous Research, container mode)
-        hermes-claw = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          specialArgs = {
-            pkgs-unstable = pkgs-unstable-x86;
-            inherit self;
-          };
-          modules = [
-            ./hosts/hermes-claw/configuration.nix
-            disko.nixosModules.disko
-            home-manager.nixosModules.home-manager
-            agenix.nixosModules.default
-            agenixModule
-            hermes-agent.nixosModules.default
-            # Override default package with our patched hermes-tui hash.
-            { services.hermes-agent.package = hermesAgentPatched "x86_64-linux"; }
-          ];
-        };
-
-        # x86_64 VPS server - Dedicated NullClaw bot (Zero_kuzea)
-        zero-kuzea = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          specialArgs = {
-            pkgs-unstable = import nixpkgs-unstable { system = "x86_64-linux"; };
-            inherit self;
-          };
-          modules = [
-            ./hosts/zero-kuzea/configuration.nix
-            disko.nixosModules.disko
-            agenix.nixosModules.default
-            agenixModule
-          ];
-        };
+        # sancta-claw, hermes-claw, zero-kuzea: retired 2026-08-20 — the
+        # machines are destroyed (no tailnet response, gone for good). See
+        # docs/retired.md for the record and the restore command.
 
         # Raspberry Pi 5 (aarch64) - Minimal config for SD image builds
         # Uses nvmd/nixos-raspberrypi for kernel 6.12.34 (same as pre-built SD image)
@@ -405,13 +332,14 @@
           sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
 
           # Store-reference existence for sancta unit scripts (2026-08-07, widened
-          # 2026-08-19): dry-build was green while `switch` failed 127 on
-          # `coreutils/bin/hostname` (hostname is not in coreutils). `${pkg}/bin/X`
-          # is a string Nix never dereferences until it RUNS — invisible to eval
-          # and build. This realises each sancta unit's ExecStart scripts across
-          # every x86_64-linux host (sancta-choir, sancta-claw, hermes-claw,
-          # zero-kuzea) and asserts every store path they reference exists,
-          # catching that class in CI instead of at switch. rpi5/rpi5-full
+          # 2026-08-19, narrowed 2026-08-20 when sancta-claw/hermes-claw/
+          # zero-kuzea were retired — see docs/retired.md): dry-build was green
+          # while `switch` failed 127 on `coreutils/bin/hostname` (hostname is
+          # not in coreutils). `${pkg}/bin/X` is a string Nix never dereferences
+          # until it RUNS — invisible to eval and build. This realises each
+          # sancta unit's ExecStart scripts on the one remaining x86_64-linux
+          # host (sancta-choir) and asserts every store path they reference
+          # exists, catching that class in CI instead of at switch. rpi5/rpi5-full
           # (aarch64-linux) are named but not realised — no aarch64 builder here
           # or in CI; see tests/unit-script-refs.nix for the honest limit.
           unit-script-refs = import ./tests/unit-script-refs.nix {

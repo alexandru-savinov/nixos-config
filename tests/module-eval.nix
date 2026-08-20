@@ -520,47 +520,11 @@ let
       };
     };
 
-    # Pin the nullclaw secret-injection contract against the upstream
-    # schema the PINNED binary (rev e94ffb0) actually parses. nullclaw
-    # parses with ignore_unknown_fields=true and silently skips accounts
-    # whose required fields (e.g. telegram bot_token, which has no default)
-    # are absent — so a rev bump renaming a key would drop the secret at
-    # runtime with NO error (validate() does not check telegram; /ready is
-    # presence-based and returns ready on an empty registry). This
-    # eval-time guard forces that drift to fail CI. Pure eval, no IFD.
-    nullclaw-injection-key-paths =
-      let
-        body = self.nixosConfigurations.zero-kuzea.config.system.build.nullclawConfigInjection;
-        required = [
-          "models.providers.anthropic.api_key"
-          "agents.defaults.model.primary"
-          "channels.telegram.accounts.main.bot_token"
-          "telegram-enabled: yes"
-          # The exact jq SET expression the ExecStartPre runs (shared `let`
-          # binding in nullclaw.nix); drift in the template/jq breaks this.
-          ''jq-set: .models.providers.anthropic.api_key = $key | .channels.telegram.accounts.main.bot_token = $token''
-        ];
-        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
-      in
-      if missing == [ ] then
-        true
-      else
-        builtins.throw "FAIL: nullclaw injection contract drifted — missing/renamed key paths: ${builtins.toJSON missing}. Re-confirm modules/services/nullclaw.nix injection against nullclaw config.example.json at the pinned rev.";
-
-    # Negative control: prove the guard actually throws when a required key
-    # path is absent (simulates a silent-drop drift). tryEval must catch it.
-    nullclaw-injection-guard-fires =
-      let
-        body = self.nixosConfigurations.zero-kuzea.config.system.build.nullclawConfigInjection;
-        bogus = [ "channels.telegram.accounts.main.NONEXISTENT_FIELD" ];
-        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) bogus;
-        guarded = if missing == [ ] then true else builtins.throw "expected-throw";
-        result = builtins.tryEval guarded;
-      in
-      if !result.success then
-        true
-      else
-        builtins.throw "FAIL: nullclaw-injection-guard-fires — guard did NOT throw on a missing key path; the pin is not actually guarding.";
+    # nullclaw-injection-key-paths / nullclaw-injection-guard-fires: retired
+    # 2026-08-20 with zero-kuzea, the only host that ever built
+    # nullclawConfigInjection (see docs/retired.md). The module-level tests
+    # above (nullclaw-minimal, nullclaw-disabled, etc.) still guard
+    # modules/services/nullclaw.nix directly and are unaffected.
 
     # ── UniFi MCP ─────────────────────────────────────────────────
     unifi-mcp-minimal = shouldEval "unifi-mcp: minimal config" {
@@ -707,98 +671,28 @@ let
       ];
     };
 
-    # Verify wiring on the actual sancta-claw host config: the proxy is
-    # enabled with the default port and reads the OpenRouter API key
-    # from agenix. This catches misconfigurations in the host module
-    # (wrong path, missing secret, port drift) without a full build.
-    openclaw-zdr-proxy-sancta-claw-wiring =
-      let
-        proxy = self.nixosConfigurations.sancta-claw.config.services.openclaw-zdr-proxy;
-        agenixPath = toString proxy.apiKeyFile;
-        portOk = proxy.port == 5780;
-        pathOk = agenixPath == "/run/agenix/openrouter-api-key";
-      in
-      if portOk && pathOk then
-        true
-      else
-        builtins.throw "FAIL: sancta-claw openclaw-zdr-proxy wiring — port=${toString proxy.port} (expected 5780), apiKeyFile=${agenixPath} (expected /run/agenix/openrouter-api-key)";
-
-    # Verify the rendered openclaw browser-config script registers the
-    # free+ZDR ladder and routes through the local proxy. Reads the body
-    # string from system.build (exposed by openclaw-service.nix) — pure
-    # eval, no IFD, no derivation realization.
-    openclaw-free-zdr-ladder-rendered =
-      let
-        body = self.nixosConfigurations.sancta-claw.config.system.build.openclawBrowserConfigBody;
-        required = [
-          "qwen/qwen3-coder:free"
-          "tencent/hy3-preview:free"
-          "inclusionai/ling-2.6-1t:free"
-          "qwen/qwen3-next-80b-a3b-instruct:free"
-          "z-ai/glm-4.5-air:free"
-          "127.0.0.1:5780"
-          # Provider config + ladder entries (OpenClaw 2026.4.x zod schema
-          # requires the rich model metadata for runtime resolution to
-          # succeed; empty {id,name} entries parse but fail at runtime with
-          # `model_not_found`).
-          ''openrouter_provider["models"] = [_make_model_entry(r) for r in LADDER]''
-          "Qwen3 Coder (free, ZDR)"
-          # Selectors carry the literal `openrouter/` prefix; without it,
-          # OpenClaw's parseModelRef splits on the first `/` and tries to
-          # find a provider named "qwen" / "z-ai" instead of "openrouter".
-          ''f"openrouter/{LADDER[0]['id']}"''
-          # Per-model api + canonical-shape sentinels — without per-entry
-          # api, `resolveExplicitModelWithRegistry`'s `if (inlineMatch?.api)`
-          # check fails and resolution falls through to the registry, which
-          # doesn't know our custom IDs.
-          ''"api":           "openai-completions"''
-          ''"contextWindow": rung["ctx"]''
-        ];
-        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
-      in
-      if missing == [ ] then
-        true
-      else
-        builtins.throw "FAIL: openclawBrowserConfigBody missing substrings: ${builtins.toJSON missing}";
-
-    # Verify the rendered openclaw health-check probe contains the
-    # one-shot first-success Telegram alert sentinel and includes the
-    # active primary model in failure messages. Reads the body string
-    # from system.build.openclawHealthProbeBody — pure eval, no IFD.
-    sancta-claw-openclaw-health-probe-zdr-alert =
-      let
-        body = self.nixosConfigurations.sancta-claw.config.system.build.openclawHealthProbeBody;
-        required = [
-          ".zdr-migration-announced"
-          "free+ZDR ladder"
-          "primary=$PRIMARY"
-          # Crash-loop circuit breaker (#403/#450): assert the windowed
-          # breaker can't be silently deleted — marker-file window count,
-          # give-up branch, and hard failure exit.
-          "CRASH_LOOP_MAX"
-          ''find "$RESTART_LOG_DIR" -maxdepth 1 -type f -mmin "-$CRASH_LOOP_WINDOW_MIN"''
-          "NOT restarting"
-          "exit 1"
-        ];
-        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
-      in
-      if missing == [ ] then
-        true
-      else
-        builtins.throw "FAIL: openclawHealthProbeBody missing substrings: ${builtins.toJSON missing}";
+    # openclaw-zdr-proxy-sancta-claw-wiring, openclaw-free-zdr-ladder-rendered,
+    # sancta-claw-openclaw-health-probe-zdr-alert: retired 2026-08-20 with
+    # sancta-claw (see docs/retired.md) — these read
+    # config.system.build.{openclawBrowserConfigBody,openclawHealthProbeBody}
+    # and config.services.openclaw-zdr-proxy off self.nixosConfigurations.
+    # sancta-claw specifically, which no longer exists. The standalone module
+    # tests above (openclaw-zdr-proxy-minimal/-disabled) still guard
+    # modules/services/openclaw-zdr-proxy.nix directly, independent of any
+    # host, and are unaffected.
 
     # Verify the tailscale-dns-watchdog ships the same windowed crash-loop
     # breaker + operator alert (#450) on every host that imports the shared
     # tailscale module. Reads the rendered unit script — pure eval, no IFD.
     tailscale-dns-watchdog-breaker =
       let
+        # sancta-claw, hermes-claw, zero-kuzea retired 2026-08-20 (destroyed
+        # machines — see docs/retired.md); dropped from this list along with
+        # them.
         hosts = [
           "rpi5"
           "rpi5-full"
           "sancta-choir"
-          "sancta-claw"
-          "hermes-claw"
-          "zero-kuzea"
         ];
         required = [
           "CRASH_LOOP_MAX"
@@ -823,57 +717,10 @@ let
       else
         builtins.throw "FAIL: tailscale-dns-watchdog breaker — hosts missing sentinels: ${builtins.toJSON failures}; rpi5-full alert wired: ${builtins.toJSON rpi5AlertWired}";
 
-    # Verify the hermes-claw host config uses the upstream hermes-agent
-    # module in container mode with the correct model pin and settings.
-    # Pure eval — reads config options directly, no IFD or derivation build.
-    hermes-claw-upstream-module =
-      let
-        cfg = self.nixosConfigurations.hermes-claw.config;
-        ha = cfg.services.hermes-agent;
-        checks = {
-          enabled = ha.enable;
-          containerMode = ha.container.enable;
-          containerBackend = ha.container.backend == "podman";
-          containerImage = ha.container.image == "ubuntu:24.04";
-          securityOpt = builtins.elem "--security-opt=no-new-privileges" ha.container.extraOptions;
-          # Pin tracks the paid Nemotron via OpenRouter. The `:free` variant
-          # is blocked by OpenRouter's privacy guardrail (404); ChatGPT
-          # Codex was tried in #467 but the free plan hits 429 immediately.
-          modelPin = ha.settings.model.default == "nvidia/nemotron-3-super-120b-a12b";
-          modelProvider = ha.settings.model.provider == "openrouter";
-          # Guard the telegram fix: the `messaging` group must stay in the
-          # sealed venv, else python-telegram-bot drops out and the bot dies.
-          messagingGroup = builtins.elem "messaging" ha.extraDependencyGroups;
-          telegramAllowed = ha.environment.TELEGRAM_ALLOWED_USERS == "364749075,7957556729";
-          dashboardOff = ha.environment.HERMES_DASHBOARD == "0";
-          hasEnvFiles = builtins.any (f: builtins.match ".*/hermes-env" f != null) ha.environmentFiles;
-        };
-        failed = builtins.filter (name: !checks.${name}) (builtins.attrNames checks);
-      in
-      if failed == [ ] then
-        true
-      else
-        builtins.throw "FAIL: hermes-claw upstream module checks failed: ${builtins.toJSON failed}";
-
-    # Verify the rendered sancta-claw smoke-test script asserts on the
-    # ZDR proxy + free+ZDR ladder + end-to-end round-trip. Reads the body
-    # string from system.build (exposed by smoke-test.nix) — pure eval,
-    # same approach as openclaw-free-zdr-ladder-rendered.
-    sancta-claw-smoke-test-zdr-checks =
-      let
-        body = self.nixosConfigurations.sancta-claw.config.system.build.smokeTestBody;
-        required = [
-          "openclaw: zdr proxy active"
-          "openclaw: primary model is free+zdr"
-          "openclaw: zdr proxy healthz"
-          "openclaw: end-to-end completion"
-        ];
-        missing = builtins.filter (s: !(nixpkgs.lib.hasInfix s body)) required;
-      in
-      if missing == [ ] then
-        true
-      else
-        builtins.throw "FAIL: sancta-claw smokeTestBody missing check titles: ${builtins.toJSON missing}";
+    # hermes-claw-upstream-module, sancta-claw-smoke-test-zdr-checks: retired
+    # 2026-08-20 with hermes-claw and sancta-claw respectively (see
+    # docs/retired.md) — both read config off nixosConfigurations attributes
+    # (hermes-claw, sancta-claw) that no longer exist.
 
     # ── sancta-statusline-refresh ─────────────────────────────────
     # The status bar renders a cached file and queries nothing itself, because
