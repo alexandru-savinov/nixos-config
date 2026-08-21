@@ -748,6 +748,15 @@ let
         # least-privilege.
         stateDir = "${soulRoot}/index/statusline";
         stateFile = "${stateDir}/state.json";
+        # 2026-08-21: the script's stale-probe opens index/orchestrator/queue.db
+        # (WAL-mode sqlite) READ-ONLY via node:sqlite. A WAL reader still needs
+        # write access to that database's `-shm` sidecar — SQLite's WAL reader
+        # contract, not a script choice — so under ProtectSystem=strict the
+        # open failed without this directory writable too, and the stale-probe
+        # silently degraded to -1 ("⚠ stale ?") while the unit still exited 0.
+        # See the module's own comment on orchestratorDir/ReadWritePaths for
+        # the reproduced failure.
+        orchestratorDir = "${soulRoot}/index/orchestrator";
         refreshScript = "${soulRoot}/index/bin/statusline-refresh";
 
         checks = {
@@ -756,22 +765,33 @@ let
           mountGated = svc.unitConfig.ConditionPathIsMountPoint or null == soulRoot;
           requiresMount = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
 
-          # Exactly ONE writable path, and it must be the state DIRECTORY, not
-          # the state file (changed 2026-08-20): the refresher's atomic write is
-          # mktemp-a-sibling-then-mv, and rename(2) needs write on the
-          # containing directory, not just the file being replaced — a
-          # single-file ReadWritePaths entry cannot satisfy that, which is
-          # exactly the bug this move fixes (reproduced live: state dir chmod
-          # 555, refresher's mktemp fails, unit exits 1). Still least-privilege:
-          # `stateDir` holds exactly one file (state.json) and nothing else, so
-          # the writable blast radius is unchanged in practice — only the grant
-          # now matches what rename(2) actually requires. `-` prefixed (review
-          # finding, 2026-08-19, still applies to the directory form): a bare
-          # path that does not exist yet fails the ProtectSystem=strict
-          # bind-mount before the unit ever starts; `-` is systemd's documented
-          # "ignore if absent" marker, not a widening — the directory is still
-          # the ONLY writable path, and it holds nothing but the one file.
-          onlyStateWritable = (svc.serviceConfig.ReadWritePaths or [ ]) == [ "-${stateDir}/" ];
+          # Exactly TWO writable paths (changed 2026-08-21 — see orchestratorDir
+          # above), each the narrowest directory one part of the script
+          # structurally needs to touch:
+          #
+          # - the state DIRECTORY, not the state file (changed 2026-08-20): the
+          #   refresher's atomic write is mktemp-a-sibling-then-mv, and
+          #   rename(2) needs write on the containing directory, not just the
+          #   file being replaced — a single-file ReadWritePaths entry cannot
+          #   satisfy that (reproduced live: state dir chmod 555, refresher's
+          #   mktemp fails, unit exits 1). Still least-privilege: `stateDir`
+          #   holds exactly one file (state.json) and nothing else.
+          # - the orchestrator DIRECTORY (added 2026-08-21): the stale-probe's
+          #   WAL-mode read of queue.db needs write access to that db's `-shm`
+          #   sidecar even though the open itself is read-only — without this
+          #   entry the probe silently degrades to -1 instead of failing loudly.
+          #
+          # Both `-` prefixed (review finding, 2026-08-19, still applies to the
+          # directory form): a bare path that does not exist yet fails the
+          # ProtectSystem=strict bind-mount before the unit ever starts; `-` is
+          # systemd's documented "ignore if absent" marker, not a widening —
+          # these two directories are still the ONLY writable paths, and each
+          # holds nothing but what the one part of the script it serves needs.
+          onlyStateAndOrchestratorWritable =
+            (svc.serviceConfig.ReadWritePaths or [ ]) == [
+              "-${stateDir}/"
+              "-${orchestratorDir}/"
+            ];
 
           # Network is REQUIRED here, unlike the doctrine guard: the ask list
           # comes from GitHub. If this were ever narrowed to AF_UNIX the unit
