@@ -73,6 +73,21 @@ let
   # resolution and why it is still least-privilege.
   stateDir = "${soulRoot}/index/statusline";
   stateFile = "${stateDir}/state.json";
+  # 2026-08-21: the script's `stale` field (see the nodejs PATH comment below)
+  # opens index/orchestrator/queue.db — a WAL-mode sqlite database — READ-ONLY
+  # via node:sqlite. THE RELATION that makes this directory need to be
+  # writable even for a read-only open: WAL mode requires mapping a `-shm`
+  # (shared-memory index) sidecar next to the database, and libsqlite
+  # creates/writes that sidecar for ANY connection, read-only included — it is
+  # part of SQLite's WAL reader contract, not a choice this script makes. Under
+  # ProtectSystem=strict with ReadWritePaths not covering this directory, that
+  # open failed (reproduced: identical command against the identical file
+  # succeeded run manually outside the unit, as the same user — the sandbox
+  # was the only variable). The script's own `|| echo -1` then fired silently:
+  # the rest of the refresh (asks, unit states) still succeeded, so the unit
+  # exited 0 and the bar just rendered "⚠ stale ?" with no loud failure to
+  # point at the cause.
+  orchestratorDir = "${soulRoot}/index/orchestrator";
   # The single source of the refresh logic. Deliberately NOT a Nix store path —
   # see "THE WORKS-BY-LUCK TRAP" above for why that is a real, named tradeoff
   # rather than an oversight.
@@ -237,25 +252,42 @@ in
         # holds exactly ONE file — state.json — and nothing else, by construction
         # (it was carved out of index/ specifically so this grant could stay
         # narrow). Compare the alternative rejected below: naming
-        # `"${soulRoot}/index"` would put the INDEX repo's `bin/`,
-        # `orchestrator/queue.db` and everything else under it inside the
-        # writable scope. Naming `stateDir` gives the unit exactly the same
-        # practical reach it always had — one file's worth of blast radius —
-        # while finally matching what rename(2) actually needs.
+        # `"${soulRoot}/index"` would put the INDEX repo's `bin/` and every
+        # other subdirectory under it inside the writable scope. Naming
+        # `stateDir` gives the unit exactly the same practical reach it always
+        # had — one file's worth of blast radius — while finally matching what
+        # rename(2) actually needs.
         #
-        # `-` prefix, not a bare path (review finding, 2026-08-19; still applies
-        # to a directory the same way it applied to the file): with
-        # ProtectSystem=strict, systemd bind-mounts each ReadWritePaths entry
-        # into the unit's private mount namespace, and a bare path that does not
-        # exist on the host makes that bind-mount — and so unit start — fail
-        # BEFORE the script ever runs. In practice `stateDir` should exist
-        # whenever the INDEX repo is checked out at all (state.json is a
-        # committed file inside it, so git materializes the directory), but `-`
-        # costs nothing and keeps the same fresh-host safety margin the
-        # single-file version had: the unit still starts, and the script's own
-        # check ("cannot read $STATE") produces the honest error instead of
-        # systemd's opaque bind-mount failure.
-        ReadWritePaths = [ "-${stateDir}/" ];
+        # `orchestratorDir` (index/orchestrator/, added 2026-08-21) is the
+        # second and — deliberately — only other entry. See orchestratorDir
+        # above for THE RELATION: the script's stale-probe opens
+        # orchestrator/queue.db, a WAL-mode sqlite database, READ-ONLY — but a
+        # WAL reader still needs write access to that database's `-shm`
+        # sidecar, so "read-only intent" does not mean "read-only access" under
+        # ProtectSystem=strict. Without this entry the open fails inside the
+        # sandbox (confirmed working identically outside it), the stale-probe
+        # silently degrades to -1, and the bar shows "⚠ stale ?" with the unit
+        # still exiting 0 — no loud failure points at the cause. Granting
+        # `orchestratorDir` specifically (not `"${soulRoot}/index"`) keeps the
+        # same narrow-scope discipline as `stateDir`: two directories, each
+        # holding exactly what one part of the script structurally needs to
+        # touch, rather than the whole INDEX repo tree.
+        #
+        # `-` prefix on both, not a bare path (review finding, 2026-08-19;
+        # still applies to a directory the same way it applied to the file):
+        # with ProtectSystem=strict, systemd bind-mounts each ReadWritePaths
+        # entry into the unit's private mount namespace, and a bare path that
+        # does not exist on the host makes that bind-mount — and so unit
+        # start — fail BEFORE the script ever runs. In practice both
+        # directories should exist whenever the INDEX repo and its orchestrator
+        # state are checked out at all, but `-` costs nothing and keeps the
+        # same fresh-host safety margin the single-file version had: the unit
+        # still starts, and the script's own error handling produces the
+        # honest signal instead of systemd's opaque bind-mount failure.
+        ReadWritePaths = [
+          "-${stateDir}/"
+          "-${orchestratorDir}/"
+        ];
         PrivateTmp = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
