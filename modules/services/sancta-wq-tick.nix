@@ -66,6 +66,26 @@ let
   statuslineDir = "${indexRoot}/statusline";
 
   lockFile = "${orchestratorDir}/wq-tick.lock";
+
+  # The clone the `execstart-contract-check` handler reads the committed
+  # manifest out of, via `git show origin/main:…` rather than the working tree
+  # (the clone is routinely checked out to some other branch) — which means it
+  # runs `git fetch` first, and that is why this path's .git has to be writable.
+  #
+  # A CONSTANT, NOT AN OPTION, and deliberately so (review finding, 2026-08-22).
+  # The first version of this module made it configurable, which was a promise
+  # it could not keep: the path is hard-coded on the OTHER side too, as
+  # `const REPO = "/var/lib/sancta/repos/nixos-config"` inside bin/wq-tick's
+  # execstart-contract-check handler, and nothing passes this value across.
+  # Overriding the option would therefore have moved the writable grant to a
+  # new clone while the handler kept fetching in the old one — whose .git is
+  # then read-only under ProtectSystem=strict, so the drift probe fails or
+  # quietly reads a stale ref. An option that silently means something other
+  # than what it says is worse than a constant that says where its twin lives.
+  # Making it genuinely configurable needs the handler to read the path from
+  # the environment: an INDEX-repo change, named here, not done here. Until
+  # then this literal and that `const REPO` must be edited together.
+  contractRepo = "/var/lib/sancta/repos/nixos-config";
 in
 {
   options.services.sancta-wq-tick = {
@@ -79,20 +99,6 @@ in
         credentials the statusline handler needs. Running as anyone else does
         not fail loudly — it produces a tick that claims nothing and reports
         success, which is the failure mode this whole module exists to end.
-      '';
-    };
-
-    configRepo = mkOption {
-      type = types.str;
-      default = "/var/lib/sancta/repos/nixos-config";
-      description = ''
-        Clone of THIS repository that the `execstart-contract-check` handler
-        reads the committed manifest from. It reads through `git show
-        origin/main:…` rather than the working tree (the clone is routinely
-        checked out to some other branch), which means the handler runs `git
-        fetch` first — so this path's `.git` has to be writable. See the
-        ReadWritePaths comment for why that grant is the honest choice rather
-        than letting every fetch fail quietly.
       '';
     };
 
@@ -137,15 +143,31 @@ in
       }
       {
         # bin/wq-tick reaches the queue through orchestrator/queue.mjs, which
-        # imports `node:sqlite`. That module does not exist before Node 22 —
-        # on an older nodejs the unit would evaluate, build, activate, and then
-        # fail at the first import with ERR_UNKNOWN_BUILTIN_MODULE, every half
-        # hour, on a host nobody is watching. A version bump in nixpkgs that
-        # moved `pkgs.nodejs` backwards is not hypothetical enough to leave
-        # unasserted, and this is the one place the relation between the module
-        # and the script's runtime requirement can be stated at all.
-        assertion = lib.versionAtLeast pkgs.nodejs.version "22";
-        message = "services.sancta-wq-tick needs nodejs >= 22 for node:sqlite (orchestrator/queue.mjs); pkgs.nodejs is ${pkgs.nodejs.version}.";
+        # imports `node:sqlite`. On a nodejs without it the unit would
+        # evaluate, build, activate, and then fail at the first import — every
+        # half hour, on a host nobody is watching. A nixpkgs bump that moved
+        # `pkgs.nodejs` backwards is not hypothetical enough to leave unasserted.
+        #
+        # THE FLOOR IS 22.13, NOT 22 AND NOT 22.5 (review finding, 2026-08-22 —
+        # the first version of this assertion said "22", which would have passed
+        # on a nodejs that still fails at runtime). Three facts, kept apart by
+        # how well each is established:
+        #   MEASURED here, on this host: `node -e 'require("node:sqlite")'` on
+        #     22.22.0 loads with no flag (only an ExperimentalWarning).
+        #   DOCUMENTED upstream: node:sqlite landed in 22.5.0 gated behind
+        #     --experimental-sqlite, and the gate was lifted during the 22.13.x
+        #     line.
+        #   RELEVANT to us: queue.mjs passes NO flag and ExecStart adds none, so
+        #     what this unit needs is the UNFLAGGED point, not the introduction
+        #     point. A 22.5–22.12 nodejs satisfies "has node:sqlite" and still
+        #     dies here, which is why the floor is not 22.5.
+        # 22.13 is therefore the lowest version this module is willing to claim.
+        # Only 22.22.0 has actually been run; if the gate in fact lifted later
+        # than 22.13, this floor is too generous — erring one release-line
+        # strict is the safe direction and is cheap, since nixpkgs is well past
+        # it.
+        assertion = lib.versionAtLeast pkgs.nodejs.version "22.13";
+        message = "services.sancta-wq-tick needs nodejs >= 22.13 for unflagged node:sqlite (orchestrator/queue.mjs passes no --experimental-sqlite); pkgs.nodejs is ${pkgs.nodejs.version}.";
       }
     ];
 
@@ -261,7 +283,7 @@ in
         #                    (mktemp sibling + rename). Directory, for the same
         #                    rename(2) reason this repo already hit on
         #                    2026-08-20.
-        #   <configRepo>/.git — `git fetch origin main` in the contract-drift
+        #   <contractRepo>/.git — `git fetch origin main` in the contract-drift
         #                    handler. Without it the fetch fails, `git show
         #                    origin/main:…` silently reads whatever was fetched
         #                    last, and the drift probe validates the live script
@@ -286,7 +308,7 @@ in
         ReadWritePaths = [
           "-${orchestratorDir}/"
           "-${statuslineDir}/"
-          "-${cfg.configRepo}/.git/"
+          "-${contractRepo}/.git/"
         ];
 
         PrivateTmp = true;

@@ -651,7 +651,13 @@ let
             in
             builtins.elem "SANCTA_STATUSLINE_STATE=${stateFile}" env
             && builtins.elem "SANCTA_STATUSLINE_REPO=alexandru-savinov/nixos-config" env
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer" env;
+            # sancta-wq-tick.service joined this list on 2026-08-22: the queue's
+            # heartbeat reports trouble through the dead-letter, but only for
+            # failures that happen INSIDE a tick — a unit that dies before any
+            # queue bookkeeping (missing script, node import failure, a
+            # ReadWritePaths bind-mount that won't start) writes nothing at all
+            # and would stop as silently as the stall this repo just fixed.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
@@ -786,6 +792,18 @@ let
           # right on this host — right by luck is not a thing to ship.
           hasHomeContract = builtins.elem "HOME=${builtins.dirOf soulRoot}" (svc.serviceConfig.Environment or [ ]);
 
+          # THE HEARTBEAT IS ITSELF WATCHED. A tick that fails INSIDE a handler
+          # lands in the queue's dead-letter, which the bar already renders. A
+          # unit that dies BEFORE any queue bookkeeping — script missing, node
+          # import failure, a bind-mount that stops the unit from starting —
+          # writes nothing anywhere, and without this the heartbeat would go
+          # silent exactly the way the stall it fixes did. Asserted here, in the
+          # wq-tick block rather than only in the statusline one, so that
+          # dropping the unit from that list fails as a wq-tick regression.
+          selfIsWatched =
+            builtins.elem "sancta-wq-tick.service"
+              self.nixosConfigurations.sancta-choir.config.services.sancta-statusline-refresh.units;
+
           # THE PATH CONTRACT, at the input end. bin/wq-tick is a dispatcher:
           # the handler scripts it invokes by absolute path run as children of
           # THIS unit and resolve their own commands through THIS PATH, so a
@@ -858,6 +876,36 @@ let
             ../modules/services/sancta-wq-tick.nix
             {
               nixpkgs.overlays = [ (_final: prev: { nodejs = prev.nodejs // { version = "20.19.0"; }; }) ];
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-wq-tick.enable = true;
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
+    # Negative arm 3 — the range the FIRST version of this assertion let
+    # through (review finding, 2026-08-22). node:sqlite exists on 22.12, so an
+    # assertion written as `versionAtLeast "22"` passes there; queue.mjs passes
+    # no --experimental-sqlite, and on 22.12 the module is still behind that
+    # flag, so the unit would activate and then die at the first import every
+    # half hour. A negative arm that only tries Node 20 cannot see this — it is
+    # the permitted-but-broken middle, which is where a version floor is
+    # actually wrong or right.
+    sancta-wq-tick-flagged-nodejs-rejected =
+      shouldFail "wq-tick: rejects nodejs 22.12 (node:sqlite still behind a flag)"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-wq-tick.nix
+            {
+              nixpkgs.overlays = [ (_final: prev: { nodejs = prev.nodejs // { version = "22.12.0"; }; }) ];
               services.sancta-soul-volume = {
                 enable = true;
                 keyFile = "/run/agenix/soul-volume-key";
