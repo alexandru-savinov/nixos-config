@@ -278,6 +278,14 @@
           # silently stops posting, findings silently stop gating.
           claude-review-poster = import ./tests/claude-review-poster.nix { inherit pkgs; };
 
+          # The other half of that gate (2026-08-22): the verdict step, which
+          # fails the check itself instead of waiting for a human to resolve a
+          # thread. It used to go red only on CRITICAL/HIGH, so a MEDIUM was
+          # posted and `claude-review` still passed — PR #569 is the worked
+          # example. These cases pin the LOW/not-LOW boundary and prove the
+          # MEDIUM arm actually flips it, which a green check alone never shows.
+          claude-review-verdict = import ./tests/claude-review-verdict.nix { inherit pkgs; };
+
           # Heartbeat membrane-reflection guard (#519): runs the shared
           # trusted-context jq against fractional-second (…NNN Z) fixtures —
           # the real new Date().toISOString() form — and asserts the parsed
