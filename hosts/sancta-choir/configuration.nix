@@ -53,6 +53,7 @@
     ../../modules/services/sancta-doctrine-guard.nix # assert the authored substrate is present + recoverable
     ../../modules/services/sancta-gallery.nix # the rendered surface, declared instead of hand-started
     ../../modules/services/sancta-statusline-refresh.nix # keep the status bar's cached state true
+    ../../modules/services/sancta-wq-tick.nix # beat the work queue without a live session
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
   ];
 
@@ -258,6 +259,38 @@
   # hours rendering a stale snapshot that looked perfectly current: six asks when
   # there were fourteen, and a dead unit it never mentioned.
   services.sancta-statusline-refresh.enable = true;
+
+  # Track the heartbeat itself on the bar (review finding, 2026-08-22 — the
+  # first version of this change left the default list alone and reintroduced
+  # the very failure it exists to remove). sancta-wq-tick reports its own
+  # trouble through the queue's dead-letter, which the bar already renders —
+  # but only for failures that happen INSIDE a tick. A unit that dies BEFORE
+  # any queue bookkeeping — script missing or un-executable, a node import
+  # blowing up, a ReadWritePaths bind-mount failing to start the unit at all —
+  # writes nothing to the queue and would once again stop silently. `is-failed`
+  # on the unit is the signal that covers exactly that gap.
+  #
+  # Safe to add despite being Type=oneshot with no RemainAfterExit: the reader
+  # (index/bin/statusline-refresh) maps is-failed first, then treats inactive +
+  # Result=success + Type=oneshot as "ok-at-rest" rather than down — which is
+  # why sancta-doctrine-guard, also a oneshot, is already in this list. The
+  # STOP-file exit is covered too, since SuccessExitStatus=3 leaves
+  # Result=success.
+  services.sancta-statusline-refresh.units = [
+    "sancta-gallery.service"
+    "sancta-doctrine-guard.service"
+    "sancta-soul-mirror.timer"
+    "sancta-wq-tick.service"
+  ];
+
+  # The work queue's heartbeat. Its handlers are what keep the rest of this
+  # honest — soul-mirror health, MEMORY.md parity, witness requests rotting past
+  # seven days, ExecStart contract drift — and until 2026-08-22 the only thing
+  # that ran them was a live session happening to. That is a coincidence, not a
+  # clock, and it failed the way coincidences fail: the statusline's stale
+  # counter read 7 on two consecutive nights with nothing reporting that the
+  # beat itself had stopped.
+  services.sancta-wq-tick.enable = true;
 
   # The rendered surface. On 2026-07-26 three node processes served Sancta's
   # work and every one was PPID 1 — orphans of `setsid nohup`, started by hand,

@@ -116,6 +116,92 @@
           interpreter = null;
           commands = [ ];
         };
+
+        # sancta-wq-tick — modules/services/sancta-wq-tick.nix. ExecStart is
+        # `${pkgs.util-linux}/bin/flock … <lockfile> <script>`: the PROGRAM
+        # token is a store path, but both later tokens are off-store absolute
+        # paths, so the unit is in scope by the "later non-store absolute
+        # token" rule. The interpreter is NOT null here, unlike sancta-gallery:
+        # the script is invoked directly, so its `#!/usr/bin/env node` shebang
+        # makes `env` resolve `node` through this unit's $PATH — the same
+        # lookup sancta-statusline-refresh's `bash` interpreter goes through.
+        #
+        # THIS ENTRY IS TRANSITIVE, AND THAT IS A DELIBERATE DEPARTURE from the
+        # "does not recurse into a child script's dependencies" rule stated on
+        # sancta-statusline-refresh above. The rule is right there and wrong
+        # here, for a structural reason: bin/wq-tick is a DISPATCHER. Its own
+        # body resolves only five commands through $PATH (curl, systemctl, git,
+        # cat, plus `node` as interpreter); everything else it does, it does by
+        # invoking bin/sancta-reconnect, bin/memory-index, bin/statusline-refresh
+        # and bin/distil by absolute path — as CHILD PROCESSES OF THIS UNIT,
+        # inheriting exactly this unit's PATH. A non-recursive contract here
+        # would declare five commands and cover almost nothing that actually
+        # runs, and would pass green while a PATH edit broke the queue at 3am.
+        # (The recursion is one level deep and terminates: the only script
+        # those children invoke by absolute path in turn is bin/sidequest, read
+        # in full 2026-08-22 — pure node `fs`, shells out to nothing.)
+        #
+        # Read on sancta-choir 2026-08-22: bin/wq-tick (246 lines) and every
+        # handler it dispatches. Which command comes from where:
+        #   curl      — wq-tick `freshness` (gallery + membrane liveness)
+        #   systemctl — wq-tick `mirror-check`; also 4 call sites in
+        #               bin/statusline-refresh (is-failed / is-active / show)
+        #   git       — wq-tick `execstart-contract-check` (fetch + show)
+        #   cat       — wq-tick `witness-age` (reads witness/requests.jsonl)
+        #   node      — ALSO a command, not only the interpreter:
+        #               bin/memory-index has its own `#!/usr/bin/env node`
+        #               shebang, and bin/statusline-refresh runs `node
+        #               --input-type=module` for its node:sqlite queue read
+        #   bash      — interpreter of bin/sancta-reconnect and bin/distil,
+        #               both `#!/usr/bin/env bash`, both $PATH-resolved
+        #   pgrep, ps — bin/sancta-reconnect (`pgrep -f "claude --resume …"`,
+        #               `ps -o ppid=` for the ancestry safe-set)
+        #   tr        — bin/sancta-reconnect (trims the ppid output)
+        #   mktemp, chmod, mv, dirname, rm, date, jq, gh, grep
+        #             — bin/statusline-refresh's atomic write + gh/jq pipeline
+        #               (identical to its own entry above, because wq-tick runs
+        #               that exact script through its `statusline-refresh`
+        #               handler)
+        #   ls, sort, tail, basename — bin/distil `check` (last sealed version,
+        #               age, threshold scan). Its `seal` path also uses
+        #               sha256sum/cut/cp/git/wc — NOT declared, because wq-tick
+        #               only ever dispatches `distil check`; if a handler ever
+        #               dispatches `seal`, this entry must grow.
+        #
+        # NOT declared, on purpose: `claude` and `sleep`, reached only on
+        # bin/sancta-reconnect's re-exec path, which the handler's
+        # SANCTA_RECONNECT_KILLONLY=1 returns before — and `claude` is not a
+        # nixpkgs package at all, so declaring it could never be satisfied.
+        # `kill`, `mapfile`, `echo`, `cd`, `[`, `trap` are bash builtins, same
+        # exclusion as above. `flock` and `test` are invoked by full store path
+        # from the unit itself, so neither is a $PATH lookup.
+        sancta-wq-tick = {
+          interpreter = "node";
+          commands = [
+            "node"
+            "bash"
+            "curl"
+            "systemctl"
+            "git"
+            "gh"
+            "jq"
+            "cat"
+            "grep"
+            "pgrep"
+            "ps"
+            "tr"
+            "mktemp"
+            "chmod"
+            "mv"
+            "dirname"
+            "rm"
+            "date"
+            "ls"
+            "sort"
+            "tail"
+            "basename"
+          ];
+        };
       };
       user = { };
     };
@@ -224,6 +310,16 @@
       "basename"
       "printf"
       "sort"
+      # `tail` added 2026-08-22: sancta-wq-tick's contract declared it (bin/distil
+      # `check` takes the newest sealed version with `sort | tail -1`) and the
+      # checker FAILED the build with "PATH= does not provide: tail" even though
+      # coreutils has always shipped it — the map was simply short. Verified the
+      # way this file's header demands, not from memory:
+      # `ls $(nix eval --raw .#nixosConfigurations.sancta-choir.pkgs.coreutils)/bin`
+      # → tail present (coreutils-9.8). A missing entry fails CLOSED like this,
+      # which is the intended direction: a wrong `provides` line can only refuse
+      # a real command, never credit an absent one.
+      "tail"
       "uniq"
       "tr"
       "cut"
@@ -237,6 +333,12 @@
     "util-linux" = [ "mount" "umount" "lsblk" "blkid" "fdisk" ];
     "curl" = [ "curl" ];
     "git" = [ "git" ];
+    # Added 2026-08-22 for sancta-wq-tick (bin/sancta-reconnect's `pgrep -f` +
+    # `ps -o ppid=`). pname verified empirically, as this file's header demands:
+    # `nix eval .#nixosConfigurations.sancta-choir.pkgs --apply 'p: p.procps.pname'`
+    # → "procps" (NOT "procps-ng", which is what the upstream project calls
+    # itself and what a from-memory entry would plausibly have said).
+    "procps" = [ "ps" "pgrep" "pkill" "top" "kill" ];
   };
 
   # Commands satisfied by NixOS's OWN unconditional systemd.services.<n>.path
