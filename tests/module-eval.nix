@@ -407,130 +407,6 @@ let
       };
     };
 
-    # ── OpenClaw ──────────────────────────────────────────────────
-    openclaw-missing-claude-code = shouldFail "openclaw: missing claude-code input" {
-      modules = [
-        ../modules/services/openclaw.nix
-        {
-          services.openclaw = {
-            enable = true;
-            anthropicApiKeyFile = "/run/secrets/anthropic-key";
-            githubTokenFile = "/run/secrets/github-token";
-          };
-        }
-      ];
-      # claude-code intentionally omitted — assertion should fire
-      specialArgs = {
-        claude-code = null;
-      };
-    };
-
-    openclaw-nix-store-secret-rejected = shouldFail "openclaw: nix-store secret rejected" {
-      modules = [
-        ../modules/services/openclaw.nix
-        {
-          services.openclaw = {
-            enable = true;
-            anthropicApiKeyFile = "/nix/store/fake-hash-secret";
-            githubTokenFile = "/run/secrets/github-token";
-          };
-        }
-      ];
-      # Provide a mock claude-code so the null-input assertion doesn't fire;
-      # we're testing ONLY the /nix/store secret assertion here.
-      specialArgs = {
-        claude-code = {
-          packages.${system}.default = pkgs.hello;
-        };
-      };
-    };
-
-    openclaw-disabled = shouldEval "openclaw: disabled" {
-      modules = [
-        ../modules/services/openclaw.nix
-        { services.openclaw.enable = false; }
-      ];
-      specialArgs = {
-        claude-code = null;
-      };
-    };
-
-    # ── NullClaw ──────────────────────────────────────────────────
-    nullclaw-minimal = shouldEval "nullclaw: minimal config" {
-      modules = [
-        ../modules/services/nullclaw.nix
-        {
-          services.nullclaw = {
-            enable = true;
-            apiKeyFile = "/run/secrets/anthropic-key";
-            # telegram.enable defaults to true, requiring botTokenFile;
-            # disable it for the minimal-config test.
-            telegram.enable = false;
-          };
-        }
-      ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
-    };
-
-    nullclaw-nix-store-secret-rejected = shouldFail "nullclaw: nix-store api key rejected" {
-      modules = [
-        ../modules/services/nullclaw.nix
-        {
-          services.nullclaw = {
-            enable = true;
-            apiKeyFile = "/nix/store/fake-hash-key";
-            # Disable telegram so only the /nix/store assertion fires,
-            # not the missing botTokenFile error.
-            telegram.enable = false;
-          };
-        }
-      ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
-    };
-
-    nullclaw-telegram-nix-store-rejected = shouldFail "nullclaw: nix-store telegram token rejected" {
-      modules = [
-        ../modules/services/nullclaw.nix
-        {
-          services.nullclaw = {
-            enable = true;
-            apiKeyFile = "/run/secrets/anthropic-key";
-            telegram.enable = true;
-            telegram.botTokenFile = "/nix/store/fake-hash-token";
-            telegram.allowedUsers = [ "12345" ];
-          };
-        }
-      ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
-    };
-
-    nullclaw-disabled = shouldEval "nullclaw: disabled" {
-      modules = [
-        ../modules/services/nullclaw.nix
-        { services.nullclaw.enable = false; }
-      ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
-    };
-
-    # nullclaw-injection-key-paths / nullclaw-injection-guard-fires: retired
-    # 2026-08-20 with zero-kuzea, the only host that ever built
-    # nullclawConfigInjection (see docs/retired.md). The module-level tests
-    # above (nullclaw-minimal, nullclaw-disabled, etc.) still guard the
-    # OPTION SURFACE of modules/services/nullclaw.nix in isolation — but with
-    # zero-kuzea gone, no host imports this module anymore, so nothing here
-    # actually exercises the real injection contract (nullclawConfigInjection
-    # against a live nullclaw binary) end to end. That coverage is gone, not
-    # "unaffected" — it only comes back if/when a host imports nullclaw.nix
-    # again.
-
     # ── UniFi MCP ─────────────────────────────────────────────────
     unifi-mcp-minimal = shouldEval "unifi-mcp: minimal config" {
       modules = [
@@ -627,65 +503,6 @@ let
       else
         builtins.throw "FAIL: sancta-gallery loopback shape gained tailnet-only wiring (tailscaled dep: ${builtins.toJSON leaked}, bind probe: ${builtins.toJSON probed}) — the own-origin branch is not actually conditional.";
 
-    # ── Claude module ─────────────────────────────────────────────
-    claude-missing-input = shouldFail "claude: missing claude-code input" {
-      modules = [
-        ../modules/services/claude.nix
-        { customModules.claude.enable = true; }
-      ];
-      specialArgs = {
-        claude-code = null;
-      };
-    };
-
-    claude-disabled = shouldEval "claude: disabled" {
-      modules = [
-        ../modules/services/claude.nix
-        { customModules.claude.enable = false; }
-      ];
-      specialArgs = {
-        claude-code = null;
-      };
-    };
-
-    # ── OpenClaw ZDR Proxy ────────────────────────────────────────
-    openclaw-zdr-proxy-minimal = shouldEval "openclaw-zdr-proxy: minimal config" {
-      modules = [
-        ../modules/services/openclaw-zdr-proxy.nix
-        {
-          services.openclaw-zdr-proxy = {
-            enable = true;
-            apiKeyFile = "/run/agenix/openrouter-api-key";
-          };
-          # The proxy unit runs as user `openclaw`, normally created by
-          # the host-level openclaw service. Declare it here so the
-          # isolated module eval doesn't fail user-validation.
-          users.users.openclaw = {
-            isSystemUser = true;
-            group = "openclaw";
-          };
-          users.groups.openclaw = { };
-        }
-      ];
-    };
-
-    openclaw-zdr-proxy-disabled = shouldEval "openclaw-zdr-proxy: disabled" {
-      modules = [
-        ../modules/services/openclaw-zdr-proxy.nix
-        { services.openclaw-zdr-proxy.enable = false; }
-      ];
-    };
-
-    # openclaw-zdr-proxy-sancta-claw-wiring, openclaw-free-zdr-ladder-rendered,
-    # sancta-claw-openclaw-health-probe-zdr-alert: retired 2026-08-20 with
-    # sancta-claw (see docs/retired.md) — these read
-    # config.system.build.{openclawBrowserConfigBody,openclawHealthProbeBody}
-    # and config.services.openclaw-zdr-proxy off self.nixosConfigurations.
-    # sancta-claw specifically, which no longer exists. The standalone module
-    # tests above (openclaw-zdr-proxy-minimal/-disabled) still guard
-    # modules/services/openclaw-zdr-proxy.nix directly, independent of any
-    # host, and are unaffected.
-
     # Verify the tailscale-dns-watchdog ships the same windowed crash-loop
     # breaker + operator alert (#450) on every host that imports the shared
     # tailscale module. Reads the rendered unit script — pure eval, no IFD.
@@ -748,6 +565,15 @@ let
         # least-privilege.
         stateDir = "${soulRoot}/index/statusline";
         stateFile = "${stateDir}/state.json";
+        # 2026-08-21: the script's stale-probe opens index/orchestrator/queue.db
+        # (WAL-mode sqlite) READ-ONLY via node:sqlite. A WAL reader still needs
+        # write access to that database's `-shm` sidecar — SQLite's WAL reader
+        # contract, not a script choice — so under ProtectSystem=strict the
+        # open failed without this directory writable too, and the stale-probe
+        # silently degraded to -1 ("⚠ stale ?") while the unit still exited 0.
+        # See the module's own comment on orchestratorDir/ReadWritePaths for
+        # the reproduced failure.
+        orchestratorDir = "${soulRoot}/index/orchestrator";
         refreshScript = "${soulRoot}/index/bin/statusline-refresh";
 
         checks = {
@@ -756,22 +582,33 @@ let
           mountGated = svc.unitConfig.ConditionPathIsMountPoint or null == soulRoot;
           requiresMount = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
 
-          # Exactly ONE writable path, and it must be the state DIRECTORY, not
-          # the state file (changed 2026-08-20): the refresher's atomic write is
-          # mktemp-a-sibling-then-mv, and rename(2) needs write on the
-          # containing directory, not just the file being replaced — a
-          # single-file ReadWritePaths entry cannot satisfy that, which is
-          # exactly the bug this move fixes (reproduced live: state dir chmod
-          # 555, refresher's mktemp fails, unit exits 1). Still least-privilege:
-          # `stateDir` holds exactly one file (state.json) and nothing else, so
-          # the writable blast radius is unchanged in practice — only the grant
-          # now matches what rename(2) actually requires. `-` prefixed (review
-          # finding, 2026-08-19, still applies to the directory form): a bare
-          # path that does not exist yet fails the ProtectSystem=strict
-          # bind-mount before the unit ever starts; `-` is systemd's documented
-          # "ignore if absent" marker, not a widening — the directory is still
-          # the ONLY writable path, and it holds nothing but the one file.
-          onlyStateWritable = (svc.serviceConfig.ReadWritePaths or [ ]) == [ "-${stateDir}/" ];
+          # Exactly TWO writable paths (changed 2026-08-21 — see orchestratorDir
+          # above), each the narrowest directory one part of the script
+          # structurally needs to touch:
+          #
+          # - the state DIRECTORY, not the state file (changed 2026-08-20): the
+          #   refresher's atomic write is mktemp-a-sibling-then-mv, and
+          #   rename(2) needs write on the containing directory, not just the
+          #   file being replaced — a single-file ReadWritePaths entry cannot
+          #   satisfy that (reproduced live: state dir chmod 555, refresher's
+          #   mktemp fails, unit exits 1). Still least-privilege: `stateDir`
+          #   holds exactly one file (state.json) and nothing else.
+          # - the orchestrator DIRECTORY (added 2026-08-21): the stale-probe's
+          #   WAL-mode read of queue.db needs write access to that db's `-shm`
+          #   sidecar even though the open itself is read-only — without this
+          #   entry the probe silently degrades to -1 instead of failing loudly.
+          #
+          # Both `-` prefixed (review finding, 2026-08-19, still applies to the
+          # directory form): a bare path that does not exist yet fails the
+          # ProtectSystem=strict bind-mount before the unit ever starts; `-` is
+          # systemd's documented "ignore if absent" marker, not a widening —
+          # these two directories are still the ONLY writable paths, and each
+          # holds nothing but what the one part of the script it serves needs.
+          onlyStateAndOrchestratorWritable =
+            (svc.serviceConfig.ReadWritePaths or [ ]) == [
+              "-${stateDir}/"
+              "-${orchestratorDir}/"
+            ];
 
           # Network is REQUIRED here, unlike the doctrine guard: the ask list
           # comes from GitHub. If this were ever narrowed to AF_UNIX the unit

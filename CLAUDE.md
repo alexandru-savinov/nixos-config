@@ -87,11 +87,10 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.nixframe` | VT 7 / HDMI | Digital photo frame with n8n upload |
 | `services.gatus-tailscale` | 3001 | Declarative status monitoring |
 | `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
-| `services.openclaw` | - | AI programming partner (Claude Code, file-based inbox) — module kept, no live host imports it (its only consumer, `sancta-claw`, retired 2026-08-20) |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 | `services.sancta-gallery` (sancta-choir) | 8739 | Rendered surface, publish-gated. Binds the tailnet address directly — documented exception below |
 
-**Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. OpenClaw uses a different model: file-based inbox with per-UID nftables network restriction (no listener).
+**Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. (`modules/services/openclaw.nix`, which used a different model — file-based inbox with per-UID nftables network restriction, no listener — was deleted 2026-08-22; see `docs/retired.md`.)
 
 **Documented exception — `sancta-gallery` on `sancta-choir`.** It binds its tailnet address directly instead of loopback + Serve. A page mounted as a *path* under Serve's `/ → 127.0.0.1:8080` catch-all failed silently and the URL returned 200 with the proxied app's own page: longest-prefix routing makes `/` the parent of every path, and an SPA history-fallback answers 200 to anything, so composed they form a total function over the URL space in which no mistake is representable. Binding its own origin makes a dead service fail as `ECONNREFUSED`, which cannot be mistaken for content. Traffic stays inside WireGuard either way; `IPAddressAllow` is narrowed to Tailscale's CGNAT/ULA ranges and a non-Tailscale bind is rejected by assertion. **New services should still follow the loopback + Serve norm** — this exception is for a surface whose whole job is that a wrong URL must be visibly wrong.
 
