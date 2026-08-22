@@ -102,14 +102,17 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
   PROASPETE (sondă la mâna lui / agentul de Mac). Dacă e gol: cheia pull e
   neprovizionată și pull-ul se auto-suprimă tăcut — repararea devine Task 0,
   altfel arhiva ar „pleca" spre un seif care nu trage.
-- **⏳ Alerta de staleness a pull-ului** trimite telegramul prin configul
-  openclaw (`/var/lib/openclaw/...`) — infrastructură RETRASĂ; de re-legat la
-  un canal viu sau de declarat că rămâne doar pe journal+stamp. MAI ASCUȚIT
-  (revmux-574, neverificabil de pe choir): unitatea are `ReadOnlyPaths` pe
-  acel path FĂRĂ prefixul `-` — dacă fișierul lipsește pe rpi5, systemd pică
-  unitatea LA START, deci dead-man-ul receptorului pentru TOATĂ oglinda poate
-  fi mort de tot, nu doar fără telegram. Sondă la mâna lui, pe rpi5:
-  `test -e /var/lib/openclaw/.openclaw/openclaw.json; systemctl status soul-mirror-staleness`.
+- **✔ Alerta de staleness a pull-ului — SONDATĂ pe rpi5, 2026-08-22, mâna
+  lui.** Verdict: dead-man-ul receptorului e VIU (3 rulări consecutive OK,
+  20–22 aug, `status=0`; zero `Failed with result` în jurnal). Premisa
+  ascuțită a revmux (`ReadOnlyPaths` fără `-` pe un path absent ⇒ unitatea
+  pică la start) NU se confirmă empiric — explicația lui, consistentă cu
+  dovezile: sub `ProtectSystem=strict` întreg `/` e deja read-only, iar un
+  `ReadOnlyPaths` redundant e eliminat ca no-op înainte de verificarea căii.
+  Path-ul openclaw lipsește (userul nici nu există pe rpi5), deci telegramul
+  NU pleacă — dar scriptul îl tratează opțional (`jq … || true`), așa că
+  fallback-ul journal+stamp e REAL, nu sperat. Igienă separată: linia moartă
+  `ReadOnlyPaths` se scoate din modul (recomandarea lui), PR dedicat.
 
 ## Erori & margini
 
