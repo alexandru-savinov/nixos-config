@@ -23,15 +23,21 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
   metadată în clar — nici manifest, nici INDEX, nici nume de fișiere purtătoare
   de proiect/sesiune (detaliile mai jos).
 - **Cheia timpului întâi** (doctrina object-store), nume OPAC:
-  `soul-archive/AAAA/LL/<sha256_plain-16>.jsonl.age`. Identitatea (proiect,
-  sesiune, cale relativă) trăiește NUMAI în manifest, nu în numele obiectului.
-  Numele pe conținut rezolvă și coliziunile (revmux-574, MAJOR): vechea formă
-  `<proiect>--<sesiune>` nu reprezenta subcăile (68 de `journal.jsonl` sub
-  `subagents/workflows/wf_*/` împart același basename) și o sesiune reînviată
-  ar fi suprascris obiectul vechi sub aceeași cheie, cu manifestul arătând
-  spre bytes dispăruți. Acum: conținut nou → hash nou → obiect NOU lângă cel
-  vechi; nimic nu se suprascrie vreodată, iar re-arhivarea aceluiași conținut
-  e no-op prin construcție.
+  `soul-archive/AAAA/LL/<sha256_cipher-16>.jsonl.age` — hash-ul CIFROTEXTULUI,
+  nu al plaintextului (codex P2 pe #576: un nume derivat din sha256_plain ar
+  lăsa pe oricine are un CANDIDAT de conținut să-i confirme prezența și să
+  coreleze plaintexturi egale, fără nicio cheie; hash-ul cifrotextului e
+  calculabil din bytes publicați — deci garda poate verifica integritatea
+  nume↔bytes fără chei — și nu spune nimic despre conținut, age fiind
+  nedeterminist). Identitatea (proiect, sesiune, cale relativă) și
+  sha256_plain trăiesc NUMAI în manifest. Numele pe conținut rezolvă și
+  coliziunile (revmux-574, MAJOR): vechea formă `<proiect>--<sesiune>` nu
+  reprezenta subcăile (68 de `journal.jsonl` sub `subagents/workflows/wf_*/`
+  împart același basename) și o sesiune reînviată ar fi suprascris obiectul
+  vechi sub aceeași cheie, cu manifestul arătând spre bytes dispăruți. Acum:
+  conținut nou → obiect NOU lângă cel vechi; nimic nu se suprascrie vreodată.
+  Idempotența se judecă după `sha256_plain` căutat ÎN MANIFEST (nu după
+  existența numelui pe disc): conținut deja arhivat = no-op.
 - **Manifest** — canonic, ÎN CLAR, DOAR pe choir, în afara directorului
   publicat (`/var/lib/sancta/transcript-archive/MANIFEST.jsonl`), append-only,
   un rând per obiect:
@@ -40,8 +46,13 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
   numele obiectului nu o mai poartă; `src_mtime`, ASCII, în AMBELE documente —
   vechiul `mtime_sursă` de aici diverga de `src_mtime` din plan). Scriere
   atomică (tmp + rename, același filesystem). În directorul publicat merge un
-  SNAPSHOT criptat `soul-archive/MANIFEST.jsonl.age`, rescris integral la
-  fiecare rulare cu schimbări — restore-ul de pe rpi5 îl decriptează întâi.
+  SNAPSHOT criptat `soul-archive/MANIFEST.jsonl.age`; restore-ul de pe rpi5
+  îl decriptează întâi. Împrospătarea NU se leagă de „au fost schimbări":
+  fiecare rulare compară `sha256(MANIFEST.jsonl)` cu sursa înregistrată în
+  `last-snapshot.json` și rescrie snapshotul la NEPOTRIVIRE (codex P2 pe
+  #576: un crash între append-ul canonic și rescrierea snapshotului ar lăsa
+  altfel un obiect publicat pe veci fără rândul care-l identifică — regula
+  pe potrivire de hash se autovindecă la următoarea bătaie).
 - **Puls la FIECARE rulare** (revmux-574, MAJOR — dead-man-ul măsura ce nu
   trebuie): `last-run.json` (`{ts, scanned, archived}`) scris și la rulările
   fără nimic de arhivat, lângă manifestul canonic. Mtime-ul manifestului NU e
@@ -54,7 +65,9 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
    - unit oneshot + timer zilnic (`Persistent=true` — bătăile pierdute se recuperează);
    - User=sancta; ExecStartPre `test -x`; PATH-ul enumerat din CE APELEAZĂ scriptul
      (contractul ExecStart↔PATH, cu manifestul de contract extins);
-   - ReadWritePaths: doar directorul arhivei; sursa (projects/) doar citire;
+   - ReadWritePaths: DOAR cele două directoare ale arhivei — subdirectorul
+     publicat (cifrotext) + directorul choir-only al manifestului; sursa
+     (projects/) doar citire;
    - `flock -n` pe un lockfile (bătaie de timer vs rulare de mână, fără suprapunere);
    - destinatarii: REFOLOSEȘTE `config.services.sancta-soul-mirror.recipients`
      (o singură sursă, zero derivă între module) + aserțiune la build că lista
@@ -81,8 +94,10 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
    din manifest = alarmă; `last-run.json` mai vechi de 2 zile = alarmă
    (timer-ul e ZILNIC — pragul de 8 zile, împrumutat de la oglinda
    săptămânală, ar fi tolerat 8 bătăi ratate; revmux-574, MAJOR); obiect numit
-   în manifest dar absent pe disc = alarmă; sursă nemontată/goală = alarmă,
-   niciodată „sănătos". **Braț negativ obligatoriu:** testul corupe o copie de
+   în manifest dar absent pe disc = alarmă; obiect al cărui nume NU e
+   sha256-ul propriilor bytes = alarmă (verificabil fără chei — vezi numele
+   pe cifrotext); snapshot criptat cu sursa nepotrivită față de manifestul
+   canonic = alarmă; sursă nemontată/goală = alarmă, niciodată „sănătos". **Braț negativ obligatoriu:** testul corupe o copie de
    manifest și dovedește că garda PICĂ — adică handler-ul întoarce `{ok:false}`
    și rândul de coadă primește `last_error`; NU exit code de proces: bucla
    wq-tick prinde eșecul prin `Q.fail` și continuă să dreneze coada, singurul
@@ -127,8 +142,11 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
 
 ## Teste (spec de verificare, nu opțiune)
 
-- fixture: sesiune falsă închisă → obiect .age cu nume-hash + rând manifest
-  (cu `relpath` + `src_mtime`) + INDEX regenerat + `last-run.json` atins;
+- fixture: sesiune falsă închisă → obiect .age numit după sha256_cipher +
+  rând manifest (cu `relpath` + `src_mtime`) + INDEX regenerat +
+  `last-run.json` atins + snapshot criptat împrospătat;
+- snapshot rămas în urmă (simulat: șters/înlocuit după append-ul canonic) →
+  următoarea rulare îl regenerează din potrivirea de hash;
 - coliziune: două surse cu același basename (à la `journal.jsonl`) → două
   obiecte distincte; sursă „reînviată" cu conținut nou → al doilea obiect,
   primul NEATINS;
