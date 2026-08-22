@@ -113,8 +113,9 @@ in
     ];
 
     # Dedicated unprivileged user the server runs as and that you SSH in as to
-    # attach (`herdr --remote herdr@host`). Mirrors the openclaw/nullclaw pattern:
-    # keeping the long-lived, opaque prebuilt binary off root shrinks the blast
+    # attach (`herdr --remote herdr@host`). Same dedicated-user pattern used
+    # elsewhere for opaque prebuilt binaries in this repo: keeping the
+    # long-lived binary off root shrinks the blast
     # radius of a compromise. The attach socket lives under this user's HOME at
     # /var/lib/herdr/.config/herdr/herdr.sock.
     users.users.herdr = {
@@ -172,7 +173,7 @@ in
       # manifest (idle/working/blocked) and to check for updates, so order after
       # real connectivity — network.target only means networking *started*, not
       # that an interface has a routable IP / DNS. Match every other networked
-      # service in this repo (qdrant, n8n, openclaw, gatus, ...) that waits on
+      # service in this repo (qdrant, n8n, gatus, ...) that waits on
       # network-online.target; otherwise those boot-time fetches race the network.
       # Also order after the herdr user's home-manager activation: it writes
       # ~/.claude/settings.json, and the ExecStartPost below wires the claude
