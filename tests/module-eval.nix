@@ -689,6 +689,189 @@ let
           ];
         };
 
+    # ── sancta-wq-tick ────────────────────────────────────────────
+    # The work queue's handlers are what keep the rest of the substrate honest
+    # — soul-mirror health, MEMORY.md parity, witness requests rotting past
+    # seven days, ExecStart contract drift. Until 2026-08-22 the only thing that
+    # ran them was a live session happening to call bin/wq-tick, which is a
+    # coincidence rather than a clock. It failed the way coincidences fail: on
+    # 2026-08-21 and again on 2026-08-22 the status bar's `stale` counter read 7
+    # — seven overdue tasks, twice — with nothing anywhere reporting that the
+    # beat itself had stopped. These assertions pin the wiring that makes the
+    # beat happen at all, and the two properties that decide whether it recovers
+    # on its own: Persistent (a missed beat catches up) and a writable set that
+    # actually covers what the handlers write (a false-narrow list fails at 3am,
+    # not here).
+    sancta-wq-tick-choir-wiring =
+      let
+        svc = self.nixosConfigurations.sancta-choir.config.systemd.services.sancta-wq-tick;
+        timer = self.nixosConfigurations.sancta-choir.config.systemd.timers.sancta-wq-tick;
+        soulRoot = toString self.nixosConfigurations.sancta-choir.config.services.sancta-soul-volume.mountPoint;
+        indexRoot = "${soulRoot}/index";
+        tickScript = "${indexRoot}/bin/wq-tick";
+        orchestratorDir = "${indexRoot}/orchestrator";
+        statuslineDir = "${indexRoot}/statusline";
+        configRepo = "/var/lib/sancta/repos/nixos-config";
+
+        checks = {
+          # Without the soul volume there is no queue database, no tick script
+          # and no handlers — a beat every half hour that can only fail.
+          mountGated = svc.unitConfig.ConditionPathIsMountPoint or null == soulRoot;
+          requiresMount = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
+
+          # THE WAL × SANDBOX RELATION, which is where this class of bug lives.
+          # Both directories, not the files inside them: bin/wq-tick writes
+          # queue.db through SQLite in WAL mode (which creates and renames -wal
+          # and -shm siblings, plus the flock file), and the statusline-refresh
+          # handler writes its state through mktemp-a-sibling-then-rename.
+          # rename(2) and sibling-creation both need write on the CONTAINING
+          # DIRECTORY — a file-granular entry cannot satisfy either, which this
+          # repo already reproduced live on 2026-08-20 for the statusline unit.
+          # Asserted as exact list equality so that WIDENING it (to all of
+          # index/, say) is also a failing change and has to be argued for,
+          # not just typed.
+          writablePathsExact =
+            (svc.serviceConfig.ReadWritePaths or [ ]) == [
+              "-${orchestratorDir}/"
+              "-${statuslineDir}/"
+              "-${configRepo}/.git/"
+            ];
+
+          # Network is REQUIRED, un-narrowed: the freshness handler curls the
+          # gallery over the tailnet and the membrane on loopback, the
+          # statusline handler talks to GitHub through gh, and the contract-drift
+          # handler fetches over https. Narrowed to AF_UNIX this unit would
+          # still start and still exit 0 — every network probe would just report
+          # a dead surface forever.
+          hasNetwork =
+            builtins.elem "AF_INET" (svc.serviceConfig.RestrictAddressFamilies or [ ])
+            && builtins.elem "AF_INET6" (svc.serviceConfig.RestrictAddressFamilies or [ ])
+            && builtins.elem "AF_UNIX" (svc.serviceConfig.RestrictAddressFamilies or [ ]);
+
+          timerEvery30 = (timer.timerConfig.OnCalendar or "") == "*:0/30";
+
+          # The incident this whole unit answers. Without Persistent, a host
+          # that was down — or a beat that was simply missed — resumes at the
+          # next half hour with the overdue tasks still overdue and nothing
+          # saying so, which is precisely the silent stall of 2026-08-21/22.
+          catchesUp = (timer.timerConfig.Persistent or false) == true;
+
+          # One tick claims at most three tasks at 60s each; five minutes leaves
+          # headroom and stays far under the thirty-minute cadence, so a slow
+          # beat cannot stack on the next one.
+          boundedRun = (svc.serviceConfig.TimeoutStartSec or "") == "5m";
+
+          # CONCURRENCY. Two properties in one string, both load-bearing:
+          # `--nonblock` (never queue behind a running beat) and
+          # `--conflict-exit-code 0` (a skipped beat is the system working, not
+          # a failure — a unit that goes red every time it is busy trains its
+          # reader to ignore it).
+          execIsFlockWrappedScript =
+            (svc.serviceConfig.ExecStart or "")
+            == "${pkgs.util-linux}/bin/flock --nonblock --conflict-exit-code 0 ${orchestratorDir}/wq-tick.lock ${tickScript}";
+
+          # ExecStart is deliberately NOT a store path (the script lives on the
+          # soul volume), so tests/unit-script-refs.nix is blind to it. This is
+          # the replacement guard, same as sancta-statusline-refresh's.
+          hasExistenceGuard = (svc.serviceConfig.ExecStartPre or "") == "${pkgs.coreutils}/bin/test -x ${tickScript}";
+
+          # bin/wq-tick exits 3 on orchestrator/STOP — a deliberate halt, not an
+          # error. Without this the STOP file would paint the unit failed every
+          # half hour, and the bar would report a broken clock while the clock
+          # was obeying an instruction.
+          stopIsNotFailure = (svc.serviceConfig.SuccessExitStatus or "") == "3";
+
+          # queue.mjs derives the database path from $HOME. systemd gives a
+          # service none by default, and queue.mjs's own fallback happens to be
+          # right on this host — right by luck is not a thing to ship.
+          hasHomeContract = builtins.elem "HOME=${builtins.dirOf soulRoot}" (svc.serviceConfig.Environment or [ ]);
+
+          # THE PATH CONTRACT, at the input end. bin/wq-tick is a dispatcher:
+          # the handler scripts it invokes by absolute path run as children of
+          # THIS unit and resolve their own commands through THIS PATH, so a
+          # missing package here breaks the queue at 3am and nothing at build
+          # time. What each one supplies is enumerated in the module and checked
+          # against the rendered PATH= by tests/execstart-path-contract.nix;
+          # this assertion pins that they are wired in the first place.
+          pathHasContract =
+            let
+              p = svc.path or [ ];
+              has = pkg: builtins.elem pkg p;
+            in
+            builtins.all has [
+              pkgs.nodejs
+              pkgs.bash
+              pkgs.curl
+              pkgs.systemd
+              pkgs.git
+              pkgs.gh
+              pkgs.jq
+              pkgs.gnugrep
+              pkgs.procps
+              pkgs.coreutils
+            ];
+        };
+
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir wq-tick wiring — failed checks: ${builtins.toJSON failed}";
+
+    # Negative arm 1: the queue database, the tick script and every handler live
+    # on the soul volume. Enabled without it, the unit would be a timer that can
+    # only fail — and would fail from inside a sandbox whose ReadWritePaths point
+    # at directories that do not exist, i.e. opaquely, at the systemd layer,
+    # every half hour. Refuse at build time instead.
+    sancta-wq-tick-without-soul-volume-rejected =
+      shouldFail "wq-tick: requires the soul volume"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-wq-tick.nix
+            {
+              services.sancta-soul-volume.enable = false;
+              services.sancta-wq-tick.enable = true;
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
+    # Negative arm 2 — the one that proves the nodejs assertion can actually
+    # LOSE. orchestrator/queue.mjs imports `node:sqlite`, which does not exist
+    # before Node 22: on an older nodejs this unit evaluates, builds, activates,
+    # and then dies at the first import every half hour on a host nobody is
+    # watching. The version is faked by overlay rather than by pinning a real
+    # old nodejs so the arm costs one eval and no download — `//` keeps the
+    # derivation's outPath, so `path = [ nodejs ]` still renders and the ONLY
+    # thing that changes is the fact the assertion reads.
+    sancta-wq-tick-old-nodejs-rejected =
+      shouldFail "wq-tick: rejects nodejs older than 22 (node:sqlite)"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-wq-tick.nix
+            {
+              nixpkgs.overlays = [ (_final: prev: { nodejs = prev.nodejs // { version = "20.19.0"; }; }) ];
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-wq-tick.enable = true;
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
     # ── claude-code-managed-settings ────────────────────────────────
     # /etc/claude-code/managed-settings.json exists specifically because a
     # running Claude Code session rewrites ~/.claude/settings.json from its
