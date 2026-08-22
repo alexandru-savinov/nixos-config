@@ -76,15 +76,17 @@ jobs:
             {
               "severity": "CRITICAL",        // one of CRITICAL | HIGH | MEDIUM | LOW —
                                              // the gate is DERIVED from this field, so
-                                             // it must be EXACT, one of those four
-                                             // spellings and nothing else. CRITICAL,
-                                             // HIGH and MEDIUM each become a resolvable
-                                             // thread AND fail this check; LOW is bundled
-                                             // into one advisory comment and blocks
-                                             // nothing. Anything that is not exactly LOW
-                                             // is treated as blocking, so a misspelt
-                                             // severity fails the check rather than
-                                             // slipping through as advisory.
+                                             // use one of those four words and nothing
+                                             // else. CRITICAL, HIGH and MEDIUM each
+                                             // become a resolvable thread AND fail this
+                                             // check; LOW is bundled into one advisory
+                                             // comment and blocks nothing. The routing
+                                             // rule is precisely: case-insensitive LOW
+                                             // is advisory, EVERY other value blocks.
+                                             // So a misspelt severity fails the check
+                                             // rather than slipping through as advisory
+                                             // — but do not rely on that as a way to
+                                             // flag something; write the real severity.
               "path": "path/to/file",        // repository-relative, exactly as in the diff
               "line": 123,                   // the line the finding is anchored to
               "side": "RIGHT",               // "RIGHT" for added/unchanged lines,
@@ -115,12 +117,19 @@ jobs:
             real shift and not a formality: the thread makes a finding
             answerable, but a human can also simply never look. The check makes
             the finding unignorable. Resolving the thread does NOT turn the
-            check green — the next run re-reads the diff, and while the code
-            still warrants the finding the reviewer will report it again. So a
-            MEDIUM now clears in one of exactly two honest ways: the code
+            check green: the next run re-reads the diff from scratch, and if the
+            code still warrants the finding you should report it again. So a
+            MEDIUM is meant to clear in one of two honest ways — the code
             changes, or a human with write access overrides the check
-            deliberately and leaves their name on that decision. Being talked
-            out of a finding you still believe is not one of them.
+            deliberately and leaves their name on that decision.
+
+            Note the honest limit of that, because it is YOUR limit: nothing in
+            this workflow makes you consistent between runs. If you silently
+            omit on the next run a finding you reported on this one, the gate
+            opens and no machinery notices. So do not treat a re-run as a fresh
+            opinion poll, and do not let a green check be the goal — report what
+            the diff warrants each time, including the finding you already
+            reported.
 
             LOW findings and anything you consider merely advisory: still write
             them as entries in review-findings.json with `"severity": "LOW"`.
@@ -382,14 +391,23 @@ jobs:
           # silent-pass shape is precisely what this step exists to remove, so
           # an unrecognised severity fails closed and is named in the output.
           #
-          # Matching is `ascii_upcase` with no trimming, mirroring the poster's
-          # `tr '[:lower:]' '[:upper:]'` exactly. Any normalisation applied on
-          # one side and not the other reintroduces the drift described above.
-          blocking=$(jq '[.[] | select((.severity // "" | ascii_upcase) != "LOW")] | length' review-findings.json)
+          # Matching is `tostring | ascii_upcase`, with no trimming, mirroring
+          # the poster's `jq -r` + `tr '[:lower:]' '[:upper:]'` exactly. Any
+          # normalisation applied on one side and not the other reintroduces
+          # the drift described above — including the `tostring`, which is not
+          # cosmetic: the poster reads this field with `jq -r`, so a non-string
+          # severity (a number, an array) reaches it already rendered as text
+          # and routes to a thread. Without `tostring` here, `ascii_upcase`
+          # would instead throw, and the step would die on a raw jq stack trace
+          # rather than through the `::error::` path every other failure mode
+          # here uses. Still red either way, but red for a reason nobody can
+          # read at 2am. With it, both steps see the same rendered string and
+          # agree, and the finding is named like any other.
+          blocking=$(jq '[.[] | select((.severity // "" | tostring | ascii_upcase) != "LOW")] | length' review-findings.json)
           echo "blocking (non-LOW) findings: $blocking"
           if [ "$blocking" -gt 0 ]; then
             echo "::error::Claude Code Review found $blocking blocking finding(s) above LOW. See the resolvable review threads on the PR."
-            jq -r '.[] | select((.severity // "" | ascii_upcase) != "LOW") | "  - [\(.severity // "<no severity>")] \(.path):\(.line)"' review-findings.json
+            jq -r '.[] | select((.severity // "" | tostring | ascii_upcase) != "LOW") | "  - [\(.severity // "<no severity>")] \(.path):\(.line)"' review-findings.json
             exit 1
           fi
           echo "verdict: PASS — no findings above LOW"

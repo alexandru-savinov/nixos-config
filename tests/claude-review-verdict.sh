@@ -161,6 +161,34 @@ if run_case "missing severity field -> exit 1 (fails closed)" 1 "above LOW"; the
   fi
 fi
 
+# 8b — a severity that is not a string at all. `.severity | ascii_upcase`
+#      throws on a number or an array, and the step would then die on a raw jq
+#      stack trace instead of the `::error::` path — red, but illegibly so, and
+#      the poster meanwhile routes it to a thread perfectly happily because
+#      `jq -r` rendered it to text first. `tostring` makes both steps see the
+#      same string. Asserting the MESSAGE, not just the exit code, is the whole
+#      point of this case: without it, the pre-`tostring` crash passes too.
+findings <<'EOF'
+[{"severity":42,"path":"a.nix","line":5,"side":"RIGHT","body":"severity is a number"}]
+EOF
+run_case "non-string severity -> exit 1 via the ::error:: path, not a jq crash" 1 "above LOW"
+
+# 8c — case-insensitivity is DELIBERATE, and this case exists to say so out
+#      loud, because it reads like a hole and was raised as one in review of
+#      this very change (PR #573, chatgpt-codex-connector). The poster has
+#      always upcased with `tr` before testing for LOW, and its own suite pins
+#      lowercase `low` as a legitimate advisory finding. Tightening only this
+#      step to an exact-enum match would split the two apart again — a `low`
+#      finding would be bundled as advisory AND fail the check — which is the
+#      precise drift this change exists to remove. It is also not a bypass: a
+#      reviewer intent on burying a finding writes `LOW`, not `low`. So the two
+#      steps stay case-insensitive TOGETHER, and this case fails if one of them
+#      is ever tightened alone.
+findings <<'EOF'
+[{"severity":"Low","path":"a.nix","line":7,"side":"RIGHT","body":"**LOW** — mixed case, still advisory"}]
+EOF
+run_case "mixed-case 'Low' -> exit 0 (matches the poster, deliberately)" 0 "verdict: PASS"
+
 # ── Counting ────────────────────────────────────────────────────────────────
 # 9 — LOW must not be counted among the blockers. If it were, the count in the
 #     error message would overstate the work and — worse — the same off-by-LOW
