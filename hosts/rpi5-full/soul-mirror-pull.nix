@@ -114,6 +114,12 @@ let
   # whether it's the puller failing or choir never having produced one.
   stalenessThresholdDays = 8;
   stampFile = "${cfg.vaultDir}/.soul-mirror-staleness-alert";
+  # Retired openclaw path — the script reads it OPTIONALLY (jq … || true), so
+  # the telegram leg self-suppresses when it is absent and the alert degrades
+  # to journal+stamp. Do NOT list it in ReadOnlyPaths: a no-dash entry on an
+  # absent path stays harmless only because ProtectSystem=strict already
+  # mounts / read-only and systemd drops the redundant entry as a no-op
+  # (probed on rpi5 2026-08-22: path absent, 3 consecutive clean runs).
   ocConfig = "/var/lib/openclaw/.openclaw/openclaw.json";
 
   stalenessScript = pkgs.writeShellScript "soul-mirror-staleness-check" ''
@@ -245,7 +251,6 @@ in
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ReadWritePaths = [ cfg.vaultDir ];
-        ReadOnlyPaths = [ ocConfig ];
         PrivateTmp = true;
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
         SystemCallFilter = [ "@system-service" ];
