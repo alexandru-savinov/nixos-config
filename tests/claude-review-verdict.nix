@@ -37,6 +37,28 @@ pkgs.runCommand "claude-review-verdict-tests"
     exit 1
   fi
 
+  # ── Static: the step must still run under the shell the harness assumes ───
+  # The harness invokes the extracted step as `bash -e`, because a `run:` block
+  # with no `shell:` key is what GitHub runs as `bash -e {0}`. Adding
+  # `shell: bash` would silently switch the real step to
+  # `bash --noprofile --norc -e -o pipefail {0}` — pipefail on — and the
+  # harness would go on testing it without. That divergence is invisible until
+  # the step grows a pipeline, at which point the check and the runner disagree
+  # about whether it failed. So the harness's assumption is asserted here
+  # rather than trusted: if someone sets a shell, this fails and says what to
+  # change. (Both forms are visible in one claude-review job log, which is the
+  # evidence this is a real distinction and not a docs reading.)
+  declared_shell=$(yq -r '.jobs."claude-review".steps[] | select(.name == "${step}") | .shell // "none"' ${workflow})
+  if [ "$declared_shell" != "none" ]; then
+    echo "SHELL ASSUMPTION BROKEN: the '${step}' step now declares shell: $declared_shell." >&2
+    echo "tests/claude-review-verdict.sh runs it as 'bash -e', which matches the no-shell" >&2
+    echo "default. An explicit 'shell: bash' adds pipefail in CI but not in the harness," >&2
+    echo "so the two would disagree about any pipeline in the step. Update the harness's" >&2
+    echo "invocation to match, then update this assertion." >&2
+    exit 1
+  fi
+  echo "ok: the verdict step declares no shell, so 'bash -e' is faithful to CI"
+
   # ── Static: the two steps must route on the SAME severity distinction ─────
   # The behavioural cases in the harness pin what the verdict step does with a
   # severity it is shown. They cannot see the OTHER half of the invariant: that

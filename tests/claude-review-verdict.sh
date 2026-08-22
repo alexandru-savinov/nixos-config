@@ -27,11 +27,22 @@ trap 'rm -rf "$WORK"' EXIT
 
 fails=0
 
-# GitHub runs a `run:` block with no explicit `shell:` as `bash -e {0}`. This
-# step, unlike the poster, does not `set -euo pipefail` itself, so it inherits
-# that -e and nothing more. Running it any other way here would test a script
-# that does not ship — the exact drift the extract-from-YAML approach exists to
-# prevent, arrived at through the invocation instead of the source.
+# GitHub runs a `run:` block with NO explicit `shell:` key as `bash -e {0}`.
+# That is specifically the no-`shell:` default; writing `shell: bash` instead
+# selects `bash --noprofile --norc -e -o pipefail {0}`, which additionally sets
+# pipefail. Both forms appear in one claude-review job log, which is what
+# settles it rather than a reading of the docs (run 32591330468):
+#
+#   Check review verdict     shell: /usr/bin/bash -e {0}
+#   Run Claude Code Review   shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+#
+# This step sets no `shell:` and, unlike the poster, does not `set -euo
+# pipefail` itself, so it runs with -e and nothing more — and so does this
+# harness. Adding `-o pipefail` here to be "safer" would be the same drift in
+# the other direction: the harness would then accept or reject pipelines
+# differently from the runner, which is exactly what extracting the step from
+# the YAML exists to prevent. claude-review-verdict.nix asserts the step still
+# declares no `shell:`, because that is the fact this invocation depends on.
 run_case() {
   local name="$1" want_rc="$2" want_msg="$3"
   local out rc=0
