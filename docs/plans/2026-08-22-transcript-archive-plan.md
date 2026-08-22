@@ -20,7 +20,7 @@ Design doc: `docs/plans/2026-08-22-transcript-archive-design.md` (read it FIRST 
 ### Task 3: The nixos module + timer
 - [ ] `modules/services/sancta-transcript-archive.nix`: oneshot unit + daily timer (`Persistent=true`), User=sancta, `ExecStartPre test -x`, `flock -n` wrapper, ReadWritePaths ONLY the archive dir, source dir read-only, PATH enumerated from what the script actually calls (read the script, list the binaries), build-time assertion that age recipients are real (copy the soul-mirror assertion pattern)
 - [ ] Wire into hosts/sancta-choir/configuration.nix
-- [ ] Extend the ExecStart↔PATH contract manifest (tests/unit-script-refs.nix or the contract file the execstart-contract-check reads) with the new unit
+- [ ] Extend `tests/execstart-path-contracts.nix` (the hand-written PATH manifest read by `tests/execstart-path-contract.nix`) with the new unit, and add the unit→script row to the `SCRIPTS` map of the `execstart-contract-check` handler in the soul repo's `bin/wq-tick` (the script lives off-store on the soul volume, so this host-side half is the only check that reads its real bytes; `tests/unit-script-refs.nix` covers the store-side ExecStart wrapper automatically — nothing to add there)
 - [ ] tests/module-eval.nix: wiring checks (paths, PATH contract, timer Persistent, flock present) with a negative arm where the existing pattern has one
 - [ ] `nix build .#checks.x86_64-linux.module-eval -L` passes; `nixos-rebuild dry-build --flake .#sancta-choir` and both rpi5 hosts clean
 
@@ -33,7 +33,7 @@ Design doc: `docs/plans/2026-08-22-transcript-archive-design.md` (read it FIRST 
 ## Constraints
 - NEVER delete, move, or rewrite source transcripts. Read-only on `projects/`.
 - No new keys, no secrets in any output or chat: only PUBLIC age recipients in nix.
-- Nothing leaves the tailnet; no third-party leg in v1.
+- No third-party leg in v1; both endpoints are our hosts. Transport is the EXISTING mirror pull path: rpi5 → SSH to choir's PUBLIC IP (`soul-mirror-pull.nix` `remoteHost`, deliberately NOT a tailnet name — Tailscale SSH on choir authenticates by tailnet identity, skips `authorized_keys`, and would bypass the `rrsync -ro` forced command). The security boundary is age encryption at rest + key-bound forced command in transit, NOT the tailnet. Do not "fix" this by switching to a tailnet name — that weakens it (resolves the P1 on #574).
 - Do not touch rpi5's pull mechanics in v1 (repairing the pull key, if the human's probe shows the vault empty, is a SEPARATE his-hand task already documented in the mirror module).
 - Never push main; worktree + PR; merge is the human's word. Follow `nix fmt` before committing nix files.
 - Archive placement must keep rrsync confinement intact — no endpoint widening beyond the published directory.

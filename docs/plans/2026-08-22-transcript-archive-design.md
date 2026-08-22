@@ -87,7 +87,15 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
 ## Ce NU face (garduri de scop)
 
 - NU șterge, NU mută, NU rescrie transcriptele-sursă. Niciodată.
-- NU exportă nimic în afara tailnet-ului; niciun terț în v1.
+- NICIUN terț în v1; ambele capete sunt hosturile noastre. Transportul e calea
+  de pull EXISTENTĂ a oglinzii: rpi5 → SSH către IP-ul PUBLIC al lui choir
+  (`soul-mirror-pull.nix` `remoteHost` — deliberat NU un nume de tailnet:
+  Tailscale SSH pe choir autentifică după identitatea de tailnet, sare peste
+  `authorized_keys` și ar ocoli comanda forțată `rrsync -ro`). Granița de
+  securitate e criptarea age la repaus + comanda forțată legată de cheie în
+  tranzit, NU tailnet-ul; a muta pe nume de tailnet ar SLĂBI-o. (Corectează
+  P1-ul de pe #574 — formularea veche „nimic în afara tailnet-ului" era
+  nesatisfiabilă pe acest transport.)
 - NU introduce chei noi și niciun secret prin chat (doar cheile PUBLICE age în nix).
 - NU atinge mecanica pull-ului de pe rpi5 în v1 dincolo de publicarea directorului
   (excepție: dacă sonda dovedește pull-ul mort, repararea CHEII e task separat,
