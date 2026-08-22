@@ -76,9 +76,15 @@ jobs:
             {
               "severity": "CRITICAL",        // one of CRITICAL | HIGH | MEDIUM | LOW —
                                              // the gate is DERIVED from this field, so
-                                             // it must be exact (CRITICAL/HIGH block merge;
-                                             // MEDIUM becomes a resolvable thread; LOW is
-                                             // bundled into one advisory comment)
+                                             // it must be EXACT, one of those four
+                                             // spellings and nothing else. CRITICAL,
+                                             // HIGH and MEDIUM each become a resolvable
+                                             // thread AND fail this check; LOW is bundled
+                                             // into one advisory comment and blocks
+                                             // nothing. Anything that is not exactly LOW
+                                             // is treated as blocking, so a misspelt
+                                             // severity fails the check rather than
+                                             // slipping through as advisory.
               "path": "path/to/file",        // repository-relative, exactly as in the diff
               "line": 123,                   // the line the finding is anchored to
               "side": "RIGHT",               // "RIGHT" for added/unchanged lines,
@@ -100,11 +106,21 @@ jobs:
             Why threads and not one comment for CRITICAL/HIGH/MEDIUM: with
             `required_conversation_resolution` enabled on the branch, GitHub
             blocks the merge until every thread is explicitly resolved by a
-            human with write access. That makes the gate a human act with a
-            name on it, rather than a model's verdict — the disposition is
-            attributable, and a finding the reviewer got wrong is answered by
-            resolving the thread with a reason instead of by editing code to
-            satisfy the model or by weakening the gate.
+            human with write access. The thread is what makes the disposition
+            attributable — a finding the reviewer got wrong is answered by
+            resolving the thread with a reason, not by editing code to satisfy
+            the model.
+
+            Note what the failing check adds on top of that, because it is a
+            real shift and not a formality: the thread makes a finding
+            answerable, but a human can also simply never look. The check makes
+            the finding unignorable. Resolving the thread does NOT turn the
+            check green — the next run re-reads the diff, and while the code
+            still warrants the finding the reviewer will report it again. So a
+            MEDIUM now clears in one of exactly two honest ways: the code
+            changes, or a human with write access overrides the check
+            deliberately and leaves their name on that decision. Being talked
+            out of a finding you still believe is not one of them.
 
             LOW findings and anything you consider merely advisory: still write
             them as entries in review-findings.json with `"severity": "LOW"`.
@@ -115,8 +131,9 @@ jobs:
             call `gh pr comment` yourself for these, or for anything else.
 
             ## The verdict is DERIVED — there is no separate step for it.
-            A later plain-bash step reads `review-findings.json` and blocks the
-            merge if ANY entry has `severity` CRITICAL or HIGH. So there is no
+            A later plain-bash step reads `review-findings.json` and FAILS THE
+            CHECK if any entry's `severity` is anything other than LOW — so
+            MEDIUM, HIGH and CRITICAL all turn this check red. So there is no
             `review-verdict` file to write and no separate tool call to remember:
             the `severity` field on each finding IS the verdict. This is
             deliberate — the old self-reported `echo PASS > review-verdict` step
@@ -124,8 +141,17 @@ jobs:
             skipped or the runtime aborted before it, turning clean PRs red. A
             gate derived from the mandatory, validated findings file cannot fail
             that way. Get each finding's `severity` right; that is the whole gate.
-            The MEDIUM findings still gate via their review threads
-            (`required_conversation_resolution`); CRITICAL/HIGH gate here too.
+
+            Weigh MEDIUM accordingly: it now stops the merge in the pipeline,
+            not only through a thread a human must resolve. That cuts both
+            ways, and BOTH directions are real damage. Do not inflate a genuine
+            style nit to MEDIUM to make it noticeable — it will block a change
+            that is fine. Do not deflate a real correctness or safety problem to
+            LOW to keep the check green — LOW blocks nothing, so that hides it
+            completely, and the whole point of this gate is that findings stop
+            depending on a human happening to read them. Rate the finding on the
+            harm it describes, exactly as the severity list above defines it,
+            and ignore what colour the check will end up.
 
           # NOTE: `gh api` is deliberately NOT granted. This job's prompt is fed
           # the PR diff, which is attacker-influenced content, and the job holds
@@ -341,11 +367,29 @@ jobs:
             echo "::error::review-findings.json missing or not a JSON array — cannot derive a verdict. Failing as a precaution."
             exit 1
           fi
-          blocking=$(jq '[.[] | select((.severity // "" | ascii_upcase) as $s | $s == "CRITICAL" or $s == "HIGH")] | length' review-findings.json)
-          echo "blocking (CRITICAL/HIGH) findings: $blocking"
+          # Blocking = every finding that is NOT LOW — so MEDIUM blocks too.
+          #
+          # This is stated as "not LOW" rather than as the list
+          # CRITICAL/HIGH/MEDIUM on purpose, and the difference is the whole
+          # point. The poster step above routes on exactly one distinction:
+          # LOW gets bundled into an advisory comment, everything else becomes
+          # a resolvable thread. Writing the verdict with the SAME predicate
+          # makes "the poster opened a gating thread for it" and "the check is
+          # red" the same condition by construction. Enumerating severities
+          # here instead would let the two drift apart the moment the reviewer
+          # writes a severity nobody listed — `MED`, `Moderate`, or an empty
+          # string — which would open a thread and still report PASS. That
+          # silent-pass shape is precisely what this step exists to remove, so
+          # an unrecognised severity fails closed and is named in the output.
+          #
+          # Matching is `ascii_upcase` with no trimming, mirroring the poster's
+          # `tr '[:lower:]' '[:upper:]'` exactly. Any normalisation applied on
+          # one side and not the other reintroduces the drift described above.
+          blocking=$(jq '[.[] | select((.severity // "" | ascii_upcase) != "LOW")] | length' review-findings.json)
+          echo "blocking (non-LOW) findings: $blocking"
           if [ "$blocking" -gt 0 ]; then
-            echo "::error::Claude Code Review found $blocking CRITICAL/HIGH finding(s). See the resolvable review threads on the PR."
-            jq -r '.[] | select((.severity // "" | ascii_upcase) as $s | $s == "CRITICAL" or $s == "HIGH") | "  - [\(.severity)] \(.path):\(.line)"' review-findings.json
+            echo "::error::Claude Code Review found $blocking blocking finding(s) above LOW. See the resolvable review threads on the PR."
+            jq -r '.[] | select((.severity // "" | ascii_upcase) != "LOW") | "  - [\(.severity // "<no severity>")] \(.path):\(.line)"' review-findings.json
             exit 1
           fi
-          echo "verdict: PASS — no CRITICAL/HIGH findings"
+          echo "verdict: PASS — no findings above LOW"
