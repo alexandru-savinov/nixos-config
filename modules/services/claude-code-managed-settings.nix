@@ -35,8 +35,8 @@
 # --------------------------------------------
 # Managed settings OVERRIDE the owner's own settings.json for any key they
 # set. That makes this file a standing capability grant, not a convenience —
-# so it carries EXACTLY the three keys below and nothing else. Do not add a
-# fourth without re-litigating this comment: anything more turns "the harness
+# so it carries EXACTLY the four keys below and nothing else. Do not add a
+# fifth without re-litigating this comment: anything more turns "the harness
 # can't erase infrastructure" into "Nix quietly outranks the owner's own
 # preferences," which is the opposite of what this module is for.
 #
@@ -48,6 +48,19 @@
 #   3. hooks.PostToolUse (memory-index-hook) — keeps MEMORY.md derived from
 #                      the memory files' frontmatter; without it the recall
 #                      index silently drifts from what is actually on disk.
+#   4. hooks.Stop (evidence-gate) — RE-LITIGATED 2026-08-23, added on
+#                      Alexandru's explicit order ("I need the mechanism that
+#                      you'll fix that", 13:57, after three unverified
+#                      system-state assertions in one day). It fires only
+#                      when a turn makes a system-state claim having run ZERO
+#                      tools, and nudges once per turn (stop_hook_active
+#                      short-circuit — the sq047 anti-loop designed in). It
+#                      restricts the AGENT's own output; it takes nothing
+#                      from the owner — which is why it passes this header's
+#                      bar. It lives here and not in ~/.claude/settings.json
+#                      because that file is exactly what the harness rewrites
+#                      from memory on /model — an accountability hook that
+#                      the harness can silently drop is decoration.
 #
 # spinnerTipsEnabled is deliberately NOT in this file — see the P1
 # CROSS-USER SAFETY section below for why (a PREFERENCE, not infrastructure,
@@ -195,6 +208,18 @@ let
           ];
         }
       ];
+      Stop = [
+        {
+          hooks = [
+            {
+              type = "command";
+              # Same cross-user shape as the other two soul-volume hooks:
+              # non-sancta accounts no-op before the 0700 path is touched.
+              command = guardedSoulCommand cfg.evidenceGateScript;
+            }
+          ];
+        }
+      ];
     };
     # spinnerTipsEnabled deliberately does NOT live here — see finding P1's
     # resolution below: a single /etc file cannot condition a plain JSON
@@ -250,6 +275,20 @@ in
         time (not a store path) — same works-by-luck caveat as
         statuslineScript, one level deeper: even the INTERPRETER here is
         whatever `date` PATH resolution finds on the box, not a Nix closure.
+      '';
+    };
+
+    evidenceGateScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/hooks/evidence-gate.mjs";
+      description = ''
+        Path to the Stop-hook evidence gate (soul volume, git-tracked in the
+        hooks repo, `#!/usr/bin/env node` shebang — must carry the execute
+        bit). Fires only when a turn asserts system state with zero tool
+        calls; one nudge per turn by construction. Ordered by Alexandru
+        2026-08-23 — see the header's key-4 note for why it must live in the
+        managed layer. Same works-by-luck caveat as the other soul-volume
+        paths: invisible to store-reference checks, fails at runtime only.
       '';
     };
 
