@@ -109,6 +109,94 @@ pregătit ca un al treilea picior extern să fie doar „împinge aceleași obie
    choir (NU în directorul publicat — e metadată în clar) și în git-ul
    indexului nu intră (e derivat + mare).
 
+## Transport — verificat din repo (2026-08-23, Task 1)
+
+Verificarea s-a făcut DIN REPO + din bytes-ii reali ai `rrsync`-ului din store,
+fără să atingă niciun host. Trei întrebări: unde publică choir, cum ancorează
+rpi5, ce permite de fapt rrsync-ul.
+
+**1. Unde publică choir cifrotextul.**
+`services.sancta-soul-mirror.localDir`, default `/var/lib/sancta/soul-mirror`
+(`modules/services/sancta-soul-mirror.nix:248-252`), creat de tmpfiles ca
+`d ${cfg.localDir} 0700 ${cfg.user} - -` (`:290-292`) — deci **700, owner
+`sancta`**, exact userul sub care va rula și arhivatorul. Pe host e activat în
+`hosts/sancta-choir/configuration.nix:236-242` cu `user = "sancta"` și un
+`pullPubKey` REAL (nu placeholder) — endpoint-ul e viu, nu inert.
+
+**2. Endpoint-ul — comanda forțată, citată** (`sancta-soul-mirror.nix:301-304`):
+
+```nix
+users.users.${cfg.user}.openssh.authorizedKeys.keys =
+  mkIf (lib.hasPrefix "ssh-" cfg.pullPubKey) [
+    ''restrict,command="${rrsync}/bin/rrsync -ro ${cfg.localDir}" ${cfg.pullPubKey}''
+  ];
+```
+
+Receptorul: `hosts/rpi5-full/soul-mirror-pull.nix` — `remoteUser = "sancta"`,
+`remoteHost = "116.203.223.113"` (IP PUBLIC, deliberat nu nume de tailnet:
+`:157-164`), `remoteDir = "/"` interpretat RELATIV la rădăcina restricționată
+(`:167-182`), tras cu `rsync -az -e "$SSH" "$REMOTE:$REMOTE_DIR" "$VAULT/"`
+(`:92-95`).
+
+**3. Constrângerea reală a rrsync-ului** (citită din
+`/nix/store/…-rrsync-3.4.1/bin/rrsync`, nu din memorie):
+
+- `arg_parser.add_argument('dir', metavar='DIR', …)` (`:376`) — **UN SINGUR**
+  director restricționat, pozițional. Nu există „a doua rădăcină" într-o
+  comandă forțată.
+- `os.chdir(args.dir)` (`:203`); în `validated_arg` (`:295-307`) orice `..`
+  omoară sesiunea, iar un argument absolut e RE-ANCORAT sub `args.dir`
+  (`arg = args.dir + arg`). Confinarea e reală, nu convențională.
+- `short_disabled_subdir = 'KLk'` (`:30`) — pe rădăcină ≠ `/` se dezactivează
+  doar opțiunile de symlink (`--copy-links`/`--copy-dirlinks`/
+  `--keep-dirlinks`). **Recursivitatea NU e dezactivată**: `-a` (⊃ `-r`) coboară
+  liber în subdirectoare.
+
+**4. Sondă locală — comportament, nu doar cod** (2026-08-23; niciun host atins:
+un shell fals face exact ce face sshd sub comanda forțată — pune comanda
+clientului în `SSH_ORIGINAL_COMMAND` și lansează literal
+`rrsync -ro <dir-publicat>`; clientul e invocația EXACTĂ a lui rpi5,
+`rsync -az -e … "$REMOTE:/" "$VAULT/"`):
+
+| Ce s-a probat | Rezultat |
+|---|---|
+| A. Pull cu `remoteDir="/"` peste un `soul-archive/2026/08/*.jsonl.age` imbricat | **ajunge tot**: tar-ul săptămânal + cele două obiecte + `MANIFEST.jsonl.age`, zero config nou |
+| B. Aceeași cheie cere un director FRATE (absolut) | respins — calea e re-ancorată sub rădăcină: `change_dir ".../published/tmp/.../secret-sibling" failed` |
+| C. Traversare cu `..` | respins — `do not use .. in arg` |
+| D. Scriere înapoi în endpoint | respins — `sending to read-only server is not allowed` |
+
+Adică: subdirectorul e liber ȘI confinarea rămâne întreagă. Decizia de mai jos
+nu se sprijină pe citit cod, ci pe B/C/D observate.
+
+**Decizia: arhiva stă SUB directorul publicat** —
+`/var/lib/sancta/soul-mirror/soul-archive/AAAA/LL/<sha256_cipher-16>.jsonl.age`.
+
+De ce nu al doilea endpoint: comanda forțată e per-CHEIE și rrsync ia un singur
+DIR, deci „al doilea director" înseamnă a doua pereche de chei → al doilea
+secret agenix pe rpi5 → a doua unitate de pull pe rpi5. Adică exact mecanica de
+pull pe care v1 a jurat să n-o atingă. Iar varianta „mut rădăcina rrsync pe un
+părinte comun" (`/var/lib/sancta`) ar deschide cheii de pull volumul sufletului
+însuși — lărgire de endpoint dincolo de directorul publicat, interzisă explicit.
+Subdirectorul e singura opțiune care nu costă nimic: recursivitatea e deja
+permisă, deci **zero schimbări pe rpi5**.
+
+Consecințe confirmate din cod, nu presupuse:
+
+- Obiectele ajung singure în `/var/lib/soul-mirror/soul-archive/AAAA/LL/` —
+  `remoteDir = "/"` + `-a` le duce fără nicio linie nouă de config.
+- **Nimic nu le taie**: AMBELE prune-uri (choir `sancta-soul-mirror.nix:131-132`,
+  rpi5 `soul-mirror-pull.nix:100-101`) globuiesc strict
+  `sancta-soul-*.tar.gz.age`. Arhiva nu e atinsă de niciunul — exact ce cere
+  „prune NU există prin design".
+- Dead-man-ul de staleness (`:119-146`) se uită la același glob de tar-uri
+  săptămânale: nemodificat, nederanjat.
+- Producătorul oglinzii tar-uiește din `soulRoot` = `/var/lib/sancta/.claude`,
+  care NU conține `localDir` — arhiva nu se auto-împachetează în oglindă.
+- Corolarul ascuțit: fiindcă rpi5 trage TOT ce e sub `localDir`, orice bucată de
+  text-clar pusă acolo pleacă de pe host. De asta manifestul canonic,
+  `last-run.json` și `INDEX.md` stau în `/var/lib/sancta/transcript-archive/`,
+  în AFARA directorului publicat.
+
 ## Precondiții verificate / de verificat
 
 - ✔ Producătorul oglinzii pe choir: viu (tar-uri săptămânale, ultimul 2026-08-16).
