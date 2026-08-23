@@ -201,6 +201,37 @@ in
         assertion = lib.hasPrefix "${mirror.localDir}/" "${cfg.publishedDir}/";
         message = "services.sancta-transcript-archive.publishedDir (${cfg.publishedDir}) must be under services.sancta-soul-mirror.localDir (${mirror.localDir}) — that directory is the ONLY thing rpi5's forced rrsync command can reach.";
       }
+      {
+        # codex P2 on #578: publishedDir lives under the mirror's 0700
+        # localDir, so a different archive user cannot traverse the parent —
+        # tmpfiles would create the child for the archive user and every run
+        # would then die at its first published-directory access. The user
+        # option's description already demands the match; demand it at eval.
+        assertion = cfg.user == mirror.user;
+        message = "services.sancta-transcript-archive.user (${cfg.user}) must equal services.sancta-soul-mirror.user (${mirror.user}) — publishedDir sits under the mirror's mode-0700 localDir, which only the mirror's user can traverse.";
+      }
+      {
+        # codex P2 on #578: the read-only-source contract, made structural in
+        # BOTH ancestor directions. A stateDir set to sourceDir or an ancestor
+        # of it would put that subtree in ReadWritePaths (defeating the
+        # sandbox guarantee); a stateDir UNDER sourceDir would additionally
+        # feed the producer its own plaintext manifest as a `*.jsonl` scan
+        # input. String-prefix comparison, same as the containment assertions
+        # above — dot-path tricks that survive it are refused at runtime by
+        # the producer's realpath check for the published dir, and the source
+        # dir is scanned read-only, so the residual risk is eval-visible
+        # misconfiguration, which these messages now name.
+        assertion =
+          !(lib.hasPrefix "${cfg.sourceDir}/" "${cfg.stateDir}/")
+          && !(lib.hasPrefix "${cfg.stateDir}/" "${cfg.sourceDir}/");
+        message = "services.sancta-transcript-archive.stateDir (${cfg.stateDir}) must be disjoint from sourceDir (${cfg.sourceDir}) in both directions — a writable state dir inside (or containing) the transcript tree defeats the read-only-source contract.";
+      }
+      {
+        assertion =
+          !(lib.hasPrefix "${cfg.sourceDir}/" "${cfg.publishedDir}/")
+          && !(lib.hasPrefix "${cfg.publishedDir}/" "${cfg.sourceDir}/");
+        message = "services.sancta-transcript-archive.publishedDir (${cfg.publishedDir}) must be disjoint from sourceDir (${cfg.sourceDir}) in both directions — the published tree is writable and pulled off-host; overlapping the source defeats both the sandbox and zero-knowledge.";
+      }
     ];
 
     # Both directories exist before the first beat, at 0700, owned by the
