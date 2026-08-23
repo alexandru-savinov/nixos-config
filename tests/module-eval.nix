@@ -1213,6 +1213,74 @@ let
           ];
         };
 
+    # Negative arm 5 — codex P2 on #578. publishedDir sits under the mirror's
+    # mode-0700 localDir, so an archive user that differs from the mirror's
+    # cannot traverse the parent: tmpfiles would create the child for the
+    # archive user and every run would then fail at its first
+    # published-directory access — a permanently failing timer that eval
+    # could have refused.
+    sancta-transcript-archive-user-mismatch-rejected =
+      shouldFail "transcript-archive: rejects a user different from the mirror's"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-soul-mirror.nix
+            ../modules/services/sancta-transcript-archive.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-soul-mirror.enable = true;
+              services.sancta-transcript-archive = {
+                enable = true;
+                user = "archiveuser";
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+              users.users.archiveuser = {
+                isSystemUser = true;
+                group = "archiveuser";
+              };
+              users.groups.archiveuser = { };
+            }
+          ];
+        };
+
+    # Negative arm 6 — codex P2 on #578, the read-only-source contract. A
+    # stateDir inside the transcript tree would put that subtree in
+    # ReadWritePaths (defeating the sandbox guarantee the module header
+    # promises) and would additionally feed the producer its own plaintext
+    # manifest as a `*.jsonl` scan input on the next beat.
+    sancta-transcript-archive-state-in-source-rejected =
+      shouldFail "transcript-archive: rejects a stateDir inside the source tree"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-soul-mirror.nix
+            ../modules/services/sancta-transcript-archive.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-soul-mirror.enable = true;
+              services.sancta-transcript-archive = {
+                enable = true;
+                stateDir = "/var/lib/sancta/.claude/projects/archive-state";
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
     # ── claude-code-managed-settings ────────────────────────────────
     # /etc/claude-code/managed-settings.json exists specifically because a
     # running Claude Code session rewrites ~/.claude/settings.json from its
