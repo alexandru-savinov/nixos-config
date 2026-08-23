@@ -69,6 +69,65 @@ plaintext on the wire or at rest off-host.
       `INDEX.md` stay in `/var/lib/sancta/transcript-archive/`, outside the
       published dir. Only ciphertext is publishable.
 
+## Task 3 — the module + timer
+
+- [x] `modules/services/sancta-transcript-archive.nix`: oneshot + DAILY timer
+      (`Persistent=true`), `User=sancta`, `ExecStartPre test -x`, `flock
+      --nonblock --conflict-exit-code 0`, `ReadWritePaths` = exactly the two
+      archive directories, no network (`RestrictAddressFamilies=AF_UNIX`),
+      `onFailure` into the mirror's existing alert path.
+- [x] Soul-mount gate: `after`/`requires` on `sancta-soul-mount.service` +
+      `ConditionPathIsMountPoint`, like every other soul-reading unit.
+- [x] Recipients REUSED from `services.sancta-soul-mirror.recipients` (one
+      source, no parallel option to drift) + build assertion `≥ 2`.
+- [x] Wired into `hosts/sancta-choir/configuration.nix`.
+- [x] `tests/execstart-path-contracts.nix` entry (interpreter `bash` + the 13
+      bare commands the script actually calls) and the
+      `sancta-transcript-archive` row in `bin/wq-tick`'s `SCRIPTS` map (INDEX
+      repo — the only check anywhere that reads the off-store script's REAL
+      bytes).
+- [x] `tests/module-eval.nix`: one wiring block (16 checks) + FOUR negative
+      arms.
+
+**The bug this task actually found, before any of it was written.** The
+producer's original contract took recipients as a space-separated env var. The
+mirror's second recipient is `ssh-ed25519 AAAA…` — it CONTAINS A SPACE — so the
+real list cannot survive that shape. Reproduced first, fixed second:
+
+```
+--- A: space-split (the script's original contract) ---
+elements: 3
+age: error: malformed SSH recipient: "ssh-ed25519": ssh: no key found
+exit=1
+--- B: recipients FILE (age -R) ---
+exit=0
+```
+
+The unit now passes `SANCTA_ARCHIVE_RECIPIENTS_FILE` (a store path holding
+public keys only) and the producer takes `age -R`. Verified on the EXACT file
+the rendered unit passes, not on a copy — the same store path the unit names,
+built and read back:
+
+```
+built: /nix/store/wsp49…-sancta-transcript-archive-recipients
+same path as the unit passes: YES
+age1d3qlm08ncrd5ksk4mzypzlx7n8lge2yqd0ejsfvcanz03a9g3csqq2pwtq
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal
+age -R OK (316 bytes)
+```
+
+The fixture test grew arm 6c for it (throwaway ssh key + throwaway age key in a
+temp dir): **51 passed, 0 failed, 1 pending** (the pending one is still Task 4's
+handler).
+
+**Ordering note, deliberately non-silent.** `bin/wq-tick`'s contract-drift
+handler reads the manifest from `origin/main`, so between the INDEX-repo commit
+and this PR's merge there IS no entry for this unit. That case used to be a
+flat failure; it now splits on whether the unit is actually deployed on the
+host — real drift if it is, a REPORTED "pending merge" note if it is not. A row
+that never stops being pending stays visible in the note rather than going
+quiet.
+
 ## Checks run
 
 **Task 1 — the endpoint simulated locally against the real `rrsync 3.4.1`**, no
@@ -104,5 +163,30 @@ or write. The decision rests on B/C/D observed, not on reading the source.
 Every line-anchored citation in this body and in the design doc is checked
 mechanically against the real file bytes (21/21 anchors OK) — one cited range
 was off by one line and was corrected rather than left to rot.
+
+**Task 3 — the module, checked against the RENDERED unit rather than the source:**
+
+```
+$ nix build .#checks.x86_64-linux.module-eval -L          → exit 0
+  ✓ sancta-transcript-archive-choir-wiring
+  ✓ sancta-transcript-archive-single-recipient-rejected
+  ✓ sancta-transcript-archive-plaintext-state-in-published-dir-rejected
+  ✓ sancta-transcript-archive-published-outside-mirror-rejected
+  ✓ sancta-transcript-archive-without-mirror-rejected
+
+$ nix build .#checks.x86_64-linux.execstart-path-contract -L   → exit 0
+  [ok] sancta-choir/system/sancta-transcript-archive: PATH= (real rendered
+       text) provides interpreter 'bash' + 13 command(s)
+  execstart-path-contract: ok — self-tests passed, all in-scope units satisfy
+  their declared contract, coverage floor met (4 unit(s)).
+```
+
+The four negative arms are the point: each one is a config that LOOKS fine and
+would be wrong in a way nothing at runtime would report — a single-recipient
+list (the mirror's own prefix assertion passes on it), a `stateDir` moved
+inside the published tree (rpi5 would pull the plaintext manifest), a
+`publishedDir` outside it (rpi5 would pull nothing and the archive would exist
+only on the host it backs up), and the mirror disabled (no endpoint at all).
+All four fail the build.
 
 - `nix fmt` / `nix flake check` — per task, see commits.

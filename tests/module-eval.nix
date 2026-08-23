@@ -920,6 +920,294 @@ let
           ];
         };
 
+    # ── sancta-transcript-archive ─────────────────────────────────
+    # The verbatim transcript (530 MB, ~0.5 GB/month) lives on ONE volume and
+    # the weekly mirror tar excludes it by design, so until this unit it had no
+    # second copy anywhere. These assertions pin the wiring that decides whether
+    # the archive is (a) produced at all, (b) actually carried to rpi5, and
+    # (c) unable to leak in clear or to damage the source — the three ways this
+    # can be quietly wrong while every unit still reports green.
+    sancta-transcript-archive-choir-wiring =
+      let
+        choir = self.nixosConfigurations.sancta-choir.config;
+        svc = choir.systemd.services.sancta-transcript-archive;
+        timer = choir.systemd.timers.sancta-transcript-archive;
+        soulRoot = toString choir.services.sancta-soul-volume.mountPoint;
+        archiveScript = "${soulRoot}/index/bin/transcript-archive";
+        sourceDir = "${soulRoot}/projects";
+        localDir = choir.services.sancta-soul-mirror.localDir;
+        publishedDir = "${localDir}/soul-archive";
+        stateDir = "/var/lib/sancta/transcript-archive";
+        env = svc.serviceConfig.Environment or [ ];
+
+        checks = {
+          # Without the mount, the underlay directory is empty: a scan finds no
+          # transcripts, and but for the producer's own empty-source guard the
+          # run would exit 0 "healthy" while the guard read the same emptiness
+          # and confirmed it. `requires` alone does not close this — a
+          # ConditionPathExists-skipped mount still satisfies Requires=.
+          mountGated = svc.unitConfig.ConditionPathIsMountPoint or null == soulRoot;
+          requiresMount = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
+
+          # THE TRANSPORT FACT. The objects reach rpi5 only because they sit
+          # under the mirror's localDir: the forced command is
+          # `rrsync -ro <localDir>` and the puller asks for remoteDir = "/".
+          # Move them one directory up or sideways and the archive still looks
+          # perfect on this host while no second copy exists anywhere.
+          publishedUnderMirror =
+            (choir.services.sancta-transcript-archive.publishedDir) == publishedDir
+            && nixpkgs.lib.hasPrefix "${localDir}/" "${publishedDir}/";
+
+          # THE ZERO-KNOWLEDGE FACT, the same relation read the other way. The
+          # canonical manifest, the heartbeat and INDEX.md are plaintext
+          # metadata (project names, session ids, sizes, a timeline); rpi5
+          # pulls EVERYTHING under localDir, so they must live outside it.
+          stateOutsidePublished =
+            (choir.services.sancta-transcript-archive.stateDir) == stateDir
+            && !(nixpkgs.lib.hasPrefix "${localDir}/" "${stateDir}/");
+
+          # Exactly the two archive directories, as directories (rename(2)
+          # needs write on the CONTAINING directory — reproduced live in this
+          # repo on 2026-08-20) and `-` prefixed (a bare path that does not
+          # exist yet fails the ProtectSystem=strict bind-mount before the unit
+          # can produce its own honest error). Exact list equality so that
+          # WIDENING it is a failing change that has to be argued for.
+          writablePathsExact =
+            (svc.serviceConfig.ReadWritePaths or [ ]) == [
+              "-${publishedDir}/"
+              "-${stateDir}/"
+            ];
+
+          # "NEVER delete, move or rewrite a source transcript" as a property of
+          # the SANDBOX, not a promise in a script: ProtectSystem=strict makes
+          # everything read-only except ReadWritePaths, and the source tree is
+          # under neither entry. This is the falsifiable form of the module's
+          # deliberate choice not to write a redundant ReadOnlyPaths line.
+          sourceNotWritable =
+            (svc.serviceConfig.ProtectSystem or "") == "strict"
+            && !(builtins.any
+              (p: nixpkgs.lib.hasPrefix (nixpkgs.lib.removePrefix "-" p) "${sourceDir}/")
+              (svc.serviceConfig.ReadWritePaths or [ ]));
+
+          # NO NETWORK. This producer reads local files, encrypts to public keys
+          # and writes local files; rpi5 dials IN for the transport. Anything
+          # that tried to send a transcript anywhere fails at the socket.
+          noNetwork = (svc.serviceConfig.RestrictAddressFamilies or [ ]) == [ "AF_UNIX" ];
+
+          # DAILY. The guard alarms when the heartbeat is older than two days,
+          # which only leaves room for one missed beat if the cadence is daily —
+          # the weekly shape borrowed from the mirror would tolerate a week of
+          # silence before anything noticed.
+          timerDaily = (timer.timerConfig.OnCalendar or "") == "*-*-* 04:20:00";
+
+          # A missed beat otherwise waits a full day, and the two-day heartbeat
+          # threshold turns one missed beat into an alarm.
+          catchesUp = (timer.timerConfig.Persistent or false) == true;
+
+          # CONCURRENCY, both properties load-bearing: `--nonblock` (never queue
+          # behind a running run) and `--conflict-exit-code 0` (a beat skipped
+          # while a hand-run is in flight is the system working, not a failure).
+          execIsFlockWrappedScript =
+            (svc.serviceConfig.ExecStart or "")
+            == "${pkgs.util-linux}/bin/flock --nonblock --conflict-exit-code 0 ${stateDir}/transcript-archive.lock ${archiveScript}";
+
+          # ExecStart is deliberately NOT a store path (the script lives on the
+          # soul volume in the INDEX repo), so tests/unit-script-refs.nix is
+          # blind to it. Same replacement guard as the other two soul units.
+          hasExistenceGuard = (svc.serviceConfig.ExecStartPre or "") == "${pkgs.coreutils}/bin/test -x ${archiveScript}";
+
+          # THE ENV CONTRACT the INDEX script reads. A drift here breaks the
+          # script while the unit itself stays green — except for the source
+          # path, where a wrong value means scanning an empty directory, which
+          # the producer treats as an error rather than a clean run.
+          hasEnvContract =
+            builtins.elem "SANCTA_ARCHIVE_SOURCE=${sourceDir}" env
+            && builtins.elem "SANCTA_ARCHIVE_PUBLISHED=${publishedDir}" env
+            && builtins.elem "SANCTA_ARCHIVE_STATE=${stateDir}" env
+            && builtins.elem "SANCTA_ARCHIVE_CLOSED_AFTER=172800" env;
+
+          # RECIPIENTS AS A FILE, and it is the mirror's list verbatim.
+          # A recipient can contain a SPACE — the mirror's second recipient is
+          # an `ssh-ed25519 AAAA…` pubkey — so the space-separated env form
+          # cannot represent the real list at all (reproduced 2026-08-23:
+          # `age: error: malformed SSH recipient: "ssh-ed25519"`). This asserts
+          # both halves: the file form is what the unit passes, and its
+          # CONTENTS are exactly the mirror's recipients, one per line.
+          recipientsFileIsMirrorList =
+            let
+              prefix = "SANCTA_ARCHIVE_RECIPIENTS_FILE=";
+              entry = nixpkgs.lib.findFirst (e: nixpkgs.lib.hasPrefix prefix e) null env;
+              file = if entry == null then null else nixpkgs.lib.removePrefix prefix entry;
+              mirrorRecipients = choir.services.sancta-soul-mirror.recipients;
+            in
+            file != null
+            && builtins.readFile file == nixpkgs.lib.concatStringsSep "\n" mirrorRecipients + "\n"
+            && builtins.length mirrorRecipients >= 2;
+
+          # A daily unit that touches no network can afford a loud failure path,
+          # unlike the 15-minute statusline refresher. Its failure means the
+          # second copy silently stopped being made.
+          alertsOnFailure = builtins.elem "sancta-soul-mirror-alert@%N.service" (svc.onFailure or [ ]);
+
+          # THE PATH CONTRACT at the input end — `bash` first and not optional,
+          # since the script's `#!/usr/bin/env bash` shebang resolves the
+          # INTERPRETER through this PATH. What each package supplies is checked
+          # against the rendered PATH= by tests/execstart-path-contract.nix;
+          # this pins that they are wired at all.
+          pathHasContract =
+            let
+              p = svc.path or [ ];
+            in
+            builtins.all (pkg: builtins.elem pkg p) [
+              pkgs.bash
+              pkgs.age
+              pkgs.jq
+              pkgs.coreutils
+              pkgs.findutils
+            ];
+
+          # Both directories exist, 0700, owned by the archiving user, before
+          # the first beat: under ProtectSystem=strict the mirror's localDir is
+          # read-only to this unit, so a first run on a fresh host could not
+          # create the published subdirectory itself.
+          tmpfilesCreateBothDirs =
+            let
+              rules = choir.systemd.tmpfiles.rules or [ ];
+            in
+            builtins.elem "d ${stateDir} 0700 sancta - -" rules
+            && builtins.elem "d ${publishedDir} 0700 sancta - -" rules;
+        };
+
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir transcript-archive wiring — failed checks: ${builtins.toJSON failed}";
+
+    # Negative arm 1 — the length check the mirror's own assertion cannot make.
+    # services.sancta-soul-mirror asserts only that every entry LOOKS like a key
+    # (`builtins.all` over a prefix test), which passes on a one-entry list and
+    # on an empty one. Reusing that list without a length check would ship an
+    # archive one lost key away from unreadable, and nothing would say so until
+    # a restore was attempted.
+    sancta-transcript-archive-single-recipient-rejected =
+      shouldFail "transcript-archive: rejects a single-recipient list"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-soul-mirror.nix
+            ../modules/services/sancta-transcript-archive.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-soul-mirror = {
+                enable = true;
+                # One entry, and a REAL key shape — so the mirror's own prefix
+                # assertion passes and only the length check can catch it.
+                recipients = [ "age1d3qlm08ncrd5ksk4mzypzlx7n8lge2yqd0ejsfvcanz03a9g3csqq2pwtq" ];
+              };
+              services.sancta-transcript-archive.enable = true;
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
+    # Negative arm 2 — the zero-knowledge invariant, made unrepresentable rather
+    # than merely forbidden. rpi5's puller asks for remoteDir = "/", so anything
+    # under the published directory leaves this host on the next pull. A
+    # stateDir moved inside it would publish the canonical plaintext manifest —
+    # project names, session ids, sizes, a timeline — with every unit still
+    # green and no check anywhere failing. It must fail at build time.
+    sancta-transcript-archive-plaintext-state-in-published-dir-rejected =
+      shouldFail "transcript-archive: rejects a stateDir under the published mirror dir"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-soul-mirror.nix
+            ../modules/services/sancta-transcript-archive.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-soul-mirror.enable = true;
+              services.sancta-transcript-archive = {
+                enable = true;
+                stateDir = "/var/lib/sancta/soul-mirror/transcript-archive";
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
+    # Negative arm 3 — the same relation read the other way. Objects written
+    # OUTSIDE the mirror's localDir are unreachable by the forced rrsync
+    # command, so rpi5 never pulls them: the archive would look complete on the
+    # host it is meant to be a backup OF, and exist nowhere else.
+    sancta-transcript-archive-published-outside-mirror-rejected =
+      shouldFail "transcript-archive: rejects a publishedDir outside the mirror's localDir"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-soul-mirror.nix
+            ../modules/services/sancta-transcript-archive.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-soul-mirror.enable = true;
+              services.sancta-transcript-archive = {
+                enable = true;
+                publishedDir = "/var/lib/sancta/soul-archive";
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
+    # Negative arm 4 — without the mirror there is no published directory, no
+    # 0700 tmpfiles rule for it and no rrsync endpoint. The unit would write
+    # ciphertext into a directory nothing serves and nothing pulls: a backup
+    # that exists only on the host it is backing up.
+    sancta-transcript-archive-without-mirror-rejected =
+      shouldFail "transcript-archive: requires the soul-mirror (endpoint + published dir)"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-soul-mirror.nix
+            ../modules/services/sancta-transcript-archive.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-soul-mirror.enable = false;
+              services.sancta-transcript-archive.enable = true;
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
     # ── claude-code-managed-settings ────────────────────────────────
     # /etc/claude-code/managed-settings.json exists specifically because a
     # running Claude Code session rewrites ~/.claude/settings.json from its
