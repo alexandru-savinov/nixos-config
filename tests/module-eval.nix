@@ -726,13 +726,20 @@ let
           requiresMount = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
 
           # THE WAL × SANDBOX RELATION, which is where this class of bug lives.
-          # Both directories, not the files inside them: bin/wq-tick writes
-          # queue.db through SQLite in WAL mode (which creates and renames -wal
-          # and -shm siblings, plus the flock file), and the statusline-refresh
-          # handler writes its state through mktemp-a-sibling-then-rename.
-          # rename(2) and sibling-creation both need write on the CONTAINING
-          # DIRECTORY — a file-granular entry cannot satisfy either, which this
-          # repo already reproduced live on 2026-08-20 for the statusline unit.
+          # Directories where a handler creates/renames siblings: bin/wq-tick
+          # writes queue.db through SQLite in WAL mode (which creates and
+          # renames -wal and -shm siblings, plus the flock file), and the
+          # statusline-refresh handler writes its state through
+          # mktemp-a-sibling-then-rename. rename(2) and sibling-creation both
+          # need write on the CONTAINING DIRECTORY — a file-granular entry
+          # cannot satisfy either, which this repo already reproduced live on
+          # 2026-08-20 for the statusline unit.
+          # FILE entries where the handler writes one inode in place, no
+          # rename (2026-08-23 review finding — both were missing, so the
+          # register series was measured-then-dropped every beat and the
+          # weekly orphan-check dead-lettered on bin/harta's EROFS):
+          # register-history.jsonl (appendFileSync) and HARTA.md
+          # (writeFileSync, O_TRUNC on the bound inode).
           # Asserted as exact list equality so that WIDENING it (to all of
           # index/, say) is also a failing change and has to be argued for,
           # not just typed.
@@ -741,6 +748,8 @@ let
               "-${orchestratorDir}/"
               "-${statuslineDir}/"
               "-${configRepo}/.git/"
+              "-${indexRoot}/register-history.jsonl"
+              "-${indexRoot}/HARTA.md"
             ];
 
           # Network is REQUIRED, un-narrowed: the freshness handler curls the
