@@ -10,11 +10,16 @@ directory rpi5 already pulls. Zero new transport, zero new keys, zero
 plaintext on the wire or at rest off-host.
 
 - Design: `docs/plans/2026-08-22-transcript-archive-design.md`
-- Plan: `docs/plans/2026-08-22-transcript-archive-plan.md`
+- Plan: `docs/plans/completed/2026-08-22-transcript-archive-plan.md`
 
 ## Open his-hand item (does NOT block this PR)
 
-- [ ] **rpi5 vault freshness probe — Alexandru's hand.** Prove
+- [x] **rpi5 vault freshness probe — DONE, Alexandru's hand, 2026-08-22.**
+      His Mac-side probe proved `/var/lib/soul-mirror` on rpi5 whole and
+      fresh: 4/4 `sancta-soul-*.tar.gz.age` tarballs, byte-identical to the
+      choir producer's copies. The original ask is kept below for the record.
+
+- ~~[ ]~~ **rpi5 vault freshness probe — Alexandru's hand.** Prove
       `/var/lib/soul-mirror` on rpi5 actually holds FRESH
       `sancta-soul-*.tar.gz.age` tarballs:
       `ls -lt /var/lib/soul-mirror/sancta-soul-*.tar.gz.age | head`.

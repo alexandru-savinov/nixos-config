@@ -126,7 +126,7 @@ in
     closedAfterSec = mkOption {
       type = types.ints.positive;
       default = 172800;
-      description = "A *.jsonl written to within this many seconds is LIVE and is never touched. 48h — the whole answer to \"the source changed mid-read\".";
+      description = "A *.jsonl written to within this many seconds is LIVE and is never touched. 48h — the whole answer to \"the source changed mid-read\". COUPLED to the archive-check guard: the soul repo's wq-tick handler reads the same SANCTA_ARCHIVE_CLOSED_AFTER value (its missing-session alarm fires at this threshold + 24h of margin for one missed daily beat), so tuning this option moves the guard with it — but tests/module-eval.nix pins the exact env string, so change BOTH together.";
     };
 
     onCalendar = mkOption {

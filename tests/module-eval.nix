@@ -1024,6 +1024,11 @@ let
             builtins.elem "SANCTA_ARCHIVE_SOURCE=${sourceDir}" env
             && builtins.elem "SANCTA_ARCHIVE_PUBLISHED=${publishedDir}" env
             && builtins.elem "SANCTA_ARCHIVE_STATE=${stateDir}" env
+            # CLOSED_AFTER is double-duty: the producer's live-file rule AND
+            # the archive-check guard's missing-session threshold (the guard
+            # reads the same variable and adds 24h of margin). If you retune
+            # closedAfterSec, update this pin too — the guard follows the
+            # value automatically; this string is the only thing that drifts.
             && builtins.elem "SANCTA_ARCHIVE_CLOSED_AFTER=172800" env;
 
           # RECIPIENTS AS A FILE, and it is the mirror's list verbatim.
