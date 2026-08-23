@@ -128,6 +128,119 @@ host — real drift if it is, a REPORTED "pending merge" note if it is not. A ro
 that never stops being pending stays visible in the note rather than going
 quiet.
 
+## Task 4 — the guard (INDEX repo: `bin/wq-tick`, `producers.json`, the wq queue)
+
+The producer is append-only and self-healing. This is the half that can LOSE.
+
+- [x] `archive-check` handler in `bin/wq-tick` — six alarms: closed session >72h
+      missing from the manifest (membership judged by `sha256_plain`, never by
+      "some object exists"); `last-run.json` older than 2d (the timer is DAILY,
+      so this tolerates one missed beat and no more — and manifest MTIME is
+      deliberately not the signal, since a healthy quiet week never touches it);
+      a row whose object is not on disk; an object whose NAME ≠ the sha256 of
+      its own bytes; a published snapshot stale against the canonical manifest;
+      an unmounted/empty source, which alarms and never reads "healthy".
+- [x] `producers.json` row `transcript-archive` → `/var/lib/sancta/transcript-archive/last-run.json`, max-age `2d`.
+- [x] Periodic queue row, period 6h (`wq add archive-check --payload '{"period":21600}' --unique maint:archive-check` → id 77).
+- [x] Negative arm proven LIVE on the real queue (below).
+
+**The name↔bytes check needs no key.** This is what cipher-hash naming bought:
+the object is named after the first 16 hex of the sha256 of its own ciphertext,
+so bit-rot, truncation and substitution are all detectable from the published
+bytes alone. The guard never decrypts anything and never holds a key.
+
+**A corrupt manifest short-circuits, and says so.** Three of the six alarms read
+their truth OUT of the manifest. If any line does not parse, reporting "0
+problems" from the rows that happened to survive would be a clean bill of health
+issued by a document we just admitted we cannot read.
+
+**Not a failure, but reported:** an object on disk with no manifest row. The
+producer documents this as the harmless side of its write order (object lands
+first; a crash before the row orphans it, and the next beat re-archives the
+source under a new name). Wasted bytes, nothing lost — counted and named in the
+note, never silent, never red.
+
+**Pending split, same shape and reason as `execstart-contract-check`.** The
+module's merge is the human's word; this handler ships now. Absent state dir +
+unit NOT deployed here → `ok:true` with `verified NOTHING` in the note, rather
+than passing quietly or crying wolf for the life of the PR. Absent state dir +
+unit DEPLOYED → red, because then the producer has never completed a run. The
+`producers.json` row is the other half and reads MISSING until deploy —
+deliberately, so the pending state is never invisible from both sides. (Recorded
+in `producers.json` under `_pending_2026_08_23`.)
+
+### Negative arm, live on the real queue
+
+Judged on the ROW, not on a process exit code — `wq-tick`'s dispatch loop
+catches handler failure via `Q.fail` and keeps draining, so "the tick exited
+nonzero" is a signal that does not exist here. Both facts in one run:
+
+```
+$ SANCTA_ARCHIVE_STATE=/tmp/archive-proof/state … node bin/wq-tick
+✗ #78 archive-check · ⚠ ARCHIVE MANIFEST CORRUPT: 1 unparseable/incomplete row(s)
+  at line 2 in /tmp/archive-proof/state/MANIFEST.jsonl — row/object/coverage
+  checks NOT evaluated; a manifest we cannot read certifies nothing
+stats: {"done":67,"pending":11}
+tick process exit code = 0          ← the handler failed; the PROCESS did not
+
+$ node bin/wq ls pending | jq '…'
+id=77 state=pending attempts=1/3 run_after=2026-08-23T01:33:38.991Z
+last_error=⚠ ARCHIVE MANIFEST CORRUPT: 1 unparseable/incomplete row(s) at line 2
+  in /tmp/archive-proof/state/MANIFEST.jsonl — row/object/coverage checks NOT
+  evaluated; a manifest we cannot read certifies nothing
+```
+
+### Both directions proven, not just one
+
+One arm is not a check. A guard that cannot pass is muted by the second week as
+surely as one that cannot fail is trusted forever — so
+`index/tests/archive-check-test.sh` builds ONE real archive with the REAL
+producer and throwaway age keys, then forks that healthy state per arm and
+breaks exactly one thing:
+
+```
+$ tests/archive-check-test.sh
+arm 0  ✓ healthy archive → ok:true · archive consistent: 2 row(s) · 2 object(s) …
+arm 1  ✓ stale heartbeat → ok:false · heartbeat 193h old (max 48h — the timer is DAILY)
+       ✓ missing heartbeat → ok:false · the producer's pulse is gone
+arm 2  ✓ row without its object → ok:false · 1 manifest row(s) whose object is NOT on disk
+arm 3  ✓ name ≠ sha256 of its bytes → ok:false   (one appended byte)
+       ✓ the recorded sha256_cipher is caught drifting too
+arm 4  ✓ stale snapshot → ok:false · published snapshot is STALE
+       ✓ snapshot absent → ok:false · nothing that can name them
+arm 5  ✓ uncovered closed session → ok:false, and the note NAMES it
+       ✓ the same session, still live (<72h) → ok:true      (the boundary, both sides)
+arm 6  ✓ empty source dir → ok:false · an empty source is NOT a clean scan
+       ✓ missing source dir → ok:false · soul volume unmounted?
+arm 7  ✓ corrupt manifest → ok:false, and says which checks it did NOT run
+arm 8  ✓ orphan object → still ok:true, but NAMED in the note
+arm 9  ✓ pending split, both sides
+arm 10 ✓ --run <unknown> → ok:false · no-handler
+
+archive-check-test: 22 passed, 0 failed
+```
+
+**Arm 9 caught a real bug in the handler, not in the test.** The
+"is this overridden?" flag folded in `SANCTA_ARCHIVE_SOURCE` and
+`SANCTA_ARCHIVE_PUBLISHED` alongside `SANCTA_ARCHIVE_STATE`, so setting either
+of the first two made the absent-state branch announce *"the unit IS deployed
+here"* on a host where it plainly was not. An alarm that states a false fact
+about the system is worse than no alarm. Each of the three exits now says only
+what it actually observed.
+
+The producer's own fixture test closes its last pending arm with this handler:
+**52 passed, 0 failed, 0 pending** (was 51/0/1). `wq-tick --run <kind>` was added
+for it — one handler, printed verdict, no claim and no DB write — which is also
+how each arm above is driven.
+
+**Cost is reported, never capped.** The handler hashes every closed source and
+every published object in full: 537 MB / 1784 files measured at 7.4s on
+2026-08-23, growing ~0.5 GB/month, at a 6h period. Bytes and seconds go in the
+note so the cost is watched as it grows; a silent top-N sample would read as
+"everything verified" while covering a shrinking fraction of the archive.
+`sh()`'s hard 60s timeout became a parameter for the same reason — a check that
+breaks once the archive gets big is not a check.
+
 ## Checks run
 
 **Task 1 — the endpoint simulated locally against the real `rrsync 3.4.1`**, no
