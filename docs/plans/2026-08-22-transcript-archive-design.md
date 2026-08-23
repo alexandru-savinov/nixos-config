@@ -199,12 +199,17 @@ Consecințe confirmate din cod, nu presupuse:
 
 ## Precondiții verificate / de verificat
 
-- ✔ Producătorul oglinzii pe choir: viu (tar-uri săptămânale, ultimul 2026-08-16).
+- ✔ Producătorul oglinzii pe choir: viu (tar-uri săptămânale; ultimul
+  2026-08-23, văzut în `/var/lib/sancta/soul-mirror/`).
 - ✔ Spațiu pe rpi5: NVMe 119 G, 54 G liberi (~9 ani la ritmul actual) — sondat 2026-08-22.
-- **⏳ Pull-ul pe rpi5:** de dovedit că `/var/lib/soul-mirror` conține tar-uri
-  PROASPETE (sondă la mâna lui / agentul de Mac). Dacă e gol: cheia pull e
-  neprovizionată și pull-ul se auto-suprimă tăcut — repararea devine Task 0,
-  altfel arhiva ar „pleca" spre un seif care nu trage.
+- **✔ Spațiu pe CHOIR** (întrebarea deschisă a revmux, măsurată 2026-08-23):
+  `/` are 75 G, 24 G liberi (67% folosit). Transcriptele (~0,5 GB/lună) și
+  arhiva (~0,5 GB/lună) cresc pe ACELAȘI disc, fără prune prin design ⇒
+  ~2 ani de aer la ritmul curent. Nu blochează v1; gardă de spațiu liber în
+  `archive-check` = element de backlog cu termen.
+- **✔ Pull-ul pe rpi5 — DOVEDIT 2026-08-22, sonda lui de pe Mac:** seiful
+  `/var/lib/soul-mirror` e întreg și proaspăt (4/4 tar-uri, byte-identice cu
+  producătorul de pe choir).
 - **✔ Alerta de staleness a pull-ului — SONDATĂ pe rpi5, 2026-08-22, mâna
   lui.** Verdict: dead-man-ul receptorului e VIU (3 rulări consecutive OK,
   20–22 aug, `status=0`; zero `Failed with result` în jurnal). Premisa

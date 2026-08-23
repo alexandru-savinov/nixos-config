@@ -185,9 +185,11 @@
         #
         # NOT transitive, and that is a fact about the script rather than a
         # narrower rule: bin/transcript-archive is a leaf. It invokes no other
-        # script by absolute path (read in full, 230 lines, 2026-08-23) — unlike
-        # bin/wq-tick above, which is a dispatcher and therefore had to declare
-        # its children's commands too.
+        # script by absolute path (read in full at soul-index commit 2da05e2,
+        # 315 lines, 2026-08-23 — a commit anchor, not a line count, so the
+        # claim stays checkable as the script grows) — unlike bin/wq-tick
+        # above, which is a dispatcher and therefore had to declare its
+        # children's commands too.
         #
         # Every BARE external command it invokes, in order of first appearance:
         #   date       — now_iso, `date -u +%s`, and the `date -u -d @<mtime>`
@@ -206,6 +208,10 @@
         #   basename   — derives the `session` field for the manifest row
         #   jq         — reads archived hashes out of the manifest, writes every
         #                row, the heartbeat, the snapshot bookkeeping and INDEX.md
+        #   realpath   — `-m` canonicalization behind the state-dir-inside-
+        #                published-dir refusal (the F1 boundary assertion)
+        #   mktemp     — the scan tempfile that lets find's exit status be
+        #                checked instead of swallowed (the F3 fix)
         # `read`, `mapfile`, `echo`, `printf`, `[`, `case` are bash builtins —
         # deliberately not listed (the recipients-file line counter is written
         # in pure bash for exactly this reason: it adds no PATH dependency).
@@ -227,6 +233,8 @@
             "rm"
             "basename"
             "jq"
+            "realpath"
+            "mktemp"
           ];
         };
 
