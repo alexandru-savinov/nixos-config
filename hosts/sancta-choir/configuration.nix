@@ -54,6 +54,7 @@
     ../../modules/services/sancta-gallery.nix # the rendered surface, declared instead of hand-started
     ../../modules/services/sancta-statusline-refresh.nix # keep the status bar's cached state true
     ../../modules/services/sancta-wq-tick.nix # beat the work queue without a live session
+    ../../modules/services/sancta-transcript-archive.nix # closed transcripts → encrypted objects rpi5 already pulls
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
   ];
 
@@ -291,6 +292,17 @@
   # counter read 7 on two consecutive nights with nothing reporting that the
   # beat itself had stopped.
   services.sancta-wq-tick.enable = true;
+
+  # The verbatim conversation gets a second copy. ~/.claude/projects (530 MB,
+  # ~0.5 GB/month) lives on exactly ONE volume and the weekly mirror tar
+  # excludes it by design — so today the raw transcript has no second leg at
+  # all. This archives closed sessions as age-encrypted, content-named objects
+  # UNDER the mirror's already-published directory, which means rpi5's existing
+  # pull carries them home with no new key, no second endpoint and no change to
+  # the pull mechanics. Recipients are the mirror's own list (one source), and
+  # the canonical plaintext manifest deliberately stays outside the published
+  # tree — rpi5 pulls everything published.
+  services.sancta-transcript-archive.enable = true;
 
   # The rendered surface. On 2026-07-26 three node processes served Sancta's
   # work and every one was PPID 1 — orphans of `setsid nohup`, started by hand,

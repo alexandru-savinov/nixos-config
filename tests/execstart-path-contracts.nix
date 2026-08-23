@@ -175,6 +175,61 @@
         # `kill`, `mapfile`, `echo`, `cd`, `[`, `trap` are bash builtins, same
         # exclusion as above. `flock` and `test` are invoked by full store path
         # from the unit itself, so neither is a $PATH lookup.
+        # sancta-transcript-archive — modules/services/sancta-transcript-archive.nix.
+        # ExecStart is `${pkgs.util-linux}/bin/flock … <lockfile> <script>`:
+        # store-path PROGRAM token, two off-store absolute tokens after it, so
+        # in scope by the "later non-store absolute token" rule — same shape as
+        # sancta-wq-tick. The interpreter is NOT null: the script is invoked
+        # directly and its `#!/usr/bin/env bash` shebang makes `env` resolve
+        # `bash` through this unit's $PATH.
+        #
+        # NOT transitive, and that is a fact about the script rather than a
+        # narrower rule: bin/transcript-archive is a leaf. It invokes no other
+        # script by absolute path (read in full, 230 lines, 2026-08-23) — unlike
+        # bin/wq-tick above, which is a dispatcher and therefore had to declare
+        # its children's commands too.
+        #
+        # Every BARE external command it invokes, in order of first appearance:
+        #   date       — now_iso, `date -u +%s`, and the `date -u -d @<mtime>`
+        #                that derives the object's YYYY/MM time key
+        #   sha256sum  — plaintext hash (idempotence), ciphertext hash (the
+        #                object's NAME), manifest hash (snapshot bookkeeping)
+        #   cut        — takes the hash off sha256sum's output
+        #   find       — `find "$SRC" -type f -name '*.jsonl' -print0` scan
+        #   sort       — `sort -z`, stable NUL-delimited scan order
+        #   stat       — `-c %Y` (mtime, the closed-session rule) and `-c %s`
+        #   mkdir      — state/published dirs and each YYYY/MM subdir
+        #   chmod      — 700 on the dirs, 600 on every object and the manifest
+        #   age        — the encryption itself (`-R <recipients file>`)
+        #   mv         — the tmp+rename that lands every object atomically
+        #   rm         — removes a tmp object when age produced empty bytes
+        #   basename   — derives the `session` field for the manifest row
+        #   jq         — reads archived hashes out of the manifest, writes every
+        #                row, the heartbeat, the snapshot bookkeeping and INDEX.md
+        # `read`, `mapfile`, `echo`, `printf`, `[`, `case` are bash builtins —
+        # deliberately not listed (the recipients-file line counter is written
+        # in pure bash for exactly this reason: it adds no PATH dependency).
+        # `flock` and `test` come from the unit itself by full store path, so
+        # neither is a $PATH lookup.
+        sancta-transcript-archive = {
+          interpreter = "bash";
+          commands = [
+            "date"
+            "sha256sum"
+            "cut"
+            "find"
+            "sort"
+            "stat"
+            "mkdir"
+            "chmod"
+            "age"
+            "mv"
+            "rm"
+            "basename"
+            "jq"
+          ];
+        };
+
         sancta-wq-tick = {
           interpreter = "node";
           commands = [
@@ -325,6 +380,14 @@
       "cut"
       "wc"
       "test"
+      # `sha256sum` and `stat` added 2026-08-23 for sancta-transcript-archive
+      # (object naming by ciphertext hash; mtime/size for the closed-session
+      # rule and the manifest row). Verified the way this file's header demands
+      # — from the real store path, not from memory:
+      # `ls $(nix eval --raw .#nixosConfigurations.sancta-choir.pkgs.coreutils)/bin`
+      # → both present (coreutils-9.8).
+      "sha256sum"
+      "stat"
     ];
     "findutils" = [ "find" "xargs" ];
     "gnused" = [ "sed" ];
@@ -333,6 +396,14 @@
     "util-linux" = [ "mount" "umount" "lsblk" "blkid" "fdisk" ];
     "curl" = [ "curl" ];
     "git" = [ "git" ];
+    # Added 2026-08-23 for sancta-transcript-archive. pname verified
+    # empirically, as this file's header demands:
+    # `nix eval --raw .#nixosConfigurations.sancta-choir.pkgs.age.pname` → "age"
+    # (the attribute name and the pname agree here, which is exactly the thing
+    # that cannot be assumed — pkgs.bash's pname is "bash-interactive").
+    # Binaries listed from the real store path: age, age-keygen (plus plugin
+    # binaries this repo does not use).
+    "age" = [ "age" "age-keygen" ];
     # Added 2026-08-22 for sancta-wq-tick (bin/sancta-reconnect's `pgrep -f` +
     # `ps -o ppid=`). pname verified empirically, as this file's header demands:
     # `nix eval .#nixosConfigurations.sancta-choir.pkgs --apply 'p: p.procps.pname'`
