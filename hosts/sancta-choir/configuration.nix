@@ -55,6 +55,7 @@
     ../../modules/services/sancta-statusline-refresh.nix # keep the status bar's cached state true
     ../../modules/services/sancta-wq-tick.nix # beat the work queue without a live session
     ../../modules/services/sancta-transcript-archive.nix # closed transcripts → encrypted objects rpi5 already pulls
+    ../../modules/services/sancta-archive-deadman.nix # the one archive watcher that does NOT need the soul mount
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
   ];
 
@@ -282,6 +283,12 @@
     "sancta-doctrine-guard.service"
     "sancta-soul-mirror.timer"
     "sancta-wq-tick.service"
+    # The archive dead-man (also a plain oneshot; same is-failed-first reader
+    # contract as doctrine-guard above). Surfacing it here covers the
+    # mounted-but-heartbeat-stale case in the status bar; in the mount-absent
+    # case the refresher itself may be silent, and `systemctl --failed` plus
+    # the journal remain the alarm that needs nothing.
+    "sancta-archive-deadman.service"
   ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
@@ -303,6 +310,15 @@
   # the canonical plaintext manifest deliberately stays outside the published
   # tree — rpi5 pulls everything published.
   services.sancta-transcript-archive.enable = true;
+
+  # The watcher for the watchers. Producer, mirror and every wq-tick guard of
+  # the archive are all — correctly — gated on the soul mount, which leaves one
+  # shared silence: a LUKS volume that fails to unlock takes the producer AND
+  # its guards down together, and nothing says so (2026-08-23 review,
+  # confidence 93). This unit is store-backed, mount-UNconditioned, writes
+  # nothing, and simply goes red when the mount is absent or the archive
+  # heartbeat's embedded ts goes stale. The red unit IS the alarm.
+  services.sancta-archive-deadman.enable = true;
 
   # The rendered surface. On 2026-07-26 three node processes served Sancta's
   # work and every one was PPID 1 — orphans of `setsid nohup`, started by hand,
