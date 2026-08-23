@@ -1359,17 +1359,44 @@ let
             nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
               (builtins.head (builtins.head (rendered.hooks.PostToolUse)).hooks).command;
 
+          # Key 4, re-litigated 2026-08-23 on Alexandru's explicit order (see
+          # the module header): the Stop-hook evidence gate. Guarded like the
+          # other soul-volume commands.
+          hasEvidenceGate =
+            (rendered.hooks.Stop or [ ])
+            == [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = guarded "/var/lib/sancta/.claude/hooks/evidence-gate.mjs";
+                  }
+                ];
+              }
+            ];
+          evidenceGateIsGuarded =
+            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
+              (builtins.head (builtins.head (rendered.hooks.Stop)).hooks).command;
+
           spinnerTipsNotInManagedFile = !(rendered ? spinnerTipsEnabled);
 
           # The hard limit this module promises in its own header: managed
-          # settings override the owner's file, so a key beyond the three
-          # agreed ones is a silent capability-removal, not a convenience.
-          # This fails loudly the moment a fourth key is added without also
+          # settings override the owner's file, so a key beyond the agreed
+          # ones is a silent capability-removal, not a convenience. This
+          # fails loudly the moment another key is added without also
           # updating this assertion — the reviewing human, not a rebuild.
-          exactlyThreeKeys = (builtins.attrNames rendered) == [
-            "hooks"
-            "statusLine"
-          ];
+          # Top level stays two attrs; the agreed hook events are exactly
+          # these three (attrNames sorts alphabetically).
+          exactlyAgreedKeys =
+            (builtins.attrNames rendered) == [
+              "hooks"
+              "statusLine"
+            ]
+            && (builtins.attrNames rendered.hooks) == [
+              "PostToolUse"
+              "Stop"
+              "UserPromptSubmit"
+            ];
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
