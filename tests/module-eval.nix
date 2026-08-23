@@ -657,7 +657,12 @@ let
             # queue bookkeeping (missing script, node import failure, a
             # ReadWritePaths bind-mount that won't start) writes nothing at all
             # and would stop as silently as the stall this repo just fixed.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service" env;
+            # sancta-archive-deadman.service joined on 2026-08-23: the
+            # mount-independent dead-man for the transcript archive. Its red
+            # state must reach the status bar in the mounted-but-heartbeat-
+            # stale case; in the mount-absent case this refresher itself may
+            # be silent, and systemctl --failed + the journal stay the alarm.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
@@ -1290,6 +1295,138 @@ let
           ];
         };
 
+    # ── sancta-archive-deadman ────────────────────────────────────
+    # The watcher for the watchers. Producer, mirror and every wq-tick guard
+    # of the archive are all gated on the soul mount, so a LUKS volume that
+    # fails to unlock silences producer AND guards together (2026-08-23
+    # review, confidence 93). This unit's value is exactly its LACK of
+    # dependencies — which makes "someone adds the mount gate back for
+    # consistency with the family" the one refactor these checks must turn
+    # into a red build.
+    sancta-archive-deadman-choir-wiring =
+      let
+        choir = self.nixosConfigurations.sancta-choir.config;
+        svc = choir.systemd.services.sancta-archive-deadman;
+        timer = choir.systemd.timers.sancta-archive-deadman;
+        soulRoot = toString choir.services.sancta-soul-volume.mountPoint;
+        heartbeat = "/var/lib/sancta/transcript-archive/last-run.json";
+        env = svc.serviceConfig.Environment or [ ];
+        execStart = toString (svc.serviceConfig.ExecStart or "");
+        script = builtins.readFile execStart;
+
+        checks = {
+          # THE POINT: no soul-mount coupling of ANY kind. Condition, wants,
+          # requires and after are each checked separately because each is a
+          # separate way the "consistency" refactor could arrive.
+          noMountCondition = (svc.unitConfig.ConditionPathIsMountPoint or null) == null;
+          noMountRequires = !(builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]));
+          noMountAfter = !(builtins.elem "sancta-soul-mount.service" (svc.after or [ ]));
+          noMountWants = !(builtins.elem "sancta-soul-mount.service" (svc.wants or [ ]));
+
+          # No onFailure chain either: sancta-soul-mirror-alert@ writes its
+          # feed line via a tool ON the soul volume. Any hook here hands the
+          # dead-man a dependency; the red unit itself is the whole alarm.
+          noFailureChain = (svc.onFailure or [ ]) == [ ];
+
+          # ENTIRELY store-backed — this is what makes unit-script-refs a
+          # real check for it, where the soul-side ExecStarts are invisible.
+          execIsStorePath = nixpkgs.lib.hasPrefix builtins.storeDir execStart;
+
+          # CONTENT ts, not mtime: the script must ask jq for .ts and must
+          # not read modification time anywhere — a hand `touch` on the
+          # heartbeat may never turn this green (the statusline's stale
+          # counter reading 7 for two nights behind a fresh mtime is the
+          # scar). Read from the realised script bytes, not from intent.
+          readsEmbeddedTs = nixpkgs.lib.hasInfix "jq" script && nixpkgs.lib.hasInfix ".ts" script;
+          neverReadsMtime = !(nixpkgs.lib.hasInfix "stat " script) && !(nixpkgs.lib.hasInfix "%Y" script);
+          checksMountpoint = nixpkgs.lib.hasInfix "mountpoint" script;
+
+          # WRITES NOTHING, structurally: strict sandbox, EMPTY writable set.
+          # The soul volume may be the thing that is absent; a watcher that
+          # writes anywhere can fail for reasons that are not its message.
+          writesNothing =
+            (svc.serviceConfig.ProtectSystem or "") == "strict"
+            && (svc.serviceConfig.ReadWritePaths or [ ]) == [ ];
+
+          noNetwork = (svc.serviceConfig.RestrictAddressFamilies or [ ]) == [ "AF_UNIX" ];
+
+          # THE CROSS-MODULE RELATION AS A TEST, not as a coupling: the
+          # module deliberately hardcodes its literals so it evaluates in a
+          # world where soul-volume / transcript-archive are broken or gone.
+          # Drift between the literals and the real options lands HERE.
+          soulMountMatchesVolume =
+            builtins.elem "SANCTA_DEADMAN_SOUL_MOUNT=${soulRoot}" env;
+          heartbeatMatchesArchiveState =
+            builtins.elem "SANCTA_DEADMAN_HEARTBEAT=${heartbeat}" env
+            && heartbeat == "${choir.services.sancta-transcript-archive.stateDir}/last-run.json";
+
+          # 3 days: one day AFTER the soul-gated archive-check guard's ~2-day
+          # threshold — so this firing first always means the primary guard
+          # was silent too, which is exactly the story worth a red unit.
+          maxAgeIsThreeDays = builtins.elem "SANCTA_DEADMAN_MAX_AGE_SEC=259200" env;
+
+          # The heartbeat must live OFF the soul volume, or the dead-man's
+          # evidence depends on the mount it watches.
+          heartbeatOffSoul = !(nixpkgs.lib.hasPrefix "${soulRoot}/" heartbeat);
+
+          # Daily + Persistent, after the producer's 04:20(+20min) slot.
+          timerDaily = (timer.timerConfig.OnCalendar or "") == "*-*-* 07:10:00";
+          catchesUp = (timer.timerConfig.Persistent or false) == true;
+
+          # Surfaced in the status bar for the mounted-but-stale case (in the
+          # mount-absent case the refresher itself may be silent, and
+          # systemctl --failed + the journal remain the dependency-free alarm).
+          statuslineSurfaced =
+            builtins.elem "sancta-archive-deadman.service"
+              choir.services.sancta-statusline-refresh.units;
+        };
+
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir archive-deadman wiring — failed checks: ${builtins.toJSON failed}";
+
+    # The module must evaluate with NO soul-volume, NO mirror, NO archive
+    # module in sight — standing alone in a broken world is its purpose.
+    sancta-archive-deadman-minimal = shouldEval "archive-deadman: minimal config, no soul modules" {
+      modules = [
+        ../modules/services/sancta-archive-deadman.nix
+        {
+          services.sancta-archive-deadman.enable = true;
+          users.users.sancta = {
+            isSystemUser = true;
+            group = "sancta";
+          };
+          users.groups.sancta = { };
+        }
+      ];
+    };
+
+    # Negative arm — the relation as an assertion (the 2026-07-31 lesson: the
+    # defect class hides in RELATIONS between settings). A heartbeat
+    # re-pointed under the soul mount quietly rebuilds the shared-gate defect:
+    # the watcher's evidence vanishes together with the thing it watches.
+    sancta-archive-deadman-heartbeat-on-soul-rejected =
+      shouldFail "archive-deadman: rejects a heartbeat under the soul mount"
+        {
+          modules = [
+            ../modules/services/sancta-archive-deadman.nix
+            {
+              services.sancta-archive-deadman = {
+                enable = true;
+                heartbeatFile = "/var/lib/sancta/.claude/transcript-archive/last-run.json";
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
     # ── claude-code-managed-settings ────────────────────────────────
     # /etc/claude-code/managed-settings.json exists specifically because a
     # running Claude Code session rewrites ~/.claude/settings.json from its
@@ -1368,17 +1505,44 @@ let
             nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
               (builtins.head (builtins.head (rendered.hooks.PostToolUse)).hooks).command;
 
+          # Key 4, re-litigated 2026-08-23 on Alexandru's explicit order (see
+          # the module header): the Stop-hook evidence gate. Guarded like the
+          # other soul-volume commands.
+          hasEvidenceGate =
+            (rendered.hooks.Stop or [ ])
+            == [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = guarded "/var/lib/sancta/.claude/hooks/evidence-gate.mjs";
+                  }
+                ];
+              }
+            ];
+          evidenceGateIsGuarded =
+            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
+              (builtins.head (builtins.head (rendered.hooks.Stop)).hooks).command;
+
           spinnerTipsNotInManagedFile = !(rendered ? spinnerTipsEnabled);
 
           # The hard limit this module promises in its own header: managed
-          # settings override the owner's file, so a key beyond the three
-          # agreed ones is a silent capability-removal, not a convenience.
-          # This fails loudly the moment a fourth key is added without also
+          # settings override the owner's file, so a key beyond the agreed
+          # ones is a silent capability-removal, not a convenience. This
+          # fails loudly the moment another key is added without also
           # updating this assertion — the reviewing human, not a rebuild.
-          exactlyThreeKeys = (builtins.attrNames rendered) == [
-            "hooks"
-            "statusLine"
-          ];
+          # Top level stays two attrs; the agreed hook events are exactly
+          # these three (attrNames sorts alphabetically).
+          exactlyAgreedKeys =
+            (builtins.attrNames rendered) == [
+              "hooks"
+              "statusLine"
+            ]
+            && (builtins.attrNames rendered.hooks) == [
+              "PostToolUse"
+              "Stop"
+              "UserPromptSubmit"
+            ];
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
