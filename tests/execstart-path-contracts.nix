@@ -396,6 +396,14 @@
       # → both present (coreutils-9.8).
       "sha256sum"
       "stat"
+      # `realpath` added 2026-08-23: the transcript-archive producer gained a
+      # state-dir-inside-published-dir refusal (`realpath -m` canonicalization,
+      # review finding F1) and the checker failed CLOSED with "PATH= does not
+      # provide: realpath" — the map was short again, same shape as `tail`
+      # above. Verified the way this file's header demands, not from memory:
+      # `ls $(nix eval --raw .#nixosConfigurations.sancta-choir.pkgs.coreutils.outPath)/bin`
+      # → realpath present (coreutils-9.8).
+      "realpath"
     ];
     "findutils" = [ "find" "xargs" ];
     "gnused" = [ "sed" ];
