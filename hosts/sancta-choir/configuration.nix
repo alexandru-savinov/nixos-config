@@ -155,13 +155,42 @@
     # scope running. Without it the default `stop` would tear down the whole
     # scope — i.e. lose the conversation — over one greedy grandchild.
     #
-    # WHY THESE CEILINGS. A healthy Sancta session sits around 400 MB RSS, so
-    # MemoryMax=3G is ~7.5x headroom: high enough that normal work never sees
-    # it, low enough that a leak cannot eat the host. MemoryHigh=2G is the
-    # first line of defence — it throttles and reclaims rather than killing, so
-    # a session drifting upward slows down (and shows up in the journal) before
-    # anything is OOM-killed. MemorySwapMax=1G stops a leak from being quietly
-    # absorbed by swap and turning into hours of thrash instead of a clean kill.
+    # WHAT IS AND IS NOT IN THIS CGROUP — and the #252 interaction. This host
+    # is an agent host that manages this very config, so the obvious worry is:
+    # does a ceiling here reproduce the Feb-2026 #252 incident (see
+    # boot.kernelPackages above), where an OOM-killed BUILD left corrupted
+    # store paths? It cannot. Nix here is multi-user with `store = auto`, and
+    # the session runs as `sancta` (uid 993, not root, no write access to
+    # /nix/store), so every `nix build` / `nixos-rebuild build` it issues is
+    # executed by nix-daemon: the builder processes are children of
+    # nix-daemon.service and are accounted to /system.slice/nix-daemon.service,
+    # NOT to this scope. Only the thin nix *client* is in here. Do not add a
+    # ceiling to nix-daemon.service expecting it to bound this session, and do
+    # not assume this ceiling bounds builds — they are separate cgroups on
+    # purpose.
+    #
+    # What that leaves in-scope is Claude Code itself plus client-side Nix
+    # EVALUATION, which is the real memory consumer and is easy to
+    # under-budget. Measured, not guessed:
+    #   * idle Sancta session ....................... ~390 MB RSS (ps, on host)
+    #   * one cold full-host flake evaluation ....... ~2.01 GiB peak RSS
+    #     (`nix eval --no-eval-cache …sancta-choir…system.build.toplevel.drvPath`)
+    #   * host total ................................ 7.57 GiB RAM + 7.8 GiB swap
+    # So a single routine "evaluate this host" turn already costs ~2.4 GiB
+    # combined. An earlier draft of this used MemoryHigh=2G/MemoryMax=3G, which
+    # would have put every ordinary eval into permanent throttling.
+    #
+    # WHY THESE CEILINGS. MemoryHigh=4G is ~1.6x that measured 2.4 GiB working
+    # peak, so normal work — including whole-flake evaluation — never throttles;
+    # it is the first line of defence and reclaims rather than kills, so a
+    # session drifting upward slows down and shows up in the journal before
+    # anything is OOM-killed. MemoryMax=5G is ~13x the idle baseline, high
+    # enough that only a genuine runaway reaches it, and low enough that on a
+    # 7.57 GiB host the rest of the system (tailscaled, nix-daemon, herdr)
+    # keeps its ~2.5 GiB and the box stays reachable. MemorySwapMax=2G absorbs
+    # an eval spike without letting a leak be quietly swallowed by the 7.8 GiB
+    # of swap and turned into hours of thrash instead of a clean kill.
+    # Re-measure these if the flake grows substantially.
     #
     # LIMITATION: this does NOT make the session survive a tailscaled restart.
     # The scope's cgroup survives, but the pty is still owned by the ssh
@@ -178,11 +207,21 @@
         exit 1
       fi
 
-      exec ${config.systemd.package}/bin/systemd-run --scope --quiet \
+      # A scope that ended in `failed` (e.g. a stop that outran TimeoutStopSec)
+      # is retained by systemd under its fixed name: the guard above correctly
+      # sees "not active", and then systemd-run cannot create the unit, leaving
+      # the launcher wedged until someone runs reset-failed by hand. --collect
+      # unloads the unit after it ran even when it failed; the explicit
+      # reset-failed clears any stale unit predating this option. Both are
+      # no-ops in the normal case.
+      ${config.systemd.package}/bin/systemctl reset-failed sancta-session.scope \
+        >/dev/null 2>&1 || true
+
+      exec ${config.systemd.package}/bin/systemd-run --scope --quiet --collect \
         --unit=sancta-session \
-        -p MemoryHigh=2G \
-        -p MemoryMax=3G \
-        -p MemorySwapMax=1G \
+        -p MemoryHigh=4G \
+        -p MemoryMax=5G \
+        -p MemorySwapMax=2G \
         -p OOMPolicy=continue \
         -p TimeoutStopSec=10 \
         /run/wrappers/bin/sudo -iu sancta \
