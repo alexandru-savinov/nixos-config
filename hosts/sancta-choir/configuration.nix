@@ -382,6 +382,22 @@
       # gone, so this bound only bites when Claude Code is genuinely stuck, and
       # the cost of being too short (a hard kill mid-flush) is far worse than
       # the cost of being too long (waiting on a session that was already dead).
+      #
+      # `sudo -iu sancta <script>` — ONE login shell, not two. `sudo -i` with a
+      # trailing command already runs the target's shell as a login shell and
+      # hands it the command via -c, so the older
+      # `sudo -iu sancta bash -lc <script>` nested a second login shell inside
+      # the first and sourced sancta's profile twice on every session start.
+      # Measured on the host, both forms currently produce an identical
+      # environment — same 7-entry PATH with no duplicates, same HOME
+      # (/var/lib/sancta), same cwd, same `claude` resolution
+      # (/etc/profiles/per-user/sancta/bin/claude) — so this is not a bug fix
+      # today. It is removing a latent one: the moment sancta's profile grows a
+      # non-idempotent side effect (spawning something, appending to a state
+      # file, printing a banner that becomes Claude Code's first input) the old
+      # form would do it twice per session. The login shell is still `-i`'s, so
+      # `claude` keeps resolving from sancta's home-manager PATH — never
+      # hardcode a /nix/store claude path here, it changes on every bump.
       exec ${config.systemd.package}/bin/systemd-run --scope --quiet --collect \
         --unit=sancta-session \
         -p MemoryHigh=4G \
@@ -390,7 +406,7 @@
         -p OOMPolicy=continue \
         -p TimeoutStopSec=45 \
         /run/wrappers/bin/sudo -iu sancta \
-        bash -lc /var/lib/sancta/.claude/index/bin/sancta-reconnect
+        /var/lib/sancta/.claude/index/bin/sancta-reconnect
     '')
   ];
 
