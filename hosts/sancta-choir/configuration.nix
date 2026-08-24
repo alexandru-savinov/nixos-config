@@ -158,8 +158,8 @@
     # It does NOT influence WHICH process the kernel picks. Under cgroup v2,
     # with memory.oom.group unset (the default, and deliberately left unset —
     # setting it would kill every process in the scope, the exact opposite of
-    # what we want), breaching MemoryMax makes the kernel choose the highest
-    # -badness process *within this cgroup*, which in practice means the
+    # what we want), breaching MemoryMax makes the kernel choose the
+    # highest-badness process *within this cgroup*, which in practice means the
     # largest RSS+swap. So the honest statement is: the biggest consumer in the
     # scope dies, and the scope survives it.
     #
