@@ -396,6 +396,55 @@
     useUserPackages = true;
   };
 
+  # earlyoom — userspace OOM killer, the paired half of OOMPolicy=continue on
+  # tailscaled (modules/services/tailscale.nix). Every Tailscale SSH tenant
+  # lives in tailscaled's cgroup, so a kernel OOM kill there used to fail and
+  # restart the daemon and sever every session (4 incidents, Aug 2026). Setting
+  # OOMPolicy=continue stops the teardown but also removes the restart that was
+  # incidentally reaping orphaned tenants — earlyoom is the deliberate
+  # replacement. It kills the real hog first, and a userspace SIGTERM/SIGKILL
+  # does not increment memory.events' oom_kill, so it never trips tailscaled's
+  # OOMPolicy. That is not a claim OOMPolicy can never fire — a kernel or
+  # cgroup-local OOM kill still increments the counter, which is why the
+  # per-session scope carries its own OOMPolicy=continue.
+  #
+  # Note the kill is SILENT on this headless host: earlyoom's largest-victim
+  # default will usually pick the agent session. Pair with a journal alert
+  # (`journalctl -u earlyoom -g sending`) or the soul-side freshness watch;
+  # the session is resumable, so the cost is visibility, not lost work.
+  #
+  # No boot.kernelParams needed here (unlike rpi5, whose firmware ships the
+  # memory controller off): /sys/fs/cgroup/system.slice/tailscaled.service/
+  # memory.max reads back on this host, so the cgroup2 memory controller and
+  # its accounting are already live.
+  #
+  # Thresholds intentionally match rpi5's for now; tuning them for this host's
+  # 8GB + 8GB zram is deliberately a separate change.
+  services.earlyoom = {
+    enable = true;
+    freeMemThreshold = 5;
+    freeSwapThreshold = 10;
+    enableNotifications = true;
+    extraArgs = [
+      # Verified live on this host: the daemon's comm is ".tailscaled-wra"
+      # (".tailscaled-wrapped" truncated to comm's 15 chars), NOT "tailscaled"
+      # — the naive spelling matches nothing on NixOS. "[.]" is a literal dot
+      # in POSIX ERE, used in preference to "\." because these args reach
+      # earlyoom via systemd's $EARLYOOM_ARGS expansion; a bracket expression
+      # carries no backslash for that unquoting pass to eat. This also covers
+      # the `be-child ssh` session supervisors, which share the daemon's comm;
+      # killing one severs a live SSH session without touching the process
+      # that ate the memory.
+      #
+      # No --prefer: the obvious candidate (claude) has a comm that is
+      # ambiguous with shadowed greps and other transients, so preferring it
+      # risks steering kills at the wrong process. Left to earlyoom's default
+      # largest-victim heuristic until there is a comm worth naming.
+      "--avoid"
+      "^(sshd|[.]tailscaled-wra|tailscaled)"
+    ];
+  };
+
   # Swap space (4GB for Open-WebUI + builds on 8GB VPS)
   swapDevices = [
     {
