@@ -274,11 +274,16 @@
           echo "sancta-session: prior sancta-session.scope is $state — stopping it and starting fresh" >&2
           ${config.systemd.package}/bin/systemctl stop sancta-session.scope \
             >/dev/null 2>&1 || true
-          # Bounded wait (~30s) for the unit to leave the running states. Do not
-          # loop forever: a scope that will not die is an operator problem, not
-          # something to spin on behind a silent prompt.
+          # Bounded wait (~90s) for the unit to leave the running states. This
+          # is a SAFETY NET around `systemctl stop` returning early or failing —
+          # stop itself blocks until the job completes — so its budget must stay
+          # strictly larger than TimeoutStopSec (45s below), or it would report
+          # "will not stop" while systemd is still legitimately waiting out the
+          # graceful window. Do not loop forever either: a scope that will not
+          # die is an operator problem, not something to spin on behind a silent
+          # prompt.
           i=0
-          while [ "$i" -lt 60 ]; do
+          while [ "$i" -lt 180 ]; do
             state="$(${config.systemd.package}/bin/systemctl show \
               -p ActiveState --value sancta-session.scope 2>/dev/null || true)"
             case "$state" in
@@ -308,13 +313,40 @@
       ${config.systemd.package}/bin/systemctl reset-failed sancta-session.scope \
         >/dev/null 2>&1 || true
 
+      # sancta-reconnect lives on the ENCRYPTED SOUL VOLUME — /var/lib/sancta/.claude
+      # is its own ext4 mount on /dev/mapper/sancta-soul, not part of the root
+      # filesystem. So "the script is missing" is a real boot-order state (the
+      # LUKS chain has not completed, the mount was skipped), not a hypothetical
+      # typo. Without this check the operator gets a bare
+      # `bash: .../sancta-reconnect: No such file or directory` from inside the
+      # new scope, with nothing tying it back to this wrapper — and a scope is
+      # created and immediately torn down for nothing. Check before exec'ing so
+      # the failure names itself like every other branch here does. (root can
+      # stat through the 0700 soul volume, so this is a real test.)
+      if [ ! -x /var/lib/sancta/.claude/index/bin/sancta-reconnect ]; then
+        echo "sancta-session: sancta-reconnect not found or not executable at /var/lib/sancta/.claude/index/bin/sancta-reconnect — the soul volume is probably not mounted. Check: systemctl status sancta-soul-mount.service; findmnt /var/lib/sancta/.claude" >&2
+        exit 1
+      fi
+
+      # TimeoutStopSec is the graceful window a REPLACED session gets before
+      # systemd escalates to SIGKILL, so it is the number that decides whether a
+      # mid-turn Claude Code is cut off mid-flush. Anchors: sancta-reconnect's
+      # own TERM/poll/KILL dance allows 5s (10 polls x 0.5s); this host's
+      # DefaultTimeoutStopSec is 90s. 45s sits deliberately between them — an
+      # order of magnitude more patient than the mechanism already in production
+      # for this exact job, while still half the host default so a wedged scope
+      # does not hold an operator for a minute and a half. It costs nothing on
+      # the normal path: `systemctl stop` returns as soon as the members are
+      # gone, so this bound only bites when Claude Code is genuinely stuck, and
+      # the cost of being too short (a hard kill mid-flush) is far worse than
+      # the cost of being too long (waiting on a session that was already dead).
       exec ${config.systemd.package}/bin/systemd-run --scope --quiet --collect \
         --unit=sancta-session \
         -p MemoryHigh=4G \
         -p MemoryMax=5G \
         -p MemorySwapMax=2G \
         -p OOMPolicy=continue \
-        -p TimeoutStopSec=10 \
+        -p TimeoutStopSec=45 \
         /run/wrappers/bin/sudo -iu sancta \
         bash -lc /var/lib/sancta/.claude/index/bin/sancta-reconnect
     '')
