@@ -250,6 +250,39 @@
         exit 1
       fi
 
+      # Validate the target BEFORE touching the prior scope. sancta-reconnect
+      # lives on the ENCRYPTED SOUL VOLUME — /var/lib/sancta/.claude is its own
+      # ext4 mount on /dev/mapper/sancta-soul, not part of the root filesystem —
+      # so "the script is missing" is a real boot-order state (the LUKS chain
+      # has not completed, the mount was skipped), not a hypothetical typo.
+      #
+      # ORDER IS THE POINT: this ran after the stop in an earlier revision,
+      # which meant a broken target cost the live session. The wrapper would
+      # reconcile away a perfectly good prior session and only then discover it
+      # had nothing to start in its place, leaving the user with neither. A
+      # precondition that can fail must be checked while failing is still free.
+      # (root stats through the 0700 soul volume, so this is a real test.)
+      if [ ! -x /var/lib/sancta/.claude/index/bin/sancta-reconnect ]; then
+        echo "sancta-session: sancta-reconnect not found or not executable at /var/lib/sancta/.claude/index/bin/sancta-reconnect — the soul volume is probably not mounted. Check: systemctl status sancta-soul-mount.service; findmnt /var/lib/sancta/.claude" >&2
+        exit 1
+      fi
+
+      # The "is the scope still running" predicate, in ONE place. It is consulted
+      # three times below (before the stop, inside the wait loop, and after it),
+      # and three hand-copied `case` lists would be three chances for the state
+      # set to drift apart on the next edit.
+      scope_running() {
+        case "''${1:-}" in
+          active | activating | deactivating | reloading) return 0 ;;
+          *) return 1 ;;
+        esac
+      }
+
+      scope_state() {
+        ${config.systemd.package}/bin/systemctl show \
+          -p ActiveState --value sancta-session.scope 2>/dev/null || true
+      }
+
       # RECONCILE, DO NOT REFUSE. This is the same n=1 contract sancta-reconnect
       # enforces at the process level (it kills any prior `claude --resume $SID`
       # outside its own ancestry, then execs a fresh one) — applied here at the
@@ -268,17 +301,27 @@
       # one, and say so in one line.
       #
       # `systemctl stop` is the right instrument: it TERMs every member and
-      # escalates to SIGKILL after TimeoutStopSec (10s, set below) — Claude Code
-      # installs a SIGTERM handler and can outlive a bare kill, which is exactly
-      # why sancta-reconnect does its own TERM/poll/KILL dance. The wait loop
-      # below is a safety net around `stop` returning early, and it refuses
-      # rather than racing if the old scope will not die.
+      # escalates to SIGKILL after TimeoutStopSec (45s, set below — see the
+      # sizing note there) — Claude Code installs a SIGTERM handler and can
+      # outlive a bare kill, which is exactly why sancta-reconnect does its own
+      # TERM/poll/KILL dance. The wait loop below is a safety net around `stop`
+      # returning early, and it refuses rather than racing if the old scope will
+      # not die.
       #
-      # Note the consequence, which matches sancta-reconnect's existing
-      # semantics: running this while a genuinely live session is attached
-      # REPLACES that session. On the normal path the Mac launcher never gets
-      # here — it focuses the existing agterm row instead of ssh'ing — so
-      # reaching this code already means "no row is attached".
+      # THE CONTRACT, stated honestly: a second launch REPLACES the prior
+      # session. That is the same n=1 rule sancta-reconnect has always enforced,
+      # not a special case for orphans — this wrapper simply applies it one level
+      # up, at the scope, because a scope cannot be replaced while the old one
+      # holds the unit name.
+      #
+      # Do not weaken this into "reaching this code means no row is attached".
+      # The Mac launcher's agterm dedup makes that the COMMON path, not a
+      # guarantee: its own inline-ssh fallback runs the remote command directly
+      # in a terminal whenever agterm is unusable, and such a session owns no
+      # agterm row at all. So a user genuinely can reach this with a live session
+      # running elsewhere, and that session will be replaced. Replacing is the
+      # designed behaviour; it just must not be justified by a claim that is only
+      # usually true.
       #
       # Residual race: two near-simultaneous launches can interleave such that
       # the second stops the scope the first has just created. n=1 still holds
@@ -290,41 +333,32 @@
       # — the child's parent comm is `flock`), so it would park a helper process
       # OUTSIDE the scope, in tailscaled's cgroup, reintroducing the exact
       # tenancy this change removes.
-      state="$(${config.systemd.package}/bin/systemctl show \
-        -p ActiveState --value sancta-session.scope 2>/dev/null || true)"
-      case "$state" in
-        active | activating | deactivating | reloading)
-          echo "sancta-session: prior sancta-session.scope is $state — stopping it and starting fresh" >&2
-          ${config.systemd.package}/bin/systemctl stop sancta-session.scope \
-            >/dev/null 2>&1 || true
-          # Bounded wait (~90s) for the unit to leave the running states. This
-          # is a SAFETY NET around `systemctl stop` returning early or failing —
-          # stop itself blocks until the job completes — so its budget must stay
-          # strictly larger than TimeoutStopSec (45s below), or it would report
-          # "will not stop" while systemd is still legitimately waiting out the
-          # graceful window. Do not loop forever either: a scope that will not
-          # die is an operator problem, not something to spin on behind a silent
-          # prompt.
-          i=0
-          while [ "$i" -lt 180 ]; do
-            state="$(${config.systemd.package}/bin/systemctl show \
-              -p ActiveState --value sancta-session.scope 2>/dev/null || true)"
-            case "$state" in
-              active | activating | deactivating | reloading) ;;
-              *) break ;;
-            esac
-            ${pkgs.coreutils}/bin/sleep 0.5
-            i=$((i + 1))
-          done
-          case "$state" in
-            active | activating | deactivating | reloading)
-              echo "sancta-session: prior scope will not stop (ActiveState=$state) — refusing rather than racing it. Investigate: systemctl status sancta-session.scope" >&2
-              exit 1
-              ;;
-          esac
-          echo "sancta-session: replaced the prior scope." >&2
-          ;;
-      esac
+      state="$(scope_state)"
+      if scope_running "$state"; then
+        echo "sancta-session: prior sancta-session.scope is $state — stopping it and starting fresh" >&2
+        ${config.systemd.package}/bin/systemctl stop sancta-session.scope \
+          >/dev/null 2>&1 || true
+        # Bounded wait (~90s) for the unit to leave the running states. This is
+        # a SAFETY NET around `systemctl stop` returning early or failing — stop
+        # itself blocks until the job completes — so its budget must stay
+        # strictly larger than TimeoutStopSec (45s below), or it would report
+        # "will not stop" while systemd is still legitimately waiting out the
+        # graceful window. Do not loop forever either: a scope that will not die
+        # is an operator problem, not something to spin on behind a silent
+        # prompt.
+        i=0
+        while [ "$i" -lt 180 ]; do
+          state="$(scope_state)"
+          scope_running "$state" || break
+          ${pkgs.coreutils}/bin/sleep 0.5
+          i=$((i + 1))
+        done
+        if scope_running "$state"; then
+          echo "sancta-session: prior scope will not stop (ActiveState=$state) — refusing rather than racing it. Investigate: systemctl status sancta-session.scope" >&2
+          exit 1
+        fi
+        echo "sancta-session: replaced the prior scope." >&2
+      fi
 
       # A scope that ended in `failed` (e.g. a stop that outran TimeoutStopSec)
       # is retained by systemd under its fixed name, so systemd-run could not
@@ -335,21 +369,6 @@
       # no-ops in the normal case.
       ${config.systemd.package}/bin/systemctl reset-failed sancta-session.scope \
         >/dev/null 2>&1 || true
-
-      # sancta-reconnect lives on the ENCRYPTED SOUL VOLUME — /var/lib/sancta/.claude
-      # is its own ext4 mount on /dev/mapper/sancta-soul, not part of the root
-      # filesystem. So "the script is missing" is a real boot-order state (the
-      # LUKS chain has not completed, the mount was skipped), not a hypothetical
-      # typo. Without this check the operator gets a bare
-      # `bash: .../sancta-reconnect: No such file or directory` from inside the
-      # new scope, with nothing tying it back to this wrapper — and a scope is
-      # created and immediately torn down for nothing. Check before exec'ing so
-      # the failure names itself like every other branch here does. (root can
-      # stat through the 0700 soul volume, so this is a real test.)
-      if [ ! -x /var/lib/sancta/.claude/index/bin/sancta-reconnect ]; then
-        echo "sancta-session: sancta-reconnect not found or not executable at /var/lib/sancta/.claude/index/bin/sancta-reconnect — the soul volume is probably not mounted. Check: systemctl status sancta-soul-mount.service; findmnt /var/lib/sancta/.claude" >&2
-        exit 1
-      fi
 
       # TimeoutStopSec is the graceful window a REPLACED session gets before
       # systemd escalates to SIGKILL, so it is the number that decides whether a
