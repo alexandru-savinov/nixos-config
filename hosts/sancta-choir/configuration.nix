@@ -197,9 +197,26 @@
     # connection tailscaled serves, so the session's terminal dies with it.
     # Detaching the pty (tmux) is a separate, separately-gated change.
     (pkgs.writeShellScriptBin "sancta-session" ''
-      # Singleton. Two Claude Code processes resuming the same conversation
-      # corrupt its transcript, so refuse loudly rather than letting
-      # systemd-run fail with its own "unit already exists" further down.
+      # Singleton, friendly path. Two Claude Code processes resuming the same
+      # conversation corrupt its transcript, so refuse with a message that says
+      # what to do instead of letting systemd-run emit its own raw error.
+      #
+      # This check is DELIBERATELY not the enforcement mechanism, and the
+      # check-then-launch window below is a known, accepted race. systemd's
+      # transient-unit naming is itself atomic, and that is what actually
+      # guarantees the singleton: three concurrent
+      # `systemd-run --scope --unit=<same name>` invocations on this host
+      # produced exactly one winner, the other two failing with "Unit ... was
+      # already loaded or has a fragment file". So the worst case if two
+      # launches interleave is that the loser sees systemd's raw error instead
+      # of the friendly line above — NOT two live sessions.
+      #
+      # Closing the window with flock was considered and rejected: util-linux
+      # flock does not exec in place (verified on this host — the child's
+      # parent comm is `flock`), so it would leave a helper process sitting
+      # OUTSIDE the scope, in tailscaled's cgroup, which is precisely the
+      # tenancy this whole change exists to remove. Trading the RCA fix for a
+      # nicer error message on a millisecond window is the wrong way round.
       state="$(${config.systemd.package}/bin/systemctl show \
         -p ActiveState --value sancta-session.scope 2>/dev/null || true)"
       if [ "$state" = "active" ] || [ "$state" = "activating" ]; then
