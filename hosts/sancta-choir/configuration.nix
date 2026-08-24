@@ -227,6 +227,29 @@
     # connection tailscaled serves, so the session's terminal dies with it.
     # Detaching the pty (tmux) is a separate, separately-gated change.
     (pkgs.writeShellScriptBin "sancta-session" ''
+      # Root only. systemPackages puts this on PATH for EVERY local user,
+      # including the deliberately-restricted `herdr` (whose sudo is scoped away
+      # from raw systemctl — see customModules.herdr below). polkit and sudoers
+      # remain the real boundary; this guard is defense in depth, so the script's
+      # behaviour matches the root-only contract its header states rather than
+      # depending on external policy nobody reads next to this file.
+      #
+      # It also removes a concrete misbehaviour: without it a non-root caller
+      # sails into the reconcile path, has its `systemctl stop` silently refused
+      # by polkit, and then sits out the full 90s wait loop before failing with
+      # a message about a scope that will not stop — blaming the scope for what
+      # was really a permissions refusal.
+      #
+      # Uses bash's built-in $EUID rather than `id -u` on purpose. A guard built
+      # on a command substitution fails OPEN if that command cannot run for any
+      # reason: the substitution yields "", `[ "" -ne 0 ]` errors, the condition
+      # is false, and execution continues as though the check had passed. $EUID
+      # needs no exec and cannot fail that way.
+      if [ "$EUID" -ne 0 ]; then
+        echo "sancta-session: must run as root (invoke it over: ssh root@sancta-choir-1…)" >&2
+        exit 1
+      fi
+
       # RECONCILE, DO NOT REFUSE. This is the same n=1 contract sancta-reconnect
       # enforces at the process level (it kills any prior `claude --resume $SID`
       # outside its own ancestry, then execs a fresh one) — applied here at the
