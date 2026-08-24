@@ -132,6 +132,62 @@
     # claude-shared skills on this host (the latter hands off to `ralphex`).
     # Mirrors rpi5-full; sancta-choir is the always-on agent host.
     self.packages.${pkgs.system}.ralphex
+
+    # sancta-session — the ONLY supported way to start the long-lived Sancta
+    # Claude Code session on this host. `sancta` on the Mac calls it over SSH.
+    #
+    # WHY A SCOPE (RCA, Aug 2026). Tailscale SSH does not hand its sessions to
+    # logind: an `ssh root@choir` command tree is parented by tailscaled and
+    # therefore lives in /system.slice/tailscaled.service's cgroup. `sudo -i`
+    # does NOT migrate it out. Two consequences, both observed:
+    #   * the session was a *tenant* of tailscaled's cgroup, so any memory
+    #     pressure accounted there could take the whole slice — including the
+    #     transport we were talking over;
+    #   * `systemctl restart tailscaled` killed the session outright.
+    # `systemd-run --scope` re-parents the exec'd tree into its own
+    # /system.slice/sancta-session.scope, off tailscaled's books, while still
+    # exec'ing in place (tty, exit status and ancestry are preserved, so the
+    # Mac's `ssh -t` pty and agterm row behave exactly as before).
+    #
+    # WHY OOMPolicy=continue. It is set ON THE SCOPE: when a tool the session
+    # spawns (a build, a big grep, a runaway node process) trips the ceiling,
+    # the kernel OOM killer reaps that child and systemd leaves the rest of the
+    # scope running. Without it the default `stop` would tear down the whole
+    # scope — i.e. lose the conversation — over one greedy grandchild.
+    #
+    # WHY THESE CEILINGS. A healthy Sancta session sits around 400 MB RSS, so
+    # MemoryMax=3G is ~7.5x headroom: high enough that normal work never sees
+    # it, low enough that a leak cannot eat the host. MemoryHigh=2G is the
+    # first line of defence — it throttles and reclaims rather than killing, so
+    # a session drifting upward slows down (and shows up in the journal) before
+    # anything is OOM-killed. MemorySwapMax=1G stops a leak from being quietly
+    # absorbed by swap and turning into hours of thrash instead of a clean kill.
+    #
+    # LIMITATION: this does NOT make the session survive a tailscaled restart.
+    # The scope's cgroup survives, but the pty is still owned by the ssh
+    # connection tailscaled serves, so the session's terminal dies with it.
+    # Detaching the pty (tmux) is a separate, separately-gated change.
+    (pkgs.writeShellScriptBin "sancta-session" ''
+      # Singleton. Two Claude Code processes resuming the same conversation
+      # corrupt its transcript, so refuse loudly rather than letting
+      # systemd-run fail with its own "unit already exists" further down.
+      state="$(${config.systemd.package}/bin/systemctl show \
+        -p ActiveState --value sancta-session.scope 2>/dev/null || true)"
+      if [ "$state" = "active" ] || [ "$state" = "activating" ]; then
+        echo "sancta-session.scope already running — attach via the existing agterm row, or reap with: systemctl stop sancta-session.scope" >&2
+        exit 1
+      fi
+
+      exec ${config.systemd.package}/bin/systemd-run --scope --quiet \
+        --unit=sancta-session \
+        -p MemoryHigh=2G \
+        -p MemoryMax=3G \
+        -p MemorySwapMax=1G \
+        -p OOMPolicy=continue \
+        -p TimeoutStopSec=10 \
+        /run/wrappers/bin/sudo -iu sancta \
+        bash -lc /var/lib/sancta/.claude/index/bin/sancta-reconnect
+    '')
   ];
 
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
