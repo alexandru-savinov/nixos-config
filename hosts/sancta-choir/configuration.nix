@@ -285,7 +285,7 @@
               active | activating | deactivating | reloading) ;;
               *) break ;;
             esac
-            sleep 0.5
+            ${pkgs.coreutils}/bin/sleep 0.5
             i=$((i + 1))
           done
           case "$state" in
