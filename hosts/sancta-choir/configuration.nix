@@ -227,39 +227,83 @@
     # connection tailscaled serves, so the session's terminal dies with it.
     # Detaching the pty (tmux) is a separate, separately-gated change.
     (pkgs.writeShellScriptBin "sancta-session" ''
-      # Singleton, friendly path. Two Claude Code processes resuming the same
-      # conversation corrupt its transcript, so refuse with a message that says
-      # what to do instead of letting systemd-run emit its own raw error.
+      # RECONCILE, DO NOT REFUSE. This is the same n=1 contract sancta-reconnect
+      # enforces at the process level (it kills any prior `claude --resume $SID`
+      # outside its own ancestry, then execs a fresh one) — applied here at the
+      # scope level, because a scope cannot be replaced while the old one holds
+      # the unit name.
       #
-      # This check is DELIBERATELY not the enforcement mechanism, and the
-      # check-then-launch window below is a known, accepted race. systemd's
-      # transient-unit naming is itself atomic, and that is what actually
-      # guarantees the singleton: three concurrent
+      # Refusing here would break the single most important case this whole
+      # design exists to serve. When the pty drops — laptop sleep, tailscaled
+      # restart, a dropped ssh — Claude Code survives the SIGHUP inside the
+      # scope, so the scope stays `active` while the agterm row that owned the
+      # terminal is gone. That ORPHANED state is precisely when the user runs
+      # `sancta`. A guard that answered "already running — attach via the
+      # existing agterm row" would be pointing at a row that no longer exists,
+      # and recovery would need a second ssh and a manual systemctl stop. So:
+      # stop the prior scope, wait for it to actually go away, start a fresh
+      # one, and say so in one line.
+      #
+      # `systemctl stop` is the right instrument: it TERMs every member and
+      # escalates to SIGKILL after TimeoutStopSec (10s, set below) — Claude Code
+      # installs a SIGTERM handler and can outlive a bare kill, which is exactly
+      # why sancta-reconnect does its own TERM/poll/KILL dance. The wait loop
+      # below is a safety net around `stop` returning early, and it refuses
+      # rather than racing if the old scope will not die.
+      #
+      # Note the consequence, which matches sancta-reconnect's existing
+      # semantics: running this while a genuinely live session is attached
+      # REPLACES that session. On the normal path the Mac launcher never gets
+      # here — it focuses the existing agterm row instead of ssh'ing — so
+      # reaching this code already means "no row is attached".
+      #
+      # Residual race: two near-simultaneous launches can interleave such that
+      # the second stops the scope the first has just created. n=1 still holds
+      # (systemd's transient-unit naming is atomic — three concurrent
       # `systemd-run --scope --unit=<same name>` invocations on this host
-      # produced exactly one winner, the other two failing with "Unit ... was
-      # already loaded or has a fragment file". So the worst case if two
-      # launches interleave is that the loser sees systemd's raw error instead
-      # of the friendly line above — NOT two live sessions.
-      #
-      # Closing the window with flock was considered and rejected: util-linux
-      # flock does not exec in place (verified on this host — the child's
-      # parent comm is `flock`), so it would leave a helper process sitting
-      # OUTSIDE the scope, in tailscaled's cgroup, which is precisely the
-      # tenancy this whole change exists to remove. Trading the RCA fix for a
-      # nicer error message on a millisecond window is the wrong way round.
+      # produced exactly one winner), so the cost is a session replaced
+      # milliseconds after starting, not two live sessions. flock would close it
+      # but was rejected: util-linux flock does not exec in place (verified here
+      # — the child's parent comm is `flock`), so it would park a helper process
+      # OUTSIDE the scope, in tailscaled's cgroup, reintroducing the exact
+      # tenancy this change removes.
       state="$(${config.systemd.package}/bin/systemctl show \
         -p ActiveState --value sancta-session.scope 2>/dev/null || true)"
-      if [ "$state" = "active" ] || [ "$state" = "activating" ]; then
-        echo "sancta-session.scope already running — attach via the existing agterm row, or reap with: systemctl stop sancta-session.scope" >&2
-        exit 1
-      fi
+      case "$state" in
+        active | activating | deactivating | reloading)
+          echo "sancta-session: prior sancta-session.scope is $state — stopping it and starting fresh" >&2
+          ${config.systemd.package}/bin/systemctl stop sancta-session.scope \
+            >/dev/null 2>&1 || true
+          # Bounded wait (~30s) for the unit to leave the running states. Do not
+          # loop forever: a scope that will not die is an operator problem, not
+          # something to spin on behind a silent prompt.
+          i=0
+          while [ "$i" -lt 60 ]; do
+            state="$(${config.systemd.package}/bin/systemctl show \
+              -p ActiveState --value sancta-session.scope 2>/dev/null || true)"
+            case "$state" in
+              active | activating | deactivating | reloading) ;;
+              *) break ;;
+            esac
+            sleep 0.5
+            i=$((i + 1))
+          done
+          case "$state" in
+            active | activating | deactivating | reloading)
+              echo "sancta-session: prior scope will not stop (ActiveState=$state) — refusing rather than racing it. Investigate: systemctl status sancta-session.scope" >&2
+              exit 1
+              ;;
+          esac
+          echo "sancta-session: replaced the prior scope." >&2
+          ;;
+      esac
 
       # A scope that ended in `failed` (e.g. a stop that outran TimeoutStopSec)
-      # is retained by systemd under its fixed name: the guard above correctly
-      # sees "not active", and then systemd-run cannot create the unit, leaving
-      # the launcher wedged until someone runs reset-failed by hand. --collect
-      # unloads the unit after it ran even when it failed; the explicit
-      # reset-failed clears any stale unit predating this option. Both are
+      # is retained by systemd under its fixed name, so systemd-run could not
+      # create the unit and the launcher would wedge until someone ran
+      # reset-failed by hand. --collect unloads the unit after it ran even when
+      # it failed; the explicit reset-failed clears any stale unit predating
+      # this option, and covers the `failed` exit from the stop above. Both are
       # no-ops in the normal case.
       ${config.systemd.package}/bin/systemctl reset-failed sancta-session.scope \
         >/dev/null 2>&1 || true
