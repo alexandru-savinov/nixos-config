@@ -149,11 +149,41 @@
     # exec'ing in place (tty, exit status and ancestry are preserved, so the
     # Mac's `ssh -t` pty and agterm row behave exactly as before).
     #
-    # WHY OOMPolicy=continue. It is set ON THE SCOPE: when a tool the session
-    # spawns (a build, a big grep, a runaway node process) trips the ceiling,
-    # the kernel OOM killer reaps that child and systemd leaves the rest of the
-    # scope running. Without it the default `stop` would tear down the whole
-    # scope — i.e. lose the conversation — over one greedy grandchild.
+    # WHY OOMPolicy=continue — and precisely what it does NOT promise.
+    # OOMPolicy is a *systemd* policy about what systemd does AFTER a member of
+    # the unit is OOM-killed: `continue` leaves the rest of the scope running,
+    # where the default `stop` would tear down the whole scope — i.e. lose the
+    # conversation — because one member died. That part is worth having.
+    #
+    # It does NOT influence WHICH process the kernel picks. Under cgroup v2,
+    # with memory.oom.group unset (the default, and deliberately left unset —
+    # setting it would kill every process in the scope, the exact opposite of
+    # what we want), breaching MemoryMax makes the kernel choose the highest
+    # -badness process *within this cgroup*, which in practice means the
+    # largest RSS+swap. So the honest statement is: the biggest consumer in the
+    # scope dies, and the scope survives it.
+    #
+    # RESIDUAL RISK, stated plainly: if the Claude Code process is itself the
+    # largest consumer when the ceiling is hit, it is the one killed, and
+    # OOMPolicy=continue keeps the scope alive but the conversation is gone.
+    # That is tolerable here only because of what the numbers say. Claude Code
+    # idles near 390 MB, while the dominant in-scope consumer is a client-side
+    # nix evaluation at ~2.01 GiB — an order of magnitude larger — so for the
+    # session to be the OOM target it would have to have grown past every child
+    # and past ~10x its own baseline, which IS the runaway case, where killing
+    # it is the correct outcome rather than a regression. MemoryHigh=4G is what
+    # makes this rare: it throttles and reclaims well before MemoryMax, so a
+    # drift is visible in the journal long before anything is killed.
+    #
+    # If that stops being true, the fix is NOT here — it is to lower Claude
+    # Code's own oom_score_adj (or run risky client-side work in a nested scope
+    # with a tighter ceiling) so the session is never the fattest process in
+    # its own cgroup. That lives in sancta-reconnect on the soul volume, not in
+    # this file, and is a separate change.
+    #
+    # Note this is strictly better than the status quo either way: today the
+    # same OOM is accounted to tailscaled.service, where it can take the
+    # transport down with it.
     #
     # WHAT IS AND IS NOT IN THIS CGROUP — and the #252 interaction. This host
     # is an agent host that manages this very config, so the obvious worry is:
