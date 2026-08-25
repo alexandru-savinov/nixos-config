@@ -228,15 +228,25 @@
     freeSwapThreshold = 10;
     enableNotifications = true;
     extraArgs = [
-      # earlyoom matches against the truncated, sometimes dot-prefixed
-      # /proc/PID/comm (Home Assistant's comm is ".hass-wrapped"), so the
-      # --prefer regex must stay UNANCHORED; the --avoid comms have no
-      # prefix, so anchoring them is correct. Was "(open-webui)" — dormant
-      # since open-webui was disabled on rpi5-full (#381/#453).
+      # earlyoom matches against the truncated (15-char), sometimes
+      # dot-prefixed /proc/PID/comm (Home Assistant's comm is ".hass-wrapped"),
+      # so the --prefer regex must stay UNANCHORED. Was "(open-webui)" —
+      # dormant since open-webui was disabled on rpi5-full (#381/#453).
       "--prefer"
       "(hass)"
+      # The bare "tailscaled" alternative NEVER MATCHED on NixOS: the wrapper
+      # makes the daemon's comm ".tailscaled-wra" (".tailscaled-wrapped" cut to
+      # 15 chars), verified live on rpi5 and sancta-choir. tailscaled was
+      # therefore unprotected here for the whole life of this block. "[.]" is a
+      # literal dot in POSIX ERE, used in preference to "\." because these args
+      # reach earlyoom via systemd's $EARLYOOM_ARGS expansion; a bracket
+      # expression carries no backslash for that unquoting pass to eat. The
+      # bare alternative is kept for a hypothetical unwrapped build. This also
+      # shields the `be-child ssh` session supervisors, which share the daemon's
+      # comm — killing one of those severs a live Tailscale SSH session without
+      # touching the process that actually consumed the memory.
       "--avoid"
-      "^(sshd|tailscaled|n8n)"
+      "^(sshd|[.]tailscaled-wra|tailscaled|n8n)"
     ];
   };
 

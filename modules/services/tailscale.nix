@@ -39,6 +39,38 @@ in
     networking.firewall.trustedInterfaces = [ "tailscale0" ];
 
     systemd = {
+      # Survive a tenant OOM kill instead of tearing down every SSH session.
+      #
+      # Tailscale SSH does NOT hand sessions to sshd — tailscaled forks a
+      # `be-child ssh` supervisor, so every remote process (shells, agents,
+      # builds) lives inside /system.slice/tailscaled.service's cgroup. When
+      # the kernel OOM-kills any one of those tenants, the kill increments the
+      # UNIT's cgroup oom_kill counter, and systemd's default OOMPolicy=stop
+      # (inherited from DefaultOOMPolicy) therefore fails and restarts
+      # tailscaled itself — severing every Tailscale SSH session on the host,
+      # including the ones unrelated to the process that actually blew up.
+      # All 4 kernel OOM kills on sancta-choir (Aug 1/3/20/24 2026) had
+      # task_memcg=/system.slice/tailscaled.service and each one took the whole
+      # tailnet SSH surface down with it.
+      #
+      # OOMPolicy=continue keeps the daemon running when a tenant dies;
+      # Restart=always (rather than the NixOS default on-failure) keeps the
+      # crash-recovery guarantee for the daemon's OWN failures, since a clean
+      # exit is no longer something we want to leave stopped.
+      #
+      # Trade-off, handled in this same PR: the restart was also the only thing
+      # reaping orphaned tenant processes after an OOM. earlyoom replaces that
+      # deliberately — it kills the actual memory hog with a plain signal
+      # BEFORE the kernel does, and a userspace SIGTERM/SIGKILL does not
+      # increment memory.events' oom_kill, so it never trips this OOMPolicy.
+      # Note this is NOT a claim that OOMPolicy can never fire: a kernel or
+      # cgroup-local OOM kill still increments the counter, which is exactly
+      # why the per-session scope carries its own OOMPolicy=continue.
+      services.tailscaled.serviceConfig = {
+        OOMPolicy = "continue";
+        Restart = "always";
+      };
+
       # Watchdog: restart tailscaled if its DNS proxy stops forwarding.
       # After an Ethernet link flap, Tailscale can lose its upstream resolver
       # config (Routes:{.:[]}) and never recover, returning SERVFAIL for all
