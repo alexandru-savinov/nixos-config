@@ -132,6 +132,282 @@
     # claude-shared skills on this host (the latter hands off to `ralphex`).
     # Mirrors rpi5-full; sancta-choir is the always-on agent host.
     self.packages.${pkgs.system}.ralphex
+
+    # sancta-session — the ONLY supported way to start the long-lived Sancta
+    # Claude Code session on this host. `sancta` on the Mac calls it over SSH.
+    #
+    # WHY A SCOPE (RCA, Aug 2026). Tailscale SSH does not hand its sessions to
+    # logind: an `ssh root@choir` command tree is parented by tailscaled and
+    # therefore lives in /system.slice/tailscaled.service's cgroup. `sudo -i`
+    # does NOT migrate it out. Two consequences, both observed:
+    #   * the session was a *tenant* of tailscaled's cgroup, so any memory
+    #     pressure accounted there could take the whole slice — including the
+    #     transport we were talking over;
+    #   * `systemctl restart tailscaled` killed the session outright.
+    # `systemd-run --scope` re-parents the exec'd tree into its own
+    # /system.slice/sancta-session.scope, off tailscaled's books, while still
+    # exec'ing in place (tty, exit status and ancestry are preserved, so the
+    # Mac's `ssh -t` pty and agterm row behave exactly as before).
+    #
+    # WHY OOMPolicy=continue — and precisely what it does NOT promise.
+    # OOMPolicy is a *systemd* policy about what systemd does AFTER a member of
+    # the unit is OOM-killed: `continue` leaves the rest of the scope running,
+    # where the default `stop` would tear down the whole scope — i.e. lose the
+    # conversation — because one member died. That part is worth having.
+    #
+    # It does NOT influence WHICH process the kernel picks. Under cgroup v2,
+    # with memory.oom.group unset (the default, and deliberately left unset —
+    # setting it would kill every process in the scope, the exact opposite of
+    # what we want), breaching MemoryMax makes the kernel choose the
+    # highest-badness process *within this cgroup*, which in practice means the
+    # largest RSS+swap. So the honest statement is: the biggest consumer in the
+    # scope dies, and the scope survives it.
+    #
+    # RESIDUAL RISK, stated plainly: if the Claude Code process is itself the
+    # largest consumer when the ceiling is hit, it is the one killed, and
+    # OOMPolicy=continue keeps the scope alive but the conversation is gone.
+    # That is tolerable here only because of what the numbers say. Claude Code
+    # idles near 390 MB, while the dominant in-scope consumer is a client-side
+    # nix evaluation at ~2.01 GiB — an order of magnitude larger — so for the
+    # session to be the OOM target it would have to have grown past every child
+    # and past ~10x its own baseline, which IS the runaway case, where killing
+    # it is the correct outcome rather than a regression. MemoryHigh=4G is what
+    # makes this rare: it throttles and reclaims well before MemoryMax, so a
+    # drift is visible in the journal long before anything is killed.
+    #
+    # If that stops being true, the fix is NOT here — it is to lower Claude
+    # Code's own oom_score_adj (or run risky client-side work in a nested scope
+    # with a tighter ceiling) so the session is never the fattest process in
+    # its own cgroup. That lives in sancta-reconnect on the soul volume, not in
+    # this file, and is a separate change.
+    #
+    # Note this is strictly better than the status quo either way: today the
+    # same OOM is accounted to tailscaled.service, where it can take the
+    # transport down with it.
+    #
+    # WHAT IS AND IS NOT IN THIS CGROUP — and the #252 interaction. This host
+    # is an agent host that manages this very config, so the obvious worry is:
+    # does a ceiling here reproduce the Feb-2026 #252 incident (see
+    # boot.kernelPackages above), where an OOM-killed BUILD left corrupted
+    # store paths? It cannot. Nix here is multi-user with `store = auto`, and
+    # the session runs as `sancta` (uid 993, not root, no write access to
+    # /nix/store), so every `nix build` / `nixos-rebuild build` it issues is
+    # executed by nix-daemon: the builder processes are children of
+    # nix-daemon.service and are accounted to /system.slice/nix-daemon.service,
+    # NOT to this scope. Only the thin nix *client* is in here. Do not add a
+    # ceiling to nix-daemon.service expecting it to bound this session, and do
+    # not assume this ceiling bounds builds — they are separate cgroups on
+    # purpose.
+    #
+    # What that leaves in-scope is Claude Code itself plus client-side Nix
+    # EVALUATION, which is the real memory consumer and is easy to
+    # under-budget. Measured, not guessed:
+    #   * idle Sancta session ....................... ~390 MB RSS (ps, on host)
+    #   * one cold full-host flake evaluation ....... ~2.01 GiB peak RSS
+    #     (`nix eval --no-eval-cache …sancta-choir…system.build.toplevel.drvPath`)
+    #   * host total ................................ 7.57 GiB RAM + 7.8 GiB swap
+    # So a single routine "evaluate this host" turn already costs ~2.4 GiB
+    # combined. An earlier draft of this used MemoryHigh=2G/MemoryMax=3G, which
+    # would have put every ordinary eval into permanent throttling.
+    #
+    # WHY THESE CEILINGS. MemoryHigh=4G is ~1.6x that measured 2.4 GiB working
+    # peak, so normal work — including whole-flake evaluation — never throttles;
+    # it is the first line of defence and reclaims rather than kills, so a
+    # session drifting upward slows down and shows up in the journal before
+    # anything is OOM-killed. MemoryMax=5G is ~13x the idle baseline, high
+    # enough that only a genuine runaway reaches it, and low enough that on a
+    # 7.57 GiB host the rest of the system (tailscaled, nix-daemon, herdr)
+    # keeps its ~2.5 GiB and the box stays reachable. MemorySwapMax=2G absorbs
+    # an eval spike without letting a leak be quietly swallowed by the 7.8 GiB
+    # of swap and turned into hours of thrash instead of a clean kill.
+    # Re-measure these if the flake grows substantially.
+    #
+    # LIMITATION: this does NOT make the session survive a tailscaled restart.
+    # The scope's cgroup survives, but the pty is still owned by the ssh
+    # connection tailscaled serves, so the session's terminal dies with it.
+    # Detaching the pty (tmux) is a separate, separately-gated change.
+    (pkgs.writeShellScriptBin "sancta-session" ''
+      # Root only. systemPackages puts this on PATH for EVERY local user,
+      # including the deliberately-restricted `herdr` (whose sudo is scoped away
+      # from raw systemctl — see customModules.herdr below). polkit and sudoers
+      # remain the real boundary; this guard is defense in depth, so the script's
+      # behaviour matches the root-only contract its header states rather than
+      # depending on external policy nobody reads next to this file.
+      #
+      # It also removes a concrete misbehaviour: without it a non-root caller
+      # sails into the reconcile path, has its `systemctl stop` silently refused
+      # by polkit, and then sits out the full 90s wait loop before failing with
+      # a message about a scope that will not stop — blaming the scope for what
+      # was really a permissions refusal.
+      #
+      # Uses bash's built-in $EUID rather than `id -u` on purpose. A guard built
+      # on a command substitution fails OPEN if that command cannot run for any
+      # reason: the substitution yields "", `[ "" -ne 0 ]` errors, the condition
+      # is false, and execution continues as though the check had passed. $EUID
+      # needs no exec and cannot fail that way.
+      if [ "$EUID" -ne 0 ]; then
+        echo "sancta-session: must run as root (invoke it over: ssh root@sancta-choir-1…)" >&2
+        exit 1
+      fi
+
+      # Validate the target BEFORE touching the prior scope. sancta-reconnect
+      # lives on the ENCRYPTED SOUL VOLUME — /var/lib/sancta/.claude is its own
+      # ext4 mount on /dev/mapper/sancta-soul, not part of the root filesystem —
+      # so "the script is missing" is a real boot-order state (the LUKS chain
+      # has not completed, the mount was skipped), not a hypothetical typo.
+      #
+      # ORDER IS THE POINT: this ran after the stop in an earlier revision,
+      # which meant a broken target cost the live session. The wrapper would
+      # reconcile away a perfectly good prior session and only then discover it
+      # had nothing to start in its place, leaving the user with neither. A
+      # precondition that can fail must be checked while failing is still free.
+      # (root stats through the 0700 soul volume, so this is a real test.)
+      if [ ! -x /var/lib/sancta/.claude/index/bin/sancta-reconnect ]; then
+        echo "sancta-session: sancta-reconnect not found or not executable at /var/lib/sancta/.claude/index/bin/sancta-reconnect — the soul volume is probably not mounted. Check: systemctl status sancta-soul-mount.service; findmnt /var/lib/sancta/.claude" >&2
+        exit 1
+      fi
+
+      # The "is the scope still running" predicate, in ONE place. It is consulted
+      # three times below (before the stop, inside the wait loop, and after it),
+      # and three hand-copied `case` lists would be three chances for the state
+      # set to drift apart on the next edit.
+      scope_running() {
+        case "''${1:-}" in
+          active | activating | deactivating | reloading) return 0 ;;
+          *) return 1 ;;
+        esac
+      }
+
+      scope_state() {
+        ${config.systemd.package}/bin/systemctl show \
+          -p ActiveState --value sancta-session.scope 2>/dev/null || true
+      }
+
+      # RECONCILE, DO NOT REFUSE. This is the same n=1 contract sancta-reconnect
+      # enforces at the process level (it kills any prior `claude --resume $SID`
+      # outside its own ancestry, then execs a fresh one) — applied here at the
+      # scope level, because a scope cannot be replaced while the old one holds
+      # the unit name.
+      #
+      # Refusing here would break the single most important case this whole
+      # design exists to serve. When the pty drops — laptop sleep, tailscaled
+      # restart, a dropped ssh — Claude Code survives the SIGHUP inside the
+      # scope, so the scope stays `active` while the agterm row that owned the
+      # terminal is gone. That ORPHANED state is precisely when the user runs
+      # `sancta`. A guard that answered "already running — attach via the
+      # existing agterm row" would be pointing at a row that no longer exists,
+      # and recovery would need a second ssh and a manual systemctl stop. So:
+      # stop the prior scope, wait for it to actually go away, start a fresh
+      # one, and say so in one line.
+      #
+      # `systemctl stop` is the right instrument: it TERMs every member and
+      # escalates to SIGKILL after TimeoutStopSec (45s, set below — see the
+      # sizing note there) — Claude Code installs a SIGTERM handler and can
+      # outlive a bare kill, which is exactly why sancta-reconnect does its own
+      # TERM/poll/KILL dance. The wait loop below is a safety net around `stop`
+      # returning early, and it refuses rather than racing if the old scope will
+      # not die.
+      #
+      # THE CONTRACT, stated honestly: a second launch REPLACES the prior
+      # session. That is the same n=1 rule sancta-reconnect has always enforced,
+      # not a special case for orphans — this wrapper simply applies it one level
+      # up, at the scope, because a scope cannot be replaced while the old one
+      # holds the unit name.
+      #
+      # Do not weaken this into "reaching this code means no row is attached".
+      # The Mac launcher's agterm dedup makes that the COMMON path, not a
+      # guarantee: its own inline-ssh fallback runs the remote command directly
+      # in a terminal whenever agterm is unusable, and such a session owns no
+      # agterm row at all. So a user genuinely can reach this with a live session
+      # running elsewhere, and that session will be replaced. Replacing is the
+      # designed behaviour; it just must not be justified by a claim that is only
+      # usually true.
+      #
+      # Residual race: two near-simultaneous launches can interleave such that
+      # the second stops the scope the first has just created. n=1 still holds
+      # (systemd's transient-unit naming is atomic — three concurrent
+      # `systemd-run --scope --unit=<same name>` invocations on this host
+      # produced exactly one winner), so the cost is a session replaced
+      # milliseconds after starting, not two live sessions. flock would close it
+      # but was rejected: util-linux flock does not exec in place (verified here
+      # — the child's parent comm is `flock`), so it would park a helper process
+      # OUTSIDE the scope, in tailscaled's cgroup, reintroducing the exact
+      # tenancy this change removes.
+      state="$(scope_state)"
+      if scope_running "$state"; then
+        echo "sancta-session: prior sancta-session.scope is $state — stopping it and starting fresh" >&2
+        ${config.systemd.package}/bin/systemctl stop sancta-session.scope \
+          >/dev/null 2>&1 || true
+        # Bounded wait (~90s) for the unit to leave the running states. This is
+        # a SAFETY NET around `systemctl stop` returning early or failing — stop
+        # itself blocks until the job completes — so its budget must stay
+        # strictly larger than TimeoutStopSec (45s below), or it would report
+        # "will not stop" while systemd is still legitimately waiting out the
+        # graceful window. Do not loop forever either: a scope that will not die
+        # is an operator problem, not something to spin on behind a silent
+        # prompt.
+        i=0
+        while [ "$i" -lt 180 ]; do
+          state="$(scope_state)"
+          scope_running "$state" || break
+          ${pkgs.coreutils}/bin/sleep 0.5
+          i=$((i + 1))
+        done
+        if scope_running "$state"; then
+          echo "sancta-session: prior scope will not stop (ActiveState=$state) — refusing rather than racing it. Investigate: systemctl status sancta-session.scope" >&2
+          exit 1
+        fi
+        echo "sancta-session: replaced the prior scope." >&2
+      fi
+
+      # A scope that ended in `failed` (e.g. a stop that outran TimeoutStopSec)
+      # is retained by systemd under its fixed name, so systemd-run could not
+      # create the unit and the launcher would wedge until someone ran
+      # reset-failed by hand. --collect unloads the unit after it ran even when
+      # it failed; the explicit reset-failed clears any stale unit predating
+      # this option, and covers the `failed` exit from the stop above. Both are
+      # no-ops in the normal case.
+      ${config.systemd.package}/bin/systemctl reset-failed sancta-session.scope \
+        >/dev/null 2>&1 || true
+
+      # TimeoutStopSec is the graceful window a REPLACED session gets before
+      # systemd escalates to SIGKILL, so it is the number that decides whether a
+      # mid-turn Claude Code is cut off mid-flush. Anchors: sancta-reconnect's
+      # own TERM/poll/KILL dance allows 5s (10 polls x 0.5s); this host's
+      # DefaultTimeoutStopSec is 90s. 45s sits deliberately between them — an
+      # order of magnitude more patient than the mechanism already in production
+      # for this exact job, while still half the host default so a wedged scope
+      # does not hold an operator for a minute and a half. It costs nothing on
+      # the normal path: `systemctl stop` returns as soon as the members are
+      # gone, so this bound only bites when Claude Code is genuinely stuck, and
+      # the cost of being too short (a hard kill mid-flush) is far worse than
+      # the cost of being too long (waiting on a session that was already dead).
+      #
+      # `sudo -iu sancta <script>` — ONE login shell, not two. `sudo -i` with a
+      # trailing command already runs the target's shell as a login shell and
+      # hands it the command via -c, so the older
+      # `sudo -iu sancta bash -lc <script>` nested a second login shell inside
+      # the first and sourced sancta's profile twice on every session start.
+      # Measured on the host, both forms currently produce an identical
+      # environment — same 7-entry PATH with no duplicates, same HOME
+      # (/var/lib/sancta), same cwd, same `claude` resolution
+      # (/etc/profiles/per-user/sancta/bin/claude) — so this is not a bug fix
+      # today. It is removing a latent one: the moment sancta's profile grows a
+      # non-idempotent side effect (spawning something, appending to a state
+      # file, printing a banner that becomes Claude Code's first input) the old
+      # form would do it twice per session. The login shell is still `-i`'s, so
+      # `claude` keeps resolving from sancta's home-manager PATH — never
+      # hardcode a /nix/store claude path here, it changes on every bump.
+      exec ${config.systemd.package}/bin/systemd-run --scope --quiet --collect \
+        --unit=sancta-session \
+        -p MemoryHigh=4G \
+        -p MemoryMax=5G \
+        -p MemorySwapMax=2G \
+        -p OOMPolicy=continue \
+        -p TimeoutStopSec=45 \
+        /run/wrappers/bin/sudo -iu sancta \
+        /var/lib/sancta/.claude/index/bin/sancta-reconnect
+    '')
   ];
 
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
