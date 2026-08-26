@@ -1452,6 +1452,12 @@ let
     # still lands in front of a human rather than in a rebuild. SessionStart/
     # SessionEnd are excluded and pinned excluded: herdr owns a SessionStart
     # hook of its own on this host (header, HERDR COLLISION).
+    #
+    # Same day, header key 8: a THIRD UserPromptSubmit entry, goal-sau-guard,
+    # the "SAU Alexandru spune stop/amână" clause any /goal condition needs
+    # (regressed a second time this same day). No new event, so
+    # exactlyAgreedKeys is unchanged — `hasClockHook` below now pins all
+    # three UserPromptSubmit entries.
     claude-code-managed-settings-choir-wiring =
       let
         etcEntry =
@@ -1502,12 +1508,16 @@ let
           # The clock hook stays UNguarded (bare `date`, no soul-volume path,
           # harmless for any account) and stays FIRST; the procstate update
           # rides alongside it as a separate entry so neither can take the
-          # other down by exiting non-zero.
+          # other down by exiting non-zero. Header key 8, RE-LITIGATED
+          # 2026-08-26 (this PR, same day as keys 5-7): goal-sau-guard rides
+          # as a THIRD separate entry — the "SAU Alexandru spune stop/amână"
+          # clause, guarded like every other soul-volume command.
           hasClockHook =
             (rendered.hooks.UserPromptSubmit or [ ])
             == [
               (entry "date '+Now: %A %Y-%m-%d %H:%M %Z'")
               (entry (procstate "active --blink"))
+              (entry (guarded "/var/lib/sancta/.claude/hooks/goal-sau-guard.mjs"))
             ];
 
           hasMemoryIndexHook =

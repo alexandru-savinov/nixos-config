@@ -150,6 +150,27 @@
 #                      an answer nobody has. The alternative was to drop it;
 #                      it earns its place by being cheap, read-only, and
 #                      already relied on.
+#   8. hooks.UserPromptSubmit (goal-sau-guard) — ADDED 2026-08-26, same day
+#                      and for the same structural reason as key 7: this
+#                      module already sets hooks.UserPromptSubmit (the
+#                      clock, key 2), so under the same unresolved
+#                      HOOK PRECEDENCE question a user-side-only
+#                      UserPromptSubmit array risks silent replacement rather
+#                      than merge. Its own stakes are real on their own,
+#                      though: it enforces the "SAU Alexandru spune
+#                      stop/amână" clause any `/goal` condition needs — an
+#                      observable closing fact is not enough on its own
+#                      (feedback_hook_loop_presence.md, 2026-07-20) — a rule
+#                      that regressed a second time on 2026-08-26 (recidiva).
+#                      It restricts the AGENT's own /goal-setting behaviour
+#                      and takes nothing from the owner, same class as key 4;
+#                      a nudge the harness can silently drop is decoration
+#                      the day the clause actually matters. Guarded like
+#                      every other soul-volume command; not a PreToolUse
+#                      block (it advises the agent composing the /goal, it
+#                      does not gate a tool call), so it renders via
+#                      guardedSoulCommand/hookEntry like keys 2-3 rather than
+#                      guardedBlockingCommand like key 6.
 #
 # HERDR COLLISION — WHY SessionStart/SessionEnd ARE NOT HERE
 # ------------------------------------------------------------
@@ -265,9 +286,10 @@
 # THE WORKS-BY-LUCK TRAP (same class as sancta-statusline-refresh.nix)
 # ----------------------------------------------------------------------
 # Every command below except the clock points at a path on the LUKS SOUL
-# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — five distinct
+# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — seven distinct
 # scripts as of 2026-08-26 (statusline.sh, memory-index-hook, evidence-gate,
-# transcript-scan-guard, pipe-status-advisor, sancta-procstate). That means:
+# transcript-scan-guard, pipe-status-advisor, sancta-procstate,
+# goal-sau-guard). That means:
 #   - tests/unit-script-refs.nix cannot see them — it only resolves
 #     /nix/store/... references, by construction. The ONE exception since
 #     2026-08-26 is the `timeout` in guardedBlockingCommand, which is a store
@@ -432,6 +454,9 @@ let
         # nothing else, so it is deliberately left UNguarded.
         (hookEntry cfg.clockCommand)
         (hookEntry (procstate "active --blink"))
+        # RE-LITIGATED 2026-08-26 (header key 8): the "SAU Alexandru spune
+        # stop/amână" clause. Guarded like every other soul-volume command.
+        (hookEntry (guardedSoulCommand cfg.goalSauGuardScript))
       ];
       PreToolUse = [
         (preToolUseEntry "Bash" (guardedBlockingCommand cfg.transcriptScanGuardScript))
@@ -602,6 +627,23 @@ in
         user-side array wholesale (see HOOK PRECEDENCE in the header), so
         leaving it in ~/.claude/settings.json would make it the one hook whose
         firing depends on an unresolved question. See header key 7.
+      '';
+    };
+
+    goalSauGuardScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/hooks/goal-sau-guard.mjs";
+      description = ''
+        Path to the UserPromptSubmit guardian for the "SAU Alexandru spune
+        stop/amână" clause (soul volume, hooks repo, `#!/usr/bin/env node`):
+        any `/goal` condition needs an observable closing fact PLUS this
+        clause (feedback_hook_loop_presence.md, 2026-07-20), a rule that
+        regressed a second time on 2026-08-26. Advisory, like
+        pipeStatusAdvisorScript and evidence-gate — it restricts the agent's
+        own /goal-setting behaviour and takes nothing from the owner, so it
+        belongs in the managed layer under this module's test (header key
+        8). Same works-by-luck caveat as the other soul-volume paths:
+        invisible to store-reference checks, fails at runtime only.
       '';
     };
 
