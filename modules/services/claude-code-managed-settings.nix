@@ -78,16 +78,20 @@
 #      hooks that the next `/model` or effort-switch write erases again,
 #      typically within hours, exactly as happened overnight.
 #
-# So the hook registry moved HERE, wholesale, rather than into the
-# home-manager settings set: fixing writer 1 alone would have shipped a fix
-# that looks declarative and still loses the hooks by lunchtime.
+# So the hook registry moved HERE rather than into the home-manager settings
+# set: fixing writer 1 alone would have shipped a fix that looks declarative
+# and still loses the hooks by lunchtime. Five of sancta's six candidate
+# events moved; SessionStart/SessionEnd did not, for a reason that has nothing
+# to do with durability — see HERDR COLLISION below.
 #
 # Consolidating also RETIRES the unresolved merge-semantics risk named in the
-# HOOK PRECEDENCE section below. With every hook in one layer, whether the
-# managed layer merges or replaces a same-event array from user settings.json
-# no longer decides whether a hook fires — previously, declaring some hooks
-# here and some there meant a "replace" answer would silently kill the
-# user-side half.
+# HOOK PRECEDENCE section below, for sancta. With none of her hooks left in
+# ~/.claude/settings.json, whether the managed layer merges or replaces a
+# same-event array no longer decides whether any of them fires — declaring
+# some here and some there would have meant a "replace" answer silently
+# killing the user-side half. That same reasoning is what rules SessionStart
+# OUT: there the user-side half belongs to herdr, and this file cannot
+# consolidate what it does not own.
 #
 #   1. statusLine   — the one surface that never scrolls away; it was dark
 #                      for 12 days because of this exact defect.
@@ -111,8 +115,8 @@
 #                      from memory on /model — an accountability hook that
 #                      the harness can silently drop is decoration.
 #   5. the procstate wiring (UserPromptSubmit, PostToolUse `*`, Notification
-#                      `permission_prompt`, Stop, SessionStart, SessionEnd)
-#                      — ADDED 2026-08-26. Every one of these calls
+#                      `permission_prompt`, Stop — NOT SessionStart/SessionEnd,
+#                      see HERDR COLLISION) — ADDED 2026-08-26. Each calls
 #                      sancta-procstate, which writes the main session's
 #                      state to ~/.claude/index/statusline/procstate for the
 #                      Mac-side poller (darwin-config sancta-bridge) to paint
@@ -128,7 +132,11 @@
 #                      content into a command. Same class as key 4: it
 #                      restricts what the AGENT may do and takes nothing from
 #                      the owner, and a guard the harness can silently drop
-#                      is — as key 4 puts it — decoration.
+#                      is — as key 4 puts it — decoration. It is the one
+#                      command here rendered by guardedBlockingCommand rather
+#                      than guardedSoulCommand, because a guard that fails
+#                      OPEN when its script is missing is decoration of a
+#                      subtler kind: see that helper's comment.
 #   7. hooks.PostToolUse (pipe-status-advisor, Bash) — ADDED 2026-08-26.
 #                      The weakest of the set on its own merits: it is
 #                      advisory, it only tells the agent when a pipeline's
@@ -142,6 +150,51 @@
 #                      an answer nobody has. The alternative was to drop it;
 #                      it earns its place by being cheap, read-only, and
 #                      already relied on.
+#
+# HERDR COLLISION — WHY SessionStart/SessionEnd ARE NOT HERE
+# ------------------------------------------------------------
+# (2026-08-26, PR #584 review finding MEDIUM.) This file is machine-wide, and
+# widening it from 3 hook events to nearly every event type raises a question
+# the earlier three never did: does any OTHER account on this host register
+# hooks of its own? Audited, live:
+#
+#   jq -S '.hooks' /var/lib/herdr/.claude/settings.json
+#     -> { "SessionStart": [ { "matcher": "*", "hooks": [ { "type":
+#          "command", "timeout": 10, "command": "bash '/var/lib/herdr/
+#          .claude/hooks/herdr-agent-state.sh' session" } ] } ] }
+#   jq '.hooks' /root/.claude/settings.json          -> none
+#
+# So herdr DOES, on exactly one event — and it is SessionStart, which the
+# procstate wiring wanted too. herdr-server reinstalls that hook on every
+# start (`herdr integration install claude`, modules/services/herdr.nix), and
+# hosts/sancta-choir/configuration.nix already documents it being clobbered
+# once by home-manager. But a reinstall cannot defend against THIS: the losing
+# side would be a lower-precedence file that is still perfectly intact, not a
+# missing key, so herdr would rewrite a hook that keeps on not firing and its
+# dashboard would silently stop reflecting agent state.
+#
+# Whether that actually happens depends on the merge-vs-replace question in
+# HOOK PRECEDENCE, which remains unresolved and untestable from here. Under
+# "concatenate" both fire and all is well; under "replace" herdr's hook dies
+# silently. Two ways out were considered:
+#
+#   - Duplicate herdr's command into this file, guarded to the herdr identity,
+#     so it survives either way. REJECTED: herdr's own hook script says
+#     "managed by herdr; reinstalling or updating the integration overwrites
+#     this file" and carries a HERDR_INTEGRATION_VERSION. Pinning another
+#     module's versioned private internals here means a herdr upgrade silently
+#     leaves this file rendering the OLD command — trading a possible failure
+#     for a guaranteed future one.
+#   - Don't claim the event. TAKEN.
+#
+# It costs the least of the seven candidates. procstate still updates on every
+# prompt, every tool call, every permission prompt and every turn end, which is
+# what actually drives the agterm row minute to minute; Stop already carries
+# `--auto-reset`. The only lost behaviour is the idle reset in the window
+# between a session starting and its first prompt. Revisit if the merge
+# semantics are ever established empirically (that experiment needs write
+# access to a real /etc, which is why it has never been run), or if herdr's
+# SessionStart hook and the procstate wiring are ever designed together.
 #
 # spinnerTipsEnabled is deliberately NOT in this file — see the P1
 # CROSS-USER SAFETY section below for why (a PREFERENCE, not infrastructure,
@@ -278,6 +331,29 @@ let
   # touched.
   guardedSoulCommand = cmdline: ''[ "$(id -un)" = sancta ] && exec ${cmdline}; exit 0'';
 
+  # FAIL-CLOSED variant, for PreToolUse guards only (PR #584 review, P1).
+  #
+  # guardedSoulCommand above fails OPEN by construction: if `exec` cannot
+  # start the target — script deleted, execute bit lost, `node` missing from
+  # the hook's PATH — a non-interactive shell exits 126/127 and the trailing
+  # `exit 0` never even runs. For a status emitter or an advisory that is the
+  # right behaviour. For a PreToolUse GUARD it is the worst possible one: the
+  # hook reports success, Claude Code proceeds, and the Bash command the guard
+  # exists to stop runs unchecked. The header's WORKS-BY-LUCK TRAP says these
+  # soul-volume paths are invisible to every build-time check, so "the script
+  # is missing" is a live runtime possibility, not a hypothetical.
+  #
+  # So: no `exec` (we must survive to inspect the status), non-sancta still
+  # exits 0 (herdr/root must never be blocked by sancta's guard), and ONLY the
+  # could-not-start statuses are converted to 2, Claude Code's blocking code.
+  # Every other status passes through untouched — transcript-scan-guard's own
+  # contract is exit 0 to allow and exit 2 to block (verified on-host
+  # 2026-08-26), and a guard that blocked on any non-zero would turn an
+  # unrelated crash into a wedged agent.
+  guardedBlockingCommand =
+    cmdline:
+    ''[ "$(id -un)" = sancta ] || exit 0; ${cmdline}; rc=$?; case $rc in 126|127) echo "managed-settings: PreToolUse guard could not start (status $rc) — blocking" >&2; exit 2 ;; *) exit $rc ;; esac'';
+
   # The four soul-volume hook scripts are invoked DIRECTLY, not as
   # `node <script>`. All three .mjs files carry `#!/usr/bin/env node` and the
   # execute bit (verified on-host 2026-08-26), and sancta-procstate carries
@@ -312,7 +388,7 @@ let
         (hookEntry (procstate "active --blink"))
       ];
       PreToolUse = [
-        (matchedEntry "Bash" (guardedSoulCommand cfg.transcriptScanGuardScript))
+        (matchedEntry "Bash" (guardedBlockingCommand cfg.transcriptScanGuardScript))
       ];
       PostToolUse = [
         (matchedEntry "Write|Edit" (guardedSoulCommand cfg.memoryIndexHookScript))
@@ -328,8 +404,10 @@ let
         (hookEntry (guardedSoulCommand cfg.evidenceGateScript))
         (hookEntry (procstate "completed --auto-reset"))
       ];
-      SessionStart = [ (hookEntry (procstate "idle")) ];
-      SessionEnd = [ (hookEntry (procstate "idle")) ];
+      # SessionStart / SessionEnd are deliberately ABSENT — see the HERDR
+      # COLLISION section in the header. herdr registers its own SessionStart
+      # hook in its own settings.json, and claiming that event machine-wide
+      # could silently kill it under merge semantics nobody has established.
     };
     # spinnerTipsEnabled deliberately does NOT live here — see finding P1's
     # resolution below: a single /etc file cannot condition a plain JSON
@@ -348,11 +426,14 @@ in
   options.services.claudeCodeManagedSettings = {
     enable = mkEnableOption ''
       /etc/claude-code/managed-settings.json — the Claude Code status bar and
-      the whole hook registry, in the one layer the interactive harness cannot
+      sancta's hook registry, in the one layer the interactive harness cannot
       silently erase (~/.claude/settings.json is rewritten wholesale from the
       harness's in-memory copy on `/model`; see the header's 2026-08-26
-      evidence). Machine-wide by construction (Claude Code has no per-user
-      managed-settings location) — every command that touches a path under
+      evidence). SessionStart/SessionEnd are deliberately excluded because
+      herdr registers its own SessionStart hook on this host — see the
+      header's HERDR COLLISION section. Machine-wide by construction (Claude
+      Code has no per-user managed-settings location) — every command that
+      touches a path under
       /var/lib/sancta is self-guarded to the sancta identity via `id -un` (see
       guardedSoulCommand / the P1 CROSS-USER SAFETY header section) so herdr
       and root sessions on this same host get an instant no-op instead of a

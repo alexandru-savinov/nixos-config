@@ -1440,7 +1440,7 @@ let
     # its durable home is now
     # home-manager.users.sancta.programs.claude-code.extraSettings.
     #
-    # 2026-08-26: the registry moved here WHOLESALE (procstate status bridge,
+    # 2026-08-26: sancta's hook registry moved here (procstate status bridge,
     # PreToolUse transcript guard, PostToolUse pipe advisor) after the same
     # erasure defect took the hooks again overnight — and after proving
     # home-manager could not have been the writer (last activation 23:54:30,
@@ -1448,8 +1448,10 @@ let
     # hard limit was re-litigated from "exactly four keys" to a TEST
     # (infrastructure and agent-restrictions may live here; owner preferences
     # may not). `exactlyAgreedKeys` below is updated to the new agreed set —
-    # it is still an EXACT match, so adding an eighth event still fails here
-    # and still lands in front of a human rather than in a rebuild.
+    # it is still an EXACT match, so adding a sixth event still fails here and
+    # still lands in front of a human rather than in a rebuild. SessionStart/
+    # SessionEnd are excluded and pinned excluded: herdr owns a SessionStart
+    # hook of its own on this host (header, HERDR COLLISION).
     claude-code-managed-settings-choir-wiring =
       let
         etcEntry =
@@ -1459,8 +1461,16 @@ let
         # Re-derived here rather than imported from the module on purpose: a
         # test that reuses the module's own helpers can only prove the module
         # is self-consistent, never that it renders the agreed shape.
-        guardPrefix = ''[ "$(id -un)" = sancta ] && exec '';
-        guarded = cmdline: "${guardPrefix}${cmdline}; exit 0";
+        # The identity check itself — the one thing every soul-volume command
+        # must contain, whichever guard shape wraps it.
+        identityCheck = ''[ "$(id -un)" = sancta ]'';
+        guarded = cmdline: ''${identityCheck} && exec ${cmdline}; exit 0'';
+        # Fail-closed shape for PreToolUse guards (PR #584 review, P1): no
+        # `exec`, and a could-not-start status becomes Claude Code's blocking
+        # exit code 2 instead of a silent allow.
+        guardedBlocking =
+          cmdline:
+          ''${identityCheck} || exit 0; ${cmdline}; rc=$?; case $rc in 126|127) echo "managed-settings: PreToolUse guard could not start (status $rc) — blocking" >&2; exit 2 ;; *) exit $rc ;; esac'';
         procstate = args: guarded "/var/lib/sancta/.claude/index/bin/sancta-procstate ${args}";
         entry = command: { hooks = [{ type = "command"; inherit command; }]; };
         matched = matcher: command: (entry command) // { inherit matcher; };
@@ -1523,12 +1533,30 @@ let
           # so each event's argument is pinned, not just its presence.
           hasTranscriptScanGuard =
             (rendered.hooks.PreToolUse or [ ])
-            == [ (matched "Bash" (guarded "/var/lib/sancta/.claude/hooks/transcript-scan-guard.mjs")) ];
+            == [ (matched "Bash" (guardedBlocking "/var/lib/sancta/.claude/hooks/transcript-scan-guard.mjs")) ];
+
+          # A PreToolUse guard that fails OPEN when its script is missing lets
+          # through exactly the commands it exists to stop, and the soul-volume
+          # paths are invisible to every build-time check. Pin the blocking
+          # exit and the absence of `exec` (which would make the shell exit
+          # 126/127 before any status mapping could run).
+          transcriptScanGuardFailsClosed =
+            let
+              c = (builtins.head (builtins.head (rendered.hooks.PreToolUse)).hooks).command;
+            in
+            nixpkgs.lib.hasInfix "exit 2" c && !(nixpkgs.lib.hasInfix "exec " c);
+
           hasBlockedOnPermissionPrompt =
             (rendered.hooks.Notification or [ ])
             == [ (matched "permission_prompt" (procstate "blocked")) ];
-          hasSessionStartIdle = (rendered.hooks.SessionStart or [ ]) == [ (entry (procstate "idle")) ];
-          hasSessionEndIdle = (rendered.hooks.SessionEnd or [ ]) == [ (entry (procstate "idle")) ];
+
+          # 2026-08-26, PR #584 review finding MEDIUM: herdr registers its own
+          # SessionStart hook in /var/lib/herdr/.claude/.  Claiming that event
+          # in this machine-wide file could silently kill it under merge
+          # semantics nobody has established, and no herdr reinstall could
+          # repair it. Pin the absence so a later "just add the idle reset"
+          # has to read the header's HERDR COLLISION section first.
+          noSessionEventsClaimed = !(rendered.hooks ? SessionStart) && !(rendered.hooks ? SessionEnd);
 
           # Belt-and-braces against the exact P1 regression this all exists to
           # prevent: a soul-volume path silently degrading back into a bare
@@ -1537,7 +1565,7 @@ let
           # added later cannot slip past by simply not having its own check.
           allSoulCommandsGuarded = builtins.all
             (
-              c: !(nixpkgs.lib.hasInfix "/var/lib/sancta" c) || nixpkgs.lib.hasInfix guardPrefix c
+              c: !(nixpkgs.lib.hasInfix "/var/lib/sancta" c) || nixpkgs.lib.hasInfix identityCheck c
             )
             allCommands;
 
@@ -1549,7 +1577,8 @@ let
           # fails loudly the moment another key is added without also
           # updating this assertion — the reviewing human, not a rebuild.
           # Top level stays two attrs; the agreed hook events are exactly
-          # these seven since 2026-08-26 (attrNames sorts alphabetically).
+          # these five since 2026-08-26 (attrNames sorts alphabetically) — the two
+          # Session* events are excluded on purpose, see noSessionEventsClaimed.
           # Widening this list is the deliberate, reviewable act of applying
           # the header's test to a new key — never a formality.
           exactlyAgreedKeys =
@@ -1561,8 +1590,6 @@ let
               "Notification"
               "PostToolUse"
               "PreToolUse"
-              "SessionEnd"
-              "SessionStart"
               "Stop"
               "UserPromptSubmit"
             ];
