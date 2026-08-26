@@ -1439,12 +1439,40 @@ let
     # literal cannot be scoped to one account the way a command string can);
     # its durable home is now
     # home-manager.users.sancta.programs.claude-code.extraSettings.
+    #
+    # 2026-08-26: the registry moved here WHOLESALE (procstate status bridge,
+    # PreToolUse transcript guard, PostToolUse pipe advisor) after the same
+    # erasure defect took the hooks again overnight — and after proving
+    # home-manager could not have been the writer (last activation 23:54:30,
+    # file rewritten 10:14:06 with no run in between). The module header's
+    # hard limit was re-litigated from "exactly four keys" to a TEST
+    # (infrastructure and agent-restrictions may live here; owner preferences
+    # may not). `exactlyAgreedKeys` below is updated to the new agreed set —
+    # it is still an EXACT match, so adding an eighth event still fails here
+    # and still lands in front of a human rather than in a rebuild.
     claude-code-managed-settings-choir-wiring =
       let
         etcEntry =
           self.nixosConfigurations.sancta-choir.config.environment.etc."claude-code/managed-settings.json";
         rendered = builtins.fromJSON etcEntry.text;
-        guarded = path: ''[ "$(id -un)" = sancta ] && exec ${path}; exit 0'';
+
+        # Re-derived here rather than imported from the module on purpose: a
+        # test that reuses the module's own helpers can only prove the module
+        # is self-consistent, never that it renders the agreed shape.
+        guardPrefix = ''[ "$(id -un)" = sancta ] && exec '';
+        guarded = cmdline: "${guardPrefix}${cmdline}; exit 0";
+        procstate = args: guarded "/var/lib/sancta/.claude/index/bin/sancta-procstate ${args}";
+        entry = command: { hooks = [{ type = "command"; inherit command; }]; };
+        matched = matcher: command: (entry command) // { inherit matcher; };
+
+        # Every command the file renders, hooks and status bar alike.
+        allCommands =
+          [ rendered.statusLine.command ]
+          ++ builtins.concatMap
+            (
+              entries: builtins.concatMap (e: map (h: h.command) e.hooks) entries
+            )
+            (builtins.attrValues rendered.hooks);
 
         checks = {
           # World-readable, not writable by anything but root/Nix — see the
@@ -1459,61 +1487,59 @@ let
               command = guarded "/var/lib/sancta/.claude/statusline.sh";
             };
 
+          # The clock hook stays UNguarded (bare `date`, no soul-volume path,
+          # harmless for any account) and stays FIRST; the procstate update
+          # rides alongside it as a separate entry so neither can take the
+          # other down by exiting non-zero.
           hasClockHook =
             (rendered.hooks.UserPromptSubmit or [ ])
             == [
-              {
-                hooks = [
-                  {
-                    type = "command";
-                    command = "date '+Now: %A %Y-%m-%d %H:%M %Z'";
-                  }
-                ];
-              }
+              (entry "date '+Now: %A %Y-%m-%d %H:%M %Z'")
+              (entry (procstate "active --blink"))
             ];
 
           hasMemoryIndexHook =
             (rendered.hooks.PostToolUse or [ ])
             == [
-              {
-                matcher = "Write|Edit";
-                hooks = [
-                  {
-                    type = "command";
-                    command = guarded "/var/lib/sancta/.claude/index/bin/memory-index-hook";
-                  }
-                ];
-              }
+              (matched "Write|Edit" (guarded "/var/lib/sancta/.claude/index/bin/memory-index-hook"))
+              (matched "Bash" (guarded "/var/lib/sancta/.claude/hooks/pipe-status-advisor.mjs"))
+              (matched "*" (procstate "active --blink"))
             ];
-
-          # Both guarded commands must actually mention the `id -un = sancta`
-          # check — a belt-and-braces assertion that the wiring didn't
-          # silently degrade back into a bare path (the exact P1 regression
-          # this all exists to prevent) if the module is ever refactored.
-          statusLineIsGuarded =
-            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta'' rendered.statusLine.command;
-          memoryHookIsGuarded =
-            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
-              (builtins.head (builtins.head (rendered.hooks.PostToolUse)).hooks).command;
 
           # Key 4, re-litigated 2026-08-23 on Alexandru's explicit order (see
           # the module header): the Stop-hook evidence gate. Guarded like the
-          # other soul-volume commands.
+          # other soul-volume commands. Since 2026-08-26 the procstate reset
+          # is a SEPARATE entry, so an evidence-gate nudge (non-zero exit)
+          # cannot leave the agterm row stuck showing "active".
           hasEvidenceGate =
             (rendered.hooks.Stop or [ ])
             == [
-              {
-                hooks = [
-                  {
-                    type = "command";
-                    command = guarded "/var/lib/sancta/.claude/hooks/evidence-gate.mjs";
-                  }
-                ];
-              }
+              (entry (guarded "/var/lib/sancta/.claude/hooks/evidence-gate.mjs"))
+              (entry (procstate "completed --auto-reset"))
             ];
-          evidenceGateIsGuarded =
-            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
-              (builtins.head (builtins.head (rendered.hooks.Stop)).hooks).command;
+
+          # The agterm status bridge (header key 5). Its failure mode is a
+          # STALE Mac row, not a blank one — which reads as a wedged agent —
+          # so each event's argument is pinned, not just its presence.
+          hasTranscriptScanGuard =
+            (rendered.hooks.PreToolUse or [ ])
+            == [ (matched "Bash" (guarded "/var/lib/sancta/.claude/hooks/transcript-scan-guard.mjs")) ];
+          hasBlockedOnPermissionPrompt =
+            (rendered.hooks.Notification or [ ])
+            == [ (matched "permission_prompt" (procstate "blocked")) ];
+          hasSessionStartIdle = (rendered.hooks.SessionStart or [ ]) == [ (entry (procstate "idle")) ];
+          hasSessionEndIdle = (rendered.hooks.SessionEnd or [ ]) == [ (entry (procstate "idle")) ];
+
+          # Belt-and-braces against the exact P1 regression this all exists to
+          # prevent: a soul-volume path silently degrading back into a bare
+          # command during a refactor. Stated as an invariant over EVERY
+          # rendered command rather than three hand-picked ones, so a hook
+          # added later cannot slip past by simply not having its own check.
+          allSoulCommandsGuarded = builtins.all
+            (
+              c: !(nixpkgs.lib.hasInfix "/var/lib/sancta" c) || nixpkgs.lib.hasInfix guardPrefix c
+            )
+            allCommands;
 
           spinnerTipsNotInManagedFile = !(rendered ? spinnerTipsEnabled);
 
@@ -1523,17 +1549,34 @@ let
           # fails loudly the moment another key is added without also
           # updating this assertion — the reviewing human, not a rebuild.
           # Top level stays two attrs; the agreed hook events are exactly
-          # these three (attrNames sorts alphabetically).
+          # these seven since 2026-08-26 (attrNames sorts alphabetically).
+          # Widening this list is the deliberate, reviewable act of applying
+          # the header's test to a new key — never a formality.
           exactlyAgreedKeys =
             (builtins.attrNames rendered) == [
               "hooks"
               "statusLine"
             ]
             && (builtins.attrNames rendered.hooks) == [
+              "Notification"
               "PostToolUse"
+              "PreToolUse"
+              "SessionEnd"
+              "SessionStart"
               "Stop"
               "UserPromptSubmit"
             ];
+
+          # No hook may sit in ~/.claude/settings.json for an event this file
+          # also sets: whether the managed layer merges or replaces a
+          # same-event array is UNRESOLVED (module header, HOOK PRECEDENCE),
+          # so a split registry has hooks whose firing depends on an unknown.
+          # This is what makes the consolidation stick.
+          noHooksInUserSettings =
+            !((
+              self.nixosConfigurations.sancta-choir.config.home-manager.users.sancta.programs.claude-code.extraSettings
+                or { }
+            ) ? hooks);
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);

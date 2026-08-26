@@ -1,4 +1,4 @@
-# claude-code-managed-settings — the three keys a running session cannot erase.
+# claude-code-managed-settings — the settings a running session cannot erase.
 #
 # WHY THIS EXISTS
 # ----------------
@@ -34,11 +34,60 @@
 # WHAT GOES IN HERE, AND THE HARD LIMIT ON IT
 # --------------------------------------------
 # Managed settings OVERRIDE the owner's own settings.json for any key they
-# set. That makes this file a standing capability grant, not a convenience —
-# so it carries EXACTLY the four keys below and nothing else. Do not add a
-# fifth without re-litigating this comment: anything more turns "the harness
-# can't erase infrastructure" into "Nix quietly outranks the owner's own
-# preferences," which is the opposite of what this module is for.
+# set. That makes this file a standing capability grant, not a convenience.
+# The original rule was "EXACTLY four keys and nothing else, do not add a
+# fifth without re-litigating this comment."
+#
+# RE-LITIGATED 2026-08-26 — the rule is now a TEST, not a count. What may
+# live here is: (a) agent INFRASTRUCTURE whose loss makes the agent invisible
+# or unaccountable, and (b) restrictions on the AGENT's own behaviour. What
+# may NOT live here is any OWNER PREFERENCE — those stay sancta-scoped in
+# home-manager.users.sancta.programs.claude-code.extraSettings, which is why
+# model / verbose / spinnerTipsEnabled are still over there and not in this
+# file. That boundary is the thing the original rule was actually protecting;
+# a headcount was only ever a proxy for it. Anything that fails the test still
+# turns "the harness can't erase infrastructure" into "Nix quietly outranks
+# the owner's own preferences," which remains the opposite of this module's
+# purpose.
+#
+# What forced the re-litigation: the whole hook registry — not just the four
+# keys below — is subject to the same erasure defect, and had in fact been
+# erased again. Evidence, 2026-08-26:
+#
+#   systemctl show home-manager-sancta -p ExecMainExitTimestamp
+#     -> Tue 2026-08-25 23:54:30 EEST      (last home-manager activation)
+#   stat -c %y /var/lib/sancta/.claude/settings.json
+#     -> 2026-08-26 10:14:06 +0300          (rewritten 10h20m LATER)
+#   jq '.hooks|keys' /var/lib/sancta/.claude/settings.json
+#     -> null                               (no hooks at all)
+#
+# TWO writers clobber that file, and they need different fixes:
+#
+#   1. The 23:54 boot activation. claude-shared's `home.activation.
+#      claudeSettings` installs the merged declarative settings over
+#      ~/.claude/settings.json whenever the hash differs. Hooks added by hand
+#      are not in that set, so a rebuild or a boot drops them. This one is
+#      at least fixable declaratively — put the hooks in the Nix set.
+#   2. The 10:14 rewrite. No home-manager run happened between 23:54:30 and
+#      10:14:06 (timestamps above), so home-manager CANNOT be that writer.
+#      It is the interactive harness doing what this header already
+#      documented on 2026-08-20: rewriting the WHOLE file from an in-memory
+#      copy that never saw an externally-added key. This one is NOT fixable
+#      in ~/.claude/settings.json by any mechanism — not a hand edit, not a
+#      Nix `install`, not a jq merge at activation time. All three restore
+#      hooks that the next `/model` or effort-switch write erases again,
+#      typically within hours, exactly as happened overnight.
+#
+# So the hook registry moved HERE, wholesale, rather than into the
+# home-manager settings set: fixing writer 1 alone would have shipped a fix
+# that looks declarative and still loses the hooks by lunchtime.
+#
+# Consolidating also RETIRES the unresolved merge-semantics risk named in the
+# HOOK PRECEDENCE section below. With every hook in one layer, whether the
+# managed layer merges or replaces a same-event array from user settings.json
+# no longer decides whether a hook fires — previously, declaring some hooks
+# here and some there meant a "replace" answer would silently kill the
+# user-side half.
 #
 #   1. statusLine   — the one surface that never scrolls away; it was dark
 #                      for 12 days because of this exact defect.
@@ -61,6 +110,38 @@
 #                      because that file is exactly what the harness rewrites
 #                      from memory on /model — an accountability hook that
 #                      the harness can silently drop is decoration.
+#   5. the procstate wiring (UserPromptSubmit, PostToolUse `*`, Notification
+#                      `permission_prompt`, Stop, SessionStart, SessionEnd)
+#                      — ADDED 2026-08-26. Every one of these calls
+#                      sancta-procstate, which writes the main session's
+#                      state to ~/.claude/index/statusline/procstate for the
+#                      Mac-side poller (darwin-config sancta-bridge) to paint
+#                      the `sancta` agterm row. Same class as key 1: it is a
+#                      STATUS SURFACE, it emits state and takes nothing from
+#                      anyone, and when it dies the failure mode is the one
+#                      key 1 already cost 12 days to — a dark bar that looks
+#                      like a stuck agent. The Mac poller cannot tell "no
+#                      hooks registered" from "agent wedged", which is why a
+#                      silently-erasable registry is not good enough here.
+#   6. hooks.PreToolUse (transcript-scan-guard, Bash) — ADDED 2026-08-26.
+#                      Guards Bash calls against dragging raw transcript
+#                      content into a command. Same class as key 4: it
+#                      restricts what the AGENT may do and takes nothing from
+#                      the owner, and a guard the harness can silently drop
+#                      is — as key 4 puts it — decoration.
+#   7. hooks.PostToolUse (pipe-status-advisor, Bash) — ADDED 2026-08-26.
+#                      The weakest of the set on its own merits: it is
+#                      advisory, it only tells the agent when a pipeline's
+#                      exit status hid a failure. It is here for a structural
+#                      reason rather than a stakes-based one — this module
+#                      sets hooks.PostToolUse, and per the unresolved
+#                      question in HOOK PRECEDENCE below, that may replace a
+#                      user-side PostToolUse array wholesale. Leaving this
+#                      one hook in ~/.claude/settings.json would make it the
+#                      single member of the registry whose firing depends on
+#                      an answer nobody has. The alternative was to drop it;
+#                      it earns its place by being cheap, read-only, and
+#                      already relied on.
 #
 # spinnerTipsEnabled is deliberately NOT in this file — see the P1
 # CROSS-USER SAFETY section below for why (a PREFERENCE, not infrastructure,
@@ -119,18 +200,31 @@
 # unresolved question — that risk is named here deliberately rather than
 # discovered by a hook silently going quiet.
 #
+# 2026-08-26: still unresolved, and now deliberately UNREACHABLE for this
+# host's registry. Re-verified the same day that sancta's settings.json again
+# has no hooks key at all (`jq '.hooks|keys'` -> null), so nothing is at stake
+# under either interpretation today — and because this module now carries
+# every hook rather than a subset, no hook's firing depends on the answer.
+# The question only bites again if someone re-adds a hook to
+# ~/.claude/settings.json for an event this file also sets; the right move
+# then is to add it HERE, not there, which is also what durability demands.
+#
 # THE WORKS-BY-LUCK TRAP (same class as sancta-statusline-refresh.nix)
 # ----------------------------------------------------------------------
-# The two hook commands below point at paths on the LUKS SOUL VOLUME
-# (/var/lib/sancta/.claude/...), not Nix store paths. That means:
+# Every command below except the clock points at a path on the LUKS SOUL
+# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — five distinct
+# scripts as of 2026-08-26 (statusline.sh, memory-index-hook, evidence-gate,
+# transcript-scan-guard, pipe-status-advisor, sancta-procstate). That means:
 #   - tests/unit-script-refs.nix cannot see them — it only resolves
 #     /nix/store/... references, by construction.
-#   - A missing interpreter, a missing script, or a lost execute bit on
-#     either path fails at RUNTIME (the hook silently does nothing, or the
+#   - A missing interpreter, a missing script, or a lost execute bit on any
+#     of those paths fails at RUNTIME (the hook silently does nothing, or the
 #     UserPromptSubmit hook errors on every prompt), never at build or eval
 #     time. `nixos-rebuild dry-build` going green proves this JSON renders
-#     correctly; it proves nothing about whether the two scripts it points at
-#     still exist and are executable on the day someone reads this.
+#     correctly; it proves nothing about whether the scripts it points at
+#     still exist and are executable on the day someone reads this. The
+#     post-deploy check in the PR that added the registry exists for exactly
+#     this gap: eval cannot close it, only running the agent can.
 # As of 2026-08-20, tests/execstart-path-contract.nix (PR #568, the
 # purpose-built eval-time guard for exactly this class of bug) is NOT yet on
 # main — it is an open PR (state: OPEN, branch add/execstart-path-contract-
@@ -176,50 +270,66 @@ let
   # PATH-shimmed `id` reporting a foreign user touches nothing (history file
   # md5 unchanged) and exits 0; under the real `sancta` identity it reaches
   # the `exec`. See the PR thread for the transcript.
-  guardedSoulCommand = path: ''[ "$(id -un)" = sancta ] && exec ${path}; exit 0'';
+  #
+  # Takes a full command line, not just a path: the procstate hooks added
+  # 2026-08-26 all pass an argument (`active --blink`, `blocked`, `idle`, …).
+  # `exec` handles those exactly as a shell would, and the guard is unchanged
+  # by their presence — `id -un` still runs before any soul-volume path is
+  # touched.
+  guardedSoulCommand = cmdline: ''[ "$(id -un)" = sancta ] && exec ${cmdline}; exit 0'';
+
+  # The four soul-volume hook scripts are invoked DIRECTLY, not as
+  # `node <script>`. All three .mjs files carry `#!/usr/bin/env node` and the
+  # execute bit (verified on-host 2026-08-26), and sancta-procstate carries
+  # `#!/usr/bin/env bash` — so `exec` resolves the interpreter through the
+  # shebang. This is the shape key 4 (evidence-gate) has already been firing
+  # in since 2026-08-23, which is why it is used for the new ones rather than
+  # a second, unproven `node <script>` form.
+  procstate = args: guardedSoulCommand "${cfg.procstateScript} ${args}";
+
+  # A hooks-array entry with no matcher (fires on every event of its kind).
+  hookEntry = command: { hooks = [{ type = "command"; inherit command; }]; };
+
+  # Same, scoped to the tools/events `matcher` selects.
+  matchedEntry = matcher: command: (hookEntry command) // { inherit matcher; };
 
   settings = {
     statusLine = {
       type = "command";
       command = guardedSoulCommand cfg.statuslineScript;
     };
+    # Every entry below is a SEPARATE element of its event's array rather than
+    # a second command inside one entry: Claude Code runs matching entries
+    # independently, so an entry that exits non-zero (evidence-gate nudging,
+    # a soul volume that is not mounted) cannot take the unrelated procstate
+    # update down with it. Ordering within an array is not depended on.
     hooks = {
       UserPromptSubmit = [
-        {
-          hooks = [
-            {
-              type = "command";
-              # Bare `date` — no filesystem path, no soul-volume dependency,
-              # confirmed harmless for any account: it prints a timestamp and
-              # nothing else, so it is deliberately left UNguarded.
-              command = cfg.clockCommand;
-            }
-          ];
-        }
+        # Bare `date` — no filesystem path, no soul-volume dependency,
+        # confirmed harmless for any account: it prints a timestamp and
+        # nothing else, so it is deliberately left UNguarded.
+        (hookEntry cfg.clockCommand)
+        (hookEntry (procstate "active --blink"))
+      ];
+      PreToolUse = [
+        (matchedEntry "Bash" (guardedSoulCommand cfg.transcriptScanGuardScript))
       ];
       PostToolUse = [
-        {
-          matcher = "Write|Edit";
-          hooks = [
-            {
-              type = "command";
-              command = guardedSoulCommand cfg.memoryIndexHookScript;
-            }
-          ];
-        }
+        (matchedEntry "Write|Edit" (guardedSoulCommand cfg.memoryIndexHookScript))
+        (matchedEntry "Bash" (guardedSoulCommand cfg.pipeStatusAdvisorScript))
+        (matchedEntry "*" (procstate "active --blink"))
+      ];
+      Notification = [
+        (matchedEntry "permission_prompt" (procstate "blocked"))
       ];
       Stop = [
-        {
-          hooks = [
-            {
-              type = "command";
-              # Same cross-user shape as the other two soul-volume hooks:
-              # non-sancta accounts no-op before the 0700 path is touched.
-              command = guardedSoulCommand cfg.evidenceGateScript;
-            }
-          ];
-        }
+        # Same cross-user shape as the other soul-volume hooks: non-sancta
+        # accounts no-op before the 0700 path is touched.
+        (hookEntry (guardedSoulCommand cfg.evidenceGateScript))
+        (hookEntry (procstate "completed --auto-reset"))
       ];
+      SessionStart = [ (hookEntry (procstate "idle")) ];
+      SessionEnd = [ (hookEntry (procstate "idle")) ];
     };
     # spinnerTipsEnabled deliberately does NOT live here — see finding P1's
     # resolution below: a single /etc file cannot condition a plain JSON
@@ -237,15 +347,16 @@ in
 {
   options.services.claudeCodeManagedSettings = {
     enable = mkEnableOption ''
-      /etc/claude-code/managed-settings.json — the three Claude Code settings
-      keys the interactive harness must never be able to silently erase
-      (status bar, clock hook, memory-index hook). Machine-wide by
-      construction (Claude Code has no per-user managed-settings location) —
-      the status bar and memory-index hook are self-guarded to the sancta
-      identity via `id -un` (see guardedSoulCommand / the P1 CROSS-USER
-      SAFETY header section) so herdr and root sessions on this same host get
-      an instant no-op instead of a permission-denied path under the 0700
-      soul volume.
+      /etc/claude-code/managed-settings.json — the Claude Code status bar and
+      the whole hook registry, in the one layer the interactive harness cannot
+      silently erase (~/.claude/settings.json is rewritten wholesale from the
+      harness's in-memory copy on `/model`; see the header's 2026-08-26
+      evidence). Machine-wide by construction (Claude Code has no per-user
+      managed-settings location) — every command that touches a path under
+      /var/lib/sancta is self-guarded to the sancta identity via `id -un` (see
+      guardedSoulCommand / the P1 CROSS-USER SAFETY header section) so herdr
+      and root sessions on this same host get an instant no-op instead of a
+      permission-denied path under the 0700 soul volume.
     '';
 
     statuslineScript = mkOption {
@@ -304,6 +415,47 @@ in
         2026-08-20 — but that logic is unreachable from a non-sancta account
         anyway (0700 parent dirs), so it is ALSO wrapped in
         guardedSoulCommand before rendering, same as statuslineScript.
+      '';
+    };
+
+    procstateScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/index/bin/sancta-procstate";
+      description = ''
+        Path to the agterm status-bridge writer (soul volume, git-tracked in
+        the index repo, `#!/usr/bin/env bash`). Called with a state argument
+        from six different events; it records ONLY the main session's state
+        in ~/.claude/index/statusline/procstate, which the Mac polls every 30s
+        (darwin-config sancta-bridge) to paint the `sancta` agterm row. Same
+        works-by-luck caveat as statuslineScript — and worse in one respect:
+        when this stops firing the Mac row does not go blank, it goes STALE,
+        which reads as a wedged agent rather than as a broken hook.
+      '';
+    };
+
+    transcriptScanGuardScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/hooks/transcript-scan-guard.mjs";
+      description = ''
+        Path to the PreToolUse guard on Bash (soul volume, git-tracked in the
+        hooks repo, `#!/usr/bin/env node` shebang — must carry the execute
+        bit). Restricts what the agent may do, so it belongs in the managed
+        layer under this module's test (header key 6). Same works-by-luck
+        caveat as the other soul-volume paths.
+      '';
+    };
+
+    pipeStatusAdvisorScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/hooks/pipe-status-advisor.mjs";
+      description = ''
+        Path to the PostToolUse advisor on Bash (soul volume, hooks repo,
+        `#!/usr/bin/env node`). Advisory only — it flags pipelines whose exit
+        status masked a failure. Here for a structural reason rather than its
+        own stakes: this module sets hooks.PostToolUse, which may replace a
+        user-side array wholesale (see HOOK PRECEDENCE in the header), so
+        leaving it in ~/.claude/settings.json would make it the one hook whose
+        firing depends on an unresolved question. See header key 7.
       '';
     };
 
