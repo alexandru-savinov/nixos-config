@@ -1456,7 +1456,11 @@ let
       let
         etcEntry =
           self.nixosConfigurations.sancta-choir.config.environment.etc."claude-code/managed-settings.json";
-        rendered = builtins.fromJSON etcEntry.text;
+        # The rendered text carries string context since the PreToolUse guard
+        # embeds a coreutils store path; builtins.fromJSON refuses a string
+        # with context, and discarding it is safe here because nothing in this
+        # test becomes a derivation input — it only reads values to assert on.
+        rendered = builtins.fromJSON (builtins.unsafeDiscardStringContext etcEntry.text);
 
         # Re-derived here rather than imported from the module on purpose: a
         # test that reuses the module's own helpers can only prove the module
@@ -1465,12 +1469,10 @@ let
         # must contain, whichever guard shape wraps it.
         identityCheck = ''[ "$(id -un)" = sancta ]'';
         guarded = cmdline: ''${identityCheck} && exec ${cmdline}; exit 0'';
-        # Fail-closed shape for PreToolUse guards (PR #584 review, P1): no
-        # `exec`, and a could-not-start status becomes Claude Code's blocking
-        # exit code 2 instead of a silent allow.
-        guardedBlocking =
-          cmdline:
-          ''${identityCheck} || exit 0; ${cmdline}; rc=$?; case $rc in 126|127) echo "managed-settings: PreToolUse guard could not start (status $rc) — blocking" >&2; exit 2 ;; *) exit $rc ;; esac'';
+        # The PreToolUse guard is checked by SHAPE instead (see
+        # transcriptScanGuardFailsClosed): its command embeds a coreutils
+        # store path, so an exact-string expectation would break on every
+        # nixpkgs bump for no safety gain.
         procstate = args: guarded "/var/lib/sancta/.claude/index/bin/sancta-procstate ${args}";
         entry = command: { hooks = [{ type = "command"; inherit command; }]; };
         matched = matcher: command: (entry command) // { inherit matcher; };
@@ -1531,20 +1533,36 @@ let
           # The agterm status bridge (header key 5). Its failure mode is a
           # STALE Mac row, not a blank one — which reads as a wedged agent —
           # so each event's argument is pinned, not just its presence.
-          hasTranscriptScanGuard =
-            (rendered.hooks.PreToolUse or [ ])
-            == [ (matched "Bash" (guardedBlocking "/var/lib/sancta/.claude/hooks/transcript-scan-guard.mjs")) ];
-
           # A PreToolUse guard that fails OPEN when its script is missing lets
           # through exactly the commands it exists to stop, and the soul-volume
-          # paths are invisible to every build-time check. Pin the blocking
-          # exit and the absence of `exec` (which would make the shell exit
-          # 126/127 before any status mapping could run).
+          # paths are invisible to every build-time check. Assert the shape
+          # rather than an exact string: the command embeds a coreutils store
+          # path, which changes on every nixpkgs bump.
           transcriptScanGuardFailsClosed =
             let
-              c = (builtins.head (builtins.head (rendered.hooks.PreToolUse)).hooks).command;
+              onlyEntry = builtins.head (rendered.hooks.PreToolUse);
+              hook = builtins.head onlyEntry.hooks;
+              c = hook.command;
             in
-            nixpkgs.lib.hasInfix "exit 2" c && !(nixpkgs.lib.hasInfix "exec " c);
+            builtins.length (rendered.hooks.PreToolUse) == 1
+            && onlyEntry.matcher == "Bash"
+            && builtins.length onlyEntry.hooks == 1
+            && nixpkgs.lib.hasInfix "transcript-scan-guard.mjs" c
+            # Blocks rather than allows, and cannot `exec` away the mapping.
+            && nixpkgs.lib.hasInfix "exit 2" c
+            && !(nixpkgs.lib.hasInfix "exec " c)
+            # A HANG must block too (PR #584 review round 2): the bound is
+            # taken here, with a store-path `timeout`, and 124 maps to a
+            # block — never left to Claude Code's unverified expiry
+            # behaviour.
+            && nixpkgs.lib.hasInfix "/bin/timeout -k 2 10 " c
+            # ALLOWLIST, not a denylist: only a literal 0 may pass. A denylist
+            # of "did not complete" statuses leaked 137 (SIGKILL after the
+            # -k escalation) straight through as an allow.
+            && nixpkgs.lib.hasInfix "case $rc in 0) exit 0 ;; 2) exit 2 ;; *)" c
+            # Claude Code's own field is a backstop that must never fire
+            # first, so it has to be strictly longer than the inner bound.
+            && (hook.timeout or 0) > 10;
 
           hasBlockedOnPermissionPrompt =
             (rendered.hooks.Notification or [ ])

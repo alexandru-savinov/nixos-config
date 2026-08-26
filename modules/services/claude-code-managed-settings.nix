@@ -344,15 +344,41 @@ let
   # is missing" is a live runtime possibility, not a hypothetical.
   #
   # So: no `exec` (we must survive to inspect the status), non-sancta still
-  # exits 0 (herdr/root must never be blocked by sancta's guard), and ONLY the
-  # could-not-start statuses are converted to 2, Claude Code's blocking code.
-  # Every other status passes through untouched — transcript-scan-guard's own
-  # contract is exit 0 to allow and exit 2 to block (verified on-host
-  # 2026-08-26), and a guard that blocked on any non-zero would turn an
-  # unrelated crash into a wedged agent.
+  # exits 0 (herdr/root must never be blocked by sancta's guard), and the
+  # status is matched against an ALLOWLIST — only a literal 0 lets the Bash
+  # call through. transcript-scan-guard's contract is exactly exit 0 to allow
+  # and exit 2 to block (verified on-host 2026-08-26); any other status means
+  # it did not deliver a verdict, and a guard with no verdict must not be an
+  # implicit yes.
+  #
+  # This was first written as a DENYLIST — map 124/125/126/127 to a block,
+  # pass everything else through — on the reasoning that blocking every
+  # non-zero would turn an unrelated crash into a wedged agent. Testing the
+  # rendered command killed that: a guard that ignores SIGTERM is escalated to
+  # SIGKILL by `timeout -k 2` and reports 137, which the denylist happily
+  # passed through as "not a blocking code", i.e. allow. Enumerating the ways
+  # a process can fail to answer is whack-a-mole; enumerating the one way it
+  # can say yes is not. The wedge risk is real but bounded and LOUD: the
+  # matcher is Bash only, so Read/Edit/Write still work to repair the guard,
+  # and the status is named on stderr.
+  #
+  # A HANG is the third way not to complete, and dropping `exec` is what makes
+  # it reachable — the status mapping below only runs once the guard returns
+  # (2026-08-26, PR #584 review round 2). Claude Code does have its own hook
+  # `timeout` field, but whether expiry blocks the tool call or allows it is
+  # UNVERIFIED, and "allow" would silently rebuild the exact bypass this
+  # helper exists to remove. So the bound is taken here instead, where the
+  # outcome is ours to decide: `timeout` fires first and reports 124, which
+  # maps to a block like any other did-not-complete. Claude Code's own field
+  # is still set (see preToolUseEntry) but only as a backstop, deliberately
+  # long enough that it never decides the outcome.
+  #
+  # `timeout` comes from the store, not PATH — unlike clockCommand's bare
+  # `date`, the machinery that makes a guard fail closed must not itself
+  # depend on what PATH resolution happens to find at hook-run time.
   guardedBlockingCommand =
     cmdline:
-    ''[ "$(id -un)" = sancta ] || exit 0; ${cmdline}; rc=$?; case $rc in 126|127) echo "managed-settings: PreToolUse guard could not start (status $rc) — blocking" >&2; exit 2 ;; *) exit $rc ;; esac'';
+    ''[ "$(id -un)" = sancta ] || exit 0; ${pkgs.coreutils}/bin/timeout -k 2 ${toString cfg.preToolUseGuardTimeout} ${cmdline}; rc=$?; case $rc in 0) exit 0 ;; 2) exit 2 ;; *) echo "managed-settings: PreToolUse guard did not deliver a verdict (status $rc) — blocking" >&2; exit 2 ;; esac'';
 
   # The four soul-volume hook scripts are invoked DIRECTLY, not as
   # `node <script>`. All three .mjs files carry `#!/usr/bin/env node` and the
@@ -368,6 +394,23 @@ let
 
   # Same, scoped to the tools/events `matcher` selects.
   matchedEntry = matcher: command: (hookEntry command) // { inherit matcher; };
+
+  # The PreToolUse guard, with Claude Code's own hook timeout set as a
+  # BACKSTOP only: guardedBlockingCommand already bounds the guard itself, and
+  # this value is deliberately longer so the harness's timeout — whose
+  # block-or-allow behaviour on expiry is unverified — never gets to decide
+  # the outcome. It exists so that a failure of the inner bound (a `timeout`
+  # that somehow cannot run at all) is still bounded by something.
+  preToolUseEntry = matcher: command: {
+    inherit matcher;
+    hooks = [
+      {
+        type = "command";
+        inherit command;
+        timeout = cfg.preToolUseGuardTimeout + 10;
+      }
+    ];
+  };
 
   settings = {
     statusLine = {
@@ -388,7 +431,7 @@ let
         (hookEntry (procstate "active --blink"))
       ];
       PreToolUse = [
-        (matchedEntry "Bash" (guardedBlockingCommand cfg.transcriptScanGuardScript))
+        (preToolUseEntry "Bash" (guardedBlockingCommand cfg.transcriptScanGuardScript))
       ];
       PostToolUse = [
         (matchedEntry "Write|Edit" (guardedSoulCommand cfg.memoryIndexHookScript))
@@ -523,6 +566,25 @@ in
         bit). Restricts what the agent may do, so it belongs in the managed
         layer under this module's test (header key 6). Same works-by-luck
         caveat as the other soul-volume paths.
+      '';
+    };
+
+    preToolUseGuardTimeout = mkOption {
+      type = types.ints.positive;
+      default = 10;
+      description = ''
+        Seconds the PreToolUse guard may run before it is killed and the tool
+        call is BLOCKED (2026-08-26, PR #584 review round 2). Enforced inside
+        the rendered command by coreutils `timeout -k 2`, not by Claude Code's
+        own hook timeout — expiry there might allow the call through, which
+        would rebuild the fail-open bypass guardedBlockingCommand exists to
+        remove. Claude Code's field is still set, to this value plus 10, purely
+        as a backstop that should never be the one to fire.
+
+        Raising this raises how long a wedged guard can stall every Bash call;
+        lowering it risks blocking legitimate calls when the guard is merely
+        slow. 10s matches the timeout herdr chose for its own hook on this
+        host.
       '';
     };
 
