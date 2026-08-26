@@ -1439,12 +1439,52 @@ let
     # literal cannot be scoped to one account the way a command string can);
     # its durable home is now
     # home-manager.users.sancta.programs.claude-code.extraSettings.
+    #
+    # 2026-08-26: sancta's hook registry moved here (procstate status bridge,
+    # PreToolUse transcript guard, PostToolUse pipe advisor) after the same
+    # erasure defect took the hooks again overnight — and after proving
+    # home-manager could not have been the writer (last activation 23:54:30,
+    # file rewritten 10:14:06 with no run in between). The module header's
+    # hard limit was re-litigated from "exactly four keys" to a TEST
+    # (infrastructure and agent-restrictions may live here; owner preferences
+    # may not). `exactlyAgreedKeys` below is updated to the new agreed set —
+    # it is still an EXACT match, so adding a sixth event still fails here and
+    # still lands in front of a human rather than in a rebuild. SessionStart/
+    # SessionEnd are excluded and pinned excluded: herdr owns a SessionStart
+    # hook of its own on this host (header, HERDR COLLISION).
     claude-code-managed-settings-choir-wiring =
       let
         etcEntry =
           self.nixosConfigurations.sancta-choir.config.environment.etc."claude-code/managed-settings.json";
-        rendered = builtins.fromJSON etcEntry.text;
-        guarded = path: ''[ "$(id -un)" = sancta ] && exec ${path}; exit 0'';
+        # The rendered text carries string context since the PreToolUse guard
+        # embeds a coreutils store path; builtins.fromJSON refuses a string
+        # with context, and discarding it is safe here because nothing in this
+        # test becomes a derivation input — it only reads values to assert on.
+        rendered = builtins.fromJSON (builtins.unsafeDiscardStringContext etcEntry.text);
+
+        # Re-derived here rather than imported from the module on purpose: a
+        # test that reuses the module's own helpers can only prove the module
+        # is self-consistent, never that it renders the agreed shape.
+        # The identity check itself — the one thing every soul-volume command
+        # must contain, whichever guard shape wraps it.
+        identityCheck = ''[ "$(id -un)" = sancta ]'';
+        guarded = cmdline: ''${identityCheck} && exec ${cmdline}; exit 0'';
+        # The PreToolUse guard is checked by SHAPE instead (see
+        # transcriptScanGuardFailsClosed): its command embeds a coreutils
+        # store path, so an exact-string expectation would break on every
+        # nixpkgs bump for no safety gain.
+        procstate = args: guarded "/var/lib/sancta/.claude/index/bin/sancta-procstate ${args}";
+        entry = command: { hooks = [{ type = "command"; inherit command; }]; };
+        matched = matcher: command: (entry command) // { inherit matcher; };
+
+        # Every command the file renders, hooks and status bar alike.
+        allCommands =
+          [ rendered.statusLine.command ]
+          ++ builtins.concatMap
+            (
+              entries: builtins.concatMap (e: map (h: h.command) e.hooks) entries
+            )
+            (builtins.attrValues rendered.hooks);
 
         checks = {
           # World-readable, not writable by anything but root/Nix — see the
@@ -1459,61 +1499,93 @@ let
               command = guarded "/var/lib/sancta/.claude/statusline.sh";
             };
 
+          # The clock hook stays UNguarded (bare `date`, no soul-volume path,
+          # harmless for any account) and stays FIRST; the procstate update
+          # rides alongside it as a separate entry so neither can take the
+          # other down by exiting non-zero.
           hasClockHook =
             (rendered.hooks.UserPromptSubmit or [ ])
             == [
-              {
-                hooks = [
-                  {
-                    type = "command";
-                    command = "date '+Now: %A %Y-%m-%d %H:%M %Z'";
-                  }
-                ];
-              }
+              (entry "date '+Now: %A %Y-%m-%d %H:%M %Z'")
+              (entry (procstate "active --blink"))
             ];
 
           hasMemoryIndexHook =
             (rendered.hooks.PostToolUse or [ ])
             == [
-              {
-                matcher = "Write|Edit";
-                hooks = [
-                  {
-                    type = "command";
-                    command = guarded "/var/lib/sancta/.claude/index/bin/memory-index-hook";
-                  }
-                ];
-              }
+              (matched "Write|Edit" (guarded "/var/lib/sancta/.claude/index/bin/memory-index-hook"))
+              (matched "Bash" (guarded "/var/lib/sancta/.claude/hooks/pipe-status-advisor.mjs"))
+              (matched "*" (procstate "active --blink"))
             ];
-
-          # Both guarded commands must actually mention the `id -un = sancta`
-          # check — a belt-and-braces assertion that the wiring didn't
-          # silently degrade back into a bare path (the exact P1 regression
-          # this all exists to prevent) if the module is ever refactored.
-          statusLineIsGuarded =
-            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta'' rendered.statusLine.command;
-          memoryHookIsGuarded =
-            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
-              (builtins.head (builtins.head (rendered.hooks.PostToolUse)).hooks).command;
 
           # Key 4, re-litigated 2026-08-23 on Alexandru's explicit order (see
           # the module header): the Stop-hook evidence gate. Guarded like the
-          # other soul-volume commands.
+          # other soul-volume commands. Since 2026-08-26 the procstate reset
+          # is a SEPARATE entry, so an evidence-gate nudge (non-zero exit)
+          # cannot leave the agterm row stuck showing "active".
           hasEvidenceGate =
             (rendered.hooks.Stop or [ ])
             == [
-              {
-                hooks = [
-                  {
-                    type = "command";
-                    command = guarded "/var/lib/sancta/.claude/hooks/evidence-gate.mjs";
-                  }
-                ];
-              }
+              (entry (guarded "/var/lib/sancta/.claude/hooks/evidence-gate.mjs"))
+              (entry (procstate "completed --auto-reset"))
             ];
-          evidenceGateIsGuarded =
-            nixpkgs.lib.hasInfix ''"$(id -un)" = sancta''
-              (builtins.head (builtins.head (rendered.hooks.Stop)).hooks).command;
+
+          # The agterm status bridge (header key 5). Its failure mode is a
+          # STALE Mac row, not a blank one — which reads as a wedged agent —
+          # so each event's argument is pinned, not just its presence.
+          # A PreToolUse guard that fails OPEN when its script is missing lets
+          # through exactly the commands it exists to stop, and the soul-volume
+          # paths are invisible to every build-time check. Assert the shape
+          # rather than an exact string: the command embeds a coreutils store
+          # path, which changes on every nixpkgs bump.
+          transcriptScanGuardFailsClosed =
+            let
+              onlyEntry = builtins.head (rendered.hooks.PreToolUse);
+              hook = builtins.head onlyEntry.hooks;
+              c = hook.command;
+            in
+            builtins.length (rendered.hooks.PreToolUse) == 1
+            && onlyEntry.matcher == "Bash"
+            && builtins.length onlyEntry.hooks == 1
+            && nixpkgs.lib.hasInfix "transcript-scan-guard.mjs" c
+            # Blocks rather than allows, and cannot `exec` away the mapping.
+            && nixpkgs.lib.hasInfix "exit 2" c
+            && !(nixpkgs.lib.hasInfix "exec " c)
+            # A HANG must block too (PR #584 review round 2): the bound is
+            # taken here, with a store-path `timeout`, and 124 maps to a
+            # block — never left to Claude Code's unverified expiry
+            # behaviour.
+            && nixpkgs.lib.hasInfix "/bin/timeout -k 2 10 " c
+            # ALLOWLIST, not a denylist: only a literal 0 may pass. A denylist
+            # of "did not complete" statuses leaked 137 (SIGKILL after the
+            # -k escalation) straight through as an allow.
+            && nixpkgs.lib.hasInfix "case $rc in 0) exit 0 ;; 2) exit 2 ;; *)" c
+            # Claude Code's own field is a backstop that must never fire
+            # first, so it has to be strictly longer than the inner bound.
+            && (hook.timeout or 0) > 10;
+
+          hasBlockedOnPermissionPrompt =
+            (rendered.hooks.Notification or [ ])
+            == [ (matched "permission_prompt" (procstate "blocked")) ];
+
+          # 2026-08-26, PR #584 review finding MEDIUM: herdr registers its own
+          # SessionStart hook in /var/lib/herdr/.claude/.  Claiming that event
+          # in this machine-wide file could silently kill it under merge
+          # semantics nobody has established, and no herdr reinstall could
+          # repair it. Pin the absence so a later "just add the idle reset"
+          # has to read the header's HERDR COLLISION section first.
+          noSessionEventsClaimed = !(rendered.hooks ? SessionStart) && !(rendered.hooks ? SessionEnd);
+
+          # Belt-and-braces against the exact P1 regression this all exists to
+          # prevent: a soul-volume path silently degrading back into a bare
+          # command during a refactor. Stated as an invariant over EVERY
+          # rendered command rather than three hand-picked ones, so a hook
+          # added later cannot slip past by simply not having its own check.
+          allSoulCommandsGuarded = builtins.all
+            (
+              c: !(nixpkgs.lib.hasInfix "/var/lib/sancta" c) || nixpkgs.lib.hasInfix identityCheck c
+            )
+            allCommands;
 
           spinnerTipsNotInManagedFile = !(rendered ? spinnerTipsEnabled);
 
@@ -1523,17 +1595,33 @@ let
           # fails loudly the moment another key is added without also
           # updating this assertion — the reviewing human, not a rebuild.
           # Top level stays two attrs; the agreed hook events are exactly
-          # these three (attrNames sorts alphabetically).
+          # these five since 2026-08-26 (attrNames sorts alphabetically) — the two
+          # Session* events are excluded on purpose, see noSessionEventsClaimed.
+          # Widening this list is the deliberate, reviewable act of applying
+          # the header's test to a new key — never a formality.
           exactlyAgreedKeys =
             (builtins.attrNames rendered) == [
               "hooks"
               "statusLine"
             ]
             && (builtins.attrNames rendered.hooks) == [
+              "Notification"
               "PostToolUse"
+              "PreToolUse"
               "Stop"
               "UserPromptSubmit"
             ];
+
+          # No hook may sit in ~/.claude/settings.json for an event this file
+          # also sets: whether the managed layer merges or replaces a
+          # same-event array is UNRESOLVED (module header, HOOK PRECEDENCE),
+          # so a split registry has hooks whose firing depends on an unknown.
+          # This is what makes the consolidation stick.
+          noHooksInUserSettings =
+            !((
+              self.nixosConfigurations.sancta-choir.config.home-manager.users.sancta.programs.claude-code.extraSettings
+                or { }
+            ) ? hooks);
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);

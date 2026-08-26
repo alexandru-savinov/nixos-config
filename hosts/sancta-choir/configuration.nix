@@ -90,17 +90,29 @@
   # low-stakes compared to the clock hook or the memory-index hook, so it
   # rides the same tolerated-loss trade-off as model/verbose below rather than
   # being force-fit into the guarded machine-wide file.
+  #
+  # Do NOT add hooks here. This file is erased by the harness on `/model`
+  # (evidence in services.claudeCodeManagedSettings below), and splitting the
+  # registry across both layers additionally makes the user-side half depend
+  # on an unresolved merge-vs-replace question. tests/module-eval.nix's
+  # `noHooksInUserSettings` check fails the build if a hooks key appears here.
   home-manager.users.sancta.programs.claude-code.extraSettings = {
     model = "opus[1m]";
     verbose = true;
     spinnerTipsEnabled = false;
   };
 
-  # The three keys the interactive harness cannot silently erase (status bar,
-  # clock hook, memory-index hook) — see the module's own header for the
-  # 2026-08-20 evidence, the hard limit on what lives here, and the P1
-  # CROSS-USER SAFETY section (statusLine + memory-index hook are guarded to
-  # the sancta identity; herdr/root get an instant no-op, not a permission
+  # The status bar and the WHOLE hook registry, in the one layer the
+  # interactive harness cannot silently erase. Sancta's hooks are deliberately
+  # NOT in extraSettings above: on 2026-08-26 they were found erased again,
+  # and the writer could not have been home-manager — its last activation
+  # exited 2026-08-25 23:54:30 while settings.json was rewritten at 10:14:06
+  # the next morning with no run in between. That second writer is the harness
+  # rewriting the file wholesale from an in-memory copy, which no activation
+  # step (install, or jq-merge) can outlast. See the module's own header for
+  # the full evidence, the 2026-08-26 re-litigation of what may live there,
+  # and the P1 CROSS-USER SAFETY section (every soul-volume command is guarded
+  # to the sancta identity; herdr/root get an instant no-op, not a permission
   # error, from the 0700 soul volume).
   services.claudeCodeManagedSettings.enable = true;
 
