@@ -269,7 +269,10 @@
 # scripts as of 2026-08-26 (statusline.sh, memory-index-hook, evidence-gate,
 # transcript-scan-guard, pipe-status-advisor, sancta-procstate). That means:
 #   - tests/unit-script-refs.nix cannot see them — it only resolves
-#     /nix/store/... references, by construction.
+#     /nix/store/... references, by construction. The ONE exception since
+#     2026-08-26 is the `timeout` in guardedBlockingCommand, which is a store
+#     path precisely so that the mechanism keeping a guard fail-closed is not
+#     itself subject to this trap.
 #   - A missing interpreter, a missing script, or a lost execute bit on any
 #     of those paths fails at RUNTIME (the hook silently does nothing, or the
 #     UserPromptSubmit hook errors on every prompt), never at build or eval
