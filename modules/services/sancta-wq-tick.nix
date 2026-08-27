@@ -291,6 +291,26 @@ in
         #                    fail, which is worse than no check. Scoped to .git:
         #                    the handler never touches the working tree, and
         #                    granting the repo root would let it.
+        #   register-history.jsonl — the register-check handler's daily
+        #                    appendFileSync (one ts+pct+N line per beat). This
+        #                    list DID NOT grow when that handler landed, so
+        #                    every unit beat got EROFS and the handler's sq047
+        #                    never-alarm design turned it into a green
+        #                    "measured but NOT recorded" — the series only grew
+        #                    when a live session ran the tick by hand (review
+        #                    finding, 2026-08-23). FILE-granular on purpose:
+        #                    append opens the bound inode in place, no sibling,
+        #                    no rename — the directory reasons above don't
+        #                    apply, and granting index/ root would hand the
+        #                    unit the whole soul.
+        #   HARTA.md       — bin/harta, run by the weekly orphan-check handler
+        #                    after a clean scan; writeFileSync in place
+        #                    (O_TRUNC on the bound inode, no tmp+rename).
+        #                    Without this the handler went red weekly, dead-
+        #                    lettered, and F4 re-added it forever with zero
+        #                    actual orphans. If bin/harta ever moves to an
+        #                    atomic tmp+rename write, this file grant stops
+        #                    working and must be re-argued as a directory.
         #
         # Everything else the handlers touch is READ-ONLY, verified by reading
         # each one: memory-index runs `--check` (compares, never writes; only
@@ -304,11 +324,18 @@ in
         # `-` prefix on each: with ProtectSystem=strict systemd bind-mounts
         # every entry into the unit's namespace and a missing path fails the
         # START, before the script can produce its own honest error. On a fresh
-        # host statusline/ plausibly does not exist yet.
+        # host statusline/ plausibly does not exist yet. Residual of `-` on the
+        # two FILE entries: if either file is ever deleted, its bind is
+        # silently skipped at unit start and the handler degrades again (the
+        # register note says NOT recorded; orphan-check's EROFS branch says the
+        # grant is missing) — both files are committed in the soul repo, so
+        # existing is their normal state.
         ReadWritePaths = [
           "-${orchestratorDir}/"
           "-${statuslineDir}/"
           "-${contractRepo}/.git/"
+          "-${indexRoot}/register-history.jsonl"
+          "-${indexRoot}/HARTA.md"
         ];
 
         PrivateTmp = true;
