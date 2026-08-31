@@ -320,10 +320,21 @@
 # THE WORKS-BY-LUCK TRAP (same class as sancta-statusline-refresh.nix)
 # ----------------------------------------------------------------------
 # Every command below except the clock points at a path on the LUKS SOUL
-# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — seven distinct
-# scripts as of 2026-08-26 (statusline.sh, memory-index-hook, evidence-gate,
+# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — EIGHT distinct
+# scripts as of 2026-08-31 (statusline.sh, memory-index-hook, evidence-gate,
 # transcript-scan-guard, pipe-status-advisor, sancta-procstate,
-# goal-sau-guard). That means:
+# goal-sau-guard, comanda-distructiva). That means:
+#
+# This list is the CHECKLIST for the post-deploy verification named in the
+# second bullet below — the one thing that can close a gap eval cannot see
+# (a positional reference on purpose: the check has no name to grep for).
+# A stale
+# count here does not merely read wrong: a human working the list skips the
+# script that is missing from it, which reproduces exactly the failure this
+# section exists to prevent, and does so most easily for the NEWEST entry —
+# the one least likely to be present. So it is updated in the same commit as
+# any addition, never after. (2026-08-31, review finding MEDIUM on #587: this
+# paragraph still said seven while key 9 was already wired.)
 #   - tests/unit-script-refs.nix cannot see them — it only resolves
 #     /nix/store/... references, by construction. The ONE exception since
 #     2026-08-26 is the `timeout` in guardedBlockingCommand, which is a store
