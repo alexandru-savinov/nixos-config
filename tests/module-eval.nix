@@ -1484,8 +1484,8 @@ let
         # must contain, whichever guard shape wraps it.
         identityCheck = ''[ "$(id -un)" = sancta ]'';
         guarded = cmdline: ''${identityCheck} && exec ${cmdline}; exit 0'';
-        # The PreToolUse guard is checked by SHAPE instead (see
-        # transcriptScanGuardFailsClosed): its command embeds a coreutils
+        # The PreToolUse guards are checked by SHAPE instead (see
+        # everyPreToolUseGuardFailsClosed): their command embeds a coreutils
         # store path, so an exact-string expectation would break on every
         # nixpkgs bump for no safety gain.
         procstate = args: guarded "/var/lib/sancta/.claude/index/bin/sancta-procstate ${args}";
