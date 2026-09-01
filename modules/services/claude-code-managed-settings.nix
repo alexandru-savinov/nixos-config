@@ -171,6 +171,40 @@
 #                      does not gate a tool call), so it renders via
 #                      guardedSoulCommand/hookEntry like keys 2-3 rather than
 #                      guardedBlockingCommand like key 6.
+#   9. hooks.PreToolUse (comanda-distructiva, Bash) — ADDED 2026-08-31.
+#                      Second member of key 6's class, and rendered the same
+#                      way for the same reason. It stops a small set of
+#                      irrecoverable shapes — `rm -r` at a protected root,
+#                      mkfs, dd onto a block device, curl-piped-to-shell — and
+#                      its whole point is that it EXPLAINS: a block with no
+#                      reason produces a blind retry, usually phrased more
+#                      circuitously, which is the behaviour being guarded
+#                      against. Its stderr therefore names what matched, why
+#                      not on this host, and what to do instead.
+#
+#                      It is a TRIPWIRE ON ACCIDENTAL SHAPES, not containment,
+#                      and the source says so in its own header and in every
+#                      block message. The wall against deletion is filesystem
+#                      permissions and the weekly soul-mirror; anyone treating
+#                      a regex over a command string as protection has built
+#                      the dangerous green this repo keeps re-learning about.
+#
+#                      Reviewed before wiring (revmux, 4 independent Opus
+#                      lenses): 14 findings, 11 confirmed, 13 fixed and 1
+#                      refused in writing. The refusal and the full
+#                      disposition table live on the soul volume, at
+#                      index/moments/garda-distructiva-recenzie.md — not here,
+#                      because a public repo is the wrong place for a
+#                      shape-by-shape map of what a guard on this host does
+#                      and does not catch.
+#
+#                      A false positive kills this guard as surely as a miss:
+#                      one block on a command that runs every day and it gets
+#                      switched off. So the negative arm asserts BOTH
+#                      directions (34 dangerous shapes blocked, 29 everyday
+#                      ones allowed) and asserts the message text, not just
+#                      the exit code — four deliberate mutations were run to
+#                      confirm the arm can actually go red.
 #
 # HERDR COLLISION — WHY SessionStart/SessionEnd ARE NOT HERE
 # ------------------------------------------------------------
@@ -286,10 +320,21 @@
 # THE WORKS-BY-LUCK TRAP (same class as sancta-statusline-refresh.nix)
 # ----------------------------------------------------------------------
 # Every command below except the clock points at a path on the LUKS SOUL
-# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — seven distinct
-# scripts as of 2026-08-26 (statusline.sh, memory-index-hook, evidence-gate,
+# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — EIGHT distinct
+# scripts as of 2026-08-31 (statusline.sh, memory-index-hook, evidence-gate,
 # transcript-scan-guard, pipe-status-advisor, sancta-procstate,
-# goal-sau-guard). That means:
+# goal-sau-guard, comanda-distructiva). That means:
+#
+# This list is the CHECKLIST for the post-deploy verification named in the
+# second bullet below — the one thing that can close a gap eval cannot see
+# (a positional reference on purpose: the check has no name to grep for).
+# A stale
+# count here does not merely read wrong: a human working the list skips the
+# script that is missing from it, which reproduces exactly the failure this
+# section exists to prevent, and does so most easily for the NEWEST entry —
+# the one least likely to be present. So it is updated in the same commit as
+# any addition, never after. (2026-08-31, review finding MEDIUM on #587: this
+# paragraph still said seven while key 9 was already wired.)
 #   - tests/unit-script-refs.nix cannot see them — it only resolves
 #     /nix/store/... references, by construction. The ONE exception since
 #     2026-08-26 is the `timeout` in guardedBlockingCommand, which is a store
@@ -460,6 +505,10 @@ let
       ];
       PreToolUse = [
         (preToolUseEntry "Bash" (guardedBlockingCommand cfg.transcriptScanGuardScript))
+        # Key 9. Separate array element, not a second command in the entry
+        # above, for the reason stated at the top of `settings`: the two
+        # guards must be able to fail independently.
+        (preToolUseEntry "Bash" (guardedBlockingCommand cfg.destructiveCommandGuardScript))
       ];
       PostToolUse = [
         (matchedEntry "Write|Edit" (guardedSoulCommand cfg.memoryIndexHookScript))
@@ -594,6 +643,30 @@ in
         bit). Restricts what the agent may do, so it belongs in the managed
         layer under this module's test (header key 6). Same works-by-luck
         caveat as the other soul-volume paths.
+      '';
+    };
+
+    destructiveCommandGuardScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/hooks/comanda-distructiva.mjs";
+      description = ''
+        Path to the second PreToolUse guard on Bash (header key 9). Blocks a
+        small set of irrecoverable command shapes and, deliberately, explains
+        each block on stderr — the explanation is the product, not decoration,
+        because a bare refusal produces a blind retry.
+
+        A TRIPWIRE on accidental shapes, NOT containment: it matches a command
+        string with regexes, so anything that hides its argv defeats it and it
+        is documented as defeatable in its own header. It buys nothing against
+        an adversary and must never be counted as a filesystem boundary.
+
+        Rendered by guardedBlockingCommand for key 6's reason: a guard whose
+        script has gone missing must not become an implicit yes. Same
+        works-by-luck caveat as every other soul-volume path here — eval
+        cannot see it, so the post-deploy check in the PR is what closes the
+        gap. Self-test: `comanda-distructiva.mjs --autoproba`, which asserts
+        both directions (dangerous blocked, everyday allowed) and the message
+        text, and exits non-zero on any failure.
       '';
     };
 

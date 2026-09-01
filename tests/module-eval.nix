@@ -1484,8 +1484,8 @@ let
         # must contain, whichever guard shape wraps it.
         identityCheck = ''[ "$(id -un)" = sancta ]'';
         guarded = cmdline: ''${identityCheck} && exec ${cmdline}; exit 0'';
-        # The PreToolUse guard is checked by SHAPE instead (see
-        # transcriptScanGuardFailsClosed): its command embeds a coreutils
+        # The PreToolUse guards are checked by SHAPE instead (see
+        # everyPreToolUseGuardFailsClosed): their command embeds a coreutils
         # store path, so an exact-string expectation would break on every
         # nixpkgs bump for no safety gain.
         procstate = args: guarded "/var/lib/sancta/.claude/index/bin/sancta-procstate ${args}";
@@ -1557,31 +1557,51 @@ let
           # paths are invisible to every build-time check. Assert the shape
           # rather than an exact string: the command embeds a coreutils store
           # path, which changes on every nixpkgs bump.
-          transcriptScanGuardFailsClosed =
+          # 2026-08-31: stated over EVERY PreToolUse entry rather than over
+          # "the only one". This check used to open with
+          # `builtins.head (rendered.hooks.PreToolUse)` and a length == 1
+          # assertion, which meant a second guard added later would be
+          # rejected by the count while the property that actually matters —
+          # every Bash guard fails CLOSED — went on being asserted for the
+          # first entry only. Adding key 9 turned that latent shape into a
+          # live one, so the invariant now quantifies, the same way
+          # allSoulCommandsGuarded below already does.
+          everyPreToolUseGuardFailsClosed =
             let
-              onlyEntry = builtins.head (rendered.hooks.PreToolUse);
-              hook = builtins.head onlyEntry.hooks;
-              c = hook.command;
+              entryOk =
+                e:
+                let
+                  hook = builtins.head e.hooks;
+                  c = hook.command;
+                in
+                e.matcher == "Bash"
+                && builtins.length e.hooks == 1
+                # Blocks rather than allows, and cannot `exec` away the mapping.
+                && nixpkgs.lib.hasInfix "exit 2" c
+                && !(nixpkgs.lib.hasInfix "exec " c)
+                # A HANG must block too (PR #584 review round 2): the bound is
+                # taken here, with a store-path `timeout`, and 124 maps to a
+                # block — never left to Claude Code's unverified expiry
+                # behaviour.
+                && nixpkgs.lib.hasInfix "/bin/timeout -k 2 10 " c
+                # ALLOWLIST, not a denylist: only a literal 0 may pass. A
+                # denylist of "did not complete" statuses leaked 137 (SIGKILL
+                # after the -k escalation) straight through as an allow.
+                && nixpkgs.lib.hasInfix "case $rc in 0) exit 0 ;; 2) exit 2 ;; *)" c
+                # Claude Code's own field is a backstop that must never fire
+                # first, so it has to be strictly longer than the inner bound.
+                && (hook.timeout or 0) > 10;
+              commands = map (e: (builtins.head e.hooks).command) rendered.hooks.PreToolUse;
+              carries = name: builtins.any (c: nixpkgs.lib.hasInfix name c) commands;
             in
-            builtins.length (rendered.hooks.PreToolUse) == 1
-            && onlyEntry.matcher == "Bash"
-            && builtins.length onlyEntry.hooks == 1
-            && nixpkgs.lib.hasInfix "transcript-scan-guard.mjs" c
-            # Blocks rather than allows, and cannot `exec` away the mapping.
-            && nixpkgs.lib.hasInfix "exit 2" c
-            && !(nixpkgs.lib.hasInfix "exec " c)
-            # A HANG must block too (PR #584 review round 2): the bound is
-            # taken here, with a store-path `timeout`, and 124 maps to a
-            # block — never left to Claude Code's unverified expiry
-            # behaviour.
-            && nixpkgs.lib.hasInfix "/bin/timeout -k 2 10 " c
-            # ALLOWLIST, not a denylist: only a literal 0 may pass. A denylist
-            # of "did not complete" statuses leaked 137 (SIGKILL after the
-            # -k escalation) straight through as an allow.
-            && nixpkgs.lib.hasInfix "case $rc in 0) exit 0 ;; 2) exit 2 ;; *)" c
-            # Claude Code's own field is a backstop that must never fire
-            # first, so it has to be strictly longer than the inner bound.
-            && (hook.timeout or 0) > 10;
+            rendered.hooks.PreToolUse != [ ]
+            && builtins.all entryOk rendered.hooks.PreToolUse
+            # Named separately from the quantified property: "they all fail
+            # closed" stays true of an EMPTY-ish registry that quietly lost a
+            # guard, which is the same absence-is-not-a-pass hole the guards
+            # themselves are written against.
+            && carries "transcript-scan-guard.mjs"
+            && carries "comanda-distructiva.mjs";
 
           hasBlockedOnPermissionPrompt =
             (rendered.hooks.Notification or [ ])
