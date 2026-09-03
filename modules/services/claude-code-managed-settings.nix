@@ -205,6 +205,40 @@
 #                      ones allowed) and asserts the message text, not just
 #                      the exit code — four deliberate mutations were run to
 #                      confirm the arm can actually go red.
+#  10. env.CLAUDE_CODE_STOP_HOOK_BLOCK_CAP = "3" — ADDED 2026-09-03. The first
+#                      non-hook key, and the first `env` entry, so it gets the
+#                      header's test in full. What it is: the number of times a
+#                      Stop-time blocker may reject a turn end before the
+#                      harness overrides it. MEASURED, not read from docs:
+#                      blocks = CAP + 1 (CAP=1→2, 2→3, 3→4; unset→9), on a
+#                      throwaway always-blocking Stop hook via `--settings`,
+#                      in an isolated `claude -p` session, with the value
+#                      delivered through settings.env exactly as this file
+#                      delivers it. So "3" means FOUR blocks, not three.
+#
+#                      Why it passes the test: it is a restriction on the
+#                      AGENT's own loop, not an owner preference. The native
+#                      `/goal` evaluator re-blocks identically until the cap
+#                      — it does not honour anything like stop_hook_active —
+#                      and this session's transcript carries ~298 such blocks,
+#                      ~30 cap-hits, clustered in five loop days (longest
+#                      episode 46 min, 18 hidden owner messages). No block
+#                      after the third ever changed the outcome; every
+#                      legitimate nudge resolved on the first, and the longest
+#                      legitimate chain (2026-08-31, three consecutive
+#                      productive blocks) fits under 4. So 4 keeps the good
+#                      path whole and cuts a dead loop by more than half.
+#
+#                      Cross-user: `env` here is machine-wide. A smaller cap
+#                      only shortens loops, for any account; harmless for
+#                      root/herdr, so deliberately left unguarded (there is
+#                      nothing to guard — it is a value, not a command).
+#
+#                      What it does NOT fix: the evaluator re-arms on the next
+#                      user turn. The cap shortens an episode; preventing one
+#                      is a matter of how a /goal is written (at least one
+#                      condition the agent can close by itself, verifiable
+#                      by a fact — feedback_hook_loop_presence.md).
 #
 # HERDR COLLISION — WHY SessionStart/SessionEnd ARE NOT HERE
 # ------------------------------------------------------------
@@ -487,6 +521,11 @@ let
       type = "command";
       command = guardedSoulCommand cfg.statuslineScript;
     };
+    # Key 10. A string, because Claude Code's `env` takes strings; toString
+    # so the option can stay a checked positive integer.
+    env = {
+      CLAUDE_CODE_STOP_HOOK_BLOCK_CAP = toString cfg.stopHookBlockCap;
+    };
     # Every entry below is a SEPARATE element of its event's array rather than
     # a second command inside one entry: Claude Code runs matching entries
     # independently, so an entry that exits non-zero (evidence-gate nudging,
@@ -667,6 +706,19 @@ in
         gap. Self-test: `comanda-distructiva.mjs --autoproba`, which asserts
         both directions (dangerous blocked, everyday allowed) and the message
         text, and exits non-zero on any failure.
+      '';
+    };
+
+    stopHookBlockCap = mkOption {
+      type = types.ints.positive;
+      default = 3;
+      description = ''
+        Value of CLAUDE_CODE_STOP_HOOK_BLOCK_CAP (header key 10): how many
+        times a Stop-time blocker may reject a turn end before the harness
+        overrides it. Measured relation, not documented: the number of blocks
+        the agent actually sees is this value PLUS ONE (unset behaves like 8,
+        i.e. 9 blocks). Default 3 = four blocks: room for a legitimate
+        three-step chain, less than half the waste of a dead loop.
       '';
     };
 
