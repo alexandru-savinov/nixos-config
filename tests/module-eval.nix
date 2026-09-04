@@ -1628,18 +1628,29 @@ let
 
           spinnerTipsNotInManagedFile = !(rendered ? spinnerTipsEnabled);
 
+          # Header key 10, 2026-09-03. Pinned to the exact attrset, not just
+          # "has the key": `env` is a machine-wide grant of environment to
+          # every session, so a second variable slipping in here must fail
+          # this check, and the VALUE is pinned because the measured relation
+          # is blocks = value + 1 — a "9" here would silently restore the
+          # nine-block loop this key exists to shorten.
+          stopHookCapPinned =
+            (rendered.env or null) == { CLAUDE_CODE_STOP_HOOK_BLOCK_CAP = "3"; };
+
           # The hard limit this module promises in its own header: managed
           # settings override the owner's file, so a key beyond the agreed
           # ones is a silent capability-removal, not a convenience. This
           # fails loudly the moment another key is added without also
           # updating this assertion — the reviewing human, not a rebuild.
-          # Top level stays two attrs; the agreed hook events are exactly
+          # Top level is THREE attrs since 2026-09-03 (env joined hooks and
+          # statusLine — header key 10); the agreed hook events are exactly
           # these five since 2026-08-26 (attrNames sorts alphabetically) — the two
           # Session* events are excluded on purpose, see noSessionEventsClaimed.
           # Widening this list is the deliberate, reviewable act of applying
           # the header's test to a new key — never a formality.
           exactlyAgreedKeys =
             (builtins.attrNames rendered) == [
+              "env"
               "hooks"
               "statusLine"
             ]
