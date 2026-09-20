@@ -124,10 +124,13 @@ let
     && !(matches "(person|device_tracker|mobile_app)\\..*" target)));
   parseSource = file: source:
     let
-      checked = builtins.tryEval (if syntax source then builtins.fromTOML source else throw "unsupported syntax");
+      checked = builtins.tryEval (
+        let parsed = if syntax source then builtins.fromTOML source else throw "unsupported syntax";
+        in if validate parsed then parsed else throw "invalid contract"
+      );
       value = checked.value;
     in
-    if checked.success && validate value then value.contract // { nivel = value.spune.nivel; }
+    if checked.success then value.contract // { nivel = value.spune.nivel; }
     else throw "vigil: invalid contract ${toString file}";
   parse = file: parseSource file (builtins.readFile file);
 in
