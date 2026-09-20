@@ -149,6 +149,14 @@ in
   # Long-Lived Access Token for hass-cli + HA MCP — minted in HA UI after
   # owner onboarding (Profile → Security → Long-lived access tokens)
   "home-assistant-token.age".publicKeys = users ++ [ rpi5 ];
+
+  # vigil: read-only checks against Home Assistant from rpi5 (design on the
+  # soul volume, 2026-09-20). A Long-Lived Access Token minted from a DEDICATED
+  # non-admin HA account named `vigil` — never from a person's account, so no
+  # poll is ever recorded as that person's activity. Same recipients as the
+  # token above: editable from choir (users), decryptable on rpi5. Same
+  # chicken-and-egg rule: the .age must exist BEFORE any host declares it.
+  "ha-vigil-token.age".publicKeys = users ++ [ rpi5 ];
   # NOTE: home-assistant-secrets.age is intentionally NOT registered — HA's own
   # secrets.yaml is unused here, and registering a key without creating its .age
   # is a footgun (a future host config wiring age.secrets before `agenix -e`
