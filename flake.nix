@@ -272,6 +272,12 @@
             directories = [ ./hosts/rpi5-full/vigil-contracts ];
           };
 
+          vigil-public-contracts-choir = import ./pkgs/vigil-public-contracts.nix {
+            inherit pkgs;
+            vigil = self.packages.x86_64-linux.vigil;
+            directories = [ ./hosts/sancta-choir/vigil-contracts ];
+          };
+
           # Agenix recipient-drift + fail-open corruption guard (#448):
           # on-disk `-> ` stanza counts must match secrets.nix declarations,
           # and no .age payload may carry the empty-plaintext signature.

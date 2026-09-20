@@ -139,6 +139,95 @@ sudo systemctl start vigil.service
 sudo jq -e '(.verde + .picat + .necitit) == 10 and .necitit == 0' /var/lib/vigil/tick
 ```
 
+## 4. Choir: eight row-only contracts
+
+After the choir row-only PR is merged and CI is green, use a clean owner
+checkout on choir. Build successfully before switching, with one build job:
+
+```sh
+test -z "$(git status --porcelain)"
+git switch main
+git pull --ff-only
+nixos-rebuild build --flake .#sancta-choir --max-jobs 1 --cores 1 &&
+  sudo nixos-rebuild switch --flake .#sancta-choir --max-jobs 1 --cores 1
+systemctl is-active vigil.timer vigil-tick.socket
+sudo systemctl start vigil.service
+sudo jq -e '.verde == 8 and .picat == 0 and .necitit == 0' /var/lib/vigil/tick
+sudo jq -e 'all(.contracts[]; .open == null and .nota == null)' /var/lib/vigil/incidents.json
+```
+
+If an incident is still open, wait for the normal green threshold and
+30-minute hold-down; do not edit state to clear it. The fresh tick and eight
+green verdicts are acceptance evidence even if no transition row exists.
+The packaged `vigil autoproba` verifies that disabled delivery writes a row
+without sending a request, queuing an event, or creating a success marker.
+
+From rpi5, verify choir's timestamp and then its peer contract verdicts:
+
+```sh
+curl --fail --max-time 10 http://100.94.191.54:8747/ | jq -e '
+  (.la | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) > (now - 900)'
+sudo systemctl start vigil.service
+run_id=$(sudo jq -r .run_id /var/lib/vigil/tick)
+sudo journalctl _SYSTEMD_INVOCATION_ID="$run_id" -o cat --no-pager
+```
+
+Both `choir-host` and `choir-tick` must report `verde`.
+
+## 5. Choir: re-key and enable delivery together
+
+Only after section 4 is accepted, use a clean owner x86_64 editing checkout
+whose age identity can decrypt the existing Telegram ciphertext. The patch
+adds choir's recipient, declares its runtime secret, enables delivery, flips
+the eight contracts to incident mode and adds the ninth channel contract.
+The owner must re-key the ciphertext before committing the recipient change.
+
+```sh
+git switch -c feat/vigil-choir-delivery
+git apply --check docs/plans/vigil-choir-activation.patch
+git apply docs/plans/vigil-choir-activation.patch
+(cd secrets && EDITOR=: agenix -e backup-telegram-env.age)
+nix fmt -- hosts/sancta-choir/configuration.nix secrets/secrets.nix
+git add hosts/sancta-choir/configuration.nix hosts/sancta-choir/vigil-contracts \
+  secrets/secrets.nix secrets/backup-telegram-env.age
+nix build .#checks.x86_64-linux.module-eval \
+  .#checks.x86_64-linux.vigil-public-contracts-choir \
+  .#checks.x86_64-linux.secrets-recipient-guard --no-link
+git commit -m "feat(vigil): enable choir delivery after secret re-key"
+git push -u origin feat/vigil-choir-delivery
+gh pr create --base main --title "feat(vigil): enable choir Telegram delivery" \
+  --body "Activates delivery for nine choir contracts and includes the owner-rekeyed Telegram ciphertext with its matching recipient rule. Require green CI and review before deployment; live acceptance remains pending."
+```
+
+After review and green CI, repeat section 4's build-before-switch commands
+on choir. Confirm nine contracts with zero NECITIT and a real channel marker:
+
+```sh
+sudo systemctl start vigil.service
+sudo jq -e '(.verde + .picat + .necitit) == 9 and .necitit == 0' /var/lib/vigil/tick
+sudo stat /var/lib/vigil/last-channel-ok
+```
+
+During a quiet hour, the owner performs the live gallery acceptance:
+
+```sh
+sudo systemctl stop sancta-gallery.service
+sudo journalctl -fu vigil.service -o cat
+```
+
+Observe two consecutive scheduled `galeria` failures and exactly one Telegram
+`open`. Exit the journal viewer and restore the gallery:
+
+```sh
+sudo systemctl start sancta-gallery.service
+sudo journalctl -fu vigil.service -o cat
+```
+
+Observe two consecutive green results and a continuous 30-minute green
+hold-down, then exactly one Telegram `close`. Restore the gallery even if the
+notification test fails. Record the observed messages and timestamps only
+after this test actually runs; a test incident is not the first real incident.
+
 ## Pending evidence
 
 - rpi5 deployment and live peer acceptance.
@@ -146,6 +235,3 @@ sudo jq -e '(.verde + .picat + .necitit) == 10 and .necitit == 0' /var/lib/vigil
 - Owner-authored private ciphertexts and their activation PR.
 - Live Telegram open/close acceptance and production ack acceptance.
 - First real incident date; record it only after a real notification arrives.
-
-The remaining choir steps and final activation patches will be added before
-the implementation is declared ready for deployment.

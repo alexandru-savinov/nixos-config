@@ -42,6 +42,7 @@
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/codex.nix
+    ../../modules/services/vigil.nix
     ../../modules/services/claude-shared.nix
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
@@ -623,6 +624,14 @@
   # bin/gallery-shot's hardcoded and only permitted origin — a structural gate,
   # "so Sancta cannot, not so it promises not to" — and killing it as a duplicate
   # would remove Sancta's own eyes on what it renders. Second role, not stray copy.
+  services.vigil = {
+    enable = true;
+    contractsDirs = [ ./vigil-contracts ];
+    expectedContracts = 8;
+    telegramEnvFile = null;
+    listenAddress = "100.94.191.54";
+  };
+
   services.sancta-gallery = {
     enable = true;
     galleryDir = "/var/lib/sancta/.claude/index/gallery";

@@ -1,0 +1,112 @@
+--- a/hosts/sancta-choir/configuration.nix
++++ b/hosts/sancta-choir/configuration.nix
+@@ -453,6 +453,10 @@
+     in
+     {
+       tailscale-auth-key = secret "tailscale-auth-key";
++      backup-telegram-env = secret "backup-telegram-env" // {
++        group = "vigil";
++        mode = "0440";
++      };
+       # Open-WebUI secrets
+       open-webui-secret-key = secret "open-webui-secret-key";
+       openrouter-api-key = secret "openrouter-api-key";
+@@ -627,8 +631,8 @@
+   services.vigil = {
+     enable = true;
+     contractsDirs = [ ./vigil-contracts ];
+-    expectedContracts = 8;
+-    telegramEnvFile = null;
++    expectedContracts = 9;
++    telegramEnvFile = config.age.secrets.backup-telegram-env.path;
+     listenAddress = "100.94.191.54";
+   };
+
+--- a/secrets/secrets.nix
++++ b/secrets/secrets.nix
+@@ -115,7 +115,7 @@
+
+   # Telegram credentials for backup failure alerts (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
+   # EnvironmentFile format — only rpi5 needs this (runs the backup service)
+-  "backup-telegram-env.age".publicKeys = users ++ [ rpi5 ];
++  "backup-telegram-env.age".publicKeys = users ++ [ rpi5 sancta-choir ];
+
+   # SSH private key for the DURABLE weekly Sancta self-backup PUSH
+   # (rpi5 → root@sancta-claw:/root/dr, restricted forced-command wrapper).
+--- a/hosts/sancta-choir/vigil-contracts/build-volume.toml
++++ b/hosts/sancta-choir/vigil-contracts/build-volume.toml
+@@ -6,4 +6,4 @@
+ picat_dupa = 2
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- a/hosts/sancta-choir/vigil-contracts/disk-root.toml
++++ b/hosts/sancta-choir/vigil-contracts/disk-root.toml
+@@ -7,4 +7,4 @@
+ prag = 85
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- a/hosts/sancta-choir/vigil-contracts/galeria.toml
++++ b/hosts/sancta-choir/vigil-contracts/galeria.toml
+@@ -8,4 +8,4 @@
+ astept = { status = 200 }
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- a/hosts/sancta-choir/vigil-contracts/membrana.toml
++++ b/hosts/sancta-choir/vigil-contracts/membrana.toml
+@@ -6,4 +6,4 @@
+ picat_dupa = 2
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- a/hosts/sancta-choir/vigil-contracts/rpi5-host.toml
++++ b/hosts/sancta-choir/vigil-contracts/rpi5-host.toml
+@@ -7,4 +7,4 @@
+ peer = true
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- a/hosts/sancta-choir/vigil-contracts/rpi5-tick.toml
++++ b/hosts/sancta-choir/vigil-contracts/rpi5-tick.toml
+@@ -8,4 +8,4 @@
+ astept = { status = 200, prospetime = "15m" }
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- a/hosts/sancta-choir/vigil-contracts/soul-mirror.toml
++++ b/hosts/sancta-choir/vigil-contracts/soul-mirror.toml
+@@ -7,4 +7,4 @@
+ prag = "8d"
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- a/hosts/sancta-choir/vigil-contracts/tailscaled.toml
++++ b/hosts/sancta-choir/vigil-contracts/tailscaled.toml
+@@ -6,4 +6,4 @@
+ picat_dupa = 2
+
+ [spune]
+-nivel = "nota"
++nivel = "incident"
+--- /dev/null
++++ b/hosts/sancta-choir/vigil-contracts/channel.toml
+@@ -0,0 +1,10 @@
++[contract]
++nume = "channel"
++ce = "Service health"
++verifica = "age"
++tinta = "/var/lib/vigil/last-channel-ok"
++picat_dupa = 2
++prag = "2d"
++
++[spune]
++nivel = "incident"

@@ -1,0 +1,10 @@
+[contract]
+nume = "disk-root"
+ce = "Service health"
+verifica = "disk"
+tinta = "/"
+picat_dupa = 2
+prag = 85
+
+[spune]
+nivel = "nota"

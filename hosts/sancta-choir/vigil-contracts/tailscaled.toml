@@ -1,0 +1,9 @@
+[contract]
+nume = "tailscaled"
+ce = "Service health"
+verifica = "unit"
+tinta = "tailscaled.service"
+picat_dupa = 2
+
+[spune]
+nivel = "nota"

@@ -1,0 +1,9 @@
+[contract]
+nume = "membrana"
+ce = "Service health"
+verifica = "tcp"
+tinta = "127.0.0.1:8743"
+picat_dupa = 2
+
+[spune]
+nivel = "nota"
