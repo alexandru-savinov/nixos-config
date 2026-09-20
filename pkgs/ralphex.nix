@@ -8,18 +8,18 @@
 
 stdenv.mkDerivation rec {
   pname = "ralphex";
-  version = "1.3.1";
+  version = "1.7.0";
 
   src = fetchurl (
     let
       sources = {
         "aarch64-linux" = {
           url = "https://github.com/umputun/ralphex/releases/download/v${version}/ralphex_${version}_linux_arm64.tar.gz";
-          hash = "sha256-GIoFw8tzxflioBXF5Zz8AxwURcBSF8BpKYPEVj20lUc=";
+          hash = "sha256-+PBHjCy+P+1osVxdh0zmWih+rSVzsrkEgh86fPjZoCw=";
         };
         "x86_64-linux" = {
           url = "https://github.com/umputun/ralphex/releases/download/v${version}/ralphex_${version}_linux_amd64.tar.gz";
-          hash = "sha256-OJcT/r8zDFzIsn6Y44h8xomfs04EM2IUytM2J64vYIA=";
+          hash = "sha256-xEfIaN/Nv0oNCbjdHHlCYcDIG9aQ1GcrvLPs0TpaIgw=";
         };
       };
       system = stdenv.hostPlatform.system;
