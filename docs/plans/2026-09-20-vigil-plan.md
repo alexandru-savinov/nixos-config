@@ -2,13 +2,13 @@ Build vigil v1: the agent that watches the Sancta fleet and speaks — contracts
 
 ## Context
 
-v4 (2026-09-20). Three revmux rounds on v1–v3 (31 + 16 + 16 findings; rounds 2
+v6 draft (2026-09-20). Four completed revmux rounds on v1–v4 (31 + 16 + 16 + 17 findings; rounds 2
 and 3 each found a fresh 16, half of them in the explain/recover half). The
 rate was not falling, so v4 **splits the plan**: this file is vigil v1 —
 watch + say + tick, both hosts, private contracts. Explain, recovery, polkit
 and the two-user spool are `docs/plans/2026-09-20-vigil-2-explain-recover-plan.md`,
 to be executed only after v1 has been live and has seen real incidents. All
-three rounds' findings that apply to v1 are folded in; the disposition tables
+four rounds' findings that apply to v1 are folded in; the disposition tables
 are at the end. Design: private, on the soul volume (`index/design/vigil-design.md`
 v2.1); the owner approved it. What this repo needs to know:
 
@@ -24,14 +24,18 @@ v2.1); the owner approved it. What this repo needs to know:
   naming plan 2.
 - A **contract** is one TOML file, one target. Closed schema (unknown keys are
   a validation error): `[contract]` — `nume` (unique across all directories),
-  `ce`, `verifica`, `tinta`, `astept` (inline table) or `prag`, `la`,
-  `picat_dupa`, optional `peer = true` (the only way a `100.` address is allowed
-  in `tinta`); `[spune]` — `nivel = "incident" | "nota"`. Check types, closed:
+  `ce`, `verifica`, `tinta`, type-specific `astept` (inline
+  table) or `prag`, `picat_dupa`, optional `peer = true` (required for a parsed target host in the Tailscale CGNAT range); `[spune]` — `nivel = "incident" | "nota"`. Check types, closed:
   `tcp | http | unit | age | disk | mount | cmd | hass-state`. `cmd` = allow-list
   of **absolute executable paths** (`cmdAllow`). No `$VAR` expansion in `tinta`.
+  `ce` is a generic operator-facing description string; `picat_dupa` is an
+  integer ≥ 1. The validator defines and enforces the required `tinta`/`astept`/
+  `prag` fields for each check type identically at eval and runtime.
   The runtime parser accepts a TOML **subset**: tables, single-line basic
   strings, integers, booleans, inline tables, arrays of strings — no floats,
-  datetimes, multi-line strings, dotted keys, arrays of tables.
+  datetimes, literal or multi-line strings, dotted keys, arrays of tables.
+  `#` comments are accepted. `nume` must match `^[a-z0-9][a-z0-9-]{0,63}$`;
+  every derived path is resolved and checked to remain under its state subdirectory.
 - Verdicts are **three-valued**: `verde`, `picat`, `NECITIT` (spawn error
   `ENOENT`/`EACCES` with `status === null`, exit 127, missing file, unknown
   unit, `Result≠success`, unparsable output, **or an unparsable contract
@@ -46,8 +50,9 @@ v2.1); the owner approved it. What this repo needs to know:
   hold-down; a contract NECITIT for `picat_dupa` consecutive ticks produces one
   `nota`. **Acknowledgement** is a drop-file `/var/lib/vigil/ack/<nume>`
   (directory `0775 vigil users`), consumed and deleted by the next tick; in v1
-  it clears a NECITIT nota's suppression, nothing else.
-- **Transitions → say.** `vigil-check` is the only producer: on `open`, `close`
+  it clears a NECITIT nota's suppression, nothing else. Consuming the ack deletes
+  that contract's nota marker even when its verdict did not change.
+- **Transitions → say.** `vigil-check` produces contract events: on `open`, `close`
   and the NECITIT `nota` it runs `$VIGIL_BIN say` (absolute path from the unit
   environment) with one JSON event `{gazda, nume, verdict, tranzitie, nivel}` —
   never `tinta`, never log text. Failed sends are spooled to
@@ -56,19 +61,24 @@ v2.1); the owner approved it. What this repo needs to know:
   shape; the chat is the owner's DM) + the status-row file, written **before**
   any network call. `nivel = "incident"` → every transition; `nivel = "nota"` →
   row + one message per *episode*: the marker `/var/lib/vigil/nota-sent/<nume>`
-  holds the `verdict` it was sent for and is **deleted by `vigil-check` when the
-  contract's verdict changes**, so the next episode sends again. When
+  holds the `verdict` it was sent for and is deleted by `vigil-check` when the
+  contract's verdict changes or its ack is consumed. The special `vigil` marker
+  is deleted only after a complete check run exits 0/1/2, so a later internal-fault
+  episode alerts again without alerting every five minutes during one fault. When
   `VIGIL_SAY=0` (host without a keyed Telegram secret) say writes the row and
   exits 0 without touching the network. It asserts `"ok":true`; every
   successful send and a daily `sendChatAction` (`typing`, against
   `$TELEGRAM_CHAT_ID` — fails when the bot cannot reach *that chat*) touch
   `/var/lib/vigil/last-channel-ok`, which the `channel` contract checks with
-  `age` (`prag = "2d"`).
+  `age` (`prag = "2d"`). Every Telegram request has a 10-second deadline.
 - **Tick.** `vigil-check`'s last action writes `/var/lib/vigil/tick.counts.json`
-  atomically (`{run_id, verde, picat, necitit}`). `ExecStopPost = vigil tick
+  atomically (`{run_id, la, verde, picat, necitit}`), where `run_id` is systemd's `$INVOCATION_ID` and `la` is the check-completion ISO time. Tests supply a unique invocation ID.
+  `ExecStopPost = vigil tick
   write` reads it plus systemd's `$SERVICE_RESULT`/`$EXIT_STATUS` and replaces
-  `/var/lib/vigil/tick` with `{"la":"<ISO>","verde":n,"picat":n,"necitit":n}`
-  **only if** result is `success`, status ∈ {0,1,2} and `run_id` is new;
+  `/var/lib/vigil/tick` with `{run_id, la, verde, picat, necitit}`
+  **only if** result is `success`, status ∈ {0,1,2}, the counts' `run_id`
+  equals `$INVOCATION_ID`, and differs from the already published tick's `run_id`.
+  Publish the entire counts object with one atomic rename, preserving its `la`;
   otherwise it leaves the tick stale — staleness is the peer's signal. A
   socket-activated responder on **:8747** serves it (`FreeBind`, after
   `tailscaled`, `Accept=yes`, `StandardError=journal`, `IPAddressAllow` on the
@@ -97,50 +107,108 @@ Files: `pkgs/vigil/` (`vigil-check.mjs`, `vigil-say.mjs`, `vigil-tick.mjs`,
 
 ## Tasks
 
+### Shared schema and runtime rules
+
+`[contract]` requires `nume`, `ce`, `verifica`, `tinta`, `picat_dupa`;
+`[spune]` requires `nivel`. `nume` reserves `vigil` for the internal-failure
+alarm; `ce` is 1–200 characters and is never sent or logged. `peer` defaults
+false. Strings are single-line; `nume` and `verifica` use the closed values above.
+`picat_dupa` is 1–12. `tinta` is a nonempty string except for `cmd`'s argv array.
+`la` and `tinta_glob` are not contract keys. No implied defaults for expectations:
+
+| verifica | target and required expectation | optional expectation |
+|---|---|---|
+| tcp | `tinta = "host:port"`; no `astept` or `prag` | none |
+| http | absolute http(s) URL; `astept = { status = 200 }` (exact integer 100–599) | `body` regex string; `prospetime` duration |
+| unit | exact `.service` unit name; no `astept` or `prag`; expects active | none |
+| age | absolute file path or `unit:<name>.service`; `prag` duration | none |
+| disk | absolute path; `prag` integer 1–100 (failure at use ≥ threshold) | none |
+| mount | absolute mountpoint; no `astept` or `prag` | none |
+| cmd | nonempty array of strings, absolute executable first; `astept = { valoare = "<expected>" }`, compared with trimmed stdout | none |
+| hass-state | generic entity identifier, no URL; `astept = { valoare = "<expected state>" }` | none |
+
+Durations are positive integers suffixed `s`, `m`, `h`, or `d`. Other expectation
+keys and combinations are rejected. `hass-state` compares the returned `.state`
+with `valoare`; unavailable/unknown state is picat; absent/malformed state is
+NECITIT. Error messages are fixed type-level codes, never parser excerpts,
+raw filenames, command output, URLs, entities, or exception messages. A malformed
+file with no usable name gets `invalid-<sha256-of-full-path, first 16 hex>` as
+its safe diagnostic identity. Do not construct paths from an invalid name.
+
+All network and subprocess checks have a 10-second hard deadline (tcp 5 seconds),
+bounded output (64 KiB), and no inherited interactive stdin. Check at most four
+contracts concurrently. Telegram delivery is at-least-once: ambiguous timeouts
+may duplicate a message. Persist transitions and pending events together in
+one atomic `incidents.json` update before attempting delivery. Treat this file
+as the authority; outbox files are an atomic projection for inspection. Mark
+successful events delivered atomically; keep failed events pending for 24 h,
+then log a fixed expiry code. Spend at most 60 seconds on delivery per tick,
+including retries, to preserve time for the checks and publishing the tick.
+Never replay expired or retired nota episodes. Atomically clear a contract's
+pending nota and suppression when consuming its ack or observing verdict change.
+When delivery changes from disabled to enabled, enqueue the current open
+incidents that have never been delivered, including ones opened during 5a.
+The disabled mode writes rows but neither sends nor creates retry/outbox files.
+
+`last-channel-ok` records only a confirmed Telegram success. Do not seed it from
+tmpfiles: do a bounded `--chataction` before checks when enabled and no successful
+probe occurred in 24 h; only success updates `last-chataction`. A failed initial
+probe honestly yields channel NECITIT. Closing checks inspect the latest complete
+run after a successful probe rather than requiring all historical journal lines
+to be green. Internal-failure sending uses the same bounded say implementation
+and shared state directory, with all required environment variables supplied.
+
+`incidents.json` corruption exits 3 without overwriting the file. Use temp-file,
+fsync, rename, and parent-directory fsync for durable authoritative state. The
+self-failure marker is separate so this alarm can still send on corrupt incident
+state. All tests use a fresh temporary state directory; none call Telegram or
+write deployed state. Tests cover kill/restart around each persistence boundary,
+stale invocation counts, row-only→enabled replay, and Telegram deadline expiry.
+
 ### Task 1: vigil-check — the deterministic core, with a negative arm that can go red
-- [ ] `pkgs/vigil/vigil-check.mjs` (Node ESM, zero deps). Reads every `*.toml` in the argv directories, **stat-ing through symlinks** (`statSync(join(dir,name)).isFile()`, never `Dirent.isFile()`). Parses with the subset parser `lib/toml.mjs`; a file that fails to parse is **accounted for as NECITIT** (named, with the parse error) and the run continues. Validates the closed schema; a `[recuperare]` section → that contract is NECITIT with `motiv = "recuperare: plan 2"`. **Duplicate `nume` → exit 3** before any check. `--expect N` compares N with the number of `*.toml` files **present**; mismatch → exit 3. stderr reports `files present / parsed / necitit`.
-- [ ] `lib/checks.mjs`, eight types: `tcp` (5 s); `http` (status class, optional `astept.body` regex, optional `astept.prospetime` — body is JSON, `.la` ISO younger than the duration; 10 s; no redirects); `unit` (`$VIGIL_SYSTEMCTL is-active <name>`, system scope); `age` (absolute file → mtime, or `unit:<name>` → `ExecMainExitTimestamp` + `Result=success` via `systemctl show`; `tinta_glob` picks newest); `disk` (`statfs` use% vs `prag`); `mount` (parse `/proc/self/mountinfo`, unescape, **mount-point field exact equality**); `cmd` (argv[0] ∈ `$VIGIL_CMD_ALLOW`, stdout vs `astept.valoare`); `hass-state` (`GET $HASS_URL/api/states/<tinta>`, bearer from the file at `$VIGIL_HASS_TOKEN_FILE`; `unavailable` → picat; ≠200 / no token → NECITIT). Spawn errors (`status === null`) and exit 127 → NECITIT, with a handler on the error event.
-- [ ] `lib/incident.mjs`: pure functions over `(state, verdict, now)` — open (assign `incident_id`), close with hold-down, NECITIT-nota, ack drop-file; persisted in `/var/lib/vigil/incidents.json`. On every verdict **change** for a contract, delete `/var/lib/vigil/nota-sent/<nume>` if present.
-- [ ] Transitions: per Context, spawn `$VIGIL_BIN say` with the event; on non-zero exit spool to `/var/lib/vigil/outbox/<ts>-<nume>.json`; at tick start retry outbox entries < 24 h. Daily (marker `/var/lib/vigil/last-chataction`): `$VIGIL_BIN say --chataction`. Last action: write `tick.counts.json` atomically.
+- [ ] `pkgs/vigil/vigil-check.mjs` (Node ESM, zero deps). All mutable state is rooted at `$STATE_DIRECTORY` (default `/var/lib/vigil`; systemd supplies that same path; tests supply a temporary directory), never hardcoded. Reads every `*.toml` in the argv directories, **stat-ing through symlinks** (`statSync(join(dir,name)).isFile()`, never `Dirent.isFile()`). Parses with the subset parser `lib/toml.mjs`; a file that fails parsing or any per-file schema/type/value rule is **accounted for as NECITIT** (with a safe diagnostic identity and fixed error code) and the run continues. Validates the closed schema, including the safe `nume` pattern and path confinement; a `[recuperare]` section → that contract is NECITIT with `motiv = "recuperare: plan 2"`. **Duplicate `nume` → exit 3** before any check. `--expect N` compares N with the number of `*.toml` files **present**; mismatch → exit 3. stderr reports `files present / parsed / necitit`.
+- [ ] `lib/checks.mjs`, eight types: `tcp` (5 s); `http` (exact status, optional `astept.body` regex, optional `astept.prospetime` — body is JSON, `.la` ISO younger than the duration; 10 s; no redirects); `unit` (`$VIGIL_SYSTEMCTL is-active <name>`, system scope); `age` (absolute file → mtime, or `unit:<name>` → `ExecMainExitTimestamp` + `Result=success` via `systemctl show`); `disk` (`statfs` use% vs `prag`); `mount` (parse `/proc/self/mountinfo`, unescape, **mount-point field exact equality**); `cmd` (argv[0] ∈ `$VIGIL_CMD_ALLOW`, stdout vs `astept.valoare`); `hass-state` (`GET $HASS_URL/api/states/<tinta>`, bearer from the file at `$VIGIL_HASS_TOKEN_FILE`; `unavailable` → picat; ≠200 / no token → NECITIT). Spawn errors (`status === null`) and exit 127 → NECITIT, with a handler on the error event.
+- [ ] `lib/incident.mjs`: pure functions over `(state, verdict, now)` — open (assign `incident_id`), close with hold-down, NECITIT-nota, ack drop-file. Persist `incidents.json` atomically by temp-file + rename; invalid existing JSON is an explicit internal fault (exit 3, preserving the bad file for diagnosis). On every verdict change or consumed ack, delete `nota-sent/<nume>` if present.
+- [ ] Transitions and persistence follow Shared schema and runtime rules: durably enqueue before sending, retry for 24 h within the 60-second delivery budget, replay unsent open incidents on enabling delivery, and retire stale nota episodes. Perform the due channel probe before checks, recording its marker only on success. After completing state and count persistence, retire `nota-sent/vigil` for exits 0/1/2; `tick write` publishes only matching current-invocation counts.
 - [ ] Output: one JSON line per contract (`nume`, `verifica`, `verdict`, `motiv` type-level, `incident`); summary on stderr; exit `0/1/2/3`.
-- [ ] `--autoproba` (contracts in memory, never written): loud (`tcp` closed port → picat); silent (`cmd` `/nonexistent/bin` → NECITIT via `ENOENT`; `age` missing file → NECITIT; `age unit:` with `Result=failed` → NECITIT; an unparsable contract text → NECITIT and the run continues; a `[recuperare]` → NECITIT "plan 2"); `mount` on `/` → verde, `/nonexistent-but-substring-of-root` → picat, **`/dev/sh` → picat**; `http prospetime` with a real tick body → verde, with `.la` 20 min old → picat; duplicate `nume` → exit 3; `--expect` mismatch on present files → exit 3; state machine: open → hold-down → close; NECITIT ×`picat_dupa` → one nota, verdict change deletes the marker, next episode → nota again; ack file → suppression cleared. Assert **text** of each line; exit 2 on deviation.
+- [ ] `--autoproba` uses a temporary `$STATE_DIRECTORY` and stub `$VIGIL_BIN` (contracts in memory, never written): loud (`tcp` closed port → picat); silent (`cmd` `/nonexistent/bin` → NECITIT via `ENOENT`; `age` missing file → NECITIT; `age unit:` with `Result=failed` → NECITIT; an unparsable or schema-invalid contract → NECITIT and the run continues; a `[recuperare]` → NECITIT "plan 2"); unsafe `nume` rejected; `mount` on `/` → verde, `/nonexistent-but-substring-of-root` → picat, **`/dev/sh` → picat**; `http prospetime` with a real tick body → verde, with `.la` 20 min old → picat; duplicate `nume` → exit 3; `--expect` mismatch on present files → exit 3; corrupt `incidents.json` → exit 3 without overwriting it; state machine: open → hold-down → close; NECITIT ×`picat_dupa` → one nota, verdict change or ack deletes the marker, next episode → nota again; self-failure fail → one nota, repeated fail → silent, successful run → marker cleared, later fail → nota. Assert **text** of each line; exit 2 on deviation.
 - [ ] `node --test pkgs/vigil/`; `mutate.sh` mutants, each red from an assertion (`EȘEC` on stderr, no stack trace): (a) missing file → green; (b) hold-down 0; (c) NECITIT → exit 0; (d) `ENOENT` → picat; (e) mount via `mountpoint.includes(tinta)` (the `/dev/sh` fixture catches it); (f) nota marker never deleted (the re-fire arm catches it). `absenta` over all `.mjs` → 0.
 
 ### Task 2: vigil-say and vigil-tick — the voice, and the proof it can speak
-- [ ] `vigil-say.mjs`: one event on stdin; **refuses** (exit 2) a `jurnal` or `tinta` key or any string > 500 chars. Writes `row.json` (`{gazda, stare, la}`) **first**. If `$VIGIL_SAY == "0"` → exit 0, no network. `nota` → if `nota-sent/<nume>` exists with the same `verdict` → exit 0; else send and write the marker with the verdict. `incident` → send. Send = `sendMessage`, assert `"ok":true` → touch `last-say-ok` and `last-channel-ok`; else exit 1. `--chataction` → `sendChatAction` on `$TELEGRAM_CHAT_ID`, assert ok, touch `last-channel-ok`.
-- [ ] `vigil-tick.mjs`: `write` — read `tick.counts.json` + `$SERVICE_RESULT`/`$EXIT_STATUS`; replace `/var/lib/vigil/tick` only on success/{0,1,2}/new `run_id`; else log and leave it. `serve` — stdin/stdout only; `200` + body if present, `404` if absent.
+- [ ] `vigil-say.mjs`: all state under `$STATE_DIRECTORY`; one event on stdin; validate the complete `{gazda,nume,verdict,tranzitie,nivel}` shape and safe `nume`; **refuse** (exit 2) a `jurnal` or `tinta` key or any string > 500 chars. Writes `row.json` (`{gazda, stare, la}`) **first**. If `$VIGIL_SAY == "0"` → exit 0, no network and no network-success markers. `nota` → if `nota-sent/<nume>` exists with the same `verdict` → exit 0; else send and write the marker with the verdict. `incident` → send. Send = `sendMessage` with a 10-second deadline, assert `"ok":true` → touch `last-say-ok` and `last-channel-ok`; else exit 1. `--chataction` → `sendChatAction` with the same deadline on `$TELEGRAM_CHAT_ID`, assert ok, touch `last-channel-ok`.
+- [ ] `vigil-tick.mjs`: all state under `$STATE_DIRECTORY`; `write` — read `tick.counts.json`, the previous published `tick`, `$INVOCATION_ID`, and `$SERVICE_RESULT`/`$EXIT_STATUS`; publish with one atomic rename only on success/{0,1,2}/matching current invocation and a new `run_id`, preserving the counts' completion time. Invalid, stale or replayed counts never refresh the tick. `serve` — stdin/stdout only; accept bounded GET/HEAD requests on `/`, read at most 8 KiB of headers with a 2-second deadline, emit valid HTTP/1.1 with Content-Length and Connection: close; `200` + JSON if present, `404` if absent, invalid published data → 503. Never put diagnostics on stdout.
 - [ ] `--autoproba` against a local fake Telegram: `ok:true`/`ok:false`/429/refused; marker/`last-*` semantics exactly as above; `VIGIL_SAY=0` writes the row and never connects; `nota` once, identical twice → once, after a verdict change → again; `jurnal`/`tinta`/501-char refused; tick `write` with `EXIT_STATUS=3` leaves the file, with `1` replaces it; `serve` 200/404.
 - [ ] Mutants: say ignores `ok:false`; say lets `tinta` through; say sends in `VIGIL_SAY=0`; tick `serve` 200-empty on absent file; tick `write` ignores `EXIT_STATUS`. `absenta` clean.
 
 ### Task 3: services.vigil — the NixOS module, contracts validated at eval against the runtime grammar
 - [ ] `pkgs/vigil.nix` + `flake.nix` export for both systems; `nix build .#packages.x86_64-linux.vigil && result/bin/vigil autoproba` → 0.
-- [ ] `modules/services/vigil.nix` options: `enable`; `contractsDirs` (list of paths); `expectedContracts` (int or null); `telegramEnvFile` (path or null → `VIGIL_SAY=0`; eval fails if null while any public contract has `nivel = "incident"` or is the `channel` contract); `hassTokenFile` / `hassUrl` (null → eval fails if any public `hass-state` contract); `tickPort` (8747); **`listenAddress` (`types.str`, mandatory)**; `cmdAllow`; `interval` (`5min`).
-- [ ] Eval gate over `contractsDirs` entries that are **Nix paths** (`builtins.isPath dir` — not `lib.isStorePath`, which is false for a flake subdirectory; runtime dirs such as `/run/vigil-contracts` are strings and are skipped): (1) **lexical pre-check of the source text** rejecting what the runtime subset rejects — dotted keys (`^\s*[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+\s*=`), `"""`/`'''`, `[[`, floats (`=\s*-?\d+\.\d`), datetimes (`\d{4}-\d{2}-\d{2}T`) — since `fromTOML` erases syntax; (2) `builtins.fromTOML` + a leaf walk (string/int/bool/list-of-string); (3) closed `verifica`; required fields per type; unknown keys; `100.` in `tinta` requires `peer`; `[recuperare]` present → fail naming plan 2; `nume` unique across the Nix-path dirs. Messages name the file.
-- [ ] Wire: `users.users.vigil`; `systemd.services.vigil` (`Type=oneshot`; `User=vigil`; `ExecStart = ${vigil}/bin/vigil check <dirs> [--expect N]`; `ExecStopPost = ${vigil}/bin/vigil tick write`; `SuccessExitStatus = "1 2"`; `EnvironmentFile` when non-null; `Environment` = `VIGIL_BIN`, `VIGIL_SYSTEMCTL`, `VIGIL_CMD_ALLOW`, `VIGIL_SAY`, `HASS_URL`, `VIGIL_HASS_TOKEN_FILE`; `path = [ coreutils systemd ]`; `StateDirectory=vigil`; `ProtectSystem=strict`; `ProtectHome=true`; `OnFailure = [ "vigil-failed.service" ]`); `vigil-failed.service` (**`User=vigil`**, same sandbox and `EnvironmentFile`, sends one `nota` event `{nume:"vigil", verdict:"failed"}`); `systemd.tmpfiles.rules`: **`d /var/lib/vigil 0755 vigil vigil`** first (so `StateDirectory` never re-chowns), then `d /var/lib/vigil/outbox 0750 vigil vigil`, `d /var/lib/vigil/nota-sent 0750 vigil vigil`, `d /var/lib/vigil/ack 0775 vigil users`; `systemd.timers.vigil` (`wantedBy = [ "timers.target" ]`; `OnBootSec = "2min"`; `OnUnitActiveSec = cfg.interval`); `systemd.sockets.vigil-tick` (`wantedBy = [ "sockets.target" ]`; `after`/`wants` `tailscaled.service`; `ListenStream = "${cfg.listenAddress}:${toString cfg.tickPort}"`; `FreeBind = true`; `Accept = true`; **`IPAddressAllow = [ "100.64.0.0/10" "fd7a:115c:a1e0::/48" ]`, `IPAddressDeny = "any"` on the socket**) + `systemd.services."vigil-tick@"` (`ExecStart = ${vigil}/bin/vigil tick serve`; `StandardInput = "socket"`; **`StandardError = "journal"`**; `User=vigil`; strict sandbox); a module assertion that `listenAddress` is inside `100.64.0.0/10`.
-- [ ] `tests/module-eval.nix`: rendered-shape assertions for everything above (user + group; `SuccessExitStatus`; `ExecStopPost`; timer `OnBootSec` + `timers.target`; socket `sockets.target`, `FreeBind`, `IPAddressAllow` on the socket, address in range and ≠ `0.0.0.0`; `StandardError=journal` on the template; tmpfiles parent line first; `vigil-failed` runs as `vigil`); **negative arms** via fixture hosts: `verifica = "shell"`, `prag = 85.0`, a datetime, a dotted key `astept.status = 200`, a `[recuperare]`, a `100.` `tinta` without `peer`, a duplicate `nume`, a `channel` contract with `telegramEnvFile = null`, a `hass-state` with `hassTokenFile = null` — each throws naming the file; and a fixture with `"/run/vigil-contracts"` in `contractsDirs` **evaluates**.
+- [ ] `modules/services/vigil.nix` options: `enable`; `contractsDirs` (list of Nix paths or absolute runtime strings, preserving the original type without coercion); `expectedContracts` (nonnegative int, mandatory when enabled, count of eval-visible Nix-path contracts); `expectedRuntimeContracts` (nonnegative int, default 0, count of string-path contracts); the module asserts `expectedContracts` equals the actual Nix-path `*.toml` count and passes their sum to `--expect`; `telegramEnvFile` (path or null → `VIGIL_SAY=0`; eval fails if null while any public contract has `nivel = "incident"` or is the `channel` contract); `hassTokenFile` / `hassUrl` (null → eval fails if any public `hass-state` contract); `tickPort` (8747); **`listenAddress` (`types.str`, mandatory)**; `cmdAllow`; `interval` (`5min`).
+- [ ] Eval gate over original Nix-path entries only (runtime strings are skipped): a string/comment-aware scanner accepts precisely the runtime subset before calling `builtins.fromTOML`. Do not approximate this with regexes over raw source: quoted values and comments must not be mistaken for syntax, and Nix uses POSIX ERE, not JavaScript regex escapes. Bare keys only, the two named tables only, decimal integers only, basic strings and their JSON-compatible escapes, booleans, one-line inline tables and one-line arrays of strings. Reject literal/multiline strings, dotted/quoted keys, floats, datetimes, nondecimal numbers, numeric separators, arrays of tables and nested inline tables. Then apply the shared closed schema, safe name rules, type requirements, peer requirement, and name uniqueness. A shared fixture corpus must have identical accept/reject results in the runtime parser and Nix gate, including comments, escaped quotes and syntax-looking text inside strings. Public errors name the file; runtime errors obey the fixed-code privacy rule.
+- [ ] Wire: `users.users.vigil`; `systemd.services.vigil` (`Type=oneshot`; `User=vigil`; `ExecStart = ${vigil}/bin/vigil check <dirs> [--expect public+runtime]`; `ExecStopPost = ${vigil}/bin/vigil tick write`; `TimeoutStartSec = "4min30s"` (below the 5-minute default interval; checks and delivery obey the stated budgets); `SuccessExitStatus = "1 2"`; `EnvironmentFile` when non-null; `Environment` = `VIGIL_BIN`, `VIGIL_SYSTEMCTL`, `VIGIL_CMD_ALLOW`, `VIGIL_SAY`, `HASS_URL`, `VIGIL_HASS_TOKEN_FILE`; `path = [ coreutils systemd ]`; `StateDirectory=vigil`; `ProtectSystem=strict`; `ProtectHome=true`; `OnFailure = [ "vigil-failed.service" ]`); `vigil-failed.service` (**`User=vigil`**, `TimeoutStartSec = "30s"`, same sandbox, `StateDirectory=vigil`, `EnvironmentFile` and say environment, sends the complete event `{gazda:<hostname>, nume:"vigil", verdict:"failed", tranzitie:"open", nivel:"nota"}`); `systemd.tmpfiles.rules`: **`d /var/lib/vigil 0755 vigil vigil`** first (so `StateDirectory` never re-chowns), then `d /var/lib/vigil/outbox 0750 vigil vigil`, `d /var/lib/vigil/nota-sent 0750 vigil vigil`, `d /var/lib/vigil/ack 0775 vigil users`; `systemd.timers.vigil` (`wantedBy = [ "timers.target" ]`; `OnBootSec = "2min"`; `OnUnitActiveSec = cfg.interval`); `systemd.sockets.vigil-tick` (`wantedBy = [ "sockets.target" ]`; `after`/`wants` `tailscaled.service`; `ListenStream = "${cfg.listenAddress}:${toString cfg.tickPort}"`; `FreeBind = true`; `Accept = true`; **`IPAddressAllow = [ "100.64.0.0/10" "fd7a:115c:a1e0::/48" ]`, `IPAddressDeny = "any"` on the socket**) + `systemd.services."vigil-tick@"` (`ExecStart = ${vigil}/bin/vigil tick serve`; `StandardInput = "socket"`; **`StandardError = "journal"`**; `User=vigil`; strict sandbox); a module assertion that `listenAddress` is inside `100.64.0.0/10`.
+- [ ] `tests/module-eval.nix`: rendered-shape assertions for everything above (user + group; public/runtime count sum and a wrong-public-count failure; `SuccessExitStatus`; `ExecStopPost`; both timeouts; timer `OnBootSec` + `timers.target`; socket `sockets.target`, `FreeBind`, `IPAddressAllow` on the socket, address in range and ≠ `0.0.0.0`; `StandardError=journal` on the template; tmpfiles parent line and absence of a fabricated channel-success file; complete `vigil-failed` event as `vigil`); **negative arms** via fixture hosts: `verifica = "shell"`, unsafe `nume`, literal string, `prag = 85.0`, a datetime, a dotted key `astept.status = 200`, a `[recuperare]`, a `100.` `tinta` without `peer`, a duplicate `nume`, a `channel` contract with `telegramEnvFile = null`, a `hass-state` with `hassTokenFile = null` — each throws naming the file; fixtures with a `#` comment and syntax-looking text inside strings parse; and a fixture with `"/run/vigil-contracts"` in `contractsDirs` plus `expectedRuntimeContracts` **evaluates**.
 - [ ] CLAUDE.md: extend the documented direct-bind exception paragraph to name `vigil-tick` alongside `sancta-gallery`, same reasoning (a dead responder must fail as `ECONNREFUSED`, which the peer's check reads as picat, not be swallowed by Serve's catch-all into a 200).
 - [ ] `nix fmt`; `nix build .#checks.x86_64-linux.module-eval` green.
 
 ### Task 4: rpi5-full — the half that matters, deployable with one switch
-- [ ] `hosts/rpi5-full/vigil-contracts/` (generic `nume`; no device names): `tailscaled.toml` (unit); `ha-alive.toml` (http `http://127.0.0.1:8123/manifest.json`, `astept = { status = 200, body = "\"name\"" }`); `ha-served.toml` (http `https://rpi5.tail4249a9.ts.net:8123/manifest.json`, 200); `soul-mirror-pull.toml` (age `unit:soul-mirror-pull.service`, `prag = "8d"`); `choir-host.toml` (tcp `<choir tailnet ip>:8747` — the port the module itself binds to the tailnet; **not** 8743, which is loopback + Serve; `peer = true`); `choir-tick.toml` (http `http://<choir tailnet ip>:8747/`, `astept = { status = 200, prospetime = "15m" }`, `peer = true`); `channel.toml` (age `/var/lib/vigil/last-channel-ok`, `prag = "2d"`). All `nivel = "incident"`. Seven files.
+- [ ] `hosts/rpi5-full/vigil-contracts/` (generic safe `nume`; no device names): `tailscaled.toml` (unit `tailscaled.service`); `ha-alive.toml` (http `http://127.0.0.1:8123/manifest.json`, `astept = { status = 200, body = "\"name\"" }`); `ha-served.toml` (http `https://rpi5.tail4249a9.ts.net:8123/manifest.json`, 200); `soul-mirror-pull.toml` (age `unit:soul-mirror-pull.service`, `prag = "8d"`); `choir-host.toml` (tcp `<choir tailnet ip>:8747` — the port the module itself binds to the tailnet; **not** 8743, which is loopback + Serve; `peer = true`); `choir-tick.toml` (http `http://<choir tailnet ip>:8747/`, `astept = { status = 200, prospetime = "15m" }`, `peer = true`); `channel.toml` (age `/var/lib/vigil/last-channel-ok`, `prag = "2d"`). Every file gives all fields required by its type, a generic `ce`, `picat_dupa = 2`, and `nivel = "incident"`. Seven files.
 - [ ] `secrets/secrets.nix`: register `vigil-rpi5-contract-{1,2,3}.age` (`users ++ [ rpi5 ]`), commented as family-facing `hass-state` contracts, one per file, decrypted to `/run/vigil-contracts/contract-N.toml`. **Do not create the `.age` files or declare `age.secrets` for them yet.** PR body: the three `agenix -e` commands and a template contract (`tinta = "sensor.EXAMPLE"`, generic `nume`, `nivel = "incident"`).
 - [ ] `hosts/rpi5-full/configuration.nix`: `services.vigil = { enable = true; contractsDirs = [ ./vigil-contracts ]; expectedContracts = 7; telegramEnvFile = secret "backup-telegram-env"; hassTokenFile = secret "ha-vigil-token"; hassUrl = "http://127.0.0.1:8123"; listenAddress = "<rpi5 tailnet ip>"; cmdAllow = []; }`; `age.secrets.ha-vigil-token = { …; owner = "vigil"; }`; for `backup-telegram-env` check its other consumers (`backup-pull`, `tailscale-dns-watchdog`) — if they need root ownership, set `group = "vigil"; mode = "0440";` and record which.
-- [ ] module-eval green; `nix eval .#nixosConfigurations.rpi5-full.config.systemd.services.vigil.serviceConfig.ExecStart` succeeds; `nix fmt`; PR. **Closing check (his hand, after switch):** `vigil.timer` active (waiting), `vigil-tick.socket` listening; within 10 min `journalctl -u vigil -n 40` shows **7 contracts, zero NECITIT**, exit 0 or 1 (`choir-host`/`choir-tick` picat until Task 5 — picat, not NECITIT); `curl http://<rpi5 tailnet ip>:8747/` from choir returns the JSON tick with a fresh `.la`.
+- [ ] module-eval green; `nix eval .#nixosConfigurations.rpi5-full.config.systemd.services.vigil.serviceConfig.ExecStart` succeeds; `nix fmt`; PR. **Closing check (his hand, after switch):** `vigil.timer` active (waiting), `vigil-tick.socket` listening; after a confirmed channel probe, the latest complete run (identified by its invocation ID, not a fixed journal tail) shows **7 contracts, zero NECITIT**, exit 0 or 1 (`choir-host`/`choir-tick` picat until Task 5 — picat, not NECITIT); `curl http://<rpi5 tailnet ip>:8747/` from choir returns the JSON tick with a fresh `.la`.
 
 ### Task 5: sancta-choir — the second half, in two PRs so the switch never fails
-- [ ] **PR 5a.** `hosts/sancta-choir/vigil-contracts/` (all `nivel = "nota"` in this PR, because `telegramEnvFile = null`): `tailscaled.toml`; `galeria.toml` (http `http://127.0.0.1:8739/` 200); `membrana.toml` (http `http://127.0.0.1:8743/` 200); `soul-mirror.toml` (age `unit:sancta-soul-mirror.service`, 8d); `disk-root.toml` (disk `/`, 85); `build-volume.toml` (mount `/mnt/sancta-build-volume`); `open-webui.toml` (http `http://127.0.0.1:8080/health` 200); `n8n.toml` (http `http://127.0.0.1:5678/healthz`, `astept = { status = 200, body = "\"status\":\"ok\"" }`); `rpi5-host.toml` (tcp `<rpi5 tailnet ip>:8747`, `peer`); `rpi5-tick.toml` (http `…:8747/`, `prospetime = "15m"`, `peer`). Enable with `telegramEnvFile = null`, `expectedContracts = 10`, `listenAddress = "<choir tailnet ip>"`. Add `sancta-choir` to `backup-telegram-env.age`'s recipients; PR body carries the exact `agenix -r` re-key command for the owner. module-eval green; PR; his switch. Closing check: 10 contracts, zero NECITIT; `curl http://<choir tailnet ip>:8747/` from rpi5 fresh; `choir-host`/`choir-tick` on rpi5 turn verde; `row.json` exists on choir; **no** outbox entries (say must not have tried the network).
-- [ ] **PR 5b** (after the owner confirms the re-key): `telegramEnvFile = secret "backup-telegram-env"` (owner/group as in Task 4), declare the secret on choir, add `channel.toml`, `expectedContracts = 11`, **flip all ten 5a contracts to `nivel = "incident"`**. Closing check (his hand, a quiet hour): `sudo systemctl stop sancta-gallery`, wait 12 min, start it — the pre-existing `galeria` contract must produce exactly one `open` and one `close` on Telegram; `last-channel-ok` exists within a day.
+- [ ] **PR 5a.** `hosts/sancta-choir/vigil-contracts/` (all `nivel = "nota"` in this PR, because `telegramEnvFile = null`): `tailscaled.toml` (unit `tailscaled.service`); `galeria.toml` (http `http://100.94.191.54:8739/` 200, `peer = true`; this is the declared system gallery, not the independent screenshot server on loopback); `membrana.toml` (tcp `127.0.0.1:8743`; listener liveness without crossing its authenticated HTTP boundary); `soul-mirror.toml` (age `unit:sancta-soul-mirror.service`, 8d); `disk-root.toml` (disk `/`, 85); `build-volume.toml` (mount `/mnt/sancta-build-volume`); `rpi5-host.toml` (tcp `<rpi5 tailnet ip>:8747`, `peer`); `rpi5-tick.toml` (http `…:8747/`, `prospetime = "15m"`, `peer`). Every file gives all fields required by its type, a generic `ce`, and `picat_dupa = 2`. Enable with `telegramEnvFile = null`, `expectedContracts = 8`, `listenAddress = "<choir tailnet ip>"`. Add `sancta-choir` to `backup-telegram-env.age`'s recipients; PR body uses the single-secret command `(cd secrets && EDITOR=: agenix -e backup-telegram-env.age)`, then exact `git add`/commit/push commands; never `agenix -r` while the three registered contract ciphertexts do not exist. module-eval green; PR; his switch. Closing check: all 8 contracts verde; `curl http://<choir tailnet ip>:8747/` from rpi5 fresh; `choir-host`/`choir-tick` on rpi5 turn verde; the packaged fake-Telegram autoproba proves a forced transition under `VIGIL_SAY=0` writes a row without a request, outbox entry or network-success marker. A healthy production run need not create `row.json`; its fresh tick and eight verde verdicts are the production evidence.
+- [ ] **PR 5b** (after the owner confirms the re-key and all 5a incidents are closed): `telegramEnvFile = secret "backup-telegram-env"` (owner/group as in Task 4), declare the secret on choir, add `channel.toml`, `expectedContracts = 9`, **flip all eight 5a contracts to `nivel = "incident"`**. Closing check (his hand, a quiet hour): `sudo systemctl stop sancta-gallery`; wait until the journal shows two consecutive picat ticks and exactly one Telegram `open`; start it; wait for two consecutive verde ticks plus the 30-minute hold-down and exactly one `close`. `last-channel-ok` exists; no row-only transition was silently carried into 5b.
 
 ### Task 6: the private contracts on rpi5, and the first real incident
-- [ ] Once the owner has created the three `.age` files: declare `age.secrets.vigil-rpi5-contract-{1,2,3} = { file = …; owner = "vigil"; path = "/run/vigil-contracts/contract-N.toml"; symlink = false; }`, add `"/run/vigil-contracts"` to `contractsDirs`, `expectedContracts = 10`. PR, CI, his switch. Closing check: `ls -l /run/vigil-contracts/` shows three regular `.toml` files owned by `vigil`; `journalctl -u vigil` shows **10 contracts, zero NECITIT**.
+- [ ] Once the owner has created the three `.age` files: declare `age.secrets.vigil-rpi5-contract-{1,2,3} = { file = …; owner = "vigil"; path = "/run/vigil-contracts/contract-N.toml"; symlink = false; }`, add `"/run/vigil-contracts"` to `contractsDirs`, keep `expectedContracts = 7`, and set `expectedRuntimeContracts = 3`. PR, CI, his switch. Closing check: `ls -l /run/vigil-contracts/` shows three regular `.toml` files owned by `vigil`; `journalctl -u vigil` shows **10 contracts, zero NECITIT**.
 - [ ] `docs/plans/completed/2026-09-20-vigil-postdeploy.md`: commands only, no device names: timers active on both hosts; both tick endpoints answer the peer with fresh `.la`; `last-channel-ok` < 2 d on both; an ack round-trip on a NECITIT nota. **The plan is done only when the first real incident reaches Telegram**; record its date there. That date is the input to plan 2.
 
 ## Constraints
 
 - PUBLIC repo. **No contract, comment, test, fixture or commit message names a family member's device, account, dashboard or entity id.** Family-facing contracts exist only as agenix ciphertext authored by the owner. If a task cannot be completed without naming one, stop and say so.
 - No `sudo`, no root, no impersonation of `vigil`, **no privilege grant of any kind in v1** (polkit is plan 2). The only listener is the socket-activated tick on `:8747` bound to the configured tailnet address with `IPAddressAllow` on the socket; never `0.0.0.0`; the ACL is not changed.
-- The user is `vigil`, hardcoded. The check-type set and the schema are closed; `cmd` is an allow-list of absolute executable paths; `[recuperare]` is rejected in v1; NECITIT is never exit 0; an unparsable contract degrades to NECITIT, never to exit 3; exit 3 is reserved for duplicate `nume`, a present-file count mismatch and crashes.
-- **Any PR that adds or removes a contract file moves `expectedContracts` on that host in the same commit**; module-eval asserts the value.
+- The user is `vigil`, hardcoded. The check-type set and the schema are closed; `cmd` is an allow-list of absolute executable paths; `[recuperare]` is rejected in v1; NECITIT is never exit 0; any per-contract parse/schema/type/value failure degrades to NECITIT, never to exit 3; exit 3 is reserved for duplicate `nume`, a present-file count mismatch, corrupt global state and crashes.
+- **Any PR that adds or removes an eval-visible contract moves `expectedContracts`; any PR that adds or removes a runtime-only contract moves `expectedRuntimeContracts` in the same commit.** Module-eval proves the public count; runtime `--expect` proves their sum.
 - Every new executable has `--autoproba` asserting **text** and at least one mutant in `mutate.sh` that turns it red from an assertion (`EȘEC`), never from a crash. `~/.claude/index/bin/absenta` over all new `.mjs` must exit 0 before a PR.
 - Do not touch: the soul volume, `soul-mirror*`, `/nix`, `managed-settings`, `sancta-worker`, `herdr`, `gatus.nix`.
 - House rules: worktree + PR; `nix fmt` in the background; `nix build .#checks.x86_64-linux.module-eval` before every PR; merge only on green CI **and zero medium+ review findings**; deploys, switches, re-keys, `.age` creation and ack drop-files are the owner's hand, written as exact commands in the PR body. Security findings return to the session, never onto the public PR.
@@ -166,7 +234,7 @@ All folded in; none refused: expectedContracts same-commit rule · hass token vi
 | conclusions filename mismatch | plan 2 (explain removed from v1) |
 | `lib.isStorePath` false for flake subdirs | `builtins.isPath` gate; fixture asserts negative arms throw |
 | `IPAddressAllow` inert on the service for accepted sockets | moved to the **socket** unit; asserted there |
-| `nota-sent` marker never cleared | deleted by check on verdict change; re-fire arm + mutant (f) |
+| `nota-sent` marker never cleared | deleted on verdict change or ack; self-failure marker retires after a successful run; re-fire arms + mutant (f) |
 | row-only mode had no mechanism | `VIGIL_SAY=0`; row written first; asserted |
 | post-`fromTOML` walk cannot see dotted keys | lexical pre-check of the source text + walk; dotted-key negative arm |
 | `vigil-failed` ran as root | `User=vigil`, same sandbox |
@@ -179,3 +247,18 @@ All folded in; none refused: expectedContracts same-commit rule · hass token vi
 | `user` option not propagated | option removed; `vigil` hardcoded |
 | `incident_id` undefined | ISO timestamp of the open transition, in `incidents.json` |
 | tick@ stderr on the TCP connection | `StandardError=journal`, asserted |
+
+## Disposition — round 4 (v4 → v5), 17 findings
+
+All folded in; none refused: episode lifecycle for contract and self-failure nota
+markers · deterministic row-only deployment proof · complete contract values and
+tick-count probe · Telegram and unit deadlines · complete self-failure event ·
+5a must be all-green before delivery · persisted accepted run ID · runtime schema
+errors become NECITIT · `$STATE_DIRECTORY` test isolation · atomic incident state ·
+single-secret agenix re-key · confirmed-only channel freshness · split public/runtime
+expected counts · dead `la` removed · literal-string gate plus accepted comments ·
+unused `tinta_glob` removed · filename-safe, confined `nume`.
+
+## Repository verification for v6
+
+The declared choir gallery binds `100.94.191.54:8739`; loopback is an independent screenshot server. Choir Open-WebUI is disabled and n8n is not declared, so its inventory is eight contracts before channel and nine afterward. The single-secret re-key runs from `secrets/`, matching agenix's rules lookup. Tick identity and time publish in one file, and channel freshness comes only from an actual Telegram success.
