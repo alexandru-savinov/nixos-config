@@ -99,6 +99,14 @@ export async function run(entries, options = {}) {
         // A synthetic invalid-file name cannot prove the old contract was removed.
         // Preserve its episode, but an unobserved interval cannot count as recovery.
         Object.assign(store.contracts[name], { verdict: 'NECITIT', consecutive: 1, greenSince: null });
+        const ack = ackIdentity(root, name);
+        if (ack !== null) {
+          // The known identity can still acknowledge its old nota while its
+          // contract is unreadable. Commit cleanup with the preserved episode.
+          Object.assign(store.contracts[name], { nota: null, notaDelivered: false });
+          store.queue = store.queue.filter(event => event.nume !== name || event.tranzitie !== 'nota');
+          store.cleanup.push({ name, marker: true, ack });
+        }
         continue;
       }
       // Synthetic names identify files even when their content cannot be read.

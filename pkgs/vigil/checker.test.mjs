@@ -379,3 +379,28 @@ test('restart after delivery commit repairs stale outbox without replaying succe
   assert.equal(h.sent.length, 1);
   assert.equal(fs.readdirSync(path.join(h.root, 'outbox')).length, 0);
 }));
+
+test('unmatched preserved identities consume acknowledgements durably without losing open incidents', async () => harness(async h => {
+  await h.tick({ fixture: 'picat' });
+  await h.tick({ fixture: 'picat' });
+  const incident = h.state().contracts.fixture.open;
+  const offline = { deliver: async () => 1 };
+  await h.tick({ fixture: 'NECITIT' }, offline);
+  await h.tick({ fixture: 'NECITIT' }, offline);
+  assert.equal(h.state().queue[0].tranzitie, 'nota');
+  fs.mkdirSync(path.join(h.root, 'ack'));
+  fs.writeFileSync(path.join(h.root, 'ack', 'fixture'), '');
+  const invalid = [{ contract: { ...base, nume: 'invalid-fixture', nivel: 'nota' }, invalid: 'contract-invalid' }];
+  await assert.rejects(run(invalid, { ...h.options, boundary: stage => {
+    if (stage === 'transitions-committed') throw new Error('simulated-kill');
+  } }), /simulated-kill/);
+  assert.equal(h.state().contracts.fixture.nota, null);
+  assert.equal(h.state().contracts.fixture.open, incident);
+  assert.equal(h.state().queue.some(event => event.nume === 'fixture'), false);
+  assert.equal(h.state().cleanup.some(item => item.name === 'fixture' && item.ack !== null), true);
+  await run(invalid, h.options);
+  assert.equal(fs.existsSync(path.join(h.root, 'ack', 'fixture')), false);
+  assert.equal(fs.existsSync(path.join(h.root, 'nota-sent', 'fixture')), false);
+  assert.equal(h.sent.some(event => event.nume === 'fixture' && event.tranzitie === 'nota'), false);
+  assert.equal(h.state().contracts.fixture.open, incident);
+}));
