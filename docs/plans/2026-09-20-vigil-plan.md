@@ -1,5 +1,11 @@
 Build vigil v1: the agent that watches the Sancta fleet and speaks — contracts decide, three-valued verdicts, Telegram + status row, on choir and rpi5, deployable with one switch each. Explain and recover are plan 2.
 
+Implementation update: reuse the existing Gatus dashboard for Vigil's public
+status. The [reuse decision](2026-09-20-vigil-reuse.md) documents preserved
+semantics and the custom components that remain necessary. Necessary Gatus
+integration changes are permitted by the revised goal; the earlier blanket
+`gatus.nix` exclusion below no longer applies to this integration.
+
 ## Context
 
 v7 implementation contract (2026-09-20). Four completed revmux rounds on v1–v4 (31 + 16 + 16 + 17 findings; rounds 2

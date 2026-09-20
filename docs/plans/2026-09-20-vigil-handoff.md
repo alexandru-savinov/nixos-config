@@ -10,6 +10,11 @@ runtime validator for full regex and URL semantics. The systemd command reads
 that validated bundle, so a failed semantic check prevents building the system
 before activation. Private runtime directories never enter a build derivation.
 
+Gatus displays Vigil through `/status`. Inspect its failed condition to distinguish
+`picat` from `NECITIT`; stale or mismatched evidence cannot show green. This view
+does not send a second set of incident alerts or advance Vigil's state. The
+[reuse decision](2026-09-20-vigil-reuse.md) records why the incident engine remains.
+
 ## 1. rpi5: seven public contracts
 
 After the rpi5 implementation PR is merged and CI is green, run from the owner's
@@ -28,6 +33,7 @@ sudo jq -e '(.verde + .picat + .necitit) == 7 and .necitit == 0' /var/lib/vigil/
 run_id=$(sudo jq -r .run_id /var/lib/vigil/tick)
 sudo journalctl _SYSTEMD_INVOCATION_ID="$run_id" -o cat --no-pager
 sudo stat /var/lib/vigil/last-channel-ok
+curl --fail --max-time 10 http://100.106.93.87:8747/status | jq '{stare, la}'
 ```
 
 The complete run must exit 0 or 1, with seven contracts and zero NECITIT,

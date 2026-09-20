@@ -74,3 +74,20 @@ test('socket responder handles partial headers, oversized input and request dead
     assert.match(await exchange(['x'.repeat(8193)]), /^HTTP\/1.1 400/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('Gatus status preserves all verdicts and cannot show stale or uncommitted health', () => fixture(root => {
+  fs.writeFileSync(path.join(root, 'tick'), JSON.stringify(counts));
+  const now = Date.parse(counts.la);
+  const status = time => JSON.parse(response(root, 'GET', '/status', time).split('\r\n\r\n')[1]);
+  for (const stare of ['verde', 'picat', 'NECITIT']) {
+    fs.writeFileSync(path.join(root, 'row.json'), JSON.stringify({ la: counts.la, stare, private: 'excluded' }));
+    assert.equal(status(now).stare, stare);
+    assert.equal(status(now).private, undefined);
+    assert.equal(status(now + 900000).stare, 'NECITIT');
+    assert.equal(status(now - 1).stare, 'NECITIT');
+  }
+  fs.writeFileSync(path.join(root, 'row.json'), JSON.stringify({ la: '2026-09-20T12:05:00.000Z', stare: 'verde' }));
+  assert.equal(status(now).stare, 'NECITIT');
+  fs.unlinkSync(path.join(root, 'row.json'));
+  assert.match(response(root, 'GET', '/status', now), /^HTTP\/1.1 503/);
+}));

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const mutations = [
+  ['stale-dashboard-green', 'vigil-tick.mjs', 'age >= 0 && age < 900000 && row.la === counts.la', 'row.la === counts.la'],
   ['premature-self-rearm', 'vigil-check.mjs', "  atomicWrite(statePath(root, 'tick.counts.json'),", "  remove(namedPath(root, 'nota-sent', 'vigil'));\n  atomicWrite(statePath(root, 'tick.counts.json'),"],
   ['public-gate-bypassed', 'lib/public-contracts.mjs', 'report(`vigil: invalid public contract ${file}`);\n          return 2;', 'report(`vigil: invalid public contract ${file}`);\n          return 0;'],
   ['missing-file-green', 'lib/checks.mjs', 'const stat = await io.stat(c.tinta);', 'const stat = await io.stat(c.tinta).catch(() => ({ mtimeMs: now }));'],

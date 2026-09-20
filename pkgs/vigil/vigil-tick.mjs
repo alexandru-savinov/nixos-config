@@ -37,16 +37,26 @@ export function publish(env = process.env) {
   return true;
 }
 
-export function response(root, method = 'GET', target = '/') {
+export function response(root, method = 'GET', target = '/', now = Date.now()) {
   let status;
   let body;
   if (!['GET', 'HEAD'].includes(method)) { status = '405 Method Not Allowed'; body = 'method-not-allowed\n'; }
-  else if (target !== '/') { status = '404 Not Found'; body = 'not-found\n'; }
+  else if (!['/', '/status'].includes(target)) { status = '404 Not Found'; body = 'not-found\n'; }
   else {
     try {
       const counts = readCounts(statePath(root, 'tick'));
       if (!counts) { status = '404 Not Found'; body = 'tick-absent\n'; }
-      else { status = '200 OK'; body = `${JSON.stringify(counts)}\n`; }
+      else {
+        status = '200 OK';
+        if (target === '/status') {
+          const row = JSON.parse(fs.readFileSync(statePath(root, 'row.json'), 'utf8'));
+          const age = now - Date.parse(counts.la);
+          // Gatus presents the existing verdict; it does not drive incident state.
+          counts.stare = age >= 0 && age < 900000 && row.la === counts.la
+            && ['verde', 'picat', 'NECITIT'].includes(row.stare) ? row.stare : 'NECITIT';
+        }
+        body = `${JSON.stringify(counts)}\n`;
+      }
     } catch {
       status = '503 Service Unavailable';
       body = 'tick-unreadable\n';
