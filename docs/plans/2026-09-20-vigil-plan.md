@@ -196,6 +196,19 @@ state. All tests use a fresh temporary state directory; none call Telegram or
 write deployed state. Tests cover kill/restart around each persistence boundary,
 stale invocation counts, row-only→enabled replay, and Telegram deadline expiry.
 
+Contract input/check failures are isolated; persistence faults are invocation
+failures. In particular, a corrupt or unwritable transition row must not be
+silently skipped: `say` requires its row before delivery, and the FIFO must retain
+unconfirmed events. Transitions and alerts are committed before row projection;
+a projection fault leaves completion counts unchanged and invokes self-failure.
+After repair, queued alerts retry in order. This is distinct from an unreadable
+contract input, which becomes NECITIT while the other checks continue.
+
+Filesystem probes have a 10-second observation deadline and return NECITIT when
+it expires, releasing their checker slots. This does not cancel an outstanding
+kernel filesystem request. If such a request prevents process exit, systemd's
+existing invocation limit still fails the run and leaves the peer tick stale.
+
 ### Task 1: vigil-check — the deterministic core, with a negative arm that can go red
 - [ ] `pkgs/vigil/vigil-check.mjs` (Node ESM, zero deps). All mutable state is rooted at `$STATE_DIRECTORY` (default `/var/lib/vigil`; systemd supplies that same path; tests supply a temporary directory), never hardcoded. Reads every `*.toml` in the argv directories, **stat-ing through symlinks** (`statSync(join(dir,name)).isFile()`, never `Dirent.isFile()`). Parses with the subset parser `lib/toml.mjs`; a file that fails parsing or any per-file schema/type/value rule is **accounted for as NECITIT** (with a safe diagnostic identity and fixed error code) and the run continues. Validates the closed schema, including the safe `nume` pattern and path confinement; a `[recuperare]` section → that contract is NECITIT with `motiv = "recuperare: plan 2"`. **Duplicate `nume` → exit 3** before any check. `--expect N` compares N with the number of `*.toml` files **present**; mismatch → exit 3. stderr reports `files present / parsed / necitit`.
 - [ ] `lib/checks.mjs`, eight types: `tcp` (5 s); `http` (exact status, optional `astept.body` regex, optional `astept.prospetime` — body is JSON, `.la` ISO younger than the duration; 10 s; no redirects); `unit` (`$VIGIL_SYSTEMCTL show <name>` → `ActiveState`, system scope); `age` (absolute file → mtime, or `unit:<name>` → `ExecMainExitTimestamp` + `Result=success` via `systemctl show`); `disk` (`statfs` use% vs `prag`); `mount` (parse `/proc/self/mountinfo`, unescape, **mount-point field exact equality**); `cmd` (argv[0] ∈ `$VIGIL_CMD_ALLOW`, stdout vs `astept.valoare`); `hass-state` (`GET $HASS_URL/api/states/<tinta>`, bearer from the file at `$VIGIL_HASS_TOKEN_FILE`; `unavailable` → picat; ≠200 / no token → NECITIT). Spawn errors (`status === null`) and exit 127 → NECITIT, with a handler on the error event.

@@ -10,6 +10,27 @@ const now = Date.parse('2026-09-20T12:00:00Z');
 const verdict = async (c, options) => (await check(c, options)).verdict;
 const response = (status, body) => async () => ({ status, body });
 
+test('stalled filesystem probes release check slots with unreadable verdicts', async () => {
+  const stalled = () => new Promise(() => {});
+  const io = { stat: stalled, statfs: stalled, readFile: stalled };
+  const contracts = [
+    { verifica: 'age', tinta: '/fixture', prag: '1h' },
+    { verifica: 'disk', tinta: '/', prag: 85 },
+    { verifica: 'mount', tinta: '/fixture' },
+    { verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } },
+  ];
+  let timer;
+  try {
+    const results = await Promise.race([
+      Promise.all(contracts.map(c => check(c, { fs: io, fsTimeout: 10,
+        env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' } }))),
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), 100); }),
+    ]);
+    assert.notEqual(results, null, 'filesystem probes must release their slots');
+    assert.ok(results.every(result => result.verdict === 'NECITIT'));
+  } finally { clearTimeout(timer); }
+});
+
 test('aborted HTTP responses release their request deadline', async t => {
   const schedule = globalThis.setTimeout;
   const cancel = globalThis.clearTimeout;
@@ -147,6 +168,19 @@ test('allow-listed commands receive only a minimal environment', async () => {
     command: async (_argv, _timeout, environment) => { inherited = environment; return { verdict: 'verde', output: 'ready' }; },
   }), 'verde');
   assert.deepEqual(inherited, { PATH: '/fixture/bin', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
+});
+
+test('Home Assistant token reads share the network check deadline', async t => {
+  let clock = 1000;
+  t.mock.method(performance, 'now', () => clock);
+  let budget;
+  const result = await check({ verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } }, {
+    env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' },
+    fs: { readFile: async () => { clock += 4000; return 'fixture-token'; } },
+    request: async (_url, options) => { budget = options.timeout; return { status: 200, body: '{"state":"ready"}' }; },
+  });
+  assert.equal(result.verdict, 'verde');
+  assert.equal(budget, 6000);
 });
 
 test('Home Assistant authentication and malformed states never expose private data', async () => {

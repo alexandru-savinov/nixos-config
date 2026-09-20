@@ -14,6 +14,15 @@ const failed = reason => answer('picat', reason);
 const unreadable = reason => answer('NECITIT', reason);
 const commandEnvironment = env => ({ PATH: env.PATH || '', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
 
+async function filesystem(operation, timeout) {
+  let timer;
+  try {
+    return await Promise.race([operation(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('filesystem-timeout')), timeout);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 // Never return exception messages, command output, URLs or response bodies.
 export function command(argv, timeout = 10000, environment = commandEnvironment(process.env)) {
   return new Promise(resolve => {
@@ -97,11 +106,13 @@ function age(timestamp, limit, now) {
 }
 
 export async function check(c, options = {}) {
+  const started = performance.now();
   const env = options.env || process.env;
   const now = options.now ?? Date.now();
   const run = options.command || command;
   const get = options.request || request;
   const io = options.fs || fs;
+  const read = operation => filesystem(operation, options.fsTimeout ?? 10000);
   try {
     switch (c.verifica) {
       case 'tcp': return await tcp(c.tinta);
@@ -124,7 +135,7 @@ export async function check(c, options = {}) {
       case 'unit':
       case 'age': {
         if (c.verifica === 'age' && !c.tinta.startsWith('unit:')) {
-          const stat = await io.stat(c.tinta);
+          const stat = await read(() => io.stat(c.tinta));
           return age(stat.mtimeMs, duration(c.prag), now);
         }
         const unit = c.verifica === 'unit' ? c.tinta : c.tinta.slice(5);
@@ -145,7 +156,7 @@ export async function check(c, options = {}) {
         return age(Date.parse(properties.ExecMainExitTimestamp), duration(c.prag), now);
       }
       case 'disk': {
-        const stat = await io.statfs(c.tinta);
+        const stat = await read(() => io.statfs(c.tinta));
         if (![stat.blocks, stat.bfree, stat.bavail].every(Number.isFinite) || stat.blocks <= 0
           || stat.bfree < 0 || stat.bfree > stat.blocks || stat.bavail < 0 || stat.bavail > stat.bfree) return unreadable('disk-unreadable');
         const used = stat.blocks - stat.bfree;
@@ -153,7 +164,7 @@ export async function check(c, options = {}) {
         if (availableTotal <= 0) return unreadable('disk-unreadable');
         return used * 100 / availableTotal >= c.prag ? failed('disk-full') : green();
       }
-      case 'mount': return mounted(await io.readFile('/proc/self/mountinfo', 'utf8'), c.tinta);
+      case 'mount': return mounted(await read(() => io.readFile('/proc/self/mountinfo', 'utf8')), c.tinta);
       case 'cmd': {
         let allow;
         try { allow = JSON.parse(env.VIGIL_CMD_ALLOW || '[]'); } catch { return unreadable('cmd-allow'); }
@@ -164,11 +175,15 @@ export async function check(c, options = {}) {
       }
       case 'hass-state': {
         if (!env.HASS_URL || !env.VIGIL_HASS_TOKEN_FILE) return unreadable('hass-config');
-        const token = (await io.readFile(env.VIGIL_HASS_TOKEN_FILE, 'utf8')).trim();
+        const token = (await read(() => io.readFile(env.VIGIL_HASS_TOKEN_FILE, 'utf8'))).trim();
         if (!token || /[\r\n]/.test(token)) return unreadable('hass-token');
         const base = new URL(env.HASS_URL);
         if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) return unreadable('hass-config');
-        const response = await get(new URL(`/api/states/${encodeURIComponent(c.tinta)}`, base), { headers: { Authorization: `Bearer ${token}` } });
+        const remaining = 10000 - (performance.now() - started);
+        if (remaining <= 0) return unreadable('hass-timeout');
+        const response = await get(new URL(`/api/states/${encodeURIComponent(c.tinta)}`, base), {
+          headers: { Authorization: `Bearer ${token}` }, timeout: remaining,
+        });
         if (response.status !== 200) return unreadable('hass-response');
         let body;
         try { body = JSON.parse(response.body); } catch { return unreadable('hass-response'); }

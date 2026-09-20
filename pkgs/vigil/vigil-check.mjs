@@ -134,6 +134,8 @@ export async function run(entries, options = {}) {
   boundary('transitions-committed');
   cleanup(root, store);
   boundary('cleanup-committed');
+  // Persistence faults fail the invocation: alerts are already durable above.
+  // Do not publish fresh evidence or acknowledge delivery after a failed row write.
   for (const event of events) await say(event, { env: { ...env, VIGIL_SAY: '0' }, now });
   if (enabled || fs.existsSync(statePath(root, 'outbox'))) projectOutbox(root, store.queue);
   if (enabled) await drain(root, store, options.deliver || ((event, timeout) => invokeSay([], event, env, timeout)), { boundary });
