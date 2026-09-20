@@ -208,6 +208,45 @@ test('enabling delivery as row-only incident closes still delivers open before c
   assert.deepEqual(h.sent.map(event => event.tranzitie), ['open', 'close']);
 }));
 
+test('unreadable contract identities preserve incidents and interrupt recovery until repair', async () => harness(async h => {
+  h.network(false);
+  await h.tick({ fixture: 'picat' });
+  await h.tick({ fixture: 'picat' });
+  const episode = h.state().contracts.fixture.open;
+  await h.tick({ fixture: 'verde' });
+  h.time(30 * 60000);
+  const directory = path.join(h.root, 'contracts');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory, 'fixture.toml'), 'unreadable fixture');
+  assert.equal(await run(loadContracts([directory]), h.options), 2);
+  assert.equal(h.state().contracts.fixture?.open, episode);
+  assert.equal(h.state().contracts.fixture.greenSince, null);
+  h.network(true);
+  await h.tick({ fixture: 'verde' });
+  assert.deepEqual(h.sent.map(event => [event.tranzitie, event.incident_id]), [['open', episode]]);
+  assert.equal(h.state().contracts.fixture.open, episode);
+  h.time(30 * 60000);
+  await h.tick({ fixture: 'verde' });
+  assert.deepEqual(h.sent.map(event => [event.tranzitie, event.incident_id]), [['open', episode], ['close', episode]]);
+}));
+
+test('repairing one invalid file retires its nota while another identity remains unreadable', async () => harness(async h => {
+  h.network(false);
+  const directory = path.join(h.root, 'contracts');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory, 'a.toml'), 'invalid fixture');
+  fs.writeFileSync(path.join(directory, 'b.toml'), 'invalid fixture');
+  const entries = loadContracts([directory]);
+  const repaired = entries[0].contract.nume;
+  await run(entries, h.options);
+  await run(entries, h.options);
+  assert.equal(h.state().queue.length, 2);
+  fs.writeFileSync(path.join(directory, 'a.toml'), '[contract]\nnume="fixture"\nce="fixture"\nverifica="unit"\ntinta="fixture.service"\npicat_dupa=2\n[spune]\nnivel="nota"\n');
+  await run(loadContracts([directory]), { ...h.options, inspect: async () => ({ verdict: 'verde', motiv: 'ok' }) });
+  assert.equal(Object.hasOwn(h.state().contracts, repaired), false);
+  assert.deepEqual(h.state().queue.map(event => event.nume), [entries[1].contract.nume]);
+}));
+
 test('row persistence faults retain committed alerts and stale evidence until repair', async () => harness(async h => {
   await h.tick({ fixture: 'picat', other: 'picat' });
   const counts = fs.readFileSync(path.join(h.root, 'tick.counts.json'), 'utf8');
