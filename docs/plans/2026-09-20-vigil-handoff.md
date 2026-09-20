@@ -167,7 +167,8 @@ From rpi5, verify choir's timestamp and then its peer contract verdicts:
 
 ```sh
 curl --fail --max-time 10 http://100.94.191.54:8747/ | jq -e '
-  (.la | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) > (now - 900)'
+  (.la | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) as $t |
+  $t <= now and $t > (now - 900)'
 sudo systemctl start vigil.service
 run_id=$(sudo jq -r .run_id /var/lib/vigil/tick)
 sudo journalctl _SYSTEMD_INVOCATION_ID="$run_id" -o cat --no-pager
