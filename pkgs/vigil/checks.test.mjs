@@ -225,6 +225,9 @@ test('real TCP/HTTP probes use bounded responses, no redirects, and refused conn
     assert.equal((await request(new URL(`${base}/redirect`))).status, 302);
     assert.equal(redirected, false);
     await assert.rejects(request(new URL(`${base}/large`)), /response/);
+    assert.equal(await verdict({ verifica: 'http', tinta: `${base}/large`, astept: { status: 200 } }), 'verde');
+    assert.equal(await verdict({ verifica: 'http', tinta: `${base}/large`, astept: { status: 503 } }), 'picat');
+    assert.equal(await verdict({ verifica: 'http', tinta: `${base}/large`, astept: { status: 200, body: 'x' } }), 'NECITIT');
     await assert.rejects(request(new URL(`${base}/hang`), { timeout: 25 }), /request-failed/);
   } finally {
     server.closeAllConnections();

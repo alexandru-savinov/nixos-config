@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { atomicWrite } from './lib/common.mjs';
+import { atomicWrite, statePath, namedPath } from './lib/common.mjs';
 
 for (const operation of ['writeFileSync', 'fsyncSync', 'renameSync']) {
   test(`atomic write cleans its temporary after ${operation} failure and preserves previous state`, t => {
@@ -26,3 +26,15 @@ for (const operation of ['writeFileSync', 'fsyncSync', 'renameSync']) {
     } finally { t.mock.restoreAll(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 }
+
+test('derived paths reject traversal independently of contract name validation', () => {
+  const root = '/tmp/vigil-path-fixture';
+  assert.equal(statePath(root, 'ack', 'fixture'), root + '/ack/fixture');
+  assert.equal(namedPath(root, 'ack', 'fixture'), root + '/ack/fixture');
+  for (const suffix of ['../escape', '../vigil-path-fixture-sibling/entry', '/tmp/outside-fixture', '.']) {
+    assert.throws(() => statePath(root, suffix), /state-path/);
+  }
+  // The valid name bypasses no regex: the directory itself must stay contained.
+  assert.throws(() => namedPath(root, '../outside-fixture', 'fixture'), /state-path/);
+  assert.throws(() => namedPath(root, 'ack', '../escape'), /state-name/);
+});
