@@ -102,7 +102,10 @@ v2.1); the owner approved it. What this repo needs to know:
   arrive as agenix secrets — one `.age` per contract, `path =
   "/run/vigil-contracts/contract-N.toml"`, `owner = "vigil"`, **`symlink =
   false`** — authored by the owner. Fixed-location devices only; `mobile_app` /
-  `device_tracker`-backed entities are excluded. Outbound messages carry the
+  `device_tracker`-backed entities are excluded. Both validators reject the
+  `person`, `device_tracker`, and `mobile_app` domains. A generic sensor domain
+  does not prove fixed-location provenance: the owner must also verify its HA
+  integration before authoring the private contract. Outbound messages carry the
   generic `nume`; `motiv` is type-level and never includes `tinta`.
 - Already in place: `secrets/ha-vigil-token.age` (#593); the module template
   `modules/services/sancta-archive-deadman.nix`; `tests/module-eval.nix`;

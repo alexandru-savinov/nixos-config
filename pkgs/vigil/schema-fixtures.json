@@ -275,5 +275,20 @@
     "name": "name-uppercase",
     "source": "[contract]\nnume = \"Fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
     "accept": false
+  },
+  {
+    "name": "hass-forbidden-person",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"person.fixture\"\npicat_dupa=2\nastept={valoare=\"ready\"}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "hass-forbidden-device_tracker",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"device_tracker.fixture\"\npicat_dupa=2\nastept={valoare=\"ready\"}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "hass-forbidden-mobile_app",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"mobile_app.fixture\"\npicat_dupa=2\nastept={valoare=\"ready\"}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
   }
 ]

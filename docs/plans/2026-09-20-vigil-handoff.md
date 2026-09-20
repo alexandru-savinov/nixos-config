@@ -93,7 +93,10 @@ cd ..
 
 Use this template inside the encrypted editor only; replace `sensor.example`
 and the expected value with the actual fixed-location entity and state. Use
-different generic names for the three files. Never copy the resulting
+different generic names for the three files. Both validators reject `person`,
+`device_tracker`, and `mobile_app` targets. For sensor entities, verify their HA
+integration is fixed-location: a sensor name alone cannot exclude mobile-app
+backing. Never copy the resulting
 plaintext into a PR, journal excerpt, fixture, or commit message.
 
 ```toml
