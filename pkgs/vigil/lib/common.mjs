@@ -24,14 +24,20 @@ export function atomicWrite(file, value, mode = 0o600) {
   const temporary = `${file}.${randomUUID()}.tmp`;
   const fd = fs.openSync(temporary, 'wx', mode);
   try {
-    fs.writeFileSync(fd, typeof value === 'string' ? value : `${JSON.stringify(value)}\n`);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
+    try {
+      fs.writeFileSync(fd, typeof value === 'string' ? value : `${JSON.stringify(value)}\n`);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temporary, file);
+    const directory = fs.openSync(path.dirname(file), 'r');
+    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+  } catch (error) {
+    // Best effort: preserve the persistence error even if cleanup also fails.
+    try { fs.unlinkSync(temporary); } catch { /* No successful state is claimed. */ }
+    throw error;
   }
-  fs.renameSync(temporary, file);
-  const directory = fs.openSync(path.dirname(file), 'r');
-  try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
 }
 export function readJson(file, absent = null) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
