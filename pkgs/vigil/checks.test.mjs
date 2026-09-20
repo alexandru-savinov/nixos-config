@@ -93,17 +93,28 @@ test('mount matching uses a complete decoded mountpoint, never a substring', () 
   assert.equal(mounted('', '/dev/shm').verdict, 'NECITIT');
 });
 
-test('unit timestamps are requested in UTC with a stable locale', async () => {
-  const result = await check({ verifica: 'age', tinta: 'unit:fixture.service', prag: '8d' }, {
-    now, env: { VIGIL_SYSTEMCTL: '/fixture/systemctl' },
-    command: async (argv, timeout, environment) => {
-      assert.equal(environment?.TZ, 'UTC');
-      assert.equal(environment?.LC_ALL, 'C');
-      assert.equal(argv[0], '/fixture/systemctl');
-      return { verdict: 'verde', output: 'LoadState=loaded\nResult=success\nExecMainExitTimestamp=Sun 2026-09-20 11:00:00 UTC' };
-    },
-  });
+test('systemd checks use a minimal environment with UTC and a stable locale', async () => {
+  for (const c of [{ verifica: 'age', tinta: 'unit:fixture.service', prag: '8d' }, { verifica: 'unit', tinta: 'fixture.service' }]) {
+    let inherited;
+    const result = await check(c, {
+      now, env: { VIGIL_SYSTEMCTL: '/fixture/systemctl', PATH: '/fixture/bin', TELEGRAM_BOT_TOKEN: 'fixture-token' },
+      command: async (argv, timeout, environment) => {
+        inherited = environment;
+        assert.equal(argv[0], '/fixture/systemctl');
+        return { verdict: 'verde', output: 'LoadState=loaded\nActiveState=active\nResult=success\nExecMainExitTimestamp=Sun 2026-09-20 11:00:00 UTC' };
+      },
+    });
+    assert.equal(result.verdict, 'verde');
+    assert.deepEqual(Object.keys(inherited).sort(), ['LANG', 'LC_ALL', 'PATH', 'TZ']);
+    assert.equal(inherited.TZ, 'UTC');
+    assert.equal(inherited.LC_ALL, 'C');
+  }
+});
+
+test('command helper defaults to the same minimal environment', async () => {
+  const result = await command([process.execPath, '-e', 'process.stdout.write(Object.keys(process.env).sort().join(","))']);
   assert.equal(result.verdict, 'verde');
+  assert.equal(result.output, 'LANG,LC_ALL,PATH,TZ');
 });
 
 test('disk threshold includes reserved blocks and rejects invalid counters', async () => {

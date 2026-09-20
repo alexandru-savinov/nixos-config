@@ -12,9 +12,10 @@ const answer = (verdict, motiv) => ({ verdict, motiv });
 const green = () => answer('verde', 'ok');
 const failed = reason => answer('picat', reason);
 const unreadable = reason => answer('NECITIT', reason);
+const commandEnvironment = env => ({ PATH: env.PATH || '', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
 
 // Never return exception messages, command output, URLs or response bodies.
-export function command(argv, timeout = 10000, environment = process.env) {
+export function command(argv, timeout = 10000, environment = commandEnvironment(process.env)) {
   return new Promise(resolve => {
     const child = execFile(argv[0], argv.slice(1), {
       timeout, killSignal: 'SIGKILL', maxBuffer: LIMIT, encoding: 'utf8',
@@ -129,7 +130,7 @@ export async function check(c, options = {}) {
         const unit = c.verifica === 'unit' ? c.tinta : c.tinta.slice(5);
         const result = await run([env.VIGIL_SYSTEMCTL || 'systemctl', 'show', unit,
           '--property=LoadState,ActiveState,Result,ExecMainExitTimestamp', '--no-pager'],
-        10000, { ...process.env, ...env, TZ: 'UTC', LC_ALL: 'C' });
+        10000, commandEnvironment(env));
         if (result.verdict !== 'verde') return unreadable('unit-unreadable');
         const properties = Object.fromEntries(result.output.trim().split('\n').map(line => {
           const index = line.indexOf('=');
@@ -157,7 +158,7 @@ export async function check(c, options = {}) {
         let allow;
         try { allow = JSON.parse(env.VIGIL_CMD_ALLOW || '[]'); } catch { return unreadable('cmd-allow'); }
         if (!Array.isArray(allow) || !allow.includes(c.tinta[0])) return unreadable('cmd-denied');
-        const result = await run(c.tinta, 10000, { PATH: env.PATH || '', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
+        const result = await run(c.tinta, 10000, commandEnvironment(env));
         if (result.verdict !== 'verde') return answer(result.verdict, 'cmd-execution');
         return result.output.trim() === c.astept.valoare ? green() : failed('cmd-value');
       }
