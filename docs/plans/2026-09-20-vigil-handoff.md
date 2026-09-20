@@ -9,6 +9,12 @@ prerequisites during evaluation; the required contract-bundle build uses Node's
 runtime validator for full regex and URL semantics. The systemd command reads
 that validated bundle, so a failed semantic check prevents building the system
 before activation. Private runtime directories never enter a build derivation.
+If runtime incident/channel contracts are loaded with delivery disabled, every
+run emits `WARNING delivery-disabled for incident/channel contracts` to the
+journal. Checks and local state continue in row-only mode. Before relying on
+alerts, supply the Telegram environment and confirm a real channel success;
+the warning must disappear. Public contracts enforce this prerequisite at build
+time because their contents are available there.
 
 Gatus displays Vigil through `/status`. Inspect its failed condition to distinguish
 `picat` from `NECITIT`; stale or mismatched evidence cannot show green. This view

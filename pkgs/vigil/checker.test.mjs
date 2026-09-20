@@ -180,6 +180,20 @@ test('aggregate remains failing while another incident is open', async () => har
   assert.notEqual(h.state().contracts.second.open, null);
 }));
 
+test('disabled delivery warns for incident or channel contracts while preserving row-only checks', async () => harness(async h => {
+  const messages = [];
+  for (const [nume, nivel, warning] of [['fixture', 'incident', true], ['channel', 'nota', true], ['fixture', 'nota', false]]) {
+    messages.length = 0;
+    assert.equal(await run([{ contract: { ...base, nume, nivel } }], {
+      ...h.options, env: { ...h.env, VIGIL_SAY: '0' }, summary: line => messages.push(line),
+      inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }),
+    }), 1);
+    assert.equal(messages.includes('vigil-check: WARNING delivery-disabled for incident/channel contracts'), warning);
+    assert.equal(h.sent.length, 0);
+    assert.equal(h.state().queue.length, 0);
+  }
+}));
+
 test('enabling delivery as row-only incident closes still delivers open before close', async () => harness(async h => {
   h.env.VIGIL_SAY = '0';
   await h.tick({ fixture: 'picat' });
