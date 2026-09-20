@@ -127,6 +127,17 @@ test('commands require exact allowlist and compare trimmed stdout without a shel
   assert.equal((await command([process.execPath, '-e', 'process.stdout.write("x".repeat(100000))'])).verdict, 'NECITIT');
 });
 
+test('allow-listed commands receive only a minimal environment', async () => {
+  const c = { verifica: 'cmd', tinta: ['/fixture/check'], astept: { valoare: 'ready' } };
+  let inherited;
+  assert.equal(await verdict(c, {
+    env: { PATH: '/fixture/bin', VIGIL_CMD_ALLOW: '["/fixture/check"]', TELEGRAM_BOT_TOKEN: 'fixture-token',
+      TELEGRAM_CHAT_ID: 'fixture-chat', VIGIL_HASS_TOKEN_FILE: '/fixture/token', OTHER_SECRET: 'fixture-secret' },
+    command: async (_argv, _timeout, environment) => { inherited = environment; return { verdict: 'verde', output: 'ready' }; },
+  }), 'verde');
+  assert.deepEqual(inherited, { PATH: '/fixture/bin', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
+});
+
 test('Home Assistant authentication and malformed states never expose private data', async () => {
   const c = { verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } };
   const options = { env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' }, fs: { readFile: async () => 'fixture-token\n' } };

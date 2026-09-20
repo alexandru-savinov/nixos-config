@@ -157,7 +157,7 @@ export async function check(c, options = {}) {
         let allow;
         try { allow = JSON.parse(env.VIGIL_CMD_ALLOW || '[]'); } catch { return unreadable('cmd-allow'); }
         if (!Array.isArray(allow) || !allow.includes(c.tinta[0])) return unreadable('cmd-denied');
-        const result = await run(c.tinta);
+        const result = await run(c.tinta, 10000, { PATH: env.PATH || '', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
         if (result.verdict !== 'verde') return answer(result.verdict, 'cmd-execution');
         return result.output.trim() === c.astept.valoare ? green() : failed('cmd-value');
       }
