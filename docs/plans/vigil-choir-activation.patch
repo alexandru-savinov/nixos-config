@@ -26,8 +26,10 @@
 +++ b/secrets/secrets.nix
 @@ -115,7 +115,7 @@
 
-   # Telegram credentials for backup failure alerts (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
-   # EnvironmentFile format — only rpi5 needs this (runs the backup service)
+-  # Telegram credentials for backup failure alerts (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
+-  # EnvironmentFile format — only rpi5 needs this (runs the backup service)
++  # Telegram credentials for rpi5 backup alerts and Vigil on both hosts
++  # EnvironmentFile format (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
 -  "backup-telegram-env.age".publicKeys = users ++ [ rpi5 ];
 +  "backup-telegram-env.age".publicKeys = users ++ [ rpi5 sancta-choir ];
 

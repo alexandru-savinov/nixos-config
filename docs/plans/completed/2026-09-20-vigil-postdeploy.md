@@ -3,6 +3,8 @@
 # Run on each deployed host; choose expected=10 on rpi5 after private activation,
 # or expected=9 on choir after delivery activation (7/8 before those gates).
 expected=9
+# Set delivery_enabled=false only for choir before delivery activation (expected=8).
+delivery_enabled=true
 systemctl is-active vigil.timer vigil-tick.socket
 systemctl list-timers vigil.timer --no-pager
 sudo systemctl start vigil.service
@@ -11,7 +13,10 @@ sudo jq -e --argjson expected "$expected" \
   '(.verde + .picat + .necitit) == $expected and .necitit == 0' /var/lib/vigil/tick
 run_id=$(sudo jq -r .run_id /var/lib/vigil/tick)
 sudo journalctl _SYSTEMD_INVOCATION_ID="$run_id" -o cat --no-pager
-test "$(( $(date +%s) - $(sudo stat -c %Y /var/lib/vigil/last-channel-ok) ))" -lt 172800
+if [ "$delivery_enabled" = true ]; then
+  channel_age=$(( $(date +%s) - $(sudo stat -c %Y /var/lib/vigil/last-channel-ok) ))
+  test "$channel_age" -ge 0 && test "$channel_age" -lt 172800
+fi
 
 # From choir, inspect rpi5's tick.
 curl --fail --max-time 10 http://100.106.93.87:8747/ | jq -e '

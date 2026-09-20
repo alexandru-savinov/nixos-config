@@ -21,6 +21,17 @@ Gatus displays Vigil through `/status`. Inspect its failed condition to distingu
 does not send a second set of incident alerts or advance Vigil's state. The
 [reuse decision](2026-09-20-vigil-reuse.md) records why the incident engine remains.
 
+The unit-age checks for `soul-mirror-pull.service` on rpi5 and
+`sancta-soul-mirror.service` on choir use systemd’s current-boot completion
+timestamp. After a reboot, a prior successful run is not observable through
+that property: the contract stays `NECITIT` until a new successful run. A
+persistent timer catches missed schedules, but does not rerun a schedule
+that already completed before the reboot. Allow the next scheduled run
+before requiring zero NECITIT; do not fabricate a success marker or treat
+unknown evidence as green. Persisting backup success across boots requires
+a separately reviewed change to the backup producer, outside this plan’s
+restriction on modifying the soul-mirror services.
+
 ## 1. rpi5: seven public contracts
 
 After the rpi5 implementation PR is merged and CI is green, run from the owner's
@@ -145,6 +156,7 @@ sudo ls -l /run/vigil-contracts/
 sudo systemctl start vigil.service
 sudo jq -e '(.verde + .picat + .necitit) == 10 and .necitit == 0' /var/lib/vigil/tick
 ```
+
 
 ## 4. Choir: eight row-only contracts
 
