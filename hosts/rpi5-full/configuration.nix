@@ -334,7 +334,7 @@ in
 
     # Monitored Endpoints
     endpoints = {
-      rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://100.106.93.87:8747/status") // {
+      rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://${config.services.vigil.listenAddress}:${toString config.services.vigil.tickPort}/status") // {
         conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];
       };
       choir-vigil = (httpEndpoint "choir" "Vigil" "http://100.94.191.54:8747/status") // {

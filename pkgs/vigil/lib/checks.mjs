@@ -12,9 +12,19 @@ const answer = (verdict, motiv) => ({ verdict, motiv });
 const green = () => answer('verde', 'ok');
 const failed = reason => answer('picat', reason);
 const unreadable = reason => answer('NECITIT', reason);
+const commandEnvironment = env => ({ PATH: env.PATH || '', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
+
+async function filesystem(operation, timeout) {
+  let timer;
+  try {
+    return await Promise.race([operation(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('filesystem-timeout')), timeout);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 
 // Never return exception messages, command output, URLs or response bodies.
-export function command(argv, timeout = 10000, environment = process.env) {
+export function command(argv, timeout = 10000, environment = commandEnvironment(process.env)) {
   return new Promise(resolve => {
     const child = execFile(argv[0], argv.slice(1), {
       timeout, killSignal: 'SIGKILL', maxBuffer: LIMIT, encoding: 'utf8',
@@ -96,11 +106,13 @@ function age(timestamp, limit, now) {
 }
 
 export async function check(c, options = {}) {
+  const started = performance.now();
   const env = options.env || process.env;
   const now = options.now ?? Date.now();
   const run = options.command || command;
   const get = options.request || request;
   const io = options.fs || fs;
+  const read = operation => filesystem(operation, options.fsTimeout ?? 10000);
   try {
     switch (c.verifica) {
       case 'tcp': return await tcp(c.tinta);
@@ -123,13 +135,13 @@ export async function check(c, options = {}) {
       case 'unit':
       case 'age': {
         if (c.verifica === 'age' && !c.tinta.startsWith('unit:')) {
-          const stat = await io.stat(c.tinta);
+          const stat = await read(() => io.stat(c.tinta));
           return age(stat.mtimeMs, duration(c.prag), now);
         }
         const unit = c.verifica === 'unit' ? c.tinta : c.tinta.slice(5);
         const result = await run([env.VIGIL_SYSTEMCTL || 'systemctl', 'show', unit,
           '--property=LoadState,ActiveState,Result,ExecMainExitTimestamp', '--no-pager'],
-        10000, { ...process.env, ...env, TZ: 'UTC', LC_ALL: 'C' });
+        10000, commandEnvironment(env));
         if (result.verdict !== 'verde') return unreadable('unit-unreadable');
         const properties = Object.fromEntries(result.output.trim().split('\n').map(line => {
           const index = line.indexOf('=');
@@ -144,7 +156,7 @@ export async function check(c, options = {}) {
         return age(Date.parse(properties.ExecMainExitTimestamp), duration(c.prag), now);
       }
       case 'disk': {
-        const stat = await io.statfs(c.tinta);
+        const stat = await read(() => io.statfs(c.tinta));
         if (![stat.blocks, stat.bfree, stat.bavail].every(Number.isFinite) || stat.blocks <= 0
           || stat.bfree < 0 || stat.bfree > stat.blocks || stat.bavail < 0 || stat.bavail > stat.bfree) return unreadable('disk-unreadable');
         const used = stat.blocks - stat.bfree;
@@ -152,22 +164,26 @@ export async function check(c, options = {}) {
         if (availableTotal <= 0) return unreadable('disk-unreadable');
         return used * 100 / availableTotal >= c.prag ? failed('disk-full') : green();
       }
-      case 'mount': return mounted(await io.readFile('/proc/self/mountinfo', 'utf8'), c.tinta);
+      case 'mount': return mounted(await read(() => io.readFile('/proc/self/mountinfo', 'utf8')), c.tinta);
       case 'cmd': {
         let allow;
         try { allow = JSON.parse(env.VIGIL_CMD_ALLOW || '[]'); } catch { return unreadable('cmd-allow'); }
         if (!Array.isArray(allow) || !allow.includes(c.tinta[0])) return unreadable('cmd-denied');
-        const result = await run(c.tinta, 10000, { PATH: env.PATH || '', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
+        const result = await run(c.tinta, 10000, commandEnvironment(env));
         if (result.verdict !== 'verde') return answer(result.verdict, 'cmd-execution');
         return result.output.trim() === c.astept.valoare ? green() : failed('cmd-value');
       }
       case 'hass-state': {
         if (!env.HASS_URL || !env.VIGIL_HASS_TOKEN_FILE) return unreadable('hass-config');
-        const token = (await io.readFile(env.VIGIL_HASS_TOKEN_FILE, 'utf8')).trim();
+        const token = (await read(() => io.readFile(env.VIGIL_HASS_TOKEN_FILE, 'utf8'))).trim();
         if (!token || /[\r\n]/.test(token)) return unreadable('hass-token');
         const base = new URL(env.HASS_URL);
         if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) return unreadable('hass-config');
-        const response = await get(new URL(`/api/states/${encodeURIComponent(c.tinta)}`, base), { headers: { Authorization: `Bearer ${token}` } });
+        const remaining = 10000 - (performance.now() - started);
+        if (remaining <= 0) return unreadable('hass-timeout');
+        const response = await get(new URL(`/api/states/${encodeURIComponent(c.tinta)}`, base), {
+          headers: { Authorization: `Bearer ${token}` }, timeout: remaining,
+        });
         if (response.status !== 200) return unreadable('hass-response');
         let body;
         try { body = JSON.parse(response.body); } catch { return unreadable('hass-response'); }

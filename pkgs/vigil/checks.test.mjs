@@ -10,6 +10,27 @@ const now = Date.parse('2026-09-20T12:00:00Z');
 const verdict = async (c, options) => (await check(c, options)).verdict;
 const response = (status, body) => async () => ({ status, body });
 
+test('stalled filesystem probes release check slots with unreadable verdicts', async () => {
+  const stalled = () => new Promise(() => {});
+  const io = { stat: stalled, statfs: stalled, readFile: stalled };
+  const contracts = [
+    { verifica: 'age', tinta: '/fixture', prag: '1h' },
+    { verifica: 'disk', tinta: '/', prag: 85 },
+    { verifica: 'mount', tinta: '/fixture' },
+    { verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } },
+  ];
+  let timer;
+  try {
+    const results = await Promise.race([
+      Promise.all(contracts.map(c => check(c, { fs: io, fsTimeout: 10,
+        env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' } }))),
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), 100); }),
+    ]);
+    assert.notEqual(results, null, 'filesystem probes must release their slots');
+    assert.ok(results.every(result => result.verdict === 'NECITIT'));
+  } finally { clearTimeout(timer); }
+});
+
 test('aborted HTTP responses release their request deadline', async t => {
   const schedule = globalThis.setTimeout;
   const cancel = globalThis.clearTimeout;
@@ -93,17 +114,28 @@ test('mount matching uses a complete decoded mountpoint, never a substring', () 
   assert.equal(mounted('', '/dev/shm').verdict, 'NECITIT');
 });
 
-test('unit timestamps are requested in UTC with a stable locale', async () => {
-  const result = await check({ verifica: 'age', tinta: 'unit:fixture.service', prag: '8d' }, {
-    now, env: { VIGIL_SYSTEMCTL: '/fixture/systemctl' },
-    command: async (argv, timeout, environment) => {
-      assert.equal(environment?.TZ, 'UTC');
-      assert.equal(environment?.LC_ALL, 'C');
-      assert.equal(argv[0], '/fixture/systemctl');
-      return { verdict: 'verde', output: 'LoadState=loaded\nResult=success\nExecMainExitTimestamp=Sun 2026-09-20 11:00:00 UTC' };
-    },
-  });
+test('systemd checks use a minimal environment with UTC and a stable locale', async () => {
+  for (const c of [{ verifica: 'age', tinta: 'unit:fixture.service', prag: '8d' }, { verifica: 'unit', tinta: 'fixture.service' }]) {
+    let inherited;
+    const result = await check(c, {
+      now, env: { VIGIL_SYSTEMCTL: '/fixture/systemctl', PATH: '/fixture/bin', TELEGRAM_BOT_TOKEN: 'fixture-token' },
+      command: async (argv, timeout, environment) => {
+        inherited = environment;
+        assert.equal(argv[0], '/fixture/systemctl');
+        return { verdict: 'verde', output: 'LoadState=loaded\nActiveState=active\nResult=success\nExecMainExitTimestamp=Sun 2026-09-20 11:00:00 UTC' };
+      },
+    });
+    assert.equal(result.verdict, 'verde');
+    assert.deepEqual(Object.keys(inherited).sort(), ['LANG', 'LC_ALL', 'PATH', 'TZ']);
+    assert.equal(inherited.TZ, 'UTC');
+    assert.equal(inherited.LC_ALL, 'C');
+  }
+});
+
+test('command helper defaults to the same minimal environment', async () => {
+  const result = await command([process.execPath, '-e', 'process.stdout.write(Object.keys(process.env).sort().join(","))']);
   assert.equal(result.verdict, 'verde');
+  assert.equal(result.output, 'LANG,LC_ALL,PATH,TZ');
 });
 
 test('disk threshold includes reserved blocks and rejects invalid counters', async () => {
@@ -136,6 +168,19 @@ test('allow-listed commands receive only a minimal environment', async () => {
     command: async (_argv, _timeout, environment) => { inherited = environment; return { verdict: 'verde', output: 'ready' }; },
   }), 'verde');
   assert.deepEqual(inherited, { PATH: '/fixture/bin', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' });
+});
+
+test('Home Assistant token reads share the network check deadline', async t => {
+  let clock = 1000;
+  t.mock.method(performance, 'now', () => clock);
+  let budget;
+  const result = await check({ verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } }, {
+    env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' },
+    fs: { readFile: async () => { clock += 4000; return 'fixture-token'; } },
+    request: async (_url, options) => { budget = options.timeout; return { status: 200, body: '{"state":"ready"}' }; },
+  });
+  assert.equal(result.verdict, 'verde');
+  assert.equal(budget, 6000);
 });
 
 test('Home Assistant authentication and malformed states never expose private data', async () => {

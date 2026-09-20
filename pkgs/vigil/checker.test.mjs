@@ -208,6 +208,28 @@ test('enabling delivery as row-only incident closes still delivers open before c
   assert.deepEqual(h.sent.map(event => event.tranzitie), ['open', 'close']);
 }));
 
+test('row persistence faults retain committed alerts and stale evidence until repair', async () => harness(async h => {
+  await h.tick({ fixture: 'picat', other: 'picat' });
+  const counts = fs.readFileSync(path.join(h.root, 'tick.counts.json'), 'utf8');
+  fs.mkdirSync(path.join(h.root, 'rows'), { recursive: true });
+  const row = path.join(h.root, 'rows', 'fixture.json');
+  fs.writeFileSync(row, 'corrupt-row');
+  h.time(1000);
+  await assert.rejects(h.tick({ fixture: 'picat', other: 'picat' }), /state-unreadable/);
+  assert.equal(h.lines.length, 4); // Both contracts were inspected on both runs.
+  assert.equal(fs.readFileSync(path.join(h.root, 'tick.counts.json'), 'utf8'), counts);
+  assert.equal(fs.readFileSync(row, 'utf8'), 'corrupt-row');
+  assert.deepEqual(h.state().queue.map(event => event.nume), ['fixture', 'other']);
+  assert.equal(h.sent.length, 0);
+  let selfAlerts = 0;
+  assert.equal(await failed({ env: h.env, gazda: 'fixture-host', send: async () => { selfAlerts++; return true; } }), 0);
+  assert.equal(selfAlerts, 1);
+  fs.unlinkSync(row);
+  await h.tick({ fixture: 'picat', other: 'picat' });
+  assert.deepEqual(h.sent.map(event => event.nume), ['fixture', 'other']);
+  assert.equal(h.state().queue.length, 0);
+}));
+
 test('restart after transition commit delivers its durable event', async () => harness(async h => {
   await h.tick({ fixture: 'picat' });
   await assert.rejects(h.tick({ fixture: 'picat' }, { boundary: stage => {
