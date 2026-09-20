@@ -24,8 +24,8 @@ clean repository checkout on rpi5:
 test -z "$(git status --porcelain)"
 git switch main
 git pull --ff-only
-nixos-rebuild build --flake .#rpi5-full
-sudo nixos-rebuild switch --flake .#rpi5-full
+nixos-rebuild build --flake .#rpi5-full &&
+  sudo nixos-rebuild switch --flake .#rpi5-full
 systemctl is-active vigil.timer vigil-tick.socket
 sudo systemctl start vigil.service
 systemctl show vigil.service -p Result -p ExecMainStatus
@@ -47,7 +47,8 @@ From choir, verify the peer endpoint and its embedded timestamp:
 
 ```sh
 curl --fail --max-time 10 http://100.106.93.87:8747/ | jq -e '
-  (.la | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) > (now - 900)'
+  (.la | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) as $t |
+  $t <= now and $t > (now - 900)'
 ```
 
 ## 2. Isolated acknowledgement acceptance
