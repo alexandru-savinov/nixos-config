@@ -92,8 +92,16 @@ export async function run(entries, options = {}) {
   const now = clock();
   const events = [];
   const counts = { verde: 0, picat: 0, necitit: 0 };
+  const unknownIdentities = entries.some(entry => entry.invalid);
   for (const name of Object.keys(store.contracts)) {
     if (!names.includes(name)) {
+      if (unknownIdentities && !name.startsWith('invalid-')) {
+        // A synthetic invalid-file name cannot prove the old contract was removed.
+        // Preserve its episode, but an unobserved interval cannot count as recovery.
+        Object.assign(store.contracts[name], { verdict: 'NECITIT', consecutive: 1, greenSince: null });
+        continue;
+      }
+      // Synthetic names identify files even when their content cannot be read.
       delete store.contracts[name];
       store.queue = store.queue.filter(event => event.nume !== name || event.tranzitie !== 'nota');
       store.cleanup.push({ name, marker: true, ack: null });

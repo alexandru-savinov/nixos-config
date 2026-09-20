@@ -204,6 +204,13 @@ a projection fault leaves completion counts unchanged and invokes self-failure.
 After repair, queued alerts retry in order. This is distinct from an unreadable
 contract input, which becomes NECITIT while the other checks continue.
 
+An invalid file has a synthetic identity, so its presence prevents proving that
+an absent old contract name was deleted. Keep unmatched incident state until all
+file identities are readable again, and reset its consecutive/recovery evidence
+to NECITIT while unmatched. A repaired contract resumes its original incident;
+its continuous green hold starts again. Only a fully readable inventory may
+retire names that are actually absent.
+
 Filesystem probes have a 10-second observation deadline and return NECITIT when
 it expires, releasing their checker slots. This does not cancel an outstanding
 kernel filesystem request. If such a request prevents process exit, systemd's

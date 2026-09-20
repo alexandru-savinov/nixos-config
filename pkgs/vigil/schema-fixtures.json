@@ -250,5 +250,30 @@
     "name": "trimmed-url",
     "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \" http://127.0.0.1/ \"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
     "accept": true
+  },
+  {
+    "name": "threshold-minimum",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 1\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "threshold-maximum",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 12\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "name-64",
+    "source": "[contract]\nnume = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "name-65",
+    "source": "[contract]\nnume = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "name-uppercase",
+    "source": "[contract]\nnume = \"Fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
   }
 ]
