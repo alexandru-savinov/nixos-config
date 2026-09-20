@@ -32,7 +32,7 @@ export function command(argv, timeout = 10000, environment = commandEnvironment(
     }, (error, stdout) => {
       if (error) {
         const missing = ['ENOENT', 'EACCES', 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(error.code)
-          || error.code === 127 || error.signal && !error.killed;
+          || error.code === null || error.code === 127 || Boolean(error.signal);
         resolve({ verdict: missing ? 'NECITIT' : 'picat', output: '' });
       } else resolve({ verdict: 'verde', output: stdout });
     });

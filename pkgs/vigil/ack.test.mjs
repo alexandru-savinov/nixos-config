@@ -48,6 +48,8 @@ test('isolated real age check consumes an ack and sends exactly one replacement 
     assert.match(lines.at(-1), /"verdict":"verde"/);
     assert.equal(fs.existsSync(path.join(root, 'nota-sent', 'fixture')), false);
     assert.equal(messages.length, 2);
+    for (const message of messages) assert.equal(message.text.includes(target), false);
+    assert.doesNotMatch(JSON.stringify(messages), /missing-fixture/);
   } finally {
     server.closeAllConnections();
     if (server.listening) await new Promise(resolve => server.close(resolve));
