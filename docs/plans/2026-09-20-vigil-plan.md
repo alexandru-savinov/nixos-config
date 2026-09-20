@@ -271,7 +271,7 @@ existing invocation limit still fails the run and leaves the peer tick stale.
 
 ### Task 6: the private contracts on rpi5, and the first real incident
 - [ ] Once the owner has created the three `.age` files: declare `age.secrets.vigil-rpi5-contract-{1,2,3} = { file = …; owner = "vigil"; path = "/run/vigil-contracts/contract-N.toml"; symlink = false; }`, add `"/run/vigil-contracts"` to `contractsDirs`, keep `expectedContracts = 7`, and set `expectedRuntimeContracts = 3`. PR, CI, his switch. Closing check: `ls -l /run/vigil-contracts/` shows three regular `.toml` files owned by `vigil`; `journalctl -u vigil` shows **10 contracts, zero NECITIT**.
-- [ ] `docs/plans/completed/2026-09-20-vigil-postdeploy.md`: commands only, no device names: timers active on both hosts; both tick endpoints answer the peer with fresh `.la`; `last-channel-ok` < 2 d on both; an isolated ack acceptance run as specified below; live ack remains pending until a natural NECITIT nota exists. **The plan is done only when the first real incident reaches Telegram**; record its date there. That date is the input to plan 2.
+- [ ] Prepare `docs/plans/2026-09-20-vigil-postdeploy.md`; move it to `docs/plans/completed/` only after all pending acceptance evidence below is recorded: commands only, no device names: timers active on both hosts; both tick endpoints answer the peer with fresh `.la`; `last-channel-ok` < 2 d on both; an isolated ack acceptance run as specified below; live ack remains pending until a natural NECITIT nota exists. **The plan is done only when the first real incident reaches Telegram**; record its date there. That date is the input to plan 2.
 
 ## Constraints
 

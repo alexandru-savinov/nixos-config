@@ -121,7 +121,7 @@ let
     && (kind != "unit" || matches "[a-zA-Z0-9@_.:-]+\\.service" target)
     && (kind != "mount" || absolute target)
     && (kind != "hass-state" || (matches "[a-z_][a-z0-9_]*\\.[a-z0-9_]+" target
-      && !(matches "(person|device_tracker|mobile_app)\\..*" target)));
+    && !(matches "(person|device_tracker|mobile_app)\\..*" target)));
   parseSource = file: source:
     let
       checked = builtins.tryEval (if syntax source then builtins.fromTOML source else throw "unsupported syntax");

@@ -253,6 +253,11 @@ after this test actually runs; a test incident is not the first real incident.
 
 ## Pending evidence
 
+Use [the pending post-deployment checklist](2026-09-20-vigil-postdeploy.md) to
+record owner acceptance. Keep it in `docs/plans/` while any evidence is pending;
+move it to `docs/plans/completed/` only after all acceptance steps and the first
+real incident delivery date are recorded.
+
 - rpi5 deployment and live peer acceptance.
 - Choir row-only deployment, secret re-key, and subsequent delivery activation.
 - Owner-authored private ciphertexts and their activation PR.
