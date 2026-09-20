@@ -155,7 +155,7 @@ test('commands require exact allowlist and compare trimmed stdout without a shel
   assert.equal((await command(['/nonexistent-vigil-fixture'])).verdict, 'NECITIT');
   assert.equal((await command([process.execPath, '-e', 'process.exit(127)'])).verdict, 'NECITIT');
   assert.equal((await command([process.execPath, '-e', 'process.exit(1)'])).verdict, 'picat');
-  assert.equal((await command([process.execPath, '-e', 'setInterval(()=>{},1000)'], 50)).verdict, 'picat');
+  assert.equal((await command([process.execPath, '-e', 'setInterval(()=>{},1000)'], 50)).verdict, 'NECITIT');
   assert.equal((await command([process.execPath, '-e', 'process.stdout.write("x".repeat(100000))'])).verdict, 'NECITIT');
 });
 
@@ -203,7 +203,7 @@ test('command deadline does not wait for inherited descendant output pipes', asy
   const script = 'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},1500)"],{stdio:"inherit"}); setInterval(()=>{},1000);';
   const started = Date.now();
   const result = await command([process.execPath, '-e', script], 80);
-  assert.equal(result.verdict, 'picat');
+  assert.equal(result.verdict, 'NECITIT');
   assert.ok(Date.now() - started < 800, 'the subprocess deadline must not wait for a descendant pipe');
 });
 
