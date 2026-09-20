@@ -72,6 +72,11 @@ export async function run(entries, options = {}) {
   const names = entries.map(entry => entry.contract.nume);
   if (new Set(names).size !== names.length) throw new Error('duplicate-name');
   if (options.expect !== undefined && options.expect !== entries.length) throw new Error('contract-count');
+  // Private runtime contracts cannot be inspected by the Nix prerequisite gate.
+  // Preserve explicit row-only mode, but never hide its notification consequence.
+  if (!enabled && entries.some(({ contract: c }) => c.nivel === 'incident' || c.nume === 'channel')) {
+    summary('vigil-check: WARNING delivery-disabled for incident/channel contracts');
+  }
   const store = loadStore(root);
   cleanup(root, store);
 
