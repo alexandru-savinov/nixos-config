@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { advance, HOLD_DOWN } from './lib/incident.mjs';
 
+test('recovery hold is exactly thirty minutes', () => {
+  assert.equal(HOLD_DOWN, 30 * 60 * 1000);
+});
+
 const contract = { nume: 'fixture', picat_dupa: 2, nivel: 'incident' };
 const start = Date.parse('2026-09-20T12:00:00Z');
 function harness() {

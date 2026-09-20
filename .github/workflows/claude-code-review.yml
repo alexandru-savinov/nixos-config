@@ -192,6 +192,7 @@ jobs:
 
       - name: Diagnose missing review report
         if: always()
+        continue-on-error: true
         env:
           REVIEW_EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
         run: |
