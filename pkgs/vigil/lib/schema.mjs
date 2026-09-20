@@ -61,7 +61,8 @@ export function validate(document) {
   } else if (c.prag !== undefined) fail();
   if (c.verifica === 'unit' && !/^[a-zA-Z0-9@_.:-]+\.service$/.test(c.tinta)) fail();
   if (c.verifica === 'mount' && !path.isAbsolute(c.tinta)) fail();
-  if (c.verifica === 'hass-state' && !/^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(c.tinta)) fail();
+  if (c.verifica === 'hass-state' && (!/^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(c.tinta)
+    || /^(person|device_tracker|mobile_app)\./.test(c.tinta))) fail();
   return { ...c, nivel: document.spune.nivel };
 }
 export function contract(source) { return validate(parseToml(source)); }
