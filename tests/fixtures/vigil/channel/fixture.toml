@@ -1,0 +1,10 @@
+[contract]
+nume = "channel"
+ce = "Fixture"
+verifica = "age"
+tinta = "/var/lib/vigil/last-channel-ok"
+prag = "2d"
+picat_dupa = 2
+
+[spune]
+nivel = "nota"

@@ -1,0 +1,10 @@
+[contract]
+nume = "ha-served"
+ce = "Service health"
+verifica = "http"
+tinta = "https://rpi5.tail4249a9.ts.net:8123/manifest.json"
+picat_dupa = 2
+astept = { status = 200 }
+
+[spune]
+nivel = "incident"

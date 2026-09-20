@@ -157,6 +157,9 @@ in
   # token above: editable from choir (users), decryptable on rpi5. Same
   # chicken-and-egg rule: the .age must exist BEFORE any host declares it.
   "ha-vigil-token.age".publicKeys = users ++ [ rpi5 ];
+  # Private Vigil contracts are prepared in vigil-contracts.pending.nix.
+  # Promote their rules here only in the commit adding the owner-created
+  # ciphertexts; the recipient guard rejects registered-but-missing files.
   # NOTE: home-assistant-secrets.age is intentionally NOT registered — HA's own
   # secrets.yaml is unused here, and registering a key without creating its .age
   # is a footgun (a future host config wiring age.secrets before `agenix -e`

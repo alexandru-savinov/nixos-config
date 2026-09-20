@@ -1,0 +1,9 @@
+[contract]
+nume = "fixture"
+ce = "Fixture"
+verifica = "mount"
+tinta = "/"
+picat_dupa = 2
+
+[spune]
+nivel = "nota"

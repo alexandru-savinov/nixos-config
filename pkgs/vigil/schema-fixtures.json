@@ -1,0 +1,254 @@
+[
+  {
+    "name": "basic",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "comments",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"# [recuperare] dotted.key = \\\"quoted\\\"\" # comment\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "unknown-type",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"shell\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "unsafe-name",
+    "source": "[contract]\nnume = \"../escape\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "literal",
+    "source": "[contract]\nnume = \"fixture\"\nce = 'Fixture'\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "float",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200.0 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "datetime",
+    "source": "[contract]\nnume = \"fixture\"\nce = 2026-09-20T12:00:00Z\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "dotted-key",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept.status = 200\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "recovery",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[recuperare]\nx = \"fixture\"\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "tailnet-missing-peer",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://100.94.191.54/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "tailnet-peer",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://100.94.191.54/\"\npeer = true\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "array-of-tables",
+    "source": "[[contract]]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "hex",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 0xC8 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "separator",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 2_00 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "unknown-key",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nother = true\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "quoted-key",
+    "source": "[contract]\n\"nume\" = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "nested-table",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = { value = 200 } }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "missing-expectation",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\n\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "threshold-zero",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 0\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "threshold-large",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 13\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "reserved-name",
+    "source": "[contract]\nnume = \"vigil\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "invalid-prefix",
+    "source": "[contract]\nnume = \"invalid-fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "array-value",
+    "source": "[contract]\nnume = \"fixture\"\nce = [\"Fixture\"]\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "inline-trailing-comma",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200, }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "escaped-backslash",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"fixture\\\\path\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "body-pattern",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200, body = \"\\\"name\\\"\" }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "tcp",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"tcp\"\ntinta=\"127.0.0.1:8080\"\npicat_dupa=2\n\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "tcp-leading-zero",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"tcp\"\ntinta=\"localhost:00080\"\npicat_dupa=2\n\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "tcp-out-of-range",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"tcp\"\ntinta=\"localhost:65536\"\npicat_dupa=2\n\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "unit",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\n\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "unit-age",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"age\"\ntinta=\"unit:fixture.service\"\npicat_dupa=2\nprag=\"8d\"\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "file-age",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"age\"\ntinta=\"/fixture\"\npicat_dupa=2\nprag=\"15m\"\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "duration-overflow",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"age\"\ntinta=\"/fixture\"\npicat_dupa=2\nprag=\"999999999999999999999d\"\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "disk",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"disk\"\ntinta=\"/\"\npicat_dupa=2\nprag=85\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "disk-float",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"disk\"\ntinta=\"/\"\npicat_dupa=2\nprag=85.0\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "mount",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"mount\"\ntinta=\"/fixture\"\npicat_dupa=2\n\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "command",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"cmd\"\ntinta=[\"/fixture/bin\",\"argument\"]\npicat_dupa=2\nastept={valoare=\"ready\"}\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "hass",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"sensor.fixture\"\npicat_dupa=2\nastept={valoare=\"ready\"}\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "hass-no-expectation",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"sensor.fixture\"\npicat_dupa=2\n\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "http-port-range",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://localhost:65536/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "unicode-ce-limit",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "unicode-ce-over-limit",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "astral-ce-limit",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "astral-ce-over-limit",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "invalid-regex-engine",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200, body = \"[\" }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false,
+    "evalAccept": true
+  },
+  {
+    "name": "encoded-tailnet-engine",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://%31%30%30.94.191.54/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": false,
+    "evalAccept": true
+  },
+  {
+    "name": "encoded-tailnet-peer",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://%31%30%30.94.191.54/\"\npicat_dupa = 2\npeer = true\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "lookahead-regex",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"http://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200, body = \"(?=ready)ready\" }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "uppercase-http",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \"HTTP://127.0.0.1/\"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "trimmed-url",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"http\"\ntinta = \" http://127.0.0.1/ \"\npicat_dupa = 2\nastept = { status = 200 }\n[spune]\nnivel = \"nota\"\n",
+    "accept": true
+  }
+]

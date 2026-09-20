@@ -1,0 +1,58 @@
+diff --git a/hosts/rpi5-full/configuration.nix b/hosts/rpi5-full/configuration.nix
+--- a/hosts/rpi5-full/configuration.nix
++++ b/hosts/rpi5-full/configuration.nix
+@@ -171,6 +171,27 @@
+       # run as root.
+       home-assistant-token = secret "home-assistant-token";
+       ha-vigil-token = ownedSecret "vigil" "ha-vigil-token";
++      vigil-rpi5-contract-1 = {
++        file = "${self}/secrets/vigil-rpi5-contract-1.age";
++        owner = "vigil";
++        group = "vigil";
++        path = "/run/vigil-contracts/contract-1.toml";
++        symlink = false;
++      };
++      vigil-rpi5-contract-2 = {
++        file = "${self}/secrets/vigil-rpi5-contract-2.age";
++        owner = "vigil";
++        group = "vigil";
++        path = "/run/vigil-contracts/contract-2.toml";
++        symlink = false;
++      };
++      vigil-rpi5-contract-3 = {
++        file = "${self}/secrets/vigil-rpi5-contract-3.age";
++        owner = "vigil";
++        group = "vigil";
++        path = "/run/vigil-contracts/contract-3.toml";
++        symlink = false;
++      };
+
+       # Backup pull secrets
+       rpi5-backup-ssh-key = {
+@@ -207,8 +228,9 @@
+
+   services.vigil = {
+     enable = true;
+-    contractsDirs = [ ./vigil-contracts ];
++    contractsDirs = [ ./vigil-contracts "/run/vigil-contracts" ];
+     expectedContracts = 7;
++    expectedRuntimeContracts = 3;
+     telegramEnvFile = secret "backup-telegram-env";
+     hassTokenFile = secret "ha-vigil-token";
+     hassUrl = "http://127.0.0.1:8123";
+diff --git a/secrets/secrets.nix b/secrets/secrets.nix
+--- a/secrets/secrets.nix
++++ b/secrets/secrets.nix
+@@ -157,9 +157,9 @@
+   # token above: editable from choir (users), decryptable on rpi5. Same
+   # chicken-and-egg rule: the .age must exist BEFORE any host declares it.
+   "ha-vigil-token.age".publicKeys = users ++ [ rpi5 ];
+-  # Private Vigil contracts are prepared in vigil-contracts.pending.nix.
+-  # Promote their rules here only in the commit adding the owner-created
+-  # ciphertexts; the recipient guard rejects registered-but-missing files.
++  "vigil-rpi5-contract-1.age".publicKeys = users ++ [ rpi5 ];
++  "vigil-rpi5-contract-2.age".publicKeys = users ++ [ rpi5 ];
++  "vigil-rpi5-contract-3.age".publicKeys = users ++ [ rpi5 ];
+   # NOTE: home-assistant-secrets.age is intentionally NOT registered — HA's own
+   # secrets.yaml is unused here, and registering a key without creating its .age
+   # is a footgun (a future host config wiring age.secrets before `agenix -e`

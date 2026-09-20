@@ -1,0 +1,10 @@
+[contract]
+nume = "fixture"
+ce = "Fixture"
+verifica = "hass-state"
+tinta = "sensor.fixture"
+astept = { valoare = "ready" }
+picat_dupa = 2
+
+[spune]
+nivel = "nota"

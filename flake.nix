@@ -206,6 +206,8 @@
           # See pkgs/ralphex.nix; install via environment.systemPackages.
           ralphex = pkgs.callPackage ./pkgs/ralphex.nix { };
 
+          vigil = pkgs.callPackage ./pkgs/vigil.nix { };
+
           # Declarative n8n VM test (#42). A package (not a check) so plain
           # `nix flake check` stays light — see the note in the checks
           # section. CI builds it in the "Build x86_64 Configs" job; run
@@ -262,6 +264,12 @@
           # invalid inputs (e.g. secrets in /nix/store).
           module-eval = import ./tests/module-eval.nix {
             inherit pkgs nixpkgs self;
+          };
+
+          vigil-public-contracts-rpi5 = import ./pkgs/vigil-public-contracts.nix {
+            inherit pkgs;
+            vigil = self.packages.x86_64-linux.vigil;
+            directories = [ ./hosts/rpi5-full/vigil-contracts ];
           };
 
           # Agenix recipient-drift + fail-open corruption guard (#448):

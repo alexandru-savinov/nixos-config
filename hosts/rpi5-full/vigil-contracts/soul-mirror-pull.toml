@@ -1,0 +1,10 @@
+[contract]
+nume = "soul-mirror-pull"
+ce = "Service health"
+verifica = "age"
+tinta = "unit:soul-mirror-pull.service"
+picat_dupa = 2
+prag = "8d"
+
+[spune]
+nivel = "incident"

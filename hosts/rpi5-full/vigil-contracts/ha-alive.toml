@@ -1,0 +1,10 @@
+[contract]
+nume = "ha-alive"
+ce = "Service health"
+verifica = "http"
+tinta = "http://127.0.0.1:8123/manifest.json"
+picat_dupa = 2
+astept = { status = 200, body = "\"name\"" }
+
+[spune]
+nivel = "incident"

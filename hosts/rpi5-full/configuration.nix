@@ -49,6 +49,7 @@ in
     ../rpi5/configuration.nix
 
     ../../modules/services/codex.nix
+    ../../modules/services/vigil.nix
 
     # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
     # ../../modules/system/open-webui-arm-fix.nix
@@ -169,6 +170,7 @@ in
       # time. Root-owned (default) — systemd HA and the MCP config oneshot both
       # run as root.
       home-assistant-token = secret "home-assistant-token";
+      ha-vigil-token = ownedSecret "vigil" "ha-vigil-token";
 
       # Backup pull secrets
       rpi5-backup-ssh-key = {
@@ -181,7 +183,9 @@ in
       };
       backup-telegram-env = {
         file = "${self}/secrets/backup-telegram-env.age";
-        mode = "0400";
+        # backup-pull and tailscale-dns-watchdog retain root access.
+        group = "vigil";
+        mode = "0440";
       };
 
       # Durable weekly self-backup PUSH key (rpi5 → root@sancta-claw:/root/dr).
@@ -200,6 +204,17 @@ in
       # decrypts it. The puller self-suppresses until the .age exists.
       soul-mirror-pull-ssh-key = secret "soul-mirror-pull-ssh-key";
     };
+
+  services.vigil = {
+    enable = true;
+    contractsDirs = [ ./vigil-contracts ];
+    expectedContracts = 7;
+    telegramEnvFile = secret "backup-telegram-env";
+    hassTokenFile = secret "ha-vigil-token";
+    hassUrl = "http://127.0.0.1:8123";
+    listenAddress = "100.106.93.87";
+    cmdAllow = [ ];
+  };
 
   # Advertise rpi5 as a Tailscale exit node for the tailnet.
   # Scoped here (not in modules/services/tailscale.nix) because that module is
