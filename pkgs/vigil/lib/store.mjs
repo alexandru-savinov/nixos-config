@@ -34,7 +34,7 @@ export function saveStore(root, value) { atomicWrite(statePath(root, 'incidents.
 export function ackIdentity(root, name) {
   try {
     const stat = fs.lstatSync(namedPath(root, 'ack', name));
-    if (!stat.isFile()) throw new Error('ack-invalid');
+    if (!stat.isFile()) return null;
     return `${stat.dev}:${stat.ino}:${stat.mtimeMs}:${stat.ctimeMs}`;
   } catch (error) {
     if (error.code === 'ENOENT') return null;

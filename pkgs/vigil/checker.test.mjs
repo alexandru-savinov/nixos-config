@@ -58,6 +58,29 @@ test('zero contracts and corrupt global state cannot report success', async () =
   assert.equal(fs.readFileSync(file, 'utf8'), 'broken-state');
 }));
 
+test('non-regular acknowledgements cannot stop monitoring or follow symlinks', async () => harness(async h => {
+  fs.mkdirSync(path.join(h.root, 'ack', 'fixture'), { recursive: true });
+  assert.equal(await h.tick({ fixture: 'verde', other: 'verde' }), 0);
+  fs.rmdirSync(path.join(h.root, 'ack', 'fixture'));
+  const target = path.join(h.root, 'untouched');
+  fs.writeFileSync(target, 'keep');
+  fs.symlinkSync(target, path.join(h.root, 'ack', 'fixture'));
+  assert.equal(await h.tick({ fixture: 'verde', other: 'verde' }), 0);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'keep');
+  assert.equal(fs.lstatSync(path.join(h.root, 'ack', 'fixture')).isSymbolicLink(), true);
+}));
+
+test('recovery contract reports the plan-2 diagnostic while other checks continue', async () => harness(async h => {
+  const directory = path.join(h.root, 'contracts');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory, 'recovery.toml'), '[contract]\nnume="fixture"\nce="fixture"\nverifica="age"\ntinta="/fixture"\nprag="1h"\npicat_dupa=2\n[spune]\nnivel="incident"\n[recuperare]\n');
+  const entries = [...loadContracts([directory]), { contract: { ...base, nume: 'other' } }];
+  assert.equal(await run(entries, { ...h.options, inspect: async () => ({ verdict: 'verde', motiv: 'ok' }) }), 2);
+  assert.equal(h.lines[0].verdict, 'NECITIT');
+  assert.equal(h.lines[0].motiv, 'recuperare: plan 2');
+  assert.equal(h.lines[1].verdict, 'verde');
+}));
+
 test('failed FIFO head prevents close overtaking open across a 30-hour outage', async () => harness(async h => {
   h.network(false);
   assert.equal(await h.tick({ fixture: 'picat' }), 1);
