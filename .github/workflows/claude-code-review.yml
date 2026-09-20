@@ -42,6 +42,15 @@ jobs:
             ## Step 1: Read the PR diff
             Run: gh pr diff ${{ github.event.pull_request.number }}
 
+            Run that as a single Bash command, without pipes, redirects, shell
+            substitutions, environment prefixes, or additional commands. Only
+            the explicitly allowed gh read commands are available; use their
+            built-in --json/--jq options when you need filtered metadata.
+            Do not keep retrying denied shell variants. Use the Write tool for
+            the required report, never shell redirection. If unavailable evidence
+            prevents completing the review, record that limitation as a finding
+            instead of omitting the report or claiming a clean review.
+
             ## Step 2: Analyze for issues
             Evaluate the changes for:
             - **CRITICAL**: Security vulnerabilities, secret exposure, data loss risks,
