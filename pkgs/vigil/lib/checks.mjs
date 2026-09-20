@@ -40,12 +40,18 @@ export function command(argv, timeout = 10000, environment = commandEnvironment(
   });
 }
 
-export function request(url, { headers = {}, timeout = 10000 } = {}) {
+export function request(url, { headers = {}, timeout = 10000, readBody = true } = {}) {
   return new Promise((resolve, reject) => {
     const client = url.protocol === 'https:' ? https : http;
     let size = 0;
     const chunks = [];
     const req = client.get(url, { headers }, response => {
+      if (!readBody) {
+        clearTimeout(timer);
+        resolve({ status: response.statusCode, body: '' });
+        response.destroy();
+        return;
+      }
       response.on('data', chunk => {
         size += chunk.length;
         if (size > LIMIT) req.destroy(new Error('response-limit'));
@@ -117,7 +123,8 @@ export async function check(c, options = {}) {
     switch (c.verifica) {
       case 'tcp': return await tcp(c.tinta);
       case 'http': {
-        const response = await get(new URL(c.tinta), { timeout: c.astept.body ? 9400 : 10000 });
+        const response = await get(new URL(c.tinta), { timeout: c.astept.body ? 9400 : 10000,
+          readBody: c.astept.body !== undefined || c.astept.prospetime !== undefined });
         if (response.status !== c.astept.status) return failed('http-status');
         if (c.astept.body !== undefined) {
           const match = await matches(c.astept.body, response.body);
