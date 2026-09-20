@@ -48,7 +48,12 @@ v2.1); the owner approved it. What this repo needs to know:
   file** — the file is *accounted for* and degrades to NECITIT; it never takes
   the host down). Exit codes of `vigil check`: `0` all verde · `1` any picat ·
   `2` any NECITIT or zero files · **`3` internal fault** (crash, duplicate
-  `nume`, `--expect N` ≠ number of `*.toml` files **present**). Only 3 is a unit
+  `nume`, `--expect N` ≠ number of `*.toml` files **present**, or failure to
+  enumerate a configured directory). An unreadable directory has unknown
+  inventory; it cannot be represented as one synthetic contract or skipped.
+  Exit 3 leaves the previous tick unchanged and invokes the self-failure path.
+  An individually unreadable file in an enumerable directory remains NECITIT.
+  Only 3 is a unit
   failure (`SuccessExitStatus = "1 2"`).
 - An **incident** opens after `picat_dupa` consecutive `picat` ticks (it gets an
   `incident_id` = the ISO timestamp of the open transition, persisted in

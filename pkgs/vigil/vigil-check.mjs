@@ -15,6 +15,9 @@ import { say } from './vigil-say.mjs';
 export function loadContracts(directories) {
   const entries = [];
   for (const directory of directories) {
+    // Enumeration failure is an inventory fault: the number of present files
+    // is unknown, so --expect cannot be verified. Do not fabricate a contract.
+    // main returns 3; systemd reports self-failure and leaves the tick stale.
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith('.toml')).sort()) {
       const file = path.resolve(directory, name);
       try {

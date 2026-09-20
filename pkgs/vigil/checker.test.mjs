@@ -3,12 +3,42 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { run, loadContracts } from './vigil-check.mjs';
 import { say } from './vigil-say.mjs';
 import { loadStore } from './lib/store.mjs';
 import { failed } from './vigil.mjs';
 
 const base = { nume: 'fixture', verifica: 'age', tinta: '/fixture', prag: '1h', picat_dupa: 2, nivel: 'incident' };
+
+test('CLI inventory and usage faults exit 3 without advancing evidence', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-cli-'));
+  try {
+    const directory = path.join(root, 'contracts');
+    fs.mkdirSync(directory);
+    const fixture = '[contract]\nnume="fixture"\nce="fixture"\nverifica="unit"\ntinta="fixture.service"\npicat_dupa=2\n[spune]\nnivel="nota"\n';
+    fs.writeFileSync(path.join(directory, 'one.toml'), fixture);
+    fs.writeFileSync(path.join(directory, 'two.toml'), fixture);
+    const state = path.join(root, 'state');
+    fs.mkdirSync(state);
+    fs.writeFileSync(path.join(state, 'tick'), 'previous evidence');
+    for (const args of [
+      [directory, '--expect', 'invalid'],
+      [directory, '--expect', '2'], // Duplicate names.
+      [directory, path.join(root, 'missing'), '--expect', '3'],
+      [path.join(directory, 'one.toml'), '--expect', '1'], // Not a directory.
+    ]) {
+      const result = spawnSync(process.execPath, [new URL('./vigil-check.mjs', import.meta.url).pathname, ...args], {
+        env: { ...process.env, STATE_DIRECTORY: state, VIGIL_SAY: '0' }, encoding: 'utf8', timeout: 5000,
+      });
+      assert.equal(result.status, 3);
+      assert.equal(result.stdout, '');
+      assert.equal(result.stderr, 'vigil-check: internal-fault\n');
+      assert.deepEqual(fs.readdirSync(state), ['tick']);
+      assert.equal(fs.readFileSync(path.join(state, 'tick'), 'utf8'), 'previous evidence');
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 async function harness(fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-run-'));
   let now = Date.parse('2026-09-20T12:00:00Z');

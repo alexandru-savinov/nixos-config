@@ -10,6 +10,37 @@ const now = Date.parse('2026-09-20T12:00:00Z');
 const verdict = async (c, options) => (await check(c, options)).verdict;
 const response = (status, body) => async () => ({ status, body });
 
+test('aborted HTTP responses release their request deadline', async t => {
+  const schedule = globalThis.setTimeout;
+  const cancel = globalThis.clearTimeout;
+  let deadline;
+  let cleared = false;
+  t.mock.method(globalThis, 'setTimeout', (fn, ms, ...args) => {
+    const timer = schedule(fn, ms, ...args);
+    if (ms === 4000) deadline = timer;
+    return timer;
+  });
+  t.mock.method(globalThis, 'clearTimeout', timer => {
+    if (timer === deadline) cleared = true;
+    return cancel(timer);
+  });
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200);
+    res.flushHeaders();
+    schedule(() => res.destroy(), 20);
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  try {
+    await assert.rejects(request(new URL(`http://127.0.0.1:${server.address().port}`), { timeout: 4000 }), /response-unreadable/);
+    assert.ok(deadline);
+    assert.equal(cleared, true);
+  } finally {
+    cancel(deadline);
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('file age distinguishes missing, fresh, stale and future timestamps', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vigil-check-'));
   try {
