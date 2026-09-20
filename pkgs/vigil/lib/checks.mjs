@@ -41,7 +41,7 @@ export function request(url, { headers = {}, timeout = 10000 } = {}) {
         if (size > LIMIT) req.destroy(new Error('response-limit'));
         else chunks.push(chunk);
       });
-      response.on('error', () => reject(new Error('response-unreadable')));
+      response.on('error', () => { clearTimeout(timer); reject(new Error('response-unreadable')); });
       response.on('end', () => {
         clearTimeout(timer);
         resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString('utf8') });
