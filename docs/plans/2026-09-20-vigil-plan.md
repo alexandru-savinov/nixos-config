@@ -163,7 +163,12 @@ as the authority; outbox files are an atomic projection for inspection. Mark
 successful events delivered atomically. Keep an undelivered open or nota while
 its episode is active, even across outages longer than 24 h. For ended episodes,
 expire historical events after 24 h as a pair: never deliver a close without its
-open. Log a fixed expiry code. Spend at most 60 seconds on delivery per tick,
+open. This limit also applies to a queued close whose open was already delivered:
+a recovery older than the retention window is history, not an active episode.
+The chat may therefore lack that close after a prolonged outage; current
+`/status` and persisted incident state remain the source of current health.
+Log the fixed `history-expired` code, without event details. Spend at most
+60 seconds on delivery per tick,
 including retries, to preserve time for the checks and publishing the tick.
 All transitions go through one FIFO, never directly around older pending work.
 Stop draining at the first failed head item. Each event additionally carries
