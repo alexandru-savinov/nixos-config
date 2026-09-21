@@ -23,12 +23,16 @@ let
     };
   }];
   config = evalConfig { inherit modules; };
+  rowOnly = evalConfig { modules = fixtureModules ./fixtures/vigil/row-only 1; };
   service = config.systemd.services.vigil;
   failure = config.systemd.services.vigil-failed;
   tick = config.systemd.services."vigil-tick@";
   socket = config.systemd.sockets.vigil-tick;
   timer = config.systemd.timers.vigil;
   checks = {
+    row-only = builtins.seq rowOnly.system.build.toplevel.drvPath
+      (rowOnly.systemd.services.vigil.environment.VIGIL_SAY == "0"
+        && !(rowOnly.systemd.services.vigil.serviceConfig ? EnvironmentFile));
     schema-parity = lib.all
       (fixture:
         (builtins.tryEval (builtins.deepSeq (schema.parseSource fixture.name fixture.source) true)).success == (fixture.evalAccept or fixture.accept)

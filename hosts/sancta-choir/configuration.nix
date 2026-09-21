@@ -42,6 +42,7 @@
     ../../modules/system/dev-tools.nix
     ../../modules/users/root.nix
     ../../modules/services/codex.nix
+    ../../modules/services/vigil.nix
     ../../modules/services/claude-shared.nix
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
@@ -607,6 +608,14 @@
   # nothing, and simply goes red when the mount is absent or the archive
   # heartbeat's embedded ts goes stale. The red unit IS the alarm.
   services.sancta-archive-deadman.enable = true;
+
+  services.vigil = {
+    enable = true;
+    contractsDirs = [ ./vigil-contracts ];
+    expectedContracts = 8;
+    telegramEnvFile = null;
+    listenAddress = "100.94.191.54";
+  };
 
   # The rendered surface. On 2026-07-26 three node processes served Sancta's
   # work and every one was PPID 1 — orphans of `setsid nohup`, started by hand,

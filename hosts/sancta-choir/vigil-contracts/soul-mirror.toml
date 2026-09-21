@@ -1,0 +1,10 @@
+[contract]
+nume = "soul-mirror"
+ce = "Service health"
+verifica = "age"
+tinta = "unit:sancta-soul-mirror.service"
+picat_dupa = 2
+prag = "8d"
+
+[spune]
+nivel = "nota"

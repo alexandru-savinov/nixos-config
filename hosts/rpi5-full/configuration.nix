@@ -336,6 +336,9 @@ in
       rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://${config.services.vigil.listenAddress}:${toString config.services.vigil.tickPort}/status") // {
         conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];
       };
+      choir-vigil = (httpEndpoint "choir" "Vigil" "http://100.94.191.54:8747/status") // {
+        conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];
+      };
       # rpi5 local services (this host)
       # rpi5-open-webui = httpEndpoint "rpi5" "Open-WebUI" "http://127.0.0.1:8080/health";
       rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";

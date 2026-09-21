@@ -272,6 +272,12 @@
             directories = [ ./hosts/rpi5-full/vigil-contracts ];
           };
 
+          vigil-public-contracts-choir = import ./pkgs/vigil-public-contracts.nix {
+            inherit pkgs;
+            vigil = self.packages.x86_64-linux.vigil;
+            directories = [ ./hosts/sancta-choir/vigil-contracts ];
+          };
+
           # Agenix recipient-drift + fail-open corruption guard (#448):
           # on-disk `-> ` stanza counts must match secrets.nix declarations,
           # and no .age payload may carry the empty-plaintext signature.
@@ -293,6 +299,9 @@
           # example. These cases pin the LOW/not-LOW boundary and prove the
           # MEDIUM arm actually flips it, which a green check alone never shows.
           claude-review-verdict = import ./tests/claude-review-verdict.nix { inherit pkgs; };
+
+          # The report must come from successful schema-validated action output.
+          claude-review-report = import ./tests/claude-review-report.nix { inherit pkgs; };
 
           # Heartbeat membrane-reflection guard (#519): runs the shared
           # trusted-context jq against fractional-second (…NNN Z) fixtures —

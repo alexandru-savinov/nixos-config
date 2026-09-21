@@ -1,0 +1,11 @@
+[contract]
+nume = "galeria"
+ce = "Service health"
+verifica = "http"
+tinta = "http://100.94.191.54:8739/"
+picat_dupa = 2
+peer = true
+astept = { status = 200 }
+
+[spune]
+nivel = "nota"

@@ -1,0 +1,9 @@
+[contract]
+nume = "build-volume"
+ce = "Service health"
+verifica = "mount"
+tinta = "/mnt/sancta-build-volume"
+picat_dupa = 2
+
+[spune]
+nivel = "nota"
