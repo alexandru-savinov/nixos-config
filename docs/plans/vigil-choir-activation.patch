@@ -1,17 +1,14 @@
 --- a/hosts/sancta-choir/configuration.nix
 +++ b/hosts/sancta-choir/configuration.nix
-@@ -453,6 +453,10 @@
+@@ -453,6 +453,7 @@
      in
      {
        tailscale-auth-key = secret "tailscale-auth-key";
-+      backup-telegram-env = secret "backup-telegram-env" // {
-+        group = "vigil";
-+        mode = "0440";
-+      };
++      backup-telegram-env = secret "backup-telegram-env";
        # Open-WebUI secrets
        open-webui-secret-key = secret "open-webui-secret-key";
        openrouter-api-key = secret "openrouter-api-key";
-@@ -627,8 +631,8 @@
+@@ -627,8 +628,8 @@
    services.vigil = {
      enable = true;
      contractsDirs = [ ./vigil-contracts ];
