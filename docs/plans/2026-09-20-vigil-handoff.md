@@ -1,6 +1,9 @@
 # Vigil v1 operator handoff
 
-Implementation and local tests are not deployment evidence. The owner performs
+The [2026-09-21 inspection](2026-09-20-vigil-postdeploy.md) confirms both public
+rollouts are deployed, with rpi5 channel authentication and choir disk capacity
+still blocking healthy-baseline acceptance. Implementation and local tests alone
+are not deployment evidence. The owner performs
 every switch, re-key, private-contract edit and live acceptance below. No live
 incident date has been recorded. Explain/recovery remains in plan 2.
 
@@ -260,8 +263,10 @@ record owner acceptance. Keep it in `docs/plans/` while any evidence is pending;
 move it to `docs/plans/completed/` only after all acceptance steps and the first
 real incident delivery date are recorded.
 
-- rpi5 deployment and live peer acceptance.
-- Choir row-only deployment, secret re-key, and subsequent delivery activation.
+- rpi5 channel credential repair and healthy-baseline acceptance; deployment and
+  green live peer checks are observed.
+- Choir disk recovery and healthy row-only acceptance; row-only deployment is
+  observed. Secret re-key and delivery activation remain pending.
 - Owner-authored private ciphertexts and their activation PR.
 - Live Telegram open/close acceptance and production ack acceptance.
 - First real incident date; record it only after a real notification arrives.
