@@ -46,8 +46,9 @@ jobs:
             substitutions, environment prefixes, or additional commands. Only
             the explicitly allowed gh read commands are available; use their
             built-in --json/--jq options when you need filtered metadata.
-            Do not keep retrying denied shell variants. Use the Write tool for
-            the required report, never shell redirection. If unavailable evidence
+            Do not keep retrying denied shell variants. Use Read, Grep and Glob
+            to inspect repository files. Return the required structured result
+            instead of writing files or using shell redirection. If unavailable evidence
             prevents completing the review, record that limitation as a finding
             instead of omitting the report or claiming a clean review.
 
@@ -65,20 +66,18 @@ jobs:
 
             Use the repository's CLAUDE.md for guidance on style and conventions.
 
-            ## Step 3: Write your findings to review-findings.json
+            ## Step 3: Return the structured review result
 
-            Write EVERY finding, of ANY severity including LOW, to a file named
-            `review-findings.json` in the repository root, using the Write tool.
-            A later workflow step — plain bash, no model — turns each entry into
-            either its own resolvable review thread (CRITICAL/HIGH/MEDIUM) or a
-            bundled advisory summary comment (LOW). You do NOT post anything
-            yourself: you have no PR-commenting tool at all, by design (see the
-            note above `claude_args` below).
+            Return an object with a required "findings" array matching the
+            supplied JSON schema. Include EVERY finding, including LOW.
+            Return {"findings": []} only after completing a review with no
+            findings. Do not write review-findings.json yourself.
 
-            The file must be a JSON array. Write `[]` if you found nothing.
-            Writing it is MANDATORY: a missing file fails the job, because a
-            review that posted nothing must never be mistaken for a review that
-            found nothing.
+            A deterministic step validates the action output and writes that
+            file for the existing poster and verdict gate. Missing, malformed
+            or incomplete output fails the job; it never defaults to [].
+            You have no PR-commenting tool. Every finding passes through the
+            deterministic poster and its mention neutralisation.
 
             Each element:
 
@@ -141,7 +140,7 @@ jobs:
             reported.
 
             LOW findings and anything you consider merely advisory: still write
-            them as entries in review-findings.json with `"severity": "LOW"`.
+            them as entries in the findings array with `"severity": "LOW"`.
             The poster step bundles all of them into ONE advisory comment
             instead of individual resolvable threads — a LOW finding is not a
             thing someone must act on, so it must not manufacture the same kind
@@ -192,12 +191,48 @@ jobs:
           # the grant closes it BY CONSTRUCTION rather than by trusting the
           # prompt text alone to keep the model in-lane: the agent now has no
           # tool that can put text in front of a human (or another workflow)
-          # except by writing review-findings.json, and every entry in that
+          # except through its structured findings, and every entry in the resulting
           # file — LOW included — passes through the same deterministic
           # neutralisation below before it becomes a real comment. claude.yml's
           # Bot-author gate (PR #555, merged) is the other lock; this is the
           # one that does not depend on the model choosing to use it correctly.
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
+          claude_args: >-
+            --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Read,Grep,Glob"
+            --json-schema '{"type":"object","additionalProperties":false,"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"severity":{"type":"string","enum":["CRITICAL","HIGH","MEDIUM","LOW"]},"path":{"type":"string","minLength":1},"line":{"type":"integer","minimum":1},"side":{"type":"string","enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}},"required":["severity","path","line","side","body"]}}},"required":["findings"]}'
+
+      - name: Materialize review report
+        if: always()
+        env:
+          REVIEW_ACTION_OUTCOME: ${{ steps.claude-review.outcome }}
+          REVIEW_OUTPUT: ${{ steps.claude-review.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+          # Never reuse a tracked, stale or model-written report.
+          rm -f review-findings.json
+          if [ "$REVIEW_ACTION_OUTCOME" != success ]; then
+            echo "::error::Reviewer action did not succeed; no report accepted."
+            exit 1
+          fi
+          # Validate again at the trust boundary. Never log model output here.
+          if ! printf '%s' "$REVIEW_OUTPUT" | jq -e -s '
+            length == 1 and (.[0] |
+              type == "object" and keys == ["findings"] and
+              (.findings | type == "array") and
+              all(.findings[];
+                type == "object" and keys == ["body","line","path","severity","side"] and
+                (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")) and
+                (.path | type == "string" and length > 0) and
+                (.line | type == "number" and . >= 1 and . == floor) and
+                (.side | IN("LEFT","RIGHT")) and
+                (.body | type == "string" and length > 0)))
+          ' >/dev/null 2>&1; then
+            echo "::error::Missing or invalid structured review result; no report accepted."
+            exit 1
+          fi
+          report=$(mktemp .review-findings.XXXXXX)
+          trap 'rm -f "$report"' EXIT
+          printf '%s' "$REVIEW_OUTPUT" | jq '.findings' > "$report"
+          mv "$report" review-findings.json
 
       - name: Diagnose missing review report
         if: always()

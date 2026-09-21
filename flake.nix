@@ -300,6 +300,9 @@
           # MEDIUM arm actually flips it, which a green check alone never shows.
           claude-review-verdict = import ./tests/claude-review-verdict.nix { inherit pkgs; };
 
+          # The report must come from successful schema-validated action output.
+          claude-review-report = import ./tests/claude-review-report.nix { inherit pkgs; };
+
           # Heartbeat membrane-reflection guard (#519): runs the shared
           # trusted-context jq against fractional-second (…NNN Z) fixtures —
           # the real new Date().toISOString() form — and asserts the parsed
