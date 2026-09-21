@@ -183,9 +183,8 @@ in
       };
       backup-telegram-env = {
         file = "${self}/secrets/backup-telegram-env.age";
-        # backup-pull and tailscale-dns-watchdog retain root access.
-        group = "vigil";
-        mode = "0440";
+        # systemd reads EnvironmentFile as root before starting Vigil.
+        mode = "0400";
       };
 
       # Durable weekly self-backup PUSH key (rpi5 → root@sancta-claw:/root/dr).
