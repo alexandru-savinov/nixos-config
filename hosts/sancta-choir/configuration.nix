@@ -453,6 +453,7 @@
     in
     {
       tailscale-auth-key = secret "tailscale-auth-key";
+      backup-telegram-env = secret "backup-telegram-env";
       # Open-WebUI secrets
       open-webui-secret-key = secret "open-webui-secret-key";
       openrouter-api-key = secret "openrouter-api-key";
@@ -612,8 +613,8 @@
   services.vigil = {
     enable = true;
     contractsDirs = [ ./vigil-contracts ];
-    expectedContracts = 8;
-    telegramEnvFile = null;
+    expectedContracts = 9;
+    telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };
 

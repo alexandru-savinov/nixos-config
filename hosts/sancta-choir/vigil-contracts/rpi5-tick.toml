@@ -8,4 +8,4 @@ peer = true
 astept = { status = 200, prospetime = "15m" }
 
 [spune]
-nivel = "nota"
+nivel = "incident"
