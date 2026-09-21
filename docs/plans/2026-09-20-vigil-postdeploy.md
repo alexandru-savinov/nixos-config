@@ -1,5 +1,40 @@
 # Vigil post-deployment evidence
 
+## 2026-09-21 choir Telegram activation (18:52 UTC)
+
+The disk incident closed naturally on scheduled run
+`e8f6ada77c98404194d8efff669822fd` at `2026-09-21T18:50:49.295Z`.
+All eight checks were green, and both open-incident and nota counts were zero.
+This completes the row-only recovery gate without manual state edits.
+
+PR #600 merged as `bd63ac64ffe7fccc971c98f3918ab6f202f2f77b`. The owner
+approved the single-secret re-key and explicitly approved the production
+switch after being informed that the unrelated CI n8n VM test was still
+running. The local choir build, module evaluation, public contract bundle,
+recipient guard, and formatting checks had passed. CI is not claimed fully
+green at deployment time; its remaining x86_64 job was still in progress.
+
+A clean detached checkout built successfully with `--max-jobs 1 --cores 1`
+before switch, using the same throttle for activation. Only the three Vigil
+unit files differed from the running units in the pre-switch comparison.
+The switch exited 0 and activated:
+`/nix/store/3cb38jijf482vx7m9fyqzd37x0w4gzvb-nixos-system-sancta-choir-25.11.20260318.fea3b36`.
+
+The documented post-deployment checker was started once. Complete invocation
+`24e4cced1ede42e8be77606827cd2e64` published `2026-09-21T18:52:20.036Z`:
+**9 verde, 0 picat, 0 NECITIT**, exit 0. All nine individual contracts,
+including `channel`, were green. The real channel probe created
+`last-channel-ok` at `18:52:19.764Z` and `last-chataction` at `18:52:19.768Z`.
+The credential remained root:root mode 0400; markers were vigil:vigil mode
+0600. No success marker was fabricated. Open-incident and nota counts were
+both zero; timer and socket remained active, as did gallery, worker, and
+membrane. Root usage remained 62%, with about 28 GiB available.
+
+This confirms deployed channel activation. Controlled gallery interruption,
+exactly-one Telegram open/close acceptance, production acknowledgement
+acceptance, and the first real incident date remain pending. Private Home
+Assistant conditions remain deferred. Do not move this checklist to completed.
+
 ## 2026-09-21 choir approved storage recovery (18:15 UTC)
 
 The owner explicitly approved removal of five reviewed build-result symlinks,
