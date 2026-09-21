@@ -1,5 +1,36 @@
 # Vigil post-deployment evidence
 
+## 2026-09-21 rpi5 credential repair acceptance (18:10 UTC)
+
+PR #598 merged as `18177f06956466cdd3573086cbd8974408b3c6b4`. The owner
+replaced the credential through agenix using the approved rpi5 identity and
+started the replacement bot. Read-only Telegram `getMe` and `getChat` both
+returned HTTP 200 with `ok=true`; no credential values were printed.
+The x86_64 secrets-recipient guard passed before merge.
+
+A clean detached checkout of that merge built successfully before approved
+activation. The resulting system is
+`/nix/store/qyfjggh103nak6d9d40801a91wypc1b5-nixos-system-rpi5-25.11.20260313.3e20095`.
+The incidental n8n workflow-sync script change is only the repository store
+path; workflow contents compare equal. Activation starts that existing sync
+job; it completed successfully, the switch exited 0, and the n8n service
+remained active.
+
+The next **scheduled** Vigil invocation, `894f9eb829174cfba9aa504945e7ca19`,
+published `2026-09-21T18:10:52.585Z`: **7 verde, 0 picat, 0 NECITIT**, with
+`ExecMainStatus=0`. All seven individual contract verdicts were green.
+`last-chataction` was created at `18:10:50.657Z`, and `last-channel-ok` was
+updated at `18:10:52.565Z` by real delivery code. No marker was fabricated.
+The timer and socket stayed active. Choir fetched this tick and `/status`
+returned `stare=verde`. Production state naturally reached zero open incidents
+and zero notas; no state was cleared manually.
+
+This accepts the **seven-public-contract rpi5 baseline**. It does not establish
+choir delivery acceptance, a controlled Telegram open/close test, production
+acknowledgement acceptance, or an owner-confirmed first real incident date.
+Choir still reports 7 verde / 1 picat (`disk-root`) with delivery disabled.
+Private HA conditions remain deferred.
+
 ## 2026-09-21 inspection (UTC)
 
 PRs #595 and #596 are merged. Both hosts already run Vigil; no rebuild,

@@ -1,8 +1,9 @@
 # Vigil v1 operator handoff
 
 The [2026-09-21 inspection](2026-09-20-vigil-postdeploy.md) confirms both public
-rollouts are deployed, with rpi5 channel authentication and choir disk capacity
-still blocking healthy-baseline acceptance. Implementation and local tests alone
+rollouts are deployed. After PR #598 and approved activation, rpi5 has seven
+green public checks and a successful channel probe. Choir disk capacity still
+blocks its healthy-baseline acceptance. Implementation and local tests alone
 are not deployment evidence. The owner performs
 every switch, re-key, private-contract edit and live acceptance below. No live
 incident date has been recorded. Explain/recovery remains in plan 2.
@@ -263,8 +264,8 @@ record owner acceptance. Keep it in `docs/plans/` while any evidence is pending;
 move it to `docs/plans/completed/` only after all acceptance steps and the first
 real incident delivery date are recorded.
 
-- rpi5 channel credential repair and healthy-baseline acceptance; deployment and
-  green live peer checks are observed.
+- rpi5 seven-public-contract baseline is accepted after PR #598; private
+  activation and live delivery/ack acceptance remain separate gates.
 - Choir disk recovery and healthy row-only acceptance; row-only deployment is
   observed. Secret re-key and delivery activation remain pending.
 - Owner-authored private ciphertexts and their activation PR.
