@@ -1,5 +1,36 @@
 # Vigil post-deployment evidence
 
+## 2026-09-21 choir approved storage recovery (18:15 UTC)
+
+The owner explicitly approved removal of five reviewed build-result symlinks,
+ordinary Nix garbage collection, and archived journal vacuum to 2 GiB.
+All five symlink targets were checked against the reviewed store paths before
+any was removed. No additional result links or profile generations were removed.
+
+- `/root/nixos-config/result`
+- `/root/result`
+- `/tmp/sancta-deployment/choir-result`
+- `/var/lib/sancta/.claude/continuity-private/2026-09-11-task-context-full-build-v1/system-result`
+- `/var/lib/sancta/.claude/continuity-private/2026-09-11-task-context-retention-full-system-v1/system-result`
+
+Nix GC reported **20,726 store paths deleted, 20,585.58 MiB freed**; this actual
+result exceeded the earlier NAR-based estimate. Journal vacuum reported another
+**2 GiB** freed, leaving about **1.9 GiB** of journals. Root usage dropped from
+**95% to 61%**, with about **29 GiB available**. System generations 38, 39, and
+40 (current) remain. Owner checkout status was unchanged. Session history,
+backups, source edits, encrypted files, and Vigil incident state were not edited.
+No production service was stopped and no monitoring threshold was changed.
+
+The next scheduled complete run, `afc0d8df20bb4dab8cf2e58e27bd14da`, published
+`2026-09-21T18:20:06.861Z`: **8 verde, 0 picat, 0 NECITIT**. All eight
+individual contracts, including `disk-root`, returned green. During subsequent
+configuration validation, root usage was 62%, still below the unchanged 85%
+threshold. The disk incident remains open in its normal recovery hold-down,
+with `greenSince=2026-09-21T18:20:06.849Z`; its earliest eligible close is a
+scheduled green run at or after 18:50:06.849 UTC. Do not clear it manually.
+Healthy current checks are confirmed; final row-only acceptance with zero open
+incidents remains pending. No choir delivery activation has occurred.
+
 ## 2026-09-21 rpi5 credential repair acceptance (18:10 UTC)
 
 PR #598 merged as `18177f06956466cdd3573086cbd8974408b3c6b4`. The owner
