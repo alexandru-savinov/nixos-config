@@ -1,10 +1,10 @@
 [contract]
-nume = "soul-mirror"
+nume = "channel"
 ce = "Service health"
 verifica = "age"
-tinta = "unit:sancta-soul-mirror.service"
+tinta = "/var/lib/vigil/last-channel-ok"
 picat_dupa = 2
-prag = "8d"
+prag = "2d"
 
 [spune]
 nivel = "incident"

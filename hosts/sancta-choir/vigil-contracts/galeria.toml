@@ -8,4 +8,4 @@ peer = true
 astept = { status = 200 }
 
 [spune]
-nivel = "nota"
+nivel = "incident"

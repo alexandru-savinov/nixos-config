@@ -6,4 +6,4 @@ tinta = "tailscaled.service"
 picat_dupa = 2
 
 [spune]
-nivel = "nota"
+nivel = "incident"

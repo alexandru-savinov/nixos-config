@@ -113,9 +113,9 @@ in
   # Only rpi5 needs to decrypt this (it holds the private key)
   "rpi5-backup-ssh-key.age".publicKeys = users ++ [ rpi5 ];
 
-  # Telegram credentials for backup failure alerts (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
-  # EnvironmentFile format — only rpi5 needs this (runs the backup service)
-  "backup-telegram-env.age".publicKeys = users ++ [ rpi5 ];
+  # Telegram credentials for rpi5 backup alerts and Vigil on both hosts
+  # EnvironmentFile format (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
+  "backup-telegram-env.age".publicKeys = users ++ [ rpi5 sancta-choir ];
 
   # SSH private key for the DURABLE weekly Sancta self-backup PUSH
   # (rpi5 → root@sancta-claw:/root/dr, restricted forced-command wrapper).

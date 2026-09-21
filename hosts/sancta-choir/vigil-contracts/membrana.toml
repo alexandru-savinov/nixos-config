@@ -6,4 +6,4 @@ tinta = "127.0.0.1:8743"
 picat_dupa = 2
 
 [spune]
-nivel = "nota"
+nivel = "incident"
