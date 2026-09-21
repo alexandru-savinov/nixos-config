@@ -1,0 +1,10 @@
+[contract]
+nume = "choir-host"
+ce = "Service health"
+verifica = "tcp"
+tinta = "100.94.191.54:8747"
+picat_dupa = 2
+peer = true
+
+[spune]
+nivel = "incident"

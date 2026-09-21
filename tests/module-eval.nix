@@ -88,6 +88,10 @@ let
   # ── Test definitions ──────────────────────────────────────────────
 
   tests = {
+    vigil-module = import ./vigil-module.nix {
+      inherit evalConfig shouldFail;
+      lib = nixpkgs.lib;
+    };
 
     # ── Qdrant ────────────────────────────────────────────────────
     qdrant-minimal = shouldEval "qdrant: minimal config" {

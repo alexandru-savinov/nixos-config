@@ -42,6 +42,15 @@ jobs:
             ## Step 1: Read the PR diff
             Run: gh pr diff ${{ github.event.pull_request.number }}
 
+            Run that as a single Bash command, without pipes, redirects, shell
+            substitutions, environment prefixes, or additional commands. Only
+            the explicitly allowed gh read commands are available; use their
+            built-in --json/--jq options when you need filtered metadata.
+            Do not keep retrying denied shell variants. Use the Write tool for
+            the required report, never shell redirection. If unavailable evidence
+            prevents completing the review, record that limitation as a finding
+            instead of omitting the report or claiming a clean review.
+
             ## Step 2: Analyze for issues
             Evaluate the changes for:
             - **CRITICAL**: Security vulnerabilities, secret exposure, data loss risks,
@@ -189,6 +198,30 @@ jobs:
           # Bot-author gate (PR #555, merged) is the other lock; this is the
           # one that does not depend on the model choosing to use it correctly.
           claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(echo:*),Bash(printf:*),Write"'
+
+      - name: Diagnose missing review report
+        if: always()
+        continue-on-error: true
+        env:
+          REVIEW_EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          if [ -f review-findings.json ] || [ ! -f "$REVIEW_EXECUTION_FILE" ]; then
+            exit 0
+          fi
+          # Fixed labels only: never print tool arguments, results, or transcripts.
+          jq -sr '
+            def bash_kind:
+              . as $command |
+              ["pwd", "git branch", "git status", "git diff", "git show",
+               "cat", "sed", "rg", "head", "tail", "gh pr diff", "gh pr view"] |
+              map(. as $prefix | select($command == $prefix or ($command | startswith($prefix + " ")))) |
+              "Bash/" + (first // "other");
+            [.[] | .. | objects | .permission_denials? // empty | .[]? |
+             if .tool_name == "Bash" then (.tool_input.command // "" | strings | bash_kind)
+             else (.tool_name? | if IN("Read", "Write", "Edit", "Grep", "Glob")
+             then . else "other" end) end] | unique |
+            "Denied reviewer tools: " + (if length == 0 then "unavailable" else join(", ") end)
+          ' "$REVIEW_EXECUTION_FILE"
 
       # Deterministic poster: reads the reviewer's findings file and opens one
       # resolvable thread per finding (CRITICAL/HIGH/MEDIUM), or bundles all

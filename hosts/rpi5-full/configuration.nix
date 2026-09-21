@@ -49,6 +49,7 @@ in
     ../rpi5/configuration.nix
 
     ../../modules/services/codex.nix
+    ../../modules/services/vigil.nix
 
     # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
     # ../../modules/system/open-webui-arm-fix.nix
@@ -169,6 +170,7 @@ in
       # time. Root-owned (default) — systemd HA and the MCP config oneshot both
       # run as root.
       home-assistant-token = secret "home-assistant-token";
+      ha-vigil-token = ownedSecret "vigil" "ha-vigil-token";
 
       # Backup pull secrets
       rpi5-backup-ssh-key = {
@@ -181,6 +183,7 @@ in
       };
       backup-telegram-env = {
         file = "${self}/secrets/backup-telegram-env.age";
+        # systemd reads EnvironmentFile as root before starting Vigil.
         mode = "0400";
       };
 
@@ -200,6 +203,17 @@ in
       # decrypts it. The puller self-suppresses until the .age exists.
       soul-mirror-pull-ssh-key = secret "soul-mirror-pull-ssh-key";
     };
+
+  services.vigil = {
+    enable = true;
+    contractsDirs = [ ./vigil-contracts ];
+    expectedContracts = 7;
+    telegramEnvFile = secret "backup-telegram-env";
+    hassTokenFile = secret "ha-vigil-token";
+    hassUrl = "http://127.0.0.1:8123";
+    listenAddress = "100.106.93.87";
+    cmdAllow = [ ];
+  };
 
   # Advertise rpi5 as a Tailscale exit node for the tailnet.
   # Scoped here (not in modules/services/tailscale.nix) because that module is
@@ -319,6 +333,9 @@ in
 
     # Monitored Endpoints
     endpoints = {
+      rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://${config.services.vigil.listenAddress}:${toString config.services.vigil.tickPort}/status") // {
+        conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];
+      };
       # rpi5 local services (this host)
       # rpi5-open-webui = httpEndpoint "rpi5" "Open-WebUI" "http://127.0.0.1:8080/health";
       rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";

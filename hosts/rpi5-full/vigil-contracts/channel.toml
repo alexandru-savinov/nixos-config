@@ -1,0 +1,10 @@
+[contract]
+nume = "channel"
+ce = "Service health"
+verifica = "age"
+tinta = "/var/lib/vigil/last-channel-ok"
+picat_dupa = 2
+prag = "2d"
+
+[spune]
+nivel = "incident"
