@@ -10,6 +10,7 @@ let
       expectedRuntimeContracts = 3;
       listenAddress = "100.106.93.87";
       telegramEnvFile = "/run/agenix/telegram";
+      hassTokenFile = "/run/custom-ha-token";
     };
   };
   modules = [ ../modules/services/vigil.nix base ];
@@ -61,6 +62,10 @@ let
     socket-acl = socket.socketConfig.IPAddressAllow == [ "100.64.0.0/10" "fd7a:115c:a1e0::/48" ] && socket.socketConfig.IPAddressDeny == "any";
     socket-ordering = builtins.elem "tailscaled.service" socket.after && builtins.elem "tailscaled.service" socket.wants;
     tick-read-only = tick.environment.STATE_DIRECTORY == "/var/lib/vigil" && !(tick.serviceConfig ? StateDirectory) && tick.serviceConfig.ProtectSystem == "strict";
+    tick-secrets-inaccessible = lib.all (path: builtins.elem path tick.serviceConfig.InaccessiblePaths)
+      [ "-/run/agenix" "-/run/agenix.d" "-/run/agenix/telegram" "-/run/custom-ha-token" "-/run/vigil-contracts" ];
+    tick-no-credentials = !(tick.serviceConfig ? EnvironmentFile) && !(tick.environment ? VIGIL_HASS_TOKEN_FILE);
+    checker-token-access = !(service.serviceConfig ? InaccessiblePaths) && service.environment.VIGIL_HASS_TOKEN_FILE == "/run/custom-ha-token";
     tick-protocol = tick.serviceConfig.StandardInput == "socket" && tick.serviceConfig.StandardOutput == "socket" && tick.serviceConfig.StandardError == "journal";
     state-parent = builtins.elem "d /var/lib/vigil 0755 vigil vigil -" config.systemd.tmpfiles.rules;
     ack-permissions = builtins.elem "d /var/lib/vigil/ack 0775 vigil users -" config.systemd.tmpfiles.rules;

@@ -132,6 +132,10 @@ in
       description = "Vigil freshness response";
       environment.STATE_DIRECTORY = "/var/lib/vigil";
       serviceConfig = sandbox // {
+        # The responder reads published status only, never checker credentials.
+        InaccessiblePaths = lib.unique ([ "-/run/agenix" "-/run/agenix.d" ]
+          ++ map (path: "-${toString path}") (lib.filter (path: path != null) [ cfg.hassTokenFile cfg.telegramEnvFile ])
+          ++ map (path: "-${path}") (builtins.filter builtins.isString cfg.contractsDirs));
         ExecStart = "${package}/bin/vigil tick serve";
         StandardInput = "socket";
         StandardOutput = "socket";

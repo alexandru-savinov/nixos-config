@@ -57,8 +57,10 @@ The complete run must exit 0 or 1, with seven contracts and zero NECITIT,
 after a confirmed channel probe. Choir peer checks may be picat until its
 socket is deployed. Failed Telegram probing leaves channel NECITIT honestly;
 do not create a success marker by hand. `backup-telegram-env` retains root
-ownership for backup-pull and tailscale-dns-watchdog, with group `vigil` and
-mode `0440`. The Home Assistant token is owned by `vigil`.
+ownership and mode `0400`: systemd reads the EnvironmentFile before starting
+the unprivileged checker. The Home Assistant token is owned by `vigil`. The
+status responder masks agenix storage, configured credential paths and private
+contract directories; it receives no credential environment.
 
 From choir, verify the peer endpoint and its embedded timestamp:
 
