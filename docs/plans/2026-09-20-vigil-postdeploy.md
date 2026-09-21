@@ -1,5 +1,112 @@
+# Vigil post-deployment evidence
+
+## 2026-09-21 inspection (UTC)
+
+PRs #595 and #596 are merged. Both hosts already run Vigil; no rebuild,
+switch, production service restart, secret edit, garbage collection, or incident
+state edit was performed during this inspection. Private Home Assistant checks
+remain deferred until the owner supplies the desired conditions securely.
+
+Administrative SSH targets used from the owner's Mac: `nixos@rpi5` and
+`root@sancta-choir-1`. The Mac's `darwin-config` Sancta bridge configuration
+also names `sancta@sancta-choir-1`; that account cannot read root-only evidence
+with noninteractive sudo. No user `~/.ssh/config` was present.
+
+### Deployed identity
+
+Neither current system exports `configuration-revision`. Record the actual
+store paths rather than inferring a deployed Git revision from an owner checkout:
+
+- rpi5: `/nix/store/sjd80vj2w78230az0vaw74rrr682iz76-nixos-system-rpi5-25.11.20260313.3e20095`
+- choir: `/nix/store/m8cbrrh2crzwvi41zfaxrazn66vzbz0y-nixos-system-sancta-choir-25.11.20260318.fea3b36`
+
+SHA-256 comparisons of all four deployed Vigil entrypoints, seven library
+modules, and each host's public TOML contracts match main at `79c70e9`.
+This establishes the inspected Vigil payload, not the entire system revision.
+
+### Complete runs and checks
+
+Both `vigil.timer` units are active/waiting and both `vigil-tick.socket` units
+are active/listening. Completed oneshots are inactive/dead with systemd
+`Result=success`; exit 2 on rpi5 and exit 1 on choir represent contract verdicts,
+not crashed services. Journals were selected by the tick's invocation ID.
+
+| Host | Complete tick (UTC) | Run ID | Results |
+| --- | --- | --- | --- |
+| rpi5 | 2026-09-21T17:45:21.025Z | a1deeafd15c243a68814e618e9738201 | 6 verde, 0 picat, 1 NECITIT |
+| choir | 2026-09-21T17:49:07.547Z | 9352eea697d44ebb9fd1f6ab15d9a57f | 7 verde, 1 picat, 0 NECITIT |
+
+- rpi5 green: `choir-host`, `choir-tick`, `ha-alive`, `ha-served`,
+  `soul-mirror-pull`, `tailscaled`.
+- rpi5 unknown: `channel`, reason `age-unreadable`.
+- Choir green: `build-volume`, `galeria`, `membrana`, `rpi5-host`, `rpi5-tick`,
+  `soul-mirror`, `tailscaled`.
+- Choir failing: `disk-root`, reason `disk-full`.
+
+Both peer endpoints returned ticks less than five minutes old when inspected;
+the rpi5 tick advanced again to `2026-09-21T17:50:41.498Z` with the same counts.
+Choir's `/status` correctly returned `stare=picat`.
+
+### Confirmed causes and remediation gates
+
+**rpi5 channel:** `/var/lib/vigil/last-channel-ok` is absent. The configured
+EnvironmentFile exists with root ownership and mode 0400. Credential shape
+checks passed, but read-only Telegram `getMe` and `getChat` requests both returned
+HTTP 401 with `ok=false`. The configured token is rejected; the precise reason
+(e.g. revocation or incorrect value) is not established. No credential values,
+API response bodies, or private entity names were printed. No Telegram message
+was sent by this inspection. Do not manufacture a channel marker. The owner
+must supply a working credential through the encrypted editor and approve its
+replacement; merely re-keying the rejected credential will not fix delivery.
+Require a genuine successful scheduled probe after approved activation.
+
+**Choir disk:** `/dev/sda1` reports 95% used, approximately 67 GiB used and
+4.2 GiB available. The contract's unchanged threshold is 85%, using available
+space after reserved blocks. Roughly 6.5 GiB must be freed at this snapshot
+just to cross that threshold; leave additional headroom. Major usage is
+`/nix/store` (33 GiB), `/var/lib` (23 GiB), and journals (3.9 GiB).
+Metadata-only inspection found 8.1 GiB of retained session history under
+`/var/lib/sancta/.codex/sessions`; this is owner data, not disposable cache.
+`nix-store --gc --print-dead` plus NAR size queries totals only 219,856,376
+bytes, which is not an exact on-disk reclaim estimate and is insufficient.
+The mounted build volume has approximately 50 GiB available. No history,
+logs, GC roots, generations, or containers were deleted or moved. A reviewed
+retention/capacity action is needed; do not raise the threshold to hide the fault.
+
+Existing incident state is preserved: rpi5 still had two peer incidents in
+recovery and one channel nota; choir had one disk incident. Green verdicts do
+not imply incidents have completed their normal hold-down or been delivered.
+
+### Acceptance and preserved work
+
+- Installed isolated acknowledgement acceptance passed on **both** hosts via
+  `systemd-run`, with `User=vigil`, `PrivateTmp=yes`, exit 0 and
+  `AUTOPROBA: 1 assertions suites passed (isolated ack)`. It uses temporary
+  fixtures and fake loopback Telegram, not production acknowledgement state.
+- The full installed Linux test suite passed on both hosts: 120 tests each.
+- The Mac suite was not a valid Linux acceptance substitute: its sandbox blocked
+  loopback listeners and macOS injected an extra child environment variable.
+- The local owner checkout on `feat/vigil-private-contracts` is clean at
+  `79c70e9`. Only the pending recipient policy exists there; no private-contract
+  ciphertexts were found in the inspected local checkout or bounded remote
+  owner-checkout searches. This is not a whole-filesystem inventory.
+- The separate Mac `~/nixos-config` has unrelated tracked and untracked edits.
+  Choir's `/root/nixos-config` is on `feat/vigil-secrets`, with a local HA-token
+  ciphertext commit and an untracked file. All were preserved. Neither remote
+  owner checkout HEAD establishes the deployed system revision.
+- No private-contract or choir-delivery activation PR exists at inspection time.
+  The prepared choir activation patch passes `git apply --check` against main.
+  It remains gated on a healthy baseline, approved credential repair/re-key,
+  required Nix checks, review, and an explicitly approved deployment.
+- Live Telegram open/close acceptance, production acknowledgement acceptance,
+  and the first real delivered incident date remain pending. Gallery interruption
+  requires owner approval. Do not move this checklist to `completed/`.
+
+## Remaining operator commands
+
 ```sh
-# PENDING: owner deployment and live acceptance have not been performed.
+# Deployment is observed on both hosts; healthy baseline and live delivery
+# acceptance remain pending. See the dated evidence above.
 # Run on each deployed host; choose expected=10 on rpi5 after private activation,
 # or expected=9 on choir after delivery activation (7/8 before those gates).
 expected=9
