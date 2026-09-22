@@ -3,8 +3,11 @@
 The [2026-09-21 inspection](2026-09-20-vigil-postdeploy.md) confirms both public
 rollouts are deployed. After PR #598 and approved activation, rpi5 has seven
 green public checks and a successful channel probe. Approved choir storage
-cleanup restored all eight checks to green; its disk incident is still awaiting
-the normal recovery hold-down before final row-only acceptance. Implementation and local tests alone
+cleanup restored all eight checks to green and the disk incident closed
+naturally. PR #600 is now deployed on choir with nine green checks and a real
+channel success. The approved gallery test completed its natural recovery and
+Telegram-confirmed open/close on 2026-09-22; owner inbox-count confirmation
+remains pending. Implementation and local tests alone
 are not deployment evidence. The owner performs
 every switch, re-key, private-contract edit and live acceptance below. No live
 incident date has been recorded. Explain/recovery remains in plan 2.
@@ -267,9 +270,11 @@ real incident delivery date are recorded.
 
 - rpi5 seven-public-contract baseline is accepted after PR #598; private
   activation and live delivery/ack acceptance remain separate gates.
-- Choir disk recovery is observed with eight green checks; wait for the normal
-  incident hold-down before final row-only acceptance. Secret re-key and
-  delivery activation remain pending.
+- Choir disk recovery, natural incident closure, single-secret re-key, and
+  delivery activation are observed. Nine checks are green; the controlled
+  gallery open/close flow and Telegram API success are confirmed. Owner
+  confirmation of exactly one visible message per transition remains pending.
 - Owner-authored private ciphertexts and their activation PR.
-- Live Telegram open/close acceptance and production ack acceptance.
+- Owner inbox-count confirmation for the controlled Telegram test, and
+  production ack acceptance after a natural NECITIT nota.
 - First real incident date; record it only after a real notification arrives.
