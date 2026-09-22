@@ -181,7 +181,7 @@ owner approval and must be recorded separately from these build-sandbox tests.
 | Phase 1: real SSH reconnect retains PID | Passed on choir; evidence below | Complete for the isolated shell |
 | Phase 2: real Claude events and Codex persistence | Both exact agent PIDs survive SSH reconnect; Claude real hooks and tool result accepted | Complete for the fresh pilots; migration is separate |
 | Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; native picker opened an attachment to the Claude pilot | Complete for the tested restored pilot panes |
-| Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Disposable same-conversation resume and tmux fallback accepted; finish restart gate and obtain interruption approval |
+| Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Complete for the owner-selected main Sancta conversation; evidence below |
 | Phase 5: Codex status and cold recovery | Codex active/completed hooks accepted before and after real SSH reconnect; owner files preserved in tests | Integrated Codex cold recovery remains; command-approval status is accepted |
 
 Codex's bundled agterm integration treats `PermissionRequest` as an approval
@@ -412,3 +412,29 @@ Main-source preflight still matches the selected conversation UUID and PID
 emitted from its screen inspection. The tested independent user scope matches
 the original tmux scope: unlimited MemoryHigh/MemoryMax/MemorySwapMax,
 OOMPolicy=stop, KillMode=control-group. Main interruption remains unapproved.
+
+### Main Sancta migration accepted
+
+The owner explicitly approved interrupting Sancta after restart and approval-status
+acceptance. Final checks found the selected conversation unchanged, its prompt
+empty, no interrupt hint, its transcript present, and the new backend name unused.
+Its source argv had only `--resume` and no positional/custom-prompt arguments.
+
+SIGTERM was sent only to source Claude PID 3270160 after rechecking identity and
+idle indicators. Exit was observed before starting any replacement; no force kill
+was used. The exact conversation UUID was resumed in `/home/nixos` as `sancta`,
+using the previously tested package and `--user-scope`.
+
+New backend: `sancta-main-20260922`; agterm pane:
+`DEE045C4-9DE3-4AEE-83FE-C5C48C6E4182`. Claude PID 3394805 (started 21:21:27 host
+time) has the same conversation UUID and is in
+`/user.slice/user-993.slice/user@993.service/app.slice/agt-mvp-sancta-main-20260922.scope`.
+Original tmux pane `4:0.0` remains at bash PID 3270087 for fallback.
+
+An SSH disconnect changed the route port 30420 → 53296 without changing Claude
+PID 3394805. A new no-tools acceptance turn returned `SANCTA_ZMX_RECONNECTED`
+and the owning pane showed `active → completed`. No transcript contents were
+printed; identity and readiness checks emitted allowlisted metadata/booleans.
+The exact conversation UUID and fallback command remain in the private local
+handoff review. No NixOS switch, credential creation, or unrelated service
+interruption occurred.
