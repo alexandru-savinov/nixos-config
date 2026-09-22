@@ -20,6 +20,7 @@
 let
   secret = name: config.age.secrets.${name}.path;
   openaiApiKeyPath = secret "openai-api-key";
+  vigilDashboard = import ../../modules/services/vigil-gatus-endpoints.nix { inherit lib; };
 
   # Gatus endpoint helpers — reduce boilerplate across monitored services
   httpEndpoint = group: name: url: {
@@ -331,8 +332,17 @@ in
     # in the Home Assistant endpoint header below for an authenticated health check.
     apiKeyFile = config.age.secrets.home-assistant-token.path;
 
-    # Monitored Endpoints
-    endpoints = {
+    # Keep aggregate history and add individual public-contract diagnostics.
+    endpoints = (vigilDashboard {
+      group = "rpi5";
+      address = config.services.vigil.listenAddress;
+      port = config.services.vigil.tickPort;
+      directory = ./vigil-contracts;
+    }) // (vigilDashboard {
+      group = "choir";
+      address = "100.94.191.54";
+      directory = ../sancta-choir/vigil-contracts;
+    }) // {
       rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://${config.services.vigil.listenAddress}:${toString config.services.vigil.tickPort}/status") // {
         conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];
       };

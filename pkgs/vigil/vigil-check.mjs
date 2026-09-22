@@ -11,6 +11,7 @@ import { advance } from './lib/incident.mjs';
 import { DAY, atomicWrite, iso, remove, namedPath, stateRoot, statePath } from './lib/common.mjs';
 import { loadStore, saveStore, cleanup, ackIdentity, projectOutbox, expireHistory, drain } from './lib/store.mjs';
 import { say } from './vigil-say.mjs';
+import { writeDashboard } from './lib/dashboard.mjs';
 
 export function loadContracts(directories) {
   const entries = [];
@@ -160,7 +161,12 @@ export async function run(entries, options = {}) {
     : counts.picat || Object.values(store.contracts).some(state => state.open) ? 'picat' : 'verde';
   const completed = iso(clock());
   atomicWrite(statePath(root, 'row.json'), { gazda, stare, la: completed, ...counts });
-  atomicWrite(statePath(root, 'tick.counts.json'), { run_id: env.INVOCATION_ID || randomUUID(), la: completed, ...counts });
+  const published = { run_id: env.INVOCATION_ID || randomUUID(), la: completed, ...counts };
+  // A dashboard failure must not change check/incident/delivery semantics.
+  // Readers reject an old snapshot unless its run ID and timestamp match tick.
+  try { writeDashboard(root, entries, results, store, published, env); }
+  catch { summary('vigil-check: dashboard-unavailable'); }
+  atomicWrite(statePath(root, 'tick.counts.json'), published);
   boundary('counts-committed');
   remove(namedPath(root, 'nota-sent', 'vigil'));
   summary(`files present=${entries.length} parsed=${entries.filter(entry => !entry.invalid).length} necitit=${counts.necitit}`);
