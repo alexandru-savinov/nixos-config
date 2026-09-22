@@ -208,6 +208,10 @@
 
           vigil = pkgs.callPackage ./pkgs/vigil.nix { };
 
+          agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
+            zmx = (import nixpkgs-unstable { inherit system; }).zmx;
+          };
+
           # Declarative n8n VM test (#42). A package (not a check) so plain
           # `nix flake check` stays light — see the note in the checks
           # section. CI builds it in the "Build x86_64 Configs" job; run
@@ -259,6 +263,16 @@
           pkgs = nixpkgsFor.x86_64-linux;
         in
         {
+          agterm-zmx = pkgs.runCommand "agterm-zmx-tests"
+            { nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs-unstable-x86.zmx ]; }
+            ''
+              cp -r ${./scripts/agterm-zmx} scripts
+              cp ${./tests/test_agterm_zmx.py} test_agterm_zmx.py
+              export AGT_ZMX_SCRIPTS=$PWD/scripts
+              export AGT_ZMX_TEST_BINARY=${pkgs-unstable-x86.zmx}/bin/zmx
+              python -m unittest -v test_agterm_zmx
+              touch $out
+            '';
           # Module evaluation tests — verify all service modules evaluate
           # correctly with minimal config, and that assertions fire for
           # invalid inputs (e.g. secrets in /nix/store).
