@@ -1,6 +1,8 @@
 [contract]
 nume = "galeria"
 ce = "Service health"
+dimension = "availability"
+driver = "operational"
 verifica = "http"
 tinta = "http://100.94.191.54:8739/"
 picat_dupa = 2
