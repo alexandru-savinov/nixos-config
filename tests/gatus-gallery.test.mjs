@@ -61,7 +61,7 @@ let output = '', child, spawnError;
 const start = () => {
   spawnError = undefined;
   child = spawn(process.env.GATUS_BIN || 'gatus', [], { cwd: directory,
-    env: { PATH: process.env.PATH, HOME: directory, GATUS_CONFIG_PATH: file, GATUS_LOG_LEVEL: 'WARN' },
+    env: { PATH: process.env.PATH, GATUS_CONFIG_PATH: file, GATUS_LOG_LEVEL: 'WARN' },
     stdio: ['ignore', 'pipe', 'pipe'] });
   child.on('error', e => { spawnError = e; });
   child.stdout.on('data', d => { output += d; }); child.stderr.on('data', d => { output += d; });

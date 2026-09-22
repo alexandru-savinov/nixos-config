@@ -27,7 +27,7 @@ let
   } // optionalHttpAttrs ep
   // optionalAttrs (ep.store != { }) { inherit (ep) store; }
   // optionalAttrs ep.always-run { always-run = true; }
-  // optionalAttrs (ep.ui != { }) { inherit (ep) ui; };
+  // optionalAttrs (ep.ui != null) { inherit (ep) ui; };
 
   # Convert suite to Gatus attrset format
   suiteToYaml = suite: {
@@ -244,14 +244,14 @@ let
       };
 
       ui = mkOption {
-        type = types.submodule {
+        type = types.nullOr (types.submodule {
           options.dont-resolve-failed-conditions = mkOption {
             type = types.bool;
             default = false;
             description = "Keep failed conditions symbolic so response values are not stored in diagnostic results.";
           };
-        };
-        default = { };
+        });
+        default = null;
         description = "Endpoint diagnostic privacy settings.";
       };
 
