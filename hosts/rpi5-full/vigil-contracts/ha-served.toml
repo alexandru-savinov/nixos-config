@@ -1,8 +1,6 @@
 [contract]
 nume = "ha-served"
 ce = "Service health"
-dimension = "availability"
-driver = "operational"
 verifica = "http"
 tinta = "https://rpi5.tail4249a9.ts.net:8123/manifest.json"
 picat_dupa = 2

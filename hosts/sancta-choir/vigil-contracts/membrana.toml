@@ -1,8 +1,6 @@
 [contract]
 nume = "membrana"
 ce = "Service health"
-dimension = "availability"
-driver = "operational"
 verifica = "tcp"
 tinta = "127.0.0.1:8743"
 picat_dupa = 2

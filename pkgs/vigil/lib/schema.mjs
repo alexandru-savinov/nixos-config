@@ -4,13 +4,6 @@ import { NAME, duration } from './common.mjs';
 import { parseToml } from './toml.mjs';
 
 const TYPES = ['tcp', 'http', 'unit', 'age', 'disk', 'mount', 'cmd', 'hass-state'];
-// Borrowed vocabulary (labels only; no check branches on them). `dimension` is
-// the kind of promise, `driver` is whom it serves. The seven dimensions and the
-// first three drivers are ODCS v3.0.0's own names (quality.dimension, sla.driver);
-// `availability` and `family` are ours, added as plain words because ODCS
-// describes data and most vigil promises are about a service being up, for her.
-const DIMENSIONS = ['accuracy', 'completeness', 'conformity', 'consistency', 'coverage', 'timeliness', 'uniqueness', 'availability'];
-const DRIVERS = ['regulatory', 'analytics', 'operational', 'family'];
 const fail = () => { throw new Error('contract-invalid'); };
 function keys(object, allowed, required = []) {
   if (!object || typeof object !== 'object' || Array.isArray(object)) fail();
@@ -31,14 +24,12 @@ export function validate(document) {
   if (Object.hasOwn(document, 'recuperare')) throw new Error('recuperare: plan 2');
   keys(document, ['contract', 'spune'], ['contract', 'spune']);
   const c = document.contract;
-  keys(c, ['nume', 'ce', 'verifica', 'tinta', 'astept', 'prag', 'picat_dupa', 'peer', 'dimension', 'driver'], ['nume', 'ce', 'verifica', 'tinta', 'picat_dupa']);
+  keys(c, ['nume', 'ce', 'verifica', 'tinta', 'astept', 'prag', 'picat_dupa', 'peer'], ['nume', 'ce', 'verifica', 'tinta', 'picat_dupa']);
   keys(document.spune, ['nivel'], ['nivel']);
   if (!NAME.test(c.nume) || c.nume === 'vigil' || c.nume.startsWith('invalid-')) fail();
   if (!text(c.ce) || c.ce.length > 200 || !TYPES.includes(c.verifica)) fail();
   if (!Number.isInteger(c.picat_dupa) || c.picat_dupa < 1 || c.picat_dupa > 12) fail();
   if (c.peer !== undefined && typeof c.peer !== 'boolean') fail();
-  if (c.dimension !== undefined && !DIMENSIONS.includes(c.dimension)) fail();
-  if (c.driver !== undefined && !DRIVERS.includes(c.driver)) fail();
   if (!['nota', 'incident'].includes(document.spune.nivel)) fail();
   let host = '';
   if (c.verifica === 'cmd') {

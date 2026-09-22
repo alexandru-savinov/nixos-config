@@ -1,8 +1,6 @@
 [contract]
 nume = "rpi5-tick"
 ce = "Service health"
-dimension = "timeliness"
-driver = "operational"
 verifica = "http"
 tinta = "http://100.106.93.87:8747/"
 picat_dupa = 2

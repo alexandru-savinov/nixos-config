@@ -140,9 +140,7 @@ export async function run(entries, options = {}) {
       events.push({ gazda, nume: c.nume, verdict: 'NECITIT', tranzitie: 'nota', nivel: 'nota',
         event_id: randomUUID(), incident_id: transition.state.nota, occurred_at: transition.state.nota });
     }
-    output(JSON.stringify({ nume: c.nume, verifica: c.verifica,
-      ...(c.dimension !== undefined && { dimension: c.dimension }), ...(c.driver !== undefined && { driver: c.driver }),
-      verdict: result.verdict, motiv: result.motiv, incident: transition.state.open }));
+    output(JSON.stringify({ nume: c.nume, verifica: c.verifica, verdict: result.verdict, motiv: result.motiv, incident: transition.state.open }));
   }
 
   if (enabled) {

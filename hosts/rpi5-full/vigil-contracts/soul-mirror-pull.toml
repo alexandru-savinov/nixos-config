@@ -1,8 +1,6 @@
 [contract]
 nume = "soul-mirror-pull"
 ce = "Service health"
-dimension = "timeliness"
-driver = "operational"
 verifica = "age"
 tinta = "unit:soul-mirror-pull.service"
 picat_dupa = 2

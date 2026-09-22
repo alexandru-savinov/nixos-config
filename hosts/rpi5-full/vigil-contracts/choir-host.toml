@@ -1,8 +1,6 @@
 [contract]
 nume = "choir-host"
 ce = "Service health"
-dimension = "availability"
-driver = "operational"
 verifica = "tcp"
 tinta = "100.94.191.54:8747"
 picat_dupa = 2
