@@ -6,6 +6,18 @@ This plan authorizes no production switches,
 service interruptions, new secrets, paid requests, or monitoring-semantics changes.
 Implement in small worktree-backed PRs; obtain approval before production activation.
 
+## Implementation status
+
+- Phase 1 audit is recorded in the linked audit document.
+- [PR #605](https://github.com/alexandru-savinov/nixos-config/pull/605) strengthens
+  native assertions and adds n8n readiness and Home Assistant HTTPS views.
+- [PR #606](https://github.com/alexandru-savinov/nixos-config/pull/606), stacked on
+  #605, adds the read-only gallery page/publication-metadata suite. The owner
+  explicitly requires at least one published image; an empty gallery fails.
+  Actual image bytes and rendering are outside this bounded pilot.
+- Production activation, 24h native observation, 48h suite observation, and the
+  later ownership review remain pending. No contract migration has occurred.
+
 ## Goal
 
 Make the dashboard answer three distinct questions: is the service reachable,
