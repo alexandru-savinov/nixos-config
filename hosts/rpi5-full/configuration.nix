@@ -172,6 +172,20 @@ in
       # run as root.
       home-assistant-token = secret "home-assistant-token";
       ha-vigil-token = ownedSecret "vigil" "ha-vigil-token";
+      vigil-rpi5-contract-1 = {
+        file = "${self}/secrets/vigil-rpi5-contract-1.age";
+        owner = "vigil";
+        group = "vigil";
+        path = "/run/vigil-contracts/contract-1.toml";
+        symlink = false;
+      };
+      vigil-rpi5-contract-2 = {
+        file = "${self}/secrets/vigil-rpi5-contract-2.age";
+        owner = "vigil";
+        group = "vigil";
+        path = "/run/vigil-contracts/contract-2.toml";
+        symlink = false;
+      };
 
       # Backup pull secrets
       rpi5-backup-ssh-key = {
@@ -207,8 +221,9 @@ in
 
   services.vigil = {
     enable = true;
-    contractsDirs = [ ./vigil-contracts ];
+    contractsDirs = [ ./vigil-contracts "/run/vigil-contracts" ];
     expectedContracts = 7;
+    expectedRuntimeContracts = 2;
     telegramEnvFile = secret "backup-telegram-env";
     hassTokenFile = secret "ha-vigil-token";
     hassUrl = "http://127.0.0.1:8123";
