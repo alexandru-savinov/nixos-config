@@ -80,7 +80,9 @@ def open_session(args, pick=False):
             return 0
         selection.check_returncode()
         selected = json.loads(selection.stdout)
-        record = next(record for record in records if record["name"] == selected["id"])
+        record = next((record for record in records if record["name"] == selected.get("id")), None)
+        if record is None:
+            raise ValueError("picker returned an unknown session; reopen the picker")
         args.name, args.cwd, args.agent = record["name"], record["cwd"], record["agent"]
         args.resume = record.get("resume")
         args.user_scope = record.get("user_scope", False)
@@ -220,7 +222,17 @@ def main():
     if not args.pick and not args.name:
         parser.error("--name is required unless --pick is used")
     if args.open or args.pick:
-        return open_session(args, args.pick)
+        try:
+            return open_session(args, args.pick)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            if isinstance(error, subprocess.TimeoutExpired):
+                detail = "request timed out; check SSH connectivity and agterm"
+            elif isinstance(error, subprocess.CalledProcessError):
+                detail = f"SSH or agterm command failed (exit {error.returncode}); check connectivity and retry"
+            else:
+                detail = str(error)
+            print(f"Could not open zmx pane: {detail}", file=sys.stderr)
+            return 1
     target = os.environ.get("AGTERM_SESSION_ID", "")
     pane_id = os.environ.get("AGTERM_PANE_ID", "")
     agterm_socket = os.environ.get("AGTERM_SOCKET", "")

@@ -32,6 +32,18 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_picker_transport_failures_are_clean_nonzero_diagnostics(self):
+        import io
+        for error in [subprocess.CalledProcessError(255, ["ssh"]),
+                      subprocess.TimeoutExpired(["ssh"], 20), OSError("socket unavailable")]:
+            output = io.StringIO()
+            with patch.object(sys, "argv", ["client.py", "--pick"]), \
+                    patch.object(client.subprocess, "run", side_effect=error), \
+                    patch.object(sys, "stderr", output):
+                self.assertEqual(client.main(), 1)
+            self.assertIn("Could not open zmx pane:", output.getvalue())
+            self.assertNotIn("Traceback", output.getvalue())
+
     def test_codex_resume_respects_native_writer_lock_without_mutating_it(self):
         identifier = '11111111-2222-3333-4444-555555555555'
         with tempfile.TemporaryDirectory() as directory:
