@@ -88,6 +88,10 @@ def status(name, value):
 
 
 def hooks(name):
+    # Claude documents PermissionRequest as the tool-permission request signal:
+    # https://code.claude.com/docs/en/hooks#permissionrequest
+    # This is a lifecycle observation, not proof a human dialog stays visible
+    # (another hook can decide it). Codex has different review semantics below.
     result = {}
     for event, value in [("UserPromptSubmit", "active"), ("PreToolUse", "active"),
                          ("PermissionRequest", "blocked"), ("Stop", "completed"),

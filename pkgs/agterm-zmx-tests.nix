@@ -1,7 +1,7 @@
 { lib, runCommand, python3, bash, integration ? false, zmx ? null }:
 
 runCommand (if integration then "agterm-zmx-integration-tests" else "agterm-zmx-protocol-tests")
-  { nativeBuildInputs = [ python3 bash ] ++ lib.optional integration zmx; }
+{ nativeBuildInputs = [ python3 bash ] ++ lib.optional integration zmx; }
   ''
     cp -r ${../scripts/agterm-zmx} scripts
     cp ${../tests/test_agterm_zmx.py} test_agterm_zmx.py

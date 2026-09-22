@@ -51,13 +51,20 @@ matching live process from Claude's session metadata. Its lock serializes helper
 launches; independent manual Claude launches must also respect the single-writer
 rule. The helper never stops a source process or invokes `sancta-reconnect`.
 
-For Codex, the installed CLI supports `codex resume UUID` in the original working
-directory. `codex resume --all` opens its cross-directory picker if the UUID is
-unknown. This is currently a **manual recovery fallback**, not a supported
-`client.py --resume` mode: that option currently accepts Claude only. A plain
-Codex resume inside a shell does not automatically install a new pane's status
-profile. Do not claim automatic status for this fallback. Integrated Codex cold
-recovery remains an acceptance gap.
+For Codex, use the same explicit launcher recovery path:
+
+```sh
+~/.local/bin/agt-zmx --open --name codex-recovery-NEW --agent codex \
+  --cwd /ORIGINAL/DIRECTORY --resume EXACT-CONVERSATION-UUID
+```
+
+The installed launcher supplies `--user-scope`. The helper requires an existing
+session transcript and probes the existing native thread writer lock read-only;
+a live writer is refused. It never creates, truncates or deletes Codex's native
+locks. Codex acquires its own writer lock at startup. Archived-only transcripts
+are not supported by this helper. Review the new profile's hooks through the
+normal trust UI before expecting lifecycle status. Use the agent's resume picker
+to identify an unknown UUID, without launching a second writer.
 
 A shell's unsaved process state cannot be recovered after reboot. Start a new
 shell under a new backend name and inspect the existing files before rerunning
@@ -76,12 +83,11 @@ verified targeted SIGTERM, checked that the old PID had exited, and then resumed
 successfully in a separate tmux session. Applying an interruption to the main
 conversation still requires explicit owner approval.
 
-## Evidence and outstanding acceptance
+## Acceptance evidence
 
 The rollout record is [the pilot plan](plans/2026-09-22-agterm-zmx-mvp.md).
 SSH reconnect, independent user-scope placement, explicit Claude resume, retained
 context, duplicate-launch refusal, and a disposable tmux fallback are verified.
 No host reboot was performed. App restart and the observed English Codex command-approval status are now
-verified. The owner-selected main Sancta migration is also accepted. Integrated Codex
-cold recovery remains a separate gate; other approval-dialog formats have not
-been accepted.
+verified. The owner-selected main Sancta migration is also accepted. Codex daemon-loss recovery with retained context and a new completed turn is
+also accepted. Other approval-dialog formats have not been accepted.

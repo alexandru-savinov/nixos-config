@@ -1,162 +1,76 @@
-# Remote zmx MVP
+# Remote zmx rollout
 
-One named session on choir survives an SSH disconnect and reattaches to the same
-process. Agterm owns the Mac panes; zmx owns the remote PTY. The default is a fresh
-shell under `sancta`, reached through the existing `root@sancta-choir-1` SSH target.
-The existing `sancta-session`, `sancta-reconnect`, tmux sessions, worker, credentials,
-and global agent settings are not invoked or modified by the MVP.
+The five-phase rollout is accepted for choir. The main Sancta Claude conversation
+now runs in zmx with its original conversation history. The original tmux shell
+remains available for fallback. Shell and agent reconnects, the native picker,
+agterm restart restoration, real lifecycle status, and explicit conversation
+recovery have been exercised. No NixOS switch was performed.
 
-## Goal and phases
+## Daily use on this Mac
 
-Run Claude Code and Codex in persistent remote zmx sessions, with agterm providing
-the panes and reliable status routing. Adopt it gradually without losing existing
-conversations or interrupting production services.
+Run these commands in a Mac agterm shell:
 
-1. **Prove persistence.** An isolated choir shell keeps the same PID through a
-   real SSH disconnect and reattach. Automated PTY tests establish the process
-   mechanism; live SSH acceptance establishes the complete connection path.
-2. **Prove agent integration.** A fresh Claude session survives reconnect and its
-   actual lifecycle events reach only its owning pane. Verify Codex persistence
-   separately, with no claim of automatic Codex status. Phases 1-2 are this MVP.
-3. **Make it convenient.** Add a session picker, pane launch and tested restoration
-   after restarting agterm. Do not change the app's global restore mode implicitly.
-4. **Migrate deliberately.** Move selected workflows after acceptance, preserving
-   conversations and a usable tmux fallback. Migration is separately approved.
-5. **Complete both-agent support.** Add verified Codex status reporting and a
-   documented recovery path after host reboot or daemon loss. Process survival
-   and restarting a saved conversation remain distinct outcomes.
+```sh
+~/.local/bin/agt-zmx --pick
+~/.local/bin/agt-zmx --open --name my-shell --agent shell
+~/.local/bin/agt-zmx --open --name my-claude --agent claude --cwd /home/nixos
+~/.local/bin/agt-zmx --open --name my-codex --agent codex --cwd /home/nixos
+```
 
-## Components
+Use a unique name for each new backend. The picker attaches an existing live
+backend without creating another conversation. Closing the Mac pane detaches;
+exiting the remote agent leaves a shell, and exiting that shell ends the backend.
 
-- `scripts/agterm-zmx/client.py`: run in an existing agterm pane. Opens a restricted
-  local Unix status relay and SSH reverse forwarding, retries SSH exit 255 after
-  five seconds. Ctrl-C during the wait cancels retries. No SSH agent forwarding.
-  `--open --name NAME` creates a new agterm session; `--pick` lists live sessions
-  from the remote inventory. Each attached client pins its own reconnect command
-  using its stable pane token for agterm's Re-run commands restore mode.
-- `scripts/agterm-zmx/host.py`: packaged as `agt-zmx-host`, with Python, bash and
-  zmx supplied by Nix. Session records and sockets live in the account's private
-  `~/.local/state/agt-zmx/`. Names are prefixed `agt-mvp-`.
-- The host package is added only to choir's system packages. No boot service,
-  firewall rule, or daemon is started by installation. The existing unstable
-  nixpkgs pin supplies zmx 0.8.0; no flake update is needed.
-- Claude receives additional hooks through its launch-specific `--settings`;
-  hook payloads and transcripts never cross the relay. The relay accepts only
-  four lifecycle states and fixes the target session and stable pane ID locally.
+The installed launcher uses a versioned client outside the worktree, the tested
+remote Nix store package, and independent user scopes. Its default target is
+`root@sancta-choir-1`, running as `sancta`. Main Sancta and recovered Codex restore
+commands now reference the versioned client. Keep the remote package GC roots.
+Agterm's existing **Re-run commands** restore mode remains unchanged.
 
-This is an original minimal implementation informed by agterm's
-[remote-Claude recipe](https://github.com/umputun/agterm/tree/master/cookbook/remote-claude-session)
-and [zmx's SSH workflow](https://github.com/neurosnap/zmx#ssh-workflow).
-It does not vendor or install that cookbook's scripts.
+## Architecture and boundaries
 
-## Acceptance before deployment
+Agterm owns Mac panes; zmx owns remote PTYs. The client retries SSH loss and pins
+an explicit pane restore command. Private remote session records retain launch
+identity. The latest attachment receives status through a restricted loopback
+relay accepting only four lifecycle states, never transcript or hook payloads.
+
+Claude uses launch-specific settings. Codex uses an additional content-addressed
+profile, preserving owner configuration and credentials. Review its hooks through
+the normal Codex trust UI. Real lifecycle events and the observed English command
+approval dialog were accepted; other dialog formats/locales are not claimed.
+The dialog observer reads only its owning pane locally and does not log or relay
+terminal text. Automatic permission review is not mistaken for human blocking.
+
+Status is the last observed lifecycle event, not liveness. Lost events are not
+replayed. One current status recipient per backend is supported. SSH persistence
+does not preserve processes through host reboot or daemon death: use an explicit
+saved conversation UUID with a new backend name, following the
+[recovery instructions](../agterm-zmx-recovery.md). Both agents' recovery is
+accepted; the destructive recovery test used a disposable Codex daemon, not a
+host reboot. Never delete native writer locks or old records to bypass a refusal.
+
+Packages are exposed for x86_64-linux, the choir pilot platform. Installation adds
+no boot service or firewall rule. Do not change zmx versions under running
+backends. No global hooks, SSH agent forwarding, or automatic migration occurs.
+
+## Validation
+
+All 23 tests passed on macOS with bundled zmx 0.7.0 and on choir with packaged
+zmx 0.8.0. The full suite includes a real disposable PTY; ordinary flake checks
+run the 22 protocol tests separately. Live acceptance is recorded below.
 
 ```sh
 AGT_ZMX_TEST_BINARY=/Applications/agterm.app/Contents/MacOS/zmx \
   python3 -m unittest discover -s tests -p test_agterm_zmx.py -v
 nix build .#checks.x86_64-linux.agterm-zmx
+nix build .#packages.x86_64-linux.agterm-zmx-tests
 nix build .#packages.x86_64-linux.agterm-zmx-host
 ```
 
-Tests cover an actual disposable zmx PTY retaining its shell PID after client
-termination, refusal to reuse a name for another directory, remote shell quoting,
-status destination changes, and the relay's target/command boundary over actual
-sockets. Test daemons use their own temporary socket directory; cleanup targets
-only the named test daemon. Mac's bundled zmx is 0.7.0; the Nix check uses the
-actual packaged Linux zmx 0.8.0. Passing Mac tests alone does not establish Linux
-or SSH integration acceptance.
+The following evidence is chronological. Statements about pending gates describe
+that checkpoint; the audit table and final acceptance entries give current status.
 
-## Launcher and picker
-
-From the Mac checkout, after the remote package is approved and available:
-
-```sh
-python3 scripts/agterm-zmx/client.py --open --name shell-trial-1 --remote-bin /nix/store/REPLACE-WITH-BUILT-PACKAGE/bin/agt-zmx-host
-python3 scripts/agterm-zmx/client.py --pick --remote-bin /nix/store/REPLACE-WITH-BUILT-PACKAGE/bin/agt-zmx-host
-```
-
-Both create a session under the `Remote zmx` workspace in the invoking window.
-Cancellation creates nothing; dead remote sessions are excluded. The picker
-does not create a new remote conversation. Use `--open` with an explicit new name
-for that. An already attached session can be picked again; the one-recipient
-limitation below still applies. This is not concurrent-viewer acceptance.
-
-The restore pin contains the Python interpreter, client path, remote host/user,
-session name, directory, agent and host executable. Keep those local files and
-the remote package available. It targets the pane running the client, including
-a right split, and leaves the app's global restore mode unchanged. In Fresh
-shells mode it will not run; this workflow requires Re-run commands. A real app
-restart test is still pending and requires approval because other local sessions
-can be interrupted by restarting agterm.
-
-## Choir pilot (owner approval required)
-
-Build the host package from this reviewed worktree on a Linux builder. A pilot
-can use the resulting `/nix/store/.../bin/agt-zmx-host` directly on choir with
-`--remote-bin`; there is no need to switch the entire NixOS configuration merely
-to try it. Keep a GC root for that package while pilot sessions use it.
-
-In a **new Mac agterm shell pane**, from the checkout:
-
-```sh
-python3 scripts/agterm-zmx/client.py --name shell-trial-1 \
-  --remote-bin /nix/store/REPLACE-WITH-BUILT-PACKAGE/bin/agt-zmx-host
-```
-
-The placeholder must be replaced with the actual built path. After approved
-normal package deployment, omit `--remote-bin`. The defaults are
-`--host root@sancta-choir-1 --user sancta --cwd /var/lib/sancta --agent shell`.
-An empty `--user ''` uses the SSH account directly on other hosts.
-
-1. In the **remote shell**, run `echo $$` and record the PID.
-2. Close that new Mac pane. Do not type `exit`, which ends the remote shell.
-3. Open another new pane and repeat the exact client command. `echo $$` must
-   return the same PID. Also verify a real SSH/network disconnect reconnects.
-4. Start a separate `--name claude-trial-1 --agent claude` session. Leave the main
-   Sancta conversation alone. Confirm login, terminal drawing/resizing, and that
-   real Claude prompt/tool/approval/Stop events reach only this pane.
-5. Reattach this trial and repeat a turn to prove the updated relay destination
-   works. A diagnostic `agt-zmx-host status` invocation exercises transport only;
-   it is not acceptance of Claude lifecycle hooks.
-6. `--agent codex` starts a fresh persistent Codex session. The expanded rollout
-   generates an additional content-addressed profile containing lifecycle hooks;
-   existing config and authentication files are preserved. Review these hooks in
-   Codex `/hooks` before expecting them to run. Live Codex hook acceptance remains
-   pending. `PermissionRequest` is not mapped to blocked because it can precede
-   automatic review; accurate human-dialog detection is still outstanding.
-
-Existing authentication is used. If unavailable, stop and arrange interactive
-login separately; this tool never reads, copies, or creates credentials. No prompt
-is automatically sent to either agent, and permission checks remain enabled.
-
-## Limits and recovery
-
-- One current status recipient per named remote session: the latest attach wins.
-  Concurrent viewers are not an accepted MVP workflow.
-- Status is a last observed lifecycle event, not progress or liveness. A Claude
-  Stop means a turn ended, not that all background work finished. Disconnected
-  events are dropped; the next event uses the new relay. There is no status replay.
-- zmx persistence covers client loss, not host reboot or daemon death. If a record
-  remains but its daemon is gone, attachment refuses instead of silently starting
-  a fresh conversation. Pick a new name; existing transcripts remain available to
-  the agent's own resume UI. Automatic conversation resume is deferred.
-- The socket namespace is separate from ordinary zmx and tmux. Do not change
-  zmx versions under a running pilot; protocol compatibility across upgrades is
-  not promised. The MVP has no bulk cleanup or kill command.
-- The SSH server must allow loopback reverse forwarding. A port collision or SSH
-  forwarding failure produces a visible retry; Ctrl-C stops it. Root SSH can use
-  `runuser`; other SSH accounts should leave `--user` empty.
-- While connected, remote processes able to reach the forwarded loopback port
-  can set this one pane's status. They cannot type into panes or access the raw
-  agterm control API through the relay.
-- Picker and pane-specific restore policy are implemented, with automated
-  cancellation/targeting tests. Live picker and app restart acceptance are still
-  pending. There is no installed key binding, remote git credential forwarding,
-  or Sancta session migration yet.
-- End a shell trial with `exit`. Agent exit leaves an interactive remote shell;
-  exit that shell when finished. Closing the Mac pane only detaches.
-
-## Rollout status
+## Historical implementation and acceptance evidence
 
 Draft PR: https://github.com/alexandru-savinov/nixos-config/pull/609
 
@@ -181,8 +95,8 @@ owner approval and must be recorded separately from these build-sandbox tests.
 | Phase 1: real SSH reconnect retains PID | Passed on choir; evidence below | Complete for the isolated shell |
 | Phase 2: real Claude events and Codex persistence | Both exact agent PIDs survive SSH reconnect; Claude real hooks and tool result accepted | Complete for the fresh pilots; migration is separate |
 | Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; native picker opened an attachment to the Claude pilot | Complete for the tested restored pilot panes |
-| Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Complete for the owner-selected main Sancta conversation; evidence below |
-| Phase 5: Codex status and cold recovery | Codex active/completed hooks accepted before and after real SSH reconnect; owner files preserved in tests | Integrated Codex cold recovery remains; command-approval status is accepted |
+| Phase 4: selected tmux workflows migrated | Main Sancta resumed with the same conversation identity; SSH reconnect and new turn accepted; original tmux shell retained | Complete for the owner-selected main Sancta conversation; evidence below |
+| Phase 5: Codex status and cold recovery | Codex active/completed hooks accepted before and after real SSH reconnect; owner files preserved in tests | Complete: native writer guard, daemon-loss resume, retained context and new turn accepted |
 
 Codex's bundled agterm integration treats `PermissionRequest` as an approval
 candidate: automatic review can resolve it without showing a human dialog.
@@ -438,3 +352,37 @@ printed; identity and readiness checks emitted allowlisted metadata/booleans.
 The exact conversation UUID and fallback command remain in the private local
 handoff review. No NixOS switch, credential creation, or unrelated service
 interruption occurred.
+
+## Codex daemon-loss recovery and stable launcher acceptance
+
+At implementation commit `7fb4b7ed4c289c04b92400f5a2fe40304dddba14`, the helper
+supports explicit Codex resume and probes the existing native thread writer lock
+read-only. A live source was refused. Only the disposable
+`codex-status-pilot-20260922` daemon was then stopped, after identity checks;
+its old record and route remained unchanged. Reusing that name was refused.
+
+`codex-recovered-20260922` resumed the original thread in its original directory,
+in an independent user scope. New PID 3398320 held the original thread's native
+writer lock. After normal hook review, a new turn recalled the earlier acceptance
+marker without that marker being supplied in the prompt. The owning pane showed
+`active → completed`. Main Sancta PID 3394805 remained running throughout.
+This establishes saved-context recovery, not survival of a process after reboot.
+
+The Mac entrypoint `~/.local/bin/agt-zmx` uses the immutable client at
+`~/.local/share/agterm-zmx/7fb4b7ed4c289c04b92400f5a2fe40304dddba14/client.py`
+and tested remote package
+`/nix/store/bq2ka5s4j65aqhlmqbw0f102bayvgnp1-agterm-zmx-host-0.1.0`.
+The client bytes match the committed source. Main Sancta and recovered Codex
+restore pins were updated without interrupting their running clients. Existing
+package roots and the original tmux shell were retained.
+
+## Claude permission-hook review evidence
+
+The [official Claude hook reference](https://code.claude.com/docs/en/hooks#permissionrequest)
+defines `PermissionRequest` as the tool-permission request signal. The configured
+event name is valid; it is not inferred from Codex's similarly named event.
+Another permission hook can decide the request, so this is a lifecycle signal,
+not proof that a human dialog remains visible. This rollout verifies Claude's
+real prompt/tool/Stop events; it does not claim a separately exercised Claude
+permission-dialog transition. Codex's actual human command-dialog transition was
+exercised separately as recorded above.
