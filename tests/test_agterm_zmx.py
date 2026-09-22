@@ -31,6 +31,25 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_scope_wraps_backend_creation_but_not_reattachment(self):
+        original = Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            try:
+                with patch.dict(os.environ, {"AGT_ZMX_STATE": str(root / "state")}), \
+                        patch.object(host.shutil, "which", return_value="/bin/tool"), \
+                        patch.object(host.os, "execvpe") as execute:
+                    host.attach("scoped", directory, "shell", 22222, user_scope=True)
+                    binary, argv, env = execute.call_args[0]
+                    self.assertEqual(binary, "systemd-run")
+                    self.assertIn("--unit=agt-mvp-scoped.scope", argv)
+                    self.assertEqual(env["XDG_RUNTIME_DIR"], f"/run/user/{os.getuid()}")
+                    with patch.object(host.subprocess, "check_output", return_value="agt-mvp-scoped\n"):
+                        host.attach("scoped", directory, "shell", 22223, user_scope=True)
+                    self.assertEqual(execute.call_args[0][0], "zmx")
+            finally:
+                os.chdir(original)
+
     def test_resume_requires_existing_transcript_and_stopped_process(self):
         identifier = "11111111-2222-3333-4444-555555555555"
         with tempfile.TemporaryDirectory() as directory:

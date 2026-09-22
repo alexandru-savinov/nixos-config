@@ -1,4 +1,4 @@
-{ lib, stdenvNoCC, makeWrapper, python3, bash, zmx }:
+{ lib, stdenvNoCC, makeWrapper, python3, bash, zmx, systemd }:
 
 stdenvNoCC.mkDerivation {
   pname = "agterm-zmx-host";
@@ -12,7 +12,7 @@ stdenvNoCC.mkDerivation {
     cp host.py $out/libexec/agterm-zmx/host.py
     makeWrapper ${python3}/bin/python3 $out/bin/agt-zmx-host \
       --add-flags "$out/libexec/agterm-zmx/host.py" \
-      --prefix PATH : ${lib.makeBinPath [ zmx bash ]}
+      --prefix PATH : ${lib.makeBinPath [ zmx bash systemd ]}
   '';
   meta = {
     description = "Isolated remote zmx sessions with per-session agterm status routing";

@@ -67,6 +67,7 @@ def inventory():
         record = json.loads(path.read_text())
         records.append({"name": name, "cwd": record["cwd"], "agent": record["agent"],
                         "resume": record.get("resume"),
+                        "user_scope": record.get("user_scope", False),
                         "alive": path.stem in live})
     return records
 
@@ -189,7 +190,7 @@ def launch(name):
     os.execvp("bash", ["bash", "--noprofile", "--norc", "-ic", line])
 
 
-def attach(name, cwd, agent, port, resume=None):
+def attach(name, cwd, agent, port, resume=None, user_scope=False):
     qualified = session_name(name)
     cwd = str(Path(cwd).resolve(strict=True))
     if not Path(cwd).is_dir():
@@ -202,11 +203,14 @@ def attach(name, cwd, agent, port, resume=None):
     record = {"cwd": cwd, "agent": agent}
     if resume is not None:
         record["resume"] = resume
+    if user_scope:
+        record["user_scope"] = True
     # An isolated socket namespace also prevents collisions with ordinary zmx use.
     environment = zmx_environment(directory)
     with (directory / (qualified + ".lock")).open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         path = directory / (qualified + ".json")
+        creating = not path.exists()
         if path.exists():
             if json.loads(path.read_text()) != record:
                 raise ValueError("name already belongs to a different directory or agent; choose a new name")
@@ -224,8 +228,16 @@ def attach(name, cwd, agent, port, resume=None):
     # enter /root. Establish the requested directory for the backend itself.
     os.chdir(cwd)
     environment["PWD"] = cwd
-    os.execvpe("zmx", ["zmx", "attach", qualified, sys.executable,
-                       str(Path(__file__).resolve()), "launch", name], environment)
+    command = ["zmx", "attach", qualified, sys.executable,
+               str(Path(__file__).resolve()), "launch", name]
+    if creating and user_scope:
+        # Scope the backend's birth, not each attachment. Its daemon remains in
+        # the user-manager scope when the SSH client disconnects.
+        environment["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+        environment["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + environment["XDG_RUNTIME_DIR"] + "/bus"
+        command = ["systemd-run", "--user", "--scope", "--collect", "--quiet",
+                   "--unit=" + qualified + ".scope", "--", *command]
+    os.execvpe(command[0], command, environment)
 
 
 def main():
@@ -238,6 +250,7 @@ def main():
     sub.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
     sub.add_argument("--port", type=int, required=True)
     sub.add_argument("--resume", help="explicit Claude conversation UUID; source must be stopped")
+    sub.add_argument("--user-scope", action="store_true", help="start backend in an existing systemd user manager")
     sub = commands.add_parser("status")
     sub.add_argument("name")
     sub.add_argument("value", choices=sorted(STATES))
@@ -248,7 +261,7 @@ def main():
         if args.action == "attach":
             if not 1024 <= args.port <= 65535:
                 raise ValueError("invalid relay port")
-            attach(args.name, args.cwd, args.agent, args.port, args.resume)
+            attach(args.name, args.cwd, args.agent, args.port, args.resume, args.user_scope)
         elif args.action == "launch":
             launch(args.name)
         elif args.action == "status":

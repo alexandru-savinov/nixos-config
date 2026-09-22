@@ -37,6 +37,8 @@ def attach_argv(args):
             "--agent", args.agent, "--remote-bin", args.remote_bin]
     if getattr(args, "resume", None):
         command += ["--resume", args.resume]
+    if getattr(args, "user_scope", False):
+        command += ["--user-scope"]
     return command
 
 
@@ -80,6 +82,7 @@ def open_session(args, pick=False):
         record = next(record for record in records if record["name"] == selected["id"])
         args.name, args.cwd, args.agent = record["name"], record["cwd"], record["agent"]
         args.resume = record.get("resume")
+        args.user_scope = record.get("user_scope", False)
     result = agterm(["session", "new", "--name", f"zmx / {args.name}",
                      "--workspace-name", "Remote zmx", "--create-workspace",
                      "--command", shlex.join(attach_argv(args)), "--wait", *selector])
@@ -138,7 +141,8 @@ def ssh_command(args, relay_path, port):
             "-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{port}:{relay_path}",
             "--", args.host, remote_command(args, ["attach", args.name, args.cwd,
                                                     "--agent", args.agent, "--port", str(port)]
-                                                    + (["--resume", args.resume] if getattr(args, "resume", None) else []))]
+                                                    + (["--resume", args.resume] if getattr(args, "resume", None) else [])
+                                                    + (["--user-scope"] if getattr(args, "user_scope", False) else []))]
 
 
 def main():
@@ -152,6 +156,7 @@ def main():
     parser.add_argument("--cwd", default="/var/lib/sancta")
     parser.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
     parser.add_argument("--resume", help="explicit Claude conversation UUID; requires a stopped source")
+    parser.add_argument("--user-scope", action="store_true", help="create backend outside the SSH service cgroup")
     parser.add_argument("--remote-bin", default="agt-zmx-host", help="host executable or built Nix store path")
     args = parser.parse_args()
     if not args.pick and not args.name:
