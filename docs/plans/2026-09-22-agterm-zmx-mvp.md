@@ -180,9 +180,9 @@ owner approval and must be recorded separately from these build-sandbox tests.
 |---|---|---|
 | Phase 1: real SSH reconnect retains PID | Passed on choir; evidence below | Complete for the isolated shell |
 | Phase 2: real Claude events and Codex persistence | Both exact agent PIDs survive SSH reconnect; Claude real hooks and tool result accepted | Complete for the fresh pilots; migration is separate |
-| Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; native picker opened an attachment to the Claude pilot | Approved app restart acceptance |
+| Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; native picker opened an attachment to the Claude pilot | Complete for the tested restored pilot panes |
 | Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Disposable same-conversation resume and tmux fallback accepted; finish restart gate and obtain interruption approval |
-| Phase 5: Codex status and cold recovery | Codex active/completed hooks accepted before and after real SSH reconnect; owner files preserved in tests | Human-dialog status, document and test cold recovery |
+| Phase 5: Codex status and cold recovery | Codex active/completed hooks accepted before and after real SSH reconnect; owner files preserved in tests | Integrated Codex cold recovery remains; command-approval status is accepted |
 
 Codex's bundled agterm integration treats `PermissionRequest` as an approval
 candidate: automatic review can resolve it without showing a human dialog.
@@ -379,3 +379,36 @@ or reopening it. A PID-addressed normal macOS quit request is being investigated
 no app-restart acceptance follows from a request alone. The permission/confirmation
 UI question is pending. The restart approval remains valid; do not request the
 same approval again solely because this attempt failed.
+
+### Owner-completed app restart and command-approval status
+
+After the two normal programmatic quit requests left agterm running, the owner
+reported restarting it. Verification found app PID 5544 instead of 3252, rerun
+mode still active, and all four current pilot panes realized with their same
+restore commands. Remote PIDs 3369559 (shell), 3376847 (Codex), 3386566 (disposable
+tmux fallback), and 3270160 (main Sancta) remained unchanged. The Codex route port
+changed 45137 → 54139. A new turn returned `ZMX_APP_RESTART_ACCEPTED` and changed
+its owning pane from active to completed. This is live app-restart acceptance;
+it does not rely on the earlier timed-out quit requests.
+
+The separate `codex-human-pilot-20260922` uses two private launch-only wrapper
+files to set `approvals_reviewer="user"` and on-request approval. The owner's base
+configuration still uses auto review and was not edited. Its agterm pane is
+`6FDB1218-0F15-43E9-98EC-BF0552639F3A`; the ordinary hook-review UI confirmed all
+seven generated hooks active. A real `sleep 3` approval test showed
+`active → blocked → active → completed` and returned `ZMX_BLOCKED_STATUS_ACCEPTED`.
+
+The local observer recognizes the observed English Codex command-approval dialog
+from its header, choices, and final footer. It reads only the owning pane's final
+24 lines in memory; it does not log or send their text. A generation guard drops
+screen observations superseded by lifecycle events. Clearing a dialog restores
+the latest actual lifecycle state. Automatic-review events alone do not mark the
+pane blocked. Other dialog types/locales are not claimed as supported. All 22 Mac
+tests passed, including ordinary-prose rejection, stale-screen/Stop ordering, and
+retry after failed status delivery.
+
+Main-source preflight still matches the selected conversation UUID and PID
+3270160; only booleans for an empty prompt and absence of the interrupt hint were
+emitted from its screen inspection. The tested independent user scope matches
+the original tmux scope: unlimited MemoryHigh/MemoryMax/MemorySwapMax,
+OOMPolicy=stop, KillMode=control-group. Main interruption remains unapproved.

@@ -31,6 +31,46 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    approval_screen = """Would you like to run the following command?
+Environment: local
+Reason: Do you approve running exactly sleep 2 outside the sandbox?
+$ sleep 2
+› 1. Yes, proceed (y)
+2. Yes, and don't ask again for commands that start with `sleep 2` (p)
+3. No, and tell Codex what to do differently (esc)
+Press enter to confirm or esc to cancel
+"""
+
+    def test_codex_dialog_detection_requires_live_dialog_layout(self):
+        self.assertTrue(client.codex_approval_visible(self.approval_screen))
+        self.assertFalse(client.codex_approval_visible('Would you approve this?'))
+        self.assertFalse(client.codex_approval_visible('Press enter to confirm or esc to cancel'))
+        self.assertFalse(client.codex_approval_visible(self.approval_screen + '\n› Ask Codex to do anything\n'))
+        self.assertFalse(client.codex_approval_visible('Hooks need review\nPress enter to confirm or esc to go back'))
+
+    def test_dialog_status_clears_and_stale_reads_cannot_overwrite_stop(self):
+        sent = []
+        tracker = client.StatusTracker(sent.append)
+        tracker.receive('active')
+        tracker.observe(self.approval_screen, tracker.snapshot())
+        tracker.observe(self.approval_screen, tracker.snapshot())
+        tracker.observe('Working...', tracker.snapshot())
+        self.assertEqual(sent, ['active', 'blocked', 'active'])
+        stale = tracker.snapshot()
+        tracker.receive('completed')
+        tracker.observe(self.approval_screen, stale)
+        self.assertEqual(sent[-1], 'completed')
+        self.assertEqual(sent.count('blocked'), 1)
+
+    def test_failed_dialog_delivery_is_retried(self):
+        from unittest.mock import Mock
+        send = Mock(side_effect=[OSError('temporarily disconnected'), None])
+        tracker = client.StatusTracker(send)
+        with self.assertRaises(OSError):
+            tracker.observe(self.approval_screen, tracker.snapshot())
+        tracker.observe(self.approval_screen, tracker.snapshot())
+        self.assertEqual(send.call_count, 2)
+
     def test_lost_daemon_never_relaunches_or_overwrites_recovery_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import shlex
 import shutil
 import socket
@@ -20,7 +21,7 @@ import uuid
 STATES = {"idle", "active", "blocked", "completed"}
 
 
-def agterm(arguments, input_text=None):
+def agterm(arguments, input_text=None, timeout=None):
     executable = os.environ.get("AGTERMCTL") or shutil.which("agtermctl")
     if not executable:
         raise ValueError("agtermctl is not available; set AGTERMCTL to its absolute path")
@@ -28,7 +29,7 @@ def agterm(arguments, input_text=None):
     if not address:
         raise ValueError("agterm socket environment is missing")
     return subprocess.run([executable, *arguments, "--socket", address],
-                          input=input_text, text=True, capture_output=True)
+                          input=input_text, text=True, capture_output=True, timeout=timeout)
 
 
 def attach_argv(args):
@@ -110,8 +111,70 @@ def status_request(payload, target, pane_id):
     return {"cmd": "session.status", "target": target, "args": args}
 
 
+def codex_approval_visible(text):
+    # Match the observed command-approval dialog, not prose mentioning approval.
+    lines = [line.strip().lower() for line in text.splitlines() if line.strip()]
+    return bool(lines and lines[-1] == "press enter to confirm or esc to cancel"
+                and "would you like to run the following command?" in lines
+                and any(re.match(r"^[›>]?[ ]*1\. yes, proceed \(y\)$", line) for line in lines)
+                and any("no, and tell codex what to do differently (esc)" in line for line in lines))
+
+
+class StatusTracker:
+    def __init__(self, send):
+        self.send = send
+        self.lock = threading.Lock()
+        self.generation = 0
+        self.latest = "idle"
+        self.dialog = False
+
+    def receive(self, value):
+        with self.lock:
+            self.generation += 1
+            self.latest, self.dialog = value, False
+            self.send(value)
+
+    def snapshot(self):
+        with self.lock:
+            return self.generation
+
+    def observe(self, text, generation):
+        visible = codex_approval_visible(text)
+        with self.lock:
+            # A Stop/PreToolUse arriving during the screen read supersedes it.
+            if generation != self.generation or visible == self.dialog:
+                return
+            self.send("blocked" if visible else self.latest)
+            self.dialog = visible
+
+
 class Relay(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tracker = StatusTracker(self.forward)
+
+    def forward(self, value):
+        request = status_request({"status": value}, self.target, self.pane_id)
+        with socket.socket(socket.AF_UNIX) as channel:
+            channel.settimeout(1)
+            channel.connect(self.agterm_socket)
+            channel.sendall((json.dumps(request) + "\n").encode())
+            if not json.loads(channel.recv(4096)).get("ok"):
+                print("agterm rejected a status update", file=sys.stderr)
+
+
+def watch_codex_dialog(relay, stop):
+    while not stop.wait(0.75):
+        generation = relay.tracker.snapshot()
+        try:
+            result = agterm(["session", "text", "--target", relay.target,
+                             "--pane-id", relay.pane_id, "--lines", "24"], timeout=3)
+            if result.returncode == 0 and not stop.is_set():
+                relay.tracker.observe(result.stdout, generation)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
 
 
 class StatusHandler(socketserver.StreamRequestHandler):
@@ -121,14 +184,9 @@ class StatusHandler(socketserver.StreamRequestHandler):
             raw = self.rfile.readline(257)
             if len(raw) > 256 or not raw.endswith(b"\n"):
                 return
-            request = status_request(json.loads(raw), self.server.target, self.server.pane_id)
-            with socket.socket(socket.AF_UNIX) as channel:
-                channel.settimeout(1)
-                channel.connect(self.server.agterm_socket)
-                channel.sendall((json.dumps(request) + "\n").encode())
-                reply = channel.recv(4096)
-                if not json.loads(reply).get("ok"):
-                    print("agterm rejected a remote status update", file=sys.stderr)
+            payload = json.loads(raw)
+            status_request(payload, self.server.target, self.server.pane_id)
+            self.server.tracker.receive(payload["status"])
         except (OSError, ValueError, TypeError):
             pass
 
@@ -182,6 +240,11 @@ def main():
             relay.target, relay.pane_id, relay.agterm_socket = target, pane_id, agterm_socket
             worker = threading.Thread(target=relay.serve_forever, daemon=True)
             worker.start()
+            monitor_stop = threading.Event()
+            monitor = None
+            if args.agent == "codex":
+                monitor = threading.Thread(target=watch_codex_dialog, args=(relay, monitor_stop), daemon=True)
+                monitor.start()
             try:
                 while True:
                     port = random.SystemRandom().randrange(20000, 60000)
@@ -193,6 +256,9 @@ def main():
             except KeyboardInterrupt:
                 return 130
             finally:
+                monitor_stop.set()
+                if monitor:
+                    monitor.join(timeout=4)
                 relay.shutdown()
 
 

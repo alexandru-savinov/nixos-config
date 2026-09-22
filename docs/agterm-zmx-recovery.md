@@ -81,5 +81,6 @@ conversation still requires explicit owner approval.
 The rollout record is [the pilot plan](plans/2026-09-22-agterm-zmx-mvp.md).
 SSH reconnect, independent user-scope placement, explicit Claude resume, retained
 context, duplicate-launch refusal, and a disposable tmux fallback are verified.
-No host reboot was performed. App restart, integrated Codex cold recovery,
-human-approval status, and main-conversation migration remain separate gates.
+No host reboot was performed. App restart and the observed English Codex command-approval status are now
+verified. Integrated Codex cold recovery and main-conversation migration remain
+separate gates; other approval-dialog formats have not been accepted.
