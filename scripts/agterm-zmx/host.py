@@ -129,8 +129,23 @@ def codex_profile(name, directory=None):
 
 
 def validate_resume(agent, identifier, config_dir=None):
-    if agent != "claude" or not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", identifier):
-        raise ValueError("resume requires Claude and an explicit lowercase conversation UUID")
+    if agent not in {"claude", "codex"} or not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", identifier):
+        raise ValueError("resume requires an agent and an explicit lowercase conversation UUID")
+    if agent == "codex":
+        directory = Path(config_dir or os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+        if not any((directory / "sessions").glob("**/*" + identifier + ".jsonl")):
+            raise ValueError("conversation transcript not found; refusing to start a fresh conversation")
+        # Probe only: never create, truncate, unlink, or keep Codex's own lock.
+        # Codex re-acquires its native writer lock at startup, closing this race.
+        try:
+            with (directory / "thread-writer-locks" / (identifier + ".lock")).open("rb") as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise ValueError("conversation still has an active Codex writer; exit it before resuming") from None
+        except FileNotFoundError:
+            pass
+        return
     directory = Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     if not any((directory / "projects").glob("*/" + identifier + ".jsonl")):
         raise ValueError("conversation transcript not found; refusing to start a fresh conversation")
@@ -174,15 +189,18 @@ def launch(name):
         os.execvp("bash", ["bash", "--noprofile", "--norc", "-i"])
     command = [agent]
     conversation_lock = None
+    if record.get("resume"):
+        conversation_lock = resume_lock(record["resume"])
+        validate_resume(agent, record["resume"])
     if agent == "claude":
         command += ["--settings", json.dumps(hooks(name))]
         if record.get("resume"):
-            conversation_lock = resume_lock(record["resume"])
-            validate_resume(agent, record["resume"])
             command += ["--resume", record["resume"]]
     elif agent == "codex":
         command += ["--profile", codex_profile(name)]
         print("zmx status hooks require review in Codex /hooks before they can run.", flush=True)
+        if record.get("resume"):
+            command += ["resume", record["resume"]]
     # Never call sancta-session / sancta-reconnect or reconcile an old process.
     # Keep a real interactive shell with job control as the agent's parent.
     unlock = f"; exec {conversation_lock.fileno()}>&-" if conversation_lock else ""
@@ -249,7 +267,7 @@ def main():
     sub.add_argument("cwd")
     sub.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
     sub.add_argument("--port", type=int, required=True)
-    sub.add_argument("--resume", help="explicit Claude conversation UUID; source must be stopped")
+    sub.add_argument("--resume", help="explicit Claude or Codex conversation UUID; source must be stopped")
     sub.add_argument("--user-scope", action="store_true", help="start backend in an existing systemd user manager")
     sub = commands.add_parser("status")
     sub.add_argument("name")

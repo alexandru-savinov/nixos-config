@@ -213,7 +213,7 @@ def main():
     mode.add_argument("--pick", action="store_true", help="pick a live remote session and open a pane")
     parser.add_argument("--cwd", default="/var/lib/sancta")
     parser.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
-    parser.add_argument("--resume", help="explicit Claude conversation UUID; requires a stopped source")
+    parser.add_argument("--resume", help="explicit Claude or Codex conversation UUID; requires a stopped source")
     parser.add_argument("--user-scope", action="store_true", help="create backend outside the SSH service cgroup")
     parser.add_argument("--remote-bin", default="agt-zmx-host", help="host executable or built Nix store path")
     args = parser.parse_args()

@@ -208,16 +208,6 @@
 
           vigil = pkgs.callPackage ./pkgs/vigil.nix { };
 
-          agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
-            zmx = (if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64).zmx;
-          };
-
-          # Explicit PTY acceptance; keep terminal timing out of general checks.
-          agterm-zmx-tests = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix {
-            integration = true;
-            zmx = (if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64).zmx;
-          };
-
           # Declarative n8n VM test (#42). A package (not a check) so plain
           # `nix flake check` stays light — see the note in the checks
           # section. CI builds it in the "Build x86_64 Configs" job; run
@@ -257,6 +247,16 @@
               coreutils
             ];
             text = builtins.readFile ./scripts/bootstrap.sh;
+          };
+        } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          # This rollout targets choir only; do not expose untested ARM packages.
+          agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
+            zmx = pkgs-unstable-x86.zmx;
+          };
+          # Explicit PTY acceptance; keep terminal timing out of general checks.
+          agterm-zmx-tests = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix {
+            integration = true;
+            zmx = pkgs-unstable-x86.zmx;
           };
         });
 

@@ -1,5 +1,6 @@
 """Protocol and reconnect regressions; optional real-zmx PTY acceptance test."""
 import importlib.util
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,26 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_codex_resume_respects_native_writer_lock_without_mutating_it(self):
+        identifier = '11111111-2222-3333-4444-555555555555'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, 'transcript not found'):
+                host.validate_resume('codex', identifier, root)
+            (root / 'sessions').mkdir()
+            transcript = root / 'sessions' / ('rollout-test-' + identifier + '.jsonl')
+            transcript.write_text('private test sentinel')
+            (root / 'thread-writer-locks').mkdir()
+            path = root / 'thread-writer-locks' / (identifier + '.lock')
+            path.write_text('native lock sentinel')
+            with path.open('rb') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaisesRegex(ValueError, 'active Codex writer'):
+                    host.validate_resume('codex', identifier, root)
+            host.validate_resume('codex', identifier, root)
+            self.assertEqual(path.read_text(), 'native lock sentinel')
+            self.assertEqual(transcript.read_text(), 'private test sentinel')
+
     approval_screen = """Would you like to run the following command?
 Environment: local
 Reason: Do you approve running exactly sleep 2 outside the sandbox?
