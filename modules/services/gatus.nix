@@ -9,7 +9,8 @@ let
   optionalHttpAttrs = ep:
     optionalAttrs (ep.method != null) { inherit (ep) method; }
     // optionalAttrs (ep.body != null) { inherit (ep) body; }
-    // optionalAttrs (ep.headers != { }) { inherit (ep) headers; };
+    // optionalAttrs (ep.headers != { }) { inherit (ep) headers; }
+    // optionalAttrs (ep.client != null) { inherit (ep) client; };
 
   # Convert Nix endpoint definitions to Gatus attrset format
   # Note: 'enabled' is a Nix-only option for filtering, not a Gatus config field
@@ -25,13 +26,15 @@ let
     inherit (ep) name url conditions;
   } // optionalHttpAttrs ep
   // optionalAttrs (ep.store != { }) { inherit (ep) store; }
-  // optionalAttrs ep.always-run { always-run = true; };
+  // optionalAttrs ep.always-run { always-run = true; }
+  // optionalAttrs (ep.ui != { }) { inherit (ep) ui; };
 
   # Convert suite to Gatus attrset format
   suiteToYaml = suite: {
     inherit (suite) name group interval;
     endpoints = map suiteEndpointToYaml suite.endpoints;
-  } // optionalAttrs (suite.context != { }) { inherit (suite) context; };
+  } // optionalAttrs (suite.context != { }) { inherit (suite) context; }
+  // optionalAttrs (suite.timeout != null) { inherit (suite) timeout; };
 
   # Transform storage config - filter null values and set SQLite default path
   storageConfig =
@@ -120,6 +123,17 @@ let
         };
         default = { };
         description = "Endpoint diagnostic privacy settings.";
+      };
+
+      client = mkOption {
+        type = types.nullOr (types.submodule {
+          options.timeout = mkOption {
+            type = types.str;
+            description = "HTTP request timeout as a Gatus duration, e.g. 10s.";
+          };
+        });
+        default = null;
+        description = "Optional explicit request timeout.";
       };
 
       interval = mkOption {
@@ -229,6 +243,29 @@ let
         description = "HTTP headers to send.";
       };
 
+      ui = mkOption {
+        type = types.submodule {
+          options.dont-resolve-failed-conditions = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Keep failed conditions symbolic so response values are not stored in diagnostic results.";
+          };
+        };
+        default = { };
+        description = "Endpoint diagnostic privacy settings.";
+      };
+
+      client = mkOption {
+        type = types.nullOr (types.submodule {
+          options.timeout = mkOption {
+            type = types.str;
+            description = "HTTP request timeout as a Gatus duration, e.g. 10s.";
+          };
+        });
+        default = null;
+        description = "Optional explicit request timeout.";
+      };
+
       conditions = mkOption {
         type = types.listOf types.str;
         default = [ "[STATUS] == 200" ];
@@ -276,6 +313,12 @@ let
         type = types.str;
         default = "15m";
         description = "Interval between suite executions.";
+      };
+
+      timeout = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Suite timeout; also bound every request because pinned Gatus checks this between steps.";
       };
 
       context = mkOption {
