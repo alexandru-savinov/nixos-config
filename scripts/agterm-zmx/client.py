@@ -32,9 +32,12 @@ def agterm(arguments, input_text=None):
 
 
 def attach_argv(args):
-    return [sys.executable, str(Path(__file__).resolve()), "--host", args.host,
+    command = [sys.executable, str(Path(__file__).resolve()), "--host", args.host,
             "--user", args.user, "--name", args.name, "--cwd", args.cwd,
             "--agent", args.agent, "--remote-bin", args.remote_bin]
+    if getattr(args, "resume", None):
+        command += ["--resume", args.resume]
+    return command
 
 
 def remote_command(args, command):
@@ -76,6 +79,7 @@ def open_session(args, pick=False):
         selected = json.loads(selection.stdout)
         record = next(record for record in records if record["name"] == selected["id"])
         args.name, args.cwd, args.agent = record["name"], record["cwd"], record["agent"]
+        args.resume = record.get("resume")
     result = agterm(["session", "new", "--name", f"zmx / {args.name}",
                      "--workspace-name", "Remote zmx", "--create-workspace",
                      "--command", shlex.join(attach_argv(args)), "--wait", *selector])
@@ -133,7 +137,8 @@ def ssh_command(args, relay_path, port):
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{port}:{relay_path}",
             "--", args.host, remote_command(args, ["attach", args.name, args.cwd,
-                                                    "--agent", args.agent, "--port", str(port)])]
+                                                    "--agent", args.agent, "--port", str(port)]
+                                                    + (["--resume", args.resume] if getattr(args, "resume", None) else []))]
 
 
 def main():
@@ -146,6 +151,7 @@ def main():
     mode.add_argument("--pick", action="store_true", help="pick a live remote session and open a pane")
     parser.add_argument("--cwd", default="/var/lib/sancta")
     parser.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
+    parser.add_argument("--resume", help="explicit Claude conversation UUID; requires a stopped source")
     parser.add_argument("--remote-bin", default="agt-zmx-host", help="host executable or built Nix store path")
     args = parser.parse_args()
     if not args.pick and not args.name:

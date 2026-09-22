@@ -66,6 +66,7 @@ def inventory():
         session_name(name)
         record = json.loads(path.read_text())
         records.append({"name": name, "cwd": record["cwd"], "agent": record["agent"],
+                        "resume": record.get("resume"),
                         "alive": path.stem in live})
     return records
 
@@ -126,6 +127,40 @@ def codex_profile(name, directory=None):
     return identifier
 
 
+def validate_resume(agent, identifier, config_dir=None):
+    if agent != "claude" or not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", identifier):
+        raise ValueError("resume requires Claude and an explicit lowercase conversation UUID")
+    directory = Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    if not any((directory / "projects").glob("*/" + identifier + ".jsonl")):
+        raise ValueError("conversation transcript not found; refusing to start a fresh conversation")
+    # Inspect metadata only. Never read transcript contents or stop an old agent.
+    for path in (directory / "sessions").glob("*.json"):
+        record = json.loads(path.read_text())
+        if record.get("sessionId") != identifier:
+            continue
+        pid = int(record["pid"])
+        if pid <= 0:
+            raise ValueError("invalid conversation process metadata")
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        raise ValueError("conversation still has a live process; exit it cleanly before resuming")
+
+
+def resume_lock(identifier):
+    # Keep this descriptor in the agent's parent shell across exec. Serializes
+    # cooperating resume launches, including the gap before Claude writes metadata.
+    lock = (state_dir() / ("resume-" + identifier + ".lock")).open("a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        raise ValueError("another zmx launch owns this conversation") from None
+    os.set_inheritable(lock.fileno(), True)
+    return lock
+
+
 def launch(name):
     record = json.loads((state_dir() / (session_name(name) + ".json")).read_text())
     os.chdir(record["cwd"])
@@ -137,18 +172,24 @@ def launch(name):
     if agent == "shell":
         os.execvp("bash", ["bash", "--noprofile", "--norc", "-i"])
     command = [agent]
+    conversation_lock = None
     if agent == "claude":
         command += ["--settings", json.dumps(hooks(name))]
+        if record.get("resume"):
+            conversation_lock = resume_lock(record["resume"])
+            validate_resume(agent, record["resume"])
+            command += ["--resume", record["resume"]]
     elif agent == "codex":
         command += ["--profile", codex_profile(name)]
         print("zmx status hooks require review in Codex /hooks before they can run.", flush=True)
-    # A fresh conversation only. Never call sancta-session / sancta-reconnect.
+    # Never call sancta-session / sancta-reconnect or reconcile an old process.
     # Keep a real interactive shell with job control as the agent's parent.
-    line = shlex.join(command) + "; exec bash -l"
+    unlock = f"; exec {conversation_lock.fileno()}>&-" if conversation_lock else ""
+    line = shlex.join(command) + unlock + "; exec bash -l"
     os.execvp("bash", ["bash", "--noprofile", "--norc", "-ic", line])
 
 
-def attach(name, cwd, agent, port):
+def attach(name, cwd, agent, port, resume=None):
     qualified = session_name(name)
     cwd = str(Path(cwd).resolve(strict=True))
     if not Path(cwd).is_dir():
@@ -159,6 +200,8 @@ def attach(name, cwd, agent, port):
         raise ValueError("requested agent is not on PATH")
     directory = state_dir()
     record = {"cwd": cwd, "agent": agent}
+    if resume is not None:
+        record["resume"] = resume
     # An isolated socket namespace also prevents collisions with ordinary zmx use.
     environment = zmx_environment(directory)
     with (directory / (qualified + ".lock")).open("a") as lock:
@@ -172,6 +215,8 @@ def attach(name, cwd, agent, port):
             if qualified not in live.splitlines():
                 raise ValueError("session ended or host restarted; choose a new name for a fresh session")
         else:
+            if resume is not None:
+                validate_resume(agent, resume)
             write_json(path, record)
         write_json(directory / (qualified + ".route"), {"port": port})
     # runuser preserves the SSH caller's cwd (often /root). zmx initializes its
@@ -192,6 +237,7 @@ def main():
     sub.add_argument("cwd")
     sub.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
     sub.add_argument("--port", type=int, required=True)
+    sub.add_argument("--resume", help="explicit Claude conversation UUID; source must be stopped")
     sub = commands.add_parser("status")
     sub.add_argument("name")
     sub.add_argument("value", choices=sorted(STATES))
@@ -202,7 +248,7 @@ def main():
         if args.action == "attach":
             if not 1024 <= args.port <= 65535:
                 raise ValueError("invalid relay port")
-            attach(args.name, args.cwd, args.agent, args.port)
+            attach(args.name, args.cwd, args.agent, args.port, args.resume)
         elif args.action == "launch":
             launch(args.name)
         elif args.action == "status":

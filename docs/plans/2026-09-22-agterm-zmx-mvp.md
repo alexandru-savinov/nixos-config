@@ -269,8 +269,9 @@ Do not invoke `sancta-session` or `sancta-reconnect` merely to discover identity
 their documented reconciliation can stop an existing conversation. Before
 migration, identify the current conversation UUID without printing its contents,
 record the existing scope protections, and prepare an explicit same-conversation
-resume plus tmux fallback. The current fresh-session helper alone is insufficient
-for this handoff. No existing pane or process has been stopped.
+resume plus tmux fallback. Explicit Claude `--resume UUID` support is now prepared and requires an existing
+transcript plus a stopped source process. Live resume/fallback acceptance remains
+pending; helper support alone is insufficient for the handoff. No existing pane or process has been stopped.
 
 ### Native picker acceptance and review follow-up
 
@@ -289,3 +290,23 @@ Automated review found a duplicate unstable nixpkgs import in the package wiring
 The package now uses the existing architecture-specific binding. Both Linux
 package derivation evaluations pass, and the x86_64 derivation remains identical
 to the package tested above. No rebuild or redeployment is needed for that fix.
+
+### Explicit resume preparation
+
+`--resume UUID --agent claude` is preserved through the picker, SSH transport,
+and restore command. The host requires a matching transcript filename and checks
+Claude process metadata without reading transcript contents. A matching live PID
+causes refusal; the helper never stops the source. A per-conversation lock is
+inherited by the agent's parent shell and released when the agent exits, preventing
+concurrent cooperating helper launches. Independent manual Claude launches do not
+honor that lock, so the operator must still avoid concurrent writers.
+
+All 17 Mac tests passed, including refusal for a live conversation, absent
+transcript, lock inheritance and release through a real child shell, and identity
+transport. The production metadata schema was checked against the selected process.
+
+Read-only cgroup inspection confirmed both existing fresh agent pilots remain in
+`tailscaled.service`. SSH reconnect acceptance does not prove independence from a
+Tailscale service restart. Migration must place the new backend in a user-manager
+scope, preserving the selected tmux workflow's transport-independent lifetime;
+this remains a required pre-migration implementation and acceptance gate.

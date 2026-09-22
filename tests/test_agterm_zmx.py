@@ -31,6 +31,50 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_resume_requires_existing_transcript_and_stopped_process(self):
+        identifier = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "transcript not found"):
+                host.validate_resume("claude", identifier, root)
+            project = root / "projects" / "test"
+            project.mkdir(parents=True)
+            transcript = project / (identifier + ".jsonl")
+            transcript.write_text('private test sentinel, never parsed')
+            host.validate_resume("claude", identifier, root)
+            (root / "sessions").mkdir()
+            metadata = root / "sessions" / "test.json"
+            metadata.write_text(json.dumps({"sessionId": identifier, "pid": os.getpid()}))
+            with self.assertRaisesRegex(ValueError, "live process"):
+                host.validate_resume("claude", identifier, root)
+            with patch.object(host.os, "kill", side_effect=ProcessLookupError):
+                host.validate_resume("claude", identifier, root)
+            self.assertEqual(transcript.read_text(), 'private test sentinel, never parsed')
+            for agent, value in [("shell", identifier), ("codex", identifier), ("claude", "../../other")]:
+                with self.assertRaises(ValueError):
+                    host.validate_resume(agent, value, root)
+
+    def test_resume_lock_survives_parent_handoff_and_releases_after_exit(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
+            lock = host.resume_lock("test")
+            child = subprocess.Popen(["bash", "-c", "read -r value"], stdin=subprocess.PIPE,
+                                     pass_fds=(lock.fileno(),))
+            lock.close()
+            try:
+                with self.assertRaisesRegex(ValueError, "owns this conversation"):
+                    host.resume_lock("test")
+            finally:
+                child.communicate(b"exit\n", timeout=5)
+            host.resume_lock("test").close()
+
+    def test_resume_identity_survives_restore_and_ssh_transport(self):
+        from argparse import Namespace
+        args = Namespace(host="host", user="sancta", name="resume", agent="claude", cwd="/tmp",
+                         remote_bin="agt-zmx-host", resume="11111111-2222-3333-4444-555555555555")
+        self.assertEqual(client.attach_argv(args)[-2:], ["--resume", args.resume])
+        command = shlex.split(client.ssh_command(args, "/tmp/socket", 22222)[-1])
+        self.assertEqual(command[-2:], ["--resume", args.resume])
+
     def test_codex_profile_preserves_owner_files_and_requires_normal_hook_trust(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
