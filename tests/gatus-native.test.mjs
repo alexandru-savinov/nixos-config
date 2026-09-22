@@ -56,7 +56,7 @@ let output = '';
 let child;
 try {
   child = spawn(process.env.GATUS_BIN || 'gatus', [], {
-    cwd: directory, env: { PATH: process.env.PATH, HOME: directory,
+    cwd: directory, env: { PATH: process.env.PATH,
       GATUS_CONFIG_PATH: path.join(directory, 'config.json'), GATUS_LOG_LEVEL: 'WARN' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
