@@ -181,7 +181,7 @@ owner approval and must be recorded separately from these build-sandbox tests.
 | Phase 1: real SSH reconnect retains PID | Passed on choir; evidence below | Complete for the isolated shell |
 | Phase 2: real Claude events and Codex persistence | Both exact agent PIDs survive SSH reconnect; Claude real hooks and tool result accepted | Complete for the fresh pilots; migration is separate |
 | Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; native picker opened an attachment to the Claude pilot | Approved app restart acceptance |
-| Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Prepare exact conversation handoff and tmux fallback, then obtain interruption approval before migration |
+| Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Disposable same-conversation resume and tmux fallback accepted; finish restart gate and obtain interruption approval |
 | Phase 5: Codex status and cold recovery | Codex active/completed hooks accepted before and after real SSH reconnect; owner files preserved in tests | Human-dialog status, document and test cold recovery |
 
 Codex's bundled agterm integration treats `PermissionRequest` as an approval
@@ -310,3 +310,41 @@ Read-only cgroup inspection confirmed both existing fresh agent pilots remain in
 Tailscale service restart. Migration must place the new backend in a user-manager
 scope, preserving the selected tmux workflow's transport-independent lifetime;
 this remains a required pre-migration implementation and acceptance gate.
+
+### Scoped resume and tmux fallback accepted, 2026-09-22
+
+Commit `042a5621944e450548cf7dd7b8c2a1cf173c6a59` passed all 18 tests on Mac
+and Linux. Choir package:
+`/nix/store/q70v0xszgb65rq5hz9hqf96l9kgyx771-agterm-zmx-host-0.1.0`, rooted at
+`/root/agterm-zmx-pilot-042a562`.
+
+`--user-scope` creates the backend inside the existing systemd user manager.
+Reattachments use that backend directly, without creating another scope. The
+flag is preserved in inventory, picker selection, SSH arguments, and restore
+commands. Existing unscoped pilots retain their original contract; migration
+and new production launches must explicitly include `--user-scope`.
+
+The disposable Claude pilot exited, then resumed by exact conversation UUID in
+new agterm pane `7418166E-E444-4143-9C56-9FAF0913085E`, session name
+`claude-resume-pilot-20260922`. Its new PID 3384809 was confirmed in
+`/user.slice/user-993.slice/user@993.service/app.slice/agt-mvp-claude-resume-pilot-20260922.scope`.
+It recalled the prior acceptance marker without that marker appearing in the
+new prompt and reported `active → completed`. A concurrent resume attempt was
+refused before creating a second agent. SSH disconnect changed relay port
+32243 → 44169 while preserving both PID and independent cgroup.
+
+For the reverse handoff, injected `/exit` was interpreted as conversation input
+and injected EOF did not exit the agent. No successful clean CLI exit is claimed
+for that step. After confirming exact pilot identity and idle state, SIGTERM was
+sent only to PID 3384809; its exit was verified before any replacement started.
+The transcript remained in place. Isolated tmux session
+`agt-fallback-pilot-20260922` then resumed that exact conversation as PID 3386566,
+showed the prior history, and answered a new turn with
+`ZMX_TMUX_FALLBACK_ACCEPTED`. Session metadata confirmed the same UUID, and its
+cgroup is an independent tmux-spawn user scope. The fallback remains running.
+
+This proves disposable conversation preservation in both directions and recovery
+after an agent process ends. It does not prove a whole host reboot, agterm app
+restart, human approval-dialog status, or migration of the main conversation.
+The main Sancta PID 3270160 remained alive throughout. Production interruption
+still requires explicit owner approval; no such interruption was performed.
