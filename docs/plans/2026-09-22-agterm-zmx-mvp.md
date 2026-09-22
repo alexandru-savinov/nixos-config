@@ -348,3 +348,13 @@ after an agent process ends. It does not prove a whole host reboot, agterm app
 restart, human approval-dialog status, or migration of the main conversation.
 The main Sancta PID 3270160 remained alive throughout. Production interruption
 still requires explicit owner approval; no such interruption was performed.
+
+### Validation entry points
+
+Following review, general `checks.x86_64-linux.agterm-zmx` runs the protocol
+suite only. Full PTY persistence acceptance remains required for this rollout:
+`nix build .#packages.x86_64-linux.agterm-zmx-tests` on choir (or the matching
+architecture on another Linux host). The package runs the entire suite, including
+the real PTY reconnect test. This keeps terminal timing out of unrelated general
+flake checks without removing the integration test or treating it as optional
+rollout evidence. Mac validation still sets `AGT_ZMX_TEST_BINARY` explicitly.
