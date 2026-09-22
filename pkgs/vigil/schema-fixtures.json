@@ -325,5 +325,40 @@
     "name": "cmd-disponibil",
     "accept": false,
     "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"cmd\"\ntinta=[\"/bin/true\"]\npicat_dupa=2\nastept={disponibil=true}\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "vocabulary-family",
+    "accept": true,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndimension=\"availability\"\ndriver=\"family\"\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "vocabulary-odcs",
+    "accept": true,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndimension=\"timeliness\"\ndriver=\"operational\"\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "vocabulary-dimension-only",
+    "accept": true,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndimension=\"completeness\"\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "dimension-unknown",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndimension=\"latency\"\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "dimension-not-string",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndimension=true\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "driver-unknown",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndriver=\"marketing\"\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "driver-not-string",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndriver=1\n[spune]\nnivel=\"nota\"\n"
   }
 ]
