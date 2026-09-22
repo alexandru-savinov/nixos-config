@@ -1,5 +1,84 @@
 # Vigil post-deployment evidence
 
+## 2026-09-22 controlled gallery delivery acceptance
+
+The owner approved stopping only `sancta-gallery.service` for two scheduled
+failures, with a 12-minute automatic restore and earlier restoration after
+confirmed open delivery. A transient restore timer was armed before the stop
+at `2026-09-22T06:18:12Z`. No deployment or incident-state edit occurred.
+
+The first scheduled failed sample published at `06:19:49.034Z`, invocation
+`ad8db1785f11474e9ced28bd54f50689`. The second, invocation
+`69dbec0a5a1f4a5a9c229fdc9d6a2795`, published at `06:24:49.337Z`.
+Only `galeria` failed: eight other checks stayed green. The gallery incident
+opened at `06:24:48.997Z`, event
+`5eff99e3-ed24-4b78-899f-784845f78b7a`; Telegram API success was recorded,
+`openDelivered=true`, its queue drained, and `last-say-ok` updated at
+`06:24:49.309Z`.
+
+Gallery was started immediately after that confirmation. The immediate HTTP
+probe raced listener startup; a read-only retry verified HTTP 200 and active
+service at `06:25:15Z`. The automatic restore was left armed and later reported
+success. The first scheduled green sample, invocation
+`b4e77d566c174ae293332101b654e83c`, published at `06:29:49.073Z`.
+Its recovery start was `06:29:49.051Z`; the unchanged 30-minute hold-down made
+close eligible no earlier than `06:59:49.051Z`. Subsequent scheduled checks
+remained green while the incident correctly stayed open.
+
+The scheduled close invocation `4bb25d997ae14e83829d9986066e70a3`
+published at `2026-09-22T07:00:13.627Z`, with all nine individual checks
+`verde`, exit 0, and zero open incidents, notas, or queued events. The close
+event was `9c1e8194-a513-4295-a335-b35e8b1bde5d`, recorded at
+`07:00:13.323Z`; `last-say-ok` updated at `07:00:13.604Z` and the genuine
+channel probe at `07:00:13.607Z`. Gallery, Vigil timer, and tick socket were
+active. No hold-down was shortened and no incident state was cleared manually.
+
+rpi5 remained seven green on invocation `6ee9ea0fa23444959e2cbdf3d015d336`
+at `06:58:50.538Z`. Both existing Gatus Vigil summaries were green on their
+07:00 UTC polls. PR #600 CI was subsequently verified fully green.
+
+This confirms the controlled production open/recovery/close flow and Telegram
+API success for both transitions. Owner confirmation of exactly one visible
+open and one visible close in Telegram is still pending; API success is not a
+read receipt. Production acknowledgement acceptance still awaits a natural
+NECITIT nota. This deliberate test does not establish the first real incident
+date. Private Home Assistant conditions remain deferred.
+
+## 2026-09-21 choir Telegram activation (18:52 UTC)
+
+The disk incident closed naturally on scheduled run
+`e8f6ada77c98404194d8efff669822fd` at `2026-09-21T18:50:49.295Z`.
+All eight checks were green, and both open-incident and nota counts were zero.
+This completes the row-only recovery gate without manual state edits.
+
+PR #600 merged as `bd63ac64ffe7fccc971c98f3918ab6f202f2f77b`. The owner
+approved the single-secret re-key and explicitly approved the production
+switch after being informed that the unrelated CI n8n VM test was still
+running. The local choir build, module evaluation, public contract bundle,
+recipient guard, and formatting checks had passed. CI is not claimed fully
+green at deployment time; its remaining x86_64 job was still in progress.
+
+A clean detached checkout built successfully with `--max-jobs 1 --cores 1`
+before switch, using the same throttle for activation. Only the three Vigil
+unit files differed from the running units in the pre-switch comparison.
+The switch exited 0 and activated:
+`/nix/store/3cb38jijf482vx7m9fyqzd37x0w4gzvb-nixos-system-sancta-choir-25.11.20260318.fea3b36`.
+
+The documented post-deployment checker was started once. Complete invocation
+`24e4cced1ede42e8be77606827cd2e64` published `2026-09-21T18:52:20.036Z`:
+**9 verde, 0 picat, 0 NECITIT**, exit 0. All nine individual contracts,
+including `channel`, were green. The real channel probe created
+`last-channel-ok` at `18:52:19.764Z` and `last-chataction` at `18:52:19.768Z`.
+The credential remained root:root mode 0400; markers were vigil:vigil mode
+0600. No success marker was fabricated. Open-incident and nota counts were
+both zero; timer and socket remained active, as did gallery, worker, and
+membrane. Root usage remained 62%, with about 28 GiB available.
+
+This confirms deployed channel activation. Controlled gallery interruption,
+exactly-one Telegram open/close acceptance, production acknowledgement
+acceptance, and the first real incident date remain pending. Private Home
+Assistant conditions remain deferred. Do not move this checklist to completed.
+
 ## 2026-09-21 choir approved storage recovery (18:15 UTC)
 
 The owner explicitly approved removal of five reviewed build-result symlinks,
