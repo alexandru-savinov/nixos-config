@@ -183,6 +183,21 @@ test('Home Assistant token reads share the network check deadline', async t => {
   assert.equal(budget, 6000);
 });
 
+test('Home Assistant disponibil: any real state is verde, unavailable/unknown is picat, never a usage log', async () => {
+  const c = { verifica: 'hass-state', tinta: 'sensor.fixture', astept: { disponibil: true } };
+  const options = { env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' }, fs: { readFile: async () => 'fixture-token\n' } };
+  for (const [body, expected, reason] of [
+    ['{"state":"docked"}', 'verde', 'ok'], ['{"state":"cleaning"}', 'verde', 'ok'], ['{"state":"returning"}', 'verde', 'ok'],
+    ['{"state":"unavailable"}', 'picat', 'hass-unavailable'], ['{"state":"unknown"}', 'picat', 'hass-unavailable'],
+    ['{"state":""}', 'NECITIT', 'hass-state'], ['{"state":3}', 'NECITIT', 'hass-state'], ['{}', 'NECITIT', 'hass-state'],
+  ]) {
+    const result = await check(c, { ...options, request: async () => ({ status: 200, body }) });
+    assert.equal(result.verdict, expected, body);
+    assert.equal(result.motiv, reason, body);
+    assert.doesNotMatch(JSON.stringify(result), /docked|cleaning|returning|fixture|token/);
+  }
+});
+
 test('Home Assistant authentication and malformed states never expose private data', async () => {
   const c = { verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } };
   const options = { env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' }, fs: { readFile: async () => 'fixture-token\n' } };

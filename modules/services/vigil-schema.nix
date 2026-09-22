@@ -113,7 +113,14 @@ let
     && keys expectation [ "status" "body" "prospetime" ] [ "status" ] && integer expectation.status 100 599
     && (!(expectation ? body) || text expectation.body)
     && (!(expectation ? prospetime) || duration expectation.prospetime)
-    else if builtins.elem kind [ "cmd" "hass-state" ] then keys expectation [ "valoare" ] [ "valoare" ] && text expectation.valoare
+    else if kind == "cmd" then keys expectation [ "valoare" ] [ "valoare" ] && text expectation.valoare
+    # hass-state: exactly one of `valoare` (state equality) or `disponibil = true`
+    # (state is not unavailable/unknown). Mirrors lib/schema.mjs; the fixtures
+    # in pkgs/vigil/schema-fixtures.json hold both sides to the same answers.
+    else if kind == "hass-state" then keys expectation [ "valoare" "disponibil" ] [ ]
+    && ((expectation ? valoare) != (expectation ? disponibil))
+    && (!(expectation ? valoare) || text expectation.valoare)
+    && (!(expectation ? disponibil) || expectation.disponibil == true)
     else !(c ? astept))
     && (if kind == "age" then (absolute target || matches "unit:[a-zA-Z0-9@_.:-]+\\.service" target) && duration (c.prag or null)
     else if kind == "disk" then absolute target && integer (c.prag or null) 1 100 else !(c ? prag))
