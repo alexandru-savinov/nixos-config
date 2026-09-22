@@ -139,6 +139,11 @@ def attach(name, cwd, agent, port):
         else:
             write_json(path, record)
         write_json(directory / (qualified + ".route"), {"port": port})
+    # runuser preserves the SSH caller's cwd (often /root). zmx initializes its
+    # daemon there before our launch callback runs; an unprivileged daemon cannot
+    # enter /root. Establish the requested directory for the backend itself.
+    os.chdir(cwd)
+    environment["PWD"] = cwd
     os.execvpe("zmx", ["zmx", "attach", qualified, sys.executable,
                        str(Path(__file__).resolve()), "launch", name], environment)
 

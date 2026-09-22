@@ -30,6 +30,22 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_backend_starts_in_requested_directory_not_ssh_callers_directory(self):
+        original = Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requested = root / "project"
+            requested.mkdir()
+            try:
+                with patch.dict(os.environ, {"AGT_ZMX_STATE": str(root / "state"), "PWD": "/root"}), \
+                        patch.object(host.shutil, "which", return_value="/bin/tool"), \
+                        patch.object(host.os, "execvpe") as execute:
+                    host.attach("cwd-test", str(requested), "shell", 22222)
+                    self.assertEqual(Path.cwd(), requested.resolve())
+                    self.assertEqual(execute.call_args[0][2]["PWD"], str(requested.resolve()))
+            finally:
+                os.chdir(original)
+
     def test_picker_lists_live_sessions_only(self):
         self.assertEqual(client.picker_items([
             {"name": "gone", "cwd": "/tmp", "agent": "shell", "alive": False},
