@@ -217,7 +217,7 @@ def attach(name, cwd, agent, port, resume=None, user_scope=False):
             # A lost daemon is not a live conversation. Do not silently restart it.
             live = subprocess.check_output(["zmx", "list", "--short"], env=environment, text=True)
             if qualified not in live.splitlines():
-                raise ValueError("session ended or host restarted; choose a new name for a fresh session")
+                raise ValueError("session ended or host restarted; preserve this record and use a new name; resume a saved agent conversation explicitly")
         else:
             if resume is not None:
                 validate_resume(agent, resume)

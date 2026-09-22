@@ -358,3 +358,24 @@ architecture on another Linux host). The package runs the entire suite, includin
 the real PTY reconnect test. This keeps terminal timing out of unrelated general
 flake checks without removing the integration test or treating it as optional
 rollout evidence. Mac validation still sets `AGT_ZMX_TEST_BINARY` explicitly.
+
+### Recovery refusal and restart attempt
+
+The missing-daemon diagnostic now directs the operator to preserve the old record
+and explicitly resume a saved conversation under a new backend name. A regression
+verifies that no exec occurs and neither record nor route is overwritten. All 19
+Mac tests passed. See [the recovery guide](../agterm-zmx-recovery.md) for supported
+paths and the remaining integrated Codex recovery gap.
+
+The owner approved a clean agterm restart, including effects on five other local
+sessions. Immediately before the attempt, agterm PID was 3252, active/configured
+restore mode was rerun, and three open pilot panes had pinned restore commands.
+Remote baseline: shell 3369559, Codex status pilot 3376847, disposable tmux Claude
+3386566, and main Sancta Claude 3270160. The Codex route port was 45137.
+
+A detached supervisor sent an AppleScript clean-quit request at 17:58:08 UTC. It
+timed out, then verified agterm still running and stopped without force-killing
+or reopening it. A PID-addressed normal macOS quit request is being investigated;
+no app-restart acceptance follows from a request alone. The permission/confirmation
+UI question is pending. The restart approval remains valid; do not request the
+same approval again solely because this attempt failed.

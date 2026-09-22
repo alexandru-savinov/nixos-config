@@ -31,6 +31,23 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_lost_daemon_never_relaunches_or_overwrites_recovery_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = root / "agt-mvp-ended.json"
+            route = root / "agt-mvp-ended.route"
+            record.write_text(json.dumps({"cwd": str(root.resolve()), "agent": "claude"}))
+            route.write_text('{"port": 22222}')
+            original = record.read_bytes(), route.read_bytes()
+            with patch.dict(os.environ, {"AGT_ZMX_STATE": directory}), \
+                    patch.object(host.shutil, "which", return_value="/bin/tool"), \
+                    patch.object(host.subprocess, "check_output", return_value=""), \
+                    patch.object(host.os, "execvpe") as execute:
+                with self.assertRaisesRegex(ValueError, "preserve this record"):
+                    host.attach("ended", directory, "claude", 33333)
+                execute.assert_not_called()
+            self.assertEqual((record.read_bytes(), route.read_bytes()), original)
+
     def test_scope_wraps_backend_creation_but_not_reattachment(self):
         original = Path.cwd()
         with tempfile.TemporaryDirectory() as directory:
