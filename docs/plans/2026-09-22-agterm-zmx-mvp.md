@@ -118,8 +118,12 @@ An empty `--user ''` uses the SSH account directly on other hosts.
 5. Reattach this trial and repeat a turn to prove the updated relay destination
    works. A diagnostic `agt-zmx-host status` invocation exercises transport only;
    it is not acceptance of Claude lifecycle hooks.
-6. `--agent codex` starts a fresh persistent Codex session, but **automatic Codex
-   lifecycle status is not implemented** in this MVP.
+6. `--agent codex` starts a fresh persistent Codex session. The expanded rollout
+   generates an additional content-addressed profile containing lifecycle hooks;
+   existing config and authentication files are preserved. Review these hooks in
+   Codex `/hooks` before expecting them to run. Live Codex hook acceptance remains
+   pending. `PermissionRequest` is not mapped to blocked because it can precede
+   automatic review; accurate human-dialog detection is still outstanding.
 
 Existing authentication is used. If unavailable, stop and arrange interactive
 login separately; this tool never reads, copies, or creates credentials. No prompt
@@ -174,14 +178,57 @@ owner approval and must be recorded separately from these build-sandbox tests.
 
 | Requirement | Evidence | Remaining gate |
 |---|---|---|
-| Phase 1: real SSH reconnect retains PID | Same-PID PTY tests pass on Mac and Linux | Approved real choir SSH pilot |
-| Phase 2: real Claude events and Codex persistence | Claude launch-scoped hooks implemented; relay tested | Agent login, real events, correct-pane and reconnect acceptance |
-| Phase 3: picker, pane launch, app restoration | Implemented; 12 Mac tests pass including cancellation and stable-pane restore targeting | Linux rebuild and live UI/restart acceptance |
-| Phase 4: selected tmux workflows migrated | No existing workflow changed | Select conversations, checkpoint, approve interruption, migrate, test fallback |
-| Phase 5: Codex status and cold recovery | Installed Codex 0.154.0 and official hook docs inspected | Implement and verify status; document and test recovery |
+| Phase 1: real SSH reconnect retains PID | Passed on choir; evidence below | Complete for the isolated shell |
+| Phase 2: real Claude events and Codex persistence | Both exact agent PIDs survive SSH reconnect; Claude real hooks and tool result accepted | Complete for the fresh pilots; migration is separate |
+| Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; picker/targeting tests pass on Mac and Linux | Live picker and approved app restart acceptance |
+| Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Prepare exact conversation handoff and tmux fallback, then obtain interruption approval before migration |
+| Phase 5: Codex status and cold recovery | Codex launch-specific lifecycle profile prepared and preservation tested | Trust/verify real hooks, human-dialog status, document and test recovery |
 
 Codex's bundled agterm integration treats `PermissionRequest` as an approval
 candidate: automatic review can resolve it without showing a human dialog.
 Blindly mapping that event to blocked would fail the accurate-status goal.
 Codex hooks must also be reviewed/trusted through its supported hook flow; the
 rollout must not bypass hook trust or sandbox/approval controls to make tests pass.
+
+## Approved live pilot evidence, 2026-09-22
+
+The owner explicitly approved isolated shell/Claude/Codex pilots without a system
+switch or interruption of existing sessions. The pilot runs under `sancta`, using
+existing credentials; no credential contents were printed or copied.
+
+An initial live-only failure identified `runuser` retaining `/root` as cwd. zmx
+tried to initialize its unprivileged daemon there before the Python launch
+callback changed directory. Commit `fcce3adacfad3b99e922fc518ef4a43252cde523`
+changes cwd/PWD before starting zmx and adds a regression test. All 13 tests at
+that commit passed on both Mac zmx 0.7.0 and Linux zmx 0.8.0.
+
+Accepted package:
+`/nix/store/a7bn521q6yd39bmxqv3gd2p9wg2sh78g-agterm-zmx-host-0.1.0`.
+GC roots are `/root/agterm-zmx-pilot-fcce3ad` and its second build output. Earlier
+pilot build roots are retained; no unrelated results were removed.
+
+| Pilot | Agterm session | Process evidence | Reconnect evidence |
+|---|---|---|---|
+| shell-pilot2-20260922 | C34418C2-9B68-41D5-A715-864B17F297D5 | Shell PID 3369559 before and after | SSH reverse-forward port changed 54456 → 39770 |
+| claude-pilot-20260922 | 27F36884-3C11-4CA9-9F10-C801274F8010 | Claude PID 3370919 survived; started 20:03:47 host time | Port changed 42703 → 35643 |
+| codex-pilot-20260922 | 2AC219F0-F345-4AA4-86E0-5B94C799267E | Codex PID 3371278 survived; started 20:04:19 host time | Port changed 21724 → 40854 |
+
+Only the pilot SSH clients were disconnected, using SSH's escape sequence. No
+tailscaled, sshd, worker, or existing tmux session was restarted. Each client
+reconnected automatically. Both agents returned their prescribed no-tools
+acceptance response. Claude showed real `active → completed` transitions in its
+own pane. After reconnect, another turn executed exactly `sleep 2` once and
+returned its prescribed response; transcript inspection emitted only the count
+of that exact tool invocation and matching successful result (one each).
+
+The long second Claude test prompt initially remained a draft when text and
+Return were injected together. A separately delivered Return submitted it and
+the hook-driven status reached completed. Automated future probes should verify
+the draft and submit Return separately; process survival alone is not proof that
+a new turn was accepted.
+
+The failed first shell pilot pane is
+`264B7B5F-F31D-4161-B895-507ACBF52661`; its daemon is gone. Its record and the
+`shell-debug-20260922` record are retained as failed-pilot evidence. The picker
+excludes both because they are not live. No claim of Codex automatic status,
+agterm app-restart acceptance, or tmux migration follows from these tests.

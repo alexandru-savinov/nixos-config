@@ -2,6 +2,7 @@
 """Remote zmx MVP. No global hooks, credentials, or existing session mutations."""
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -94,6 +95,37 @@ def hooks(name):
     return {"hooks": result}
 
 
+def codex_profile_text(name):
+    # A separate active profile adds hooks without rewriting user config/auth.
+    # PermissionRequest is deliberately absent: it precedes automatic review,
+    # and does not prove that a human approval dialog is actually visible.
+    lines = ["# Generated launch-specific zmx lifecycle hooks. Review with /hooks.", "[hooks]"]
+    for event, value in [("SessionStart", "idle"), ("UserPromptSubmit", "active"),
+                         ("PreToolUse", "active"), ("PostToolUse", "active"),
+                         ("Stop", "completed"), ("Interrupt", "idle"), ("SessionEnd", "idle")]:
+        command = shlex.join([sys.executable, str(Path(__file__).resolve()), "status", name, value])
+        lines.append(event + ' = [{ hooks = [{ type = "command", command = '
+                     + json.dumps(command) + ', timeout = 2 }] }]')
+    return "\n".join(lines) + "\n"
+
+
+def codex_profile(name, directory=None):
+    content = codex_profile_text(name)
+    identifier = "agt-zmx-" + hashlib.sha256(content.encode()).hexdigest()[:16]
+    directory = Path(directory) if directory is not None else Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / (identifier + ".config.toml")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        if path.is_symlink() or path.read_text() != content:
+            raise ValueError("Codex profile name already exists with different content")
+    else:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(content)
+    return identifier
+
+
 def launch(name):
     record = json.loads((state_dir() / (session_name(name) + ".json")).read_text())
     os.chdir(record["cwd"])
@@ -107,6 +139,9 @@ def launch(name):
     command = [agent]
     if agent == "claude":
         command += ["--settings", json.dumps(hooks(name))]
+    elif agent == "codex":
+        command += ["--profile", codex_profile(name)]
+        print("zmx status hooks require review in Codex /hooks before they can run.", flush=True)
     # A fresh conversation only. Never call sancta-session / sancta-reconnect.
     # Keep a real interactive shell with job control as the agent's parent.
     line = shlex.join(command) + "; exec bash -l"

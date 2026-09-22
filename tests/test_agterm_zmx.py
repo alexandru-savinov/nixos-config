@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -30,6 +31,26 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_codex_profile_preserves_owner_files_and_requires_normal_hook_trust(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.toml").write_text('# owner configuration\n')
+            (root / "auth.json").write_text('test credential sentinel')
+            identifier = host.codex_profile("codex-test", root)
+            path = root / (identifier + ".config.toml")
+            parsed = tomllib.loads(path.read_text())
+            self.assertIn("Stop", parsed["hooks"])
+            self.assertNotIn("PermissionRequest", parsed["hooks"])
+            self.assertNotIn("dangerously", path.read_text())
+            self.assertEqual(host.codex_profile("codex-test", root), identifier)
+            self.assertEqual((root / "config.toml").read_text(), '# owner configuration\n')
+            self.assertEqual((root / "auth.json").read_text(), 'test credential sentinel')
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            path.write_text('# owner edit\n')
+            with self.assertRaises(ValueError):
+                host.codex_profile("codex-test", root)
+            self.assertEqual(path.read_text(), '# owner edit\n')
+
     def test_backend_starts_in_requested_directory_not_ssh_callers_directory(self):
         original = Path.cwd()
         with tempfile.TemporaryDirectory() as directory:
