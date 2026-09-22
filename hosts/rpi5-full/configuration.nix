@@ -29,6 +29,14 @@ let
     conditions = [ "[STATUS] == 200" ];
   };
 
+  # Native body checks keep failure values out of Gatus history. Vigil's
+  # allowlisted diagnostic rows continue to resolve their safe fixed text.
+  nativeHttpEndpoint = group: name: url: conditions:
+    (httpEndpoint group name url) // {
+      conditions = [ "[STATUS] == 200" ] ++ conditions;
+      ui.dont-resolve-failed-conditions = true;
+    };
+
   remoteHttpEndpoint = group: name: url: {
     inherit name group url;
     interval = "1m";
@@ -351,14 +359,25 @@ in
       };
       # rpi5 local services (this host)
       # rpi5-open-webui = httpEndpoint "rpi5" "Open-WebUI" "http://127.0.0.1:8080/health";
-      rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";
-      rpi5-anki-workflow = httpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui";
-      rpi5-nixframe = httpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui";
+      rpi5-n8n = nativeHttpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz" [ "[BODY].status == ok" ];
+      rpi5-n8n-readiness = nativeHttpEndpoint "rpi5" "n8n readiness" "http://127.0.0.1:5678/healthz/readiness" [ "[BODY].status == ok" ];
+      # UI availability only: these GETs do not execute an upload or generation.
+      rpi5-anki-workflow = nativeHttpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui" [
+        "[BODY] == pat(*<title>Image to Anki Deck</title>*)"
+        ''[BODY] == pat(*<input type="file" id="fileInput"*)''
+      ];
+      rpi5-nixframe = nativeHttpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui" [
+        "[BODY] == pat(*<title>NixFrame Upload</title>*)"
+        ''[BODY] == pat(*<input type="file" id="fileInput"*)''
+      ];
       # Authenticated HA health check — Bearer token is the LLAT, expanded by
       # Gatus from GATUS_API_KEY at runtime (never rendered into the nix store).
-      rpi5-home-assistant = (httpEndpoint "rpi5" "Home Assistant" "http://127.0.0.1:8123/api/") // {
+      rpi5-home-assistant = (nativeHttpEndpoint "rpi5" "Home Assistant" "http://127.0.0.1:8123/api/" [ "[BODY].message == API running." ]) // {
         headers = { Authorization = "Bearer \${GATUS_API_KEY}"; };
       };
+      rpi5-home-assistant-https = nativeHttpEndpoint "rpi5" "Home Assistant HTTPS" "https://rpi5.tail4249a9.ts.net:8123/manifest.json" [
+        "[BODY].name == Home Assistant"
+      ];
       # rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
       rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 
@@ -371,7 +390,10 @@ in
         conditions = [
           "[STATUS] == 200"
           "[RESPONSE_TIME] < 3000"
+          "len([BODY].data) > 0"
+          "has([BODY].data[0].id) == true"
         ];
+        ui.dont-resolve-failed-conditions = true;
       };
     };
 
