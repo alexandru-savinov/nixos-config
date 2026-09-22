@@ -6,6 +6,26 @@ shell under `sancta`, reached through the existing `root@sancta-choir-1` SSH tar
 The existing `sancta-session`, `sancta-reconnect`, tmux sessions, worker, credentials,
 and global agent settings are not invoked or modified by the MVP.
 
+## Goal and phases
+
+Run Claude Code and Codex in persistent remote zmx sessions, with agterm providing
+the panes and reliable status routing. Adopt it gradually without losing existing
+conversations or interrupting production services.
+
+1. **Prove persistence.** An isolated choir shell keeps the same PID through a
+   real SSH disconnect and reattach. Automated PTY tests establish the process
+   mechanism; live SSH acceptance establishes the complete connection path.
+2. **Prove agent integration.** A fresh Claude session survives reconnect and its
+   actual lifecycle events reach only its owning pane. Verify Codex persistence
+   separately, with no claim of automatic Codex status. Phases 1-2 are this MVP.
+3. **Make it convenient.** Add a session picker, pane launch and tested restoration
+   after restarting agterm. Do not change the app's global restore mode implicitly.
+4. **Migrate deliberately.** Move selected workflows after acceptance, preserving
+   conversations and a usable tmux fallback. Migration is separately approved.
+5. **Complete both-agent support.** Add verified Codex status reporting and a
+   documented recovery path after host reboot or daemon loss. Process survival
+   and restarting a saved conversation remain distinct outcomes.
+
 ## Components
 
 - `scripts/agterm-zmx/client.py`: run in an existing agterm pane. Opens a restricted
@@ -106,6 +126,18 @@ is automatically sent to either agent, and permission checks remain enabled.
 
 ## Rollout status
 
-Implementation and isolated acceptance are tracked in the PR. No production
-switch, existing session interruption, or global hook installation is implied by
-these tests. Live choir SSH and real-agent acceptance must be recorded separately.
+Draft PR: https://github.com/alexandru-savinov/nixos-config/pull/609
+
+At implementation commit `0218b06dac94518b366c002cf507659e2bf912af`:
+
+- All eight tests passed on macOS with bundled zmx 0.7.0.
+- The package built on choir with `--max-jobs 1 --cores 1`, and all eight Nix
+  acceptance tests passed there with Linux zmx 0.8.0, inside the build sandbox.
+- Formatting and package evaluation passed. No flake lock changed.
+- Built pilot executable:
+  `/nix/store/96nsymrqyx6bfvfyhv3hqq0xmkafwmh9-agterm-zmx-host-0.1.0/bin/agt-zmx-host`.
+  The build used `--no-link`; establish a GC root before a live pilot.
+
+No production switch, existing session interruption, global hook installation,
+or agent launch occurred. Live choir SSH and real-agent acceptance remain pending
+owner approval and must be recorded separately from these build-sandbox tests.
