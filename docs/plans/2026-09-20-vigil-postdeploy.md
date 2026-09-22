@@ -38,9 +38,11 @@ at `06:58:50.538Z`. Both existing Gatus Vigil summaries were green on their
 07:00 UTC polls. PR #600 CI was subsequently verified fully green.
 
 This confirms the controlled production open/recovery/close flow and Telegram
-API success for both transitions. Owner confirmation of exactly one visible
-open and one visible close in Telegram is still pending; API success is not a
-read receipt. Production acknowledgement acceptance still awaits a natural
+API success for both transitions. The owner confirmed exactly one open in
+Telegram and supplied both received messages, matching the recorded open
+`2026-09-22T06:24:48.997Z` and close `2026-09-22T07:00:13.323Z`. This
+confirms receipt of both transitions; the close-message duplicate count was
+not separately stated. Production acknowledgement acceptance still awaits a natural
 NECITIT nota. This deliberate test does not establish the first real incident
 date. Private Home Assistant conditions remain deferred.
 
