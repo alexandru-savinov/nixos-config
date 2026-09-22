@@ -300,5 +300,30 @@
     "name": "tcp-port-overflow",
     "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"tcp\"\ntinta=\"host:9999999999999999999999999999999999999999\"\npicat_dupa=2\n[spune]\nnivel=\"nota\"\n",
     "accept": false
+  },
+  {
+    "name": "hass-disponibil",
+    "accept": true,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"sensor.fixture\"\npicat_dupa=2\nastept={disponibil=true}\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "hass-disponibil-false",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"sensor.fixture\"\npicat_dupa=2\nastept={disponibil=false}\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "hass-disponibil-and-valoare",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"sensor.fixture\"\npicat_dupa=2\nastept={disponibil=true,valoare=\"ready\"}\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "hass-disponibil-string",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"sensor.fixture\"\npicat_dupa=2\nastept={disponibil=\"true\"}\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "cmd-disponibil",
+    "accept": false,
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"cmd\"\ntinta=[\"/bin/true\"]\npicat_dupa=2\nastept={disponibil=true}\n[spune]\nnivel=\"nota\"\n"
   }
 ]

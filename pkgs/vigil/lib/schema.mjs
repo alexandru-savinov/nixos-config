@@ -48,9 +48,20 @@ export function validate(document) {
       try { new RegExp(c.astept.body); } catch { fail(); }
     }
     if (c.astept.prospetime !== undefined) duration(c.astept.prospetime);
-  } else if (['cmd', 'hass-state'].includes(c.verifica)) {
+  } else if (c.verifica === 'cmd') {
     keys(c.astept, ['valoare'], ['valoare']);
     if (!text(c.astept.valoare)) fail();
+  } else if (c.verifica === 'hass-state') {
+    // Exactly one expectation. `disponibil = true` means "the entity is not
+    // unavailable/unknown" and is the ONLY safe shape for a device whose state
+    // legitimately cycles (docked → cleaning → returning): a fixed `valoare`
+    // would open an incident on every use, i.e. a usage log of the household
+    // delivered to Telegram. Only `true` is accepted; `false` is meaningless.
+    keys(c.astept, ['valoare', 'disponibil'], []);
+    const hasValoare = c.astept.valoare !== undefined, hasDisponibil = c.astept.disponibil !== undefined;
+    if (hasValoare === hasDisponibil) fail();
+    if (hasValoare && !text(c.astept.valoare)) fail();
+    if (hasDisponibil && c.astept.disponibil !== true) fail();
   } else if (c.astept !== undefined) fail();
   if ((tailnetAddress(host) || host.toLowerCase().startsWith('fd7a:115c:a1e0:')) && c.peer !== true) fail();
   if (c.verifica === 'age') {
