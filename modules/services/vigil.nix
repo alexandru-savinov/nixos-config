@@ -28,6 +28,7 @@ let
     VIGIL_BIN = "${package}/bin/vigil";
     VIGIL_SYSTEMCTL = "${pkgs.systemd}/bin/systemctl";
     VIGIL_CMD_ALLOW = builtins.toJSON cfg.cmdAllow;
+    VIGIL_PUBLIC_NAMES = builtins.toJSON names;
     VIGIL_SAY = if cfg.telegramEnvFile == null then "0" else "1";
     HASS_URL = if cfg.hassUrl == null then "" else cfg.hassUrl;
     VIGIL_HASS_TOKEN_FILE = if cfg.hassTokenFile == null then "" else toString cfg.hassTokenFile;
@@ -130,7 +131,10 @@ in
     };
     systemd.services."vigil-tick@" = {
       description = "Vigil freshness response";
-      environment.STATE_DIRECTORY = "/var/lib/vigil";
+      environment = {
+        STATE_DIRECTORY = "/var/lib/vigil";
+        VIGIL_PUBLIC_NAMES = builtins.toJSON names;
+      };
       serviceConfig = sandbox // {
         # The responder reads published status only, never checker credentials.
         InaccessiblePaths = lib.unique ([ "-/run/agenix" "-/run/agenix.d" ]

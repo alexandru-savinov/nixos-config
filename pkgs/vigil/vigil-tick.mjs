@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { dashboardCheck } from './lib/dashboard.mjs';
 import { pathToFileURL } from 'node:url';
 import { atomicWrite, stateRoot, statePath, validTime } from './lib/common.mjs';
 
@@ -37,11 +38,12 @@ export function publish(env = process.env) {
   return true;
 }
 
-export function response(root, method = 'GET', target = '/', now = Date.now()) {
+export function response(root, method = 'GET', target = '/', now = Date.now(), env = process.env) {
   let status;
   let body;
+  const checkName = /^\/checks\/([a-z0-9][a-z0-9-]{0,63})$/.exec(target)?.[1];
   if (!['GET', 'HEAD'].includes(method)) { status = '405 Method Not Allowed'; body = 'method-not-allowed\n'; }
-  else if (!['/', '/status'].includes(target)) { status = '404 Not Found'; body = 'not-found\n'; }
+  else if (!['/', '/status'].includes(target) && !checkName) { status = '404 Not Found'; body = 'not-found\n'; }
   else {
     try {
       const counts = readCounts(statePath(root, 'tick'));
@@ -55,7 +57,11 @@ export function response(root, method = 'GET', target = '/', now = Date.now()) {
           counts.stare = age >= 0 && age < 900000 && row.la === counts.la
             && ['verde', 'picat', 'NECITIT'].includes(row.stare) ? row.stare : 'NECITIT';
         }
-        body = `${JSON.stringify(counts)}\n`;
+        if (checkName) {
+          const check = dashboardCheck(root, checkName, counts, now, env);
+          if (!check) { status = '404 Not Found'; body = 'check-absent\n'; }
+          else body = `${JSON.stringify(check)}\n`;
+        } else body = `${JSON.stringify(counts)}\n`;
       }
     } catch {
       status = '503 Service Unavailable';
@@ -90,7 +96,7 @@ export function serve({ input = process.stdin, output = process.stdout, env = pr
       if (end === -1) return;
       const firstLine = /^([A-Z]+) (\S+) HTTP\/1\.[01]\r\n/.exec(header);
       if (!firstLine) { bad(); return; }
-      finish(response(root, firstLine[1], firstLine[2]));
+      finish(response(root, firstLine[1], firstLine[2], Date.now(), env));
     };
     input.on('data', data);
     input.once('end', ended);

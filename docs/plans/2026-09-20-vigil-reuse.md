@@ -2,8 +2,11 @@
 
 Gatus remains the dashboard and existing service monitor. Vigil contributes its
 three-valued aggregate through `/status`; Gatus evaluates `[BODY].stare == verde`.
-A failed condition retains the actual `picat` or `NECITIT` value in Gatus's
-condition details. No additional dashboard, storage service, or notification
+A failed aggregate condition retains the actual `picat` or `NECITIT` value.
+Individual public checks additionally have descriptive Gatus rows. Their failed
+`[BODY].detail == ok` condition contains the fixed diagnostic reason, sample
+threshold progress, incident/delivery state, original check time, and (during
+recovery) the earliest eligible close time. No additional dashboard, storage service, or notification
 provider is introduced. Vigil alone owns its incident notifications.
 
 The status response includes only the existing public tick fields and `stare`.
@@ -11,6 +14,42 @@ It reports NECITIT for a tick older than 15 minutes, a future timestamp, or an
 aggregate row that does not match the published tick. Missing/corrupt evidence
 fails the HTTP check. Reading the dashboard never advances incident state or
 counts a sample. The peer endpoint `/` retains its original timestamp semantics.
+
+## Public check detail
+
+`/checks/<public-name>` is a read-only view of the latest completed Vigil run.
+The checker writes an optional, allowlisted snapshot after incident transitions
+and delivery processing; the responder requires both its run ID and timestamp
+to match the published tick. A missing/corrupt snapshot fails closed. Stale,
+future, or uncommitted evidence returns NECITIT rather than an old green result.
+Failure to write this optional dashboard snapshot does not change check results,
+incident processing, delivery, or tick publication.
+
+The allowlist comes only from public Nix contract directories and is also passed
+to the responder. Private runtime contracts have no detail endpoint or Gatus row.
+The snapshot contains no target, description, URL, entity ID, credential, command
+output, or raw error. Diagnostic reasons and delivery states use fixed public
+vocabularies; unknown reason text becomes `check-unreadable`.
+
+A green check with an open incident remains a red detail row during the existing
+recovery hold-down. Its detail explains the recovery deadline. A closed check
+is green according to the existing verdict semantics even if a close notification
+is still queued; the JSON response records that queue state without introducing
+a new alert or changing health semantics. `delivery=confirmed` means Vigil
+received a successful Telegram API response, not that a person read the message. Gatus resolves diagnostic values in
+failed conditions only: its successful-row timestamp is the dashboard poll time,
+not a new Vigil sample. The detail JSON includes the original `checked_at`.
+
+There are seven rpi5 and nine choir public rows, plus the two original aggregate
+rows (whose names and history are retained). They pull existing results every
+minute and define no alerts. The `/` peer tick and `/status` aggregate interfaces
+are unchanged. No second incident engine, push credentials, or dashboard fork is
+introduced.
+
+Deployment requires separate approval. Update choir's reader/checker first and
+confirm `/checks/galeria`; then update rpi5's reader/checker and Gatus config.
+Older readers return 404 for detail routes, so do not interpret temporary new-row
+failures as production incidents. Do not deploy during a live acceptance episode.
 
 ## Why the remaining code exists
 

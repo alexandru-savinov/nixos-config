@@ -69,6 +69,21 @@ let
     tick-protocol = tick.serviceConfig.StandardInput == "socket" && tick.serviceConfig.StandardOutput == "socket" && tick.serviceConfig.StandardError == "journal";
     state-parent = builtins.elem "d /var/lib/vigil 0755 vigil vigil -" config.systemd.tmpfiles.rules;
     ack-permissions = builtins.elem "d /var/lib/vigil/ack 0775 vigil users -" config.systemd.tmpfiles.rules;
+    public-dashboard-allowlist = builtins.fromJSON service.environment.VIGIL_PUBLIC_NAMES ==
+      [ "channel" "choir-host" "choir-tick" "ha-alive" "ha-served" "soul-mirror-pull" "tailscaled" ]
+      && tick.environment.VIGIL_PUBLIC_NAMES == service.environment.VIGIL_PUBLIC_NAMES;
+    dashboard-endpoints =
+      let
+        endpoints = (import ../modules/services/vigil-gatus-endpoints.nix { inherit lib; }) {
+          group = "choir";
+          address = "100.94.191.54";
+          directory = ../hosts/sancta-choir/vigil-contracts;
+        };
+      in
+      builtins.length (builtins.attrNames endpoints) == 9
+      && endpoints.choir-vigil-galeria.url == "http://100.94.191.54:8747/checks/galeria"
+      && builtins.elem "[BODY].detail == ok" endpoints.choir-vigil-galeria.conditions
+      && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints);
     no-fabricated-success = lib.all (line: !(lib.hasInfix "last-channel-ok" line)) config.systemd.tmpfiles.rules;
     wrong-public-count = shouldFail "vigil-count" { modules = modules ++ [{ services.vigil.expectedContracts = lib.mkForce 6; }]; };
     wildcard-listener = shouldFail "vigil-listen" { modules = modules ++ [{ services.vigil.listenAddress = lib.mkForce "0.0.0.0"; }]; };
