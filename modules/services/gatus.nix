@@ -19,7 +19,7 @@ let
   } // optionalHttpAttrs ep
   // optionalAttrs (ep.dns != null) { inherit (ep) dns; }
   // optionalAttrs (ep.ssh != null) { inherit (ep) ssh; }
-  // optionalAttrs (ep.ui != { }) { inherit (ep) ui; };
+  // optionalAttrs (ep.ui != null) { inherit (ep) ui; };
 
   # Convert suite endpoint to Gatus attrset format (includes store and always-run)
   suiteEndpointToYaml = ep: {
@@ -114,14 +114,14 @@ let
       };
 
       ui = mkOption {
-        type = types.submodule {
+        type = types.nullOr (types.submodule {
           options.dont-resolve-failed-conditions = mkOption {
             type = types.bool;
             default = false;
             description = "Keep failed conditions symbolic so response values are not stored in diagnostic results.";
           };
-        };
-        default = { };
+        });
+        default = null;
         description = "Endpoint diagnostic privacy settings.";
       };
 
