@@ -1,6 +1,8 @@
 # Gatus coverage and Vigil boundaries
 
-Status: proposed, 2026-09-22. This plan authorizes no production switches,
+Status: implementation approved by the owner, 2026-09-22. The
+[read-only coverage audit](2026-09-22-gatus-coverage-audit.md) records phase 1.
+This plan authorizes no production switches,
 service interruptions, new secrets, paid requests, or monitoring-semantics changes.
 Implement in small worktree-backed PRs; obtain approval before production activation.
 
