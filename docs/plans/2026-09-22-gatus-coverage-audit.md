@@ -79,13 +79,12 @@ or private gallery content was printed or copied.
 
 No fixed vendor asset was referenced by the current shell. Therefore the earlier
 “select an item then retrieve its image” proposal is not adopted in this phase.
-It would introduce dynamic object identifiers and require agreement on empty
-content behavior and privacy-safe diagnostics.
+It would introduce dynamic object identifiers and require privacy-safe diagnostics.
 
 The bounded pilot is **gallery page -> metadata API**, observed from rpi5. Check
 that the shell advertises its API and contains an image element, then that the
-API supplies its documented fields with the publish gate enabled. Empty content
-remains valid by default, pending the owner's requested preference. Do not claim
+API supplies its documented fields with the publish gate enabled. The owner explicitly requires at least one published image; null or empty
+`file` therefore fails the suite, without exposing its value in diagnostics. Do not claim
 that this suite verifies an image's bytes, rendering, or content freshness. It
 still detects a broken API behind a healthy page and a Pi-to-gallery routing
 failure. No shared context or arbitrary artifact URL is needed for these two
