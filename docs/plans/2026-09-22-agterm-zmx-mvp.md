@@ -55,9 +55,10 @@ backends. No global hooks, SSH agent forwarding, or automatic migration occurs.
 
 ## Validation
 
-All 23 tests passed on macOS with bundled zmx 0.7.0 and on choir with packaged
-zmx 0.8.0. The full suite includes a real disposable PTY; ordinary flake checks
-run the 22 protocol tests separately. Live acceptance is recorded below.
+The 23-test acceptance suite passed on macOS with bundled zmx 0.7.0 and on
+choir with packaged zmx 0.8.0. The later picker-error regression brings the suite
+to 24 tests, all passing on macOS. Ordinary flake checks run protocol tests
+separately from the full suite's real disposable PTY. Live evidence is below.
 
 ```sh
 AGT_ZMX_TEST_BINARY=/Applications/agterm.app/Contents/MacOS/zmx \
@@ -386,3 +387,12 @@ not proof that a human dialog remains visible. This rollout verifies Claude's
 real prompt/tool/Stop events; it does not claim a separately exercised Claude
 permission-dialog transition. Codex's actual human command-dialog transition was
 exercised separately as recorded above.
+
+## Final picker diagnostic fix
+
+Commit `bf7fb6534e55b5d685e2e491e5d8030a0db10e33` reports SSH, socket and timeout
+failures during picker/pane creation as concise nonzero diagnostics instead of
+tracebacks. The picker also rejects an unknown selection explicitly. All 24 Mac
+tests passed, including the new transport-failure regression. This client is now
+installed in its own versioned directory; the launcher and main Sancta/recovered
+Codex restore pins reference it. The remote package and running agents are unchanged.
