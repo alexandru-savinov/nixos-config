@@ -42,6 +42,33 @@ def write_json(path, value):
         Path(temporary).unlink(missing_ok=True)
 
 
+def zmx_environment(directory):
+    environment = dict(os.environ)
+    environment.pop("ZMX_SESSION", None)
+    environment.pop("ZMX_SESSION_PREFIX", None)
+    environment["ZMX_DIR"] = str(directory / "sockets")
+    environment["ZMX_DIR_MODE"] = "0700"
+    environment["ZMX_LOG_MODE"] = "0600"
+    return environment
+
+
+def inventory():
+    # Read only. An empty inventory must not create state or start a daemon.
+    directory = Path(os.environ.get("AGT_ZMX_STATE", Path.home() / ".local/state/agt-zmx"))
+    if not directory.exists():
+        return []
+    live = subprocess.check_output(["zmx", "list", "--short"],
+                                   env=zmx_environment(directory), text=True, timeout=5).splitlines()
+    records = []
+    for path in sorted(directory.glob("agt-mvp-*.json")):
+        name = path.stem.removeprefix("agt-mvp-")
+        session_name(name)
+        record = json.loads(path.read_text())
+        records.append({"name": name, "cwd": record["cwd"], "agent": record["agent"],
+                        "alive": path.stem in live})
+    return records
+
+
 def status(name, value):
     """Only lifecycle state crosses the bridge; hook stdin is never read/logged."""
     if value not in STATES:
@@ -97,13 +124,8 @@ def attach(name, cwd, agent, port):
         raise ValueError("requested agent is not on PATH")
     directory = state_dir()
     record = {"cwd": cwd, "agent": agent}
-    environment = dict(os.environ)
-    environment.pop("ZMX_SESSION", None)
-    environment.pop("ZMX_SESSION_PREFIX", None)
     # An isolated socket namespace also prevents collisions with ordinary zmx use.
-    environment["ZMX_DIR"] = str(directory / "sockets")
-    environment["ZMX_DIR_MODE"] = "0700"
-    environment["ZMX_LOG_MODE"] = "0600"
+    environment = zmx_environment(directory)
     with (directory / (qualified + ".lock")).open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         path = directory / (qualified + ".json")
@@ -124,6 +146,7 @@ def attach(name, cwd, agent, port):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
+    commands.add_parser("list")
     sub = commands.add_parser("attach")
     sub.add_argument("name")
     sub.add_argument("cwd")
@@ -142,8 +165,10 @@ def main():
             attach(args.name, args.cwd, args.agent, args.port)
         elif args.action == "launch":
             launch(args.name)
-        else:
+        elif args.action == "status":
             status(args.name, args.value)
+        else:
+            print(json.dumps(inventory()))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"agt-zmx-host: {error}\n")
 

@@ -30,6 +30,48 @@ client, host = load("client"), load("host")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_picker_lists_live_sessions_only(self):
+        self.assertEqual(client.picker_items([
+            {"name": "gone", "cwd": "/tmp", "agent": "shell", "alive": False},
+            {"name": "work", "cwd": "/tmp/project", "agent": "codex", "alive": True},
+        ]), [{"id": "work", "label": "work · codex", "subtitle": "/tmp/project"}])
+        with self.assertRaises(ValueError):
+            client.picker_items([{"name": "bad\nrow", "cwd": "/tmp", "agent": "shell", "alive": True}])
+
+    def test_picker_cancellation_creates_no_pane(self):
+        from argparse import Namespace
+        args = Namespace(host="host", user="", remote_bin="agt-zmx-host")
+        records = [{"name": "work", "cwd": "/tmp", "agent": "shell", "alive": True}]
+        with patch.object(client.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(records))), \
+                patch.object(client, "agterm", return_value=subprocess.CompletedProcess([], 2, '{"result":"cancelled"}')) as ctl:
+            self.assertEqual(client.open_session(args, pick=True), 0)
+            self.assertEqual(ctl.call_count, 1)
+            self.assertEqual(ctl.call_args[0][0][0], "pick")
+
+    def test_restore_pin_preserves_remote_identity_and_uses_current_pane(self):
+        from argparse import Namespace
+        args = Namespace(host="root@host", user="sancta", remote_bin="/nix/store/pkg/bin/agt-zmx-host",
+                         name="work", cwd="/tmp/with ' quote", agent="claude")
+        reply = subprocess.CompletedProcess([], 0, '{"ok":true,"result":{"pane":"right"}}')
+        with patch.object(client, "agterm", return_value=reply) as ctl:
+            client.pin_restore(args, "new-session", "new-pane")
+            command = ctl.call_args[0][0]
+            self.assertEqual(command[:2], ["session", "restore"])
+            self.assertEqual(shlex.split(command[2]), client.attach_argv(args))
+            self.assertEqual(command[command.index("--target") + 1], "new-session")
+            self.assertEqual(command[command.index("--pane-id") + 1], "new-pane")
+            self.assertNotIn("--open", shlex.split(command[2]))
+        with patch.object(client, "agterm", return_value=subprocess.CompletedProcess([], 0, '{"ok":true}')):
+            with self.assertRaises(ValueError):
+                client.pin_restore(args, "new-session", "new-pane")
+
+    def test_missing_inventory_is_read_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "not-created"
+            with patch.dict(os.environ, {"AGT_ZMX_STATE": str(missing)}):
+                self.assertEqual(host.inventory(), [])
+                self.assertFalse(missing.exists())
+
     def test_foreign_commands_targets_and_bad_states_rejected(self):
         for bad in [None, [], {"status": "completed", "target": "other"},
                     {"cmd": "session.type", "status": "idle"}, {"status": []},

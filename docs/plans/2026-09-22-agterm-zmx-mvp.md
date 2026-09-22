@@ -31,6 +31,9 @@ conversations or interrupting production services.
 - `scripts/agterm-zmx/client.py`: run in an existing agterm pane. Opens a restricted
   local Unix status relay and SSH reverse forwarding, retries SSH exit 255 after
   five seconds. Ctrl-C during the wait cancels retries. No SSH agent forwarding.
+  `--open --name NAME` creates a new agterm session; `--pick` lists live sessions
+  from the remote inventory. Each attached client pins its own reconnect command
+  using its stable pane token for agterm's Re-run commands restore mode.
 - `scripts/agterm-zmx/host.py`: packaged as `agt-zmx-host`, with Python, bash and
   zmx supplied by Nix. Session records and sockets live in the account's private
   `~/.local/state/agt-zmx/`. Names are prefixed `agt-mvp-`.
@@ -62,6 +65,29 @@ sockets. Test daemons use their own temporary socket directory; cleanup targets
 only the named test daemon. Mac's bundled zmx is 0.7.0; the Nix check uses the
 actual packaged Linux zmx 0.8.0. Passing Mac tests alone does not establish Linux
 or SSH integration acceptance.
+
+## Launcher and picker
+
+From the Mac checkout, after the remote package is approved and available:
+
+```sh
+python3 scripts/agterm-zmx/client.py --open --name shell-trial-1 --remote-bin /nix/store/REPLACE-WITH-BUILT-PACKAGE/bin/agt-zmx-host
+python3 scripts/agterm-zmx/client.py --pick --remote-bin /nix/store/REPLACE-WITH-BUILT-PACKAGE/bin/agt-zmx-host
+```
+
+Both create a session under the `Remote zmx` workspace in the invoking window.
+Cancellation creates nothing; dead remote sessions are excluded. The picker
+does not create a new remote conversation. Use `--open` with an explicit new name
+for that. An already attached session can be picked again; the one-recipient
+limitation below still applies. This is not concurrent-viewer acceptance.
+
+The restore pin contains the Python interpreter, client path, remote host/user,
+session name, directory, agent and host executable. Keep those local files and
+the remote package available. It targets the pane running the client, including
+a right split, and leaves the app's global restore mode unchanged. In Fresh
+shells mode it will not run; this workflow requires Re-run commands. A real app
+restart test is still pending and requires approval because other local sessions
+can be interrupted by restarting agterm.
 
 ## Choir pilot (owner approval required)
 
@@ -119,8 +145,10 @@ is automatically sent to either agent, and permission checks remain enabled.
 - While connected, remote processes able to reach the forwarded loopback port
   can set this one pane's status. They cannot type into panes or access the raw
   agterm control API through the relay.
-- There is no picker, key binding, automatic Mac app restart restoration, remote
-  git credential forwarding, or Sancta session migration in this first version.
+- Picker and pane-specific restore policy are implemented, with automated
+  cancellation/targeting tests. Live picker and app restart acceptance are still
+  pending. There is no installed key binding, remote git credential forwarding,
+  or Sancta session migration yet.
 - End a shell trial with `exit`. Agent exit leaves an interactive remote shell;
   exit that shell when finished. Closing the Mac pane only detaches.
 
@@ -141,3 +169,19 @@ At implementation commit `0218b06dac94518b366c002cf507659e2bf912af`:
 No production switch, existing session interruption, global hook installation,
 or agent launch occurred. Live choir SSH and real-agent acceptance remain pending
 owner approval and must be recorded separately from these build-sandbox tests.
+
+## Full-goal audit (after the user expanded beyond the MVP)
+
+| Requirement | Evidence | Remaining gate |
+|---|---|---|
+| Phase 1: real SSH reconnect retains PID | Same-PID PTY tests pass on Mac and Linux | Approved real choir SSH pilot |
+| Phase 2: real Claude events and Codex persistence | Claude launch-scoped hooks implemented; relay tested | Agent login, real events, correct-pane and reconnect acceptance |
+| Phase 3: picker, pane launch, app restoration | Implemented; 12 Mac tests pass including cancellation and stable-pane restore targeting | Linux rebuild and live UI/restart acceptance |
+| Phase 4: selected tmux workflows migrated | No existing workflow changed | Select conversations, checkpoint, approve interruption, migrate, test fallback |
+| Phase 5: Codex status and cold recovery | Installed Codex 0.154.0 and official hook docs inspected | Implement and verify status; document and test recovery |
+
+Codex's bundled agterm integration treats `PermissionRequest` as an approval
+candidate: automatic review can resolve it without showing a human dialog.
+Blindly mapping that event to blocked would fail the accurate-status goal.
+Codex hooks must also be reviewed/trusted through its supported hook flow; the
+rollout must not bypass hook trust or sandbox/approval controls to make tests pass.

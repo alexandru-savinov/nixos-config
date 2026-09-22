@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import random
 import shlex
+import shutil
 import socket
 import socketserver
 import subprocess
@@ -17,6 +18,79 @@ import uuid
 
 
 STATES = {"idle", "active", "blocked", "completed"}
+
+
+def agterm(arguments, input_text=None):
+    executable = os.environ.get("AGTERMCTL") or shutil.which("agtermctl")
+    if not executable:
+        raise ValueError("agtermctl is not available; set AGTERMCTL to its absolute path")
+    address = os.environ.get("AGT_SOCKET") or os.environ.get("AGTERM_SOCKET")
+    if not address:
+        raise ValueError("agterm socket environment is missing")
+    return subprocess.run([executable, *arguments, "--socket", address],
+                          input=input_text, text=True, capture_output=True)
+
+
+def attach_argv(args):
+    return [sys.executable, str(Path(__file__).resolve()), "--host", args.host,
+            "--user", args.user, "--name", args.name, "--cwd", args.cwd,
+            "--agent", args.agent, "--remote-bin", args.remote_bin]
+
+
+def remote_command(args, command):
+    words = [args.remote_bin, *command]
+    if args.user:
+        words = ["runuser", "-u", args.user, "--", *words]
+    return shlex.join(words)
+
+
+def picker_items(records):
+    items = []
+    for record in records:
+        if record.get("alive") is not True:
+            continue
+        name, agent, cwd = record["name"], record["agent"], record["cwd"]
+        if agent not in {"shell", "claude", "codex"} or not all(isinstance(x, str) for x in [name, cwd]):
+            raise ValueError("invalid remote inventory")
+        if any(ord(c) < 32 for c in name + cwd):
+            raise ValueError("control characters in remote inventory")
+        items.append({"id": name, "label": f"{name} · {agent}", "subtitle": cwd})
+    return items
+
+
+def open_session(args, pick=False):
+    window = os.environ.get("AGT_WINDOW_ID") or os.environ.get("AGTERM_WINDOW_ID")
+    selector = ["--window", window] if window else []
+    if pick:
+        listing = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                                  "--", args.host, remote_command(args, ["list"])],
+                                 capture_output=True, text=True, timeout=20, check=True)
+        records = json.loads(listing.stdout)
+        choices = picker_items(records)
+        if not choices:
+            raise ValueError("no live zmx sessions; use --open --name NAME to start one")
+        selection = agterm(["pick", "--prompt", f"zmx on {args.host}", *selector], json.dumps(choices))
+        if selection.returncode == 2:
+            return 0
+        selection.check_returncode()
+        selected = json.loads(selection.stdout)
+        record = next(record for record in records if record["name"] == selected["id"])
+        args.name, args.cwd, args.agent = record["name"], record["cwd"], record["agent"]
+    result = agterm(["session", "new", "--name", f"zmx / {args.name}",
+                     "--workspace-name", "Remote zmx", "--create-workspace",
+                     "--command", shlex.join(attach_argv(args)), "--wait", *selector])
+    result.check_returncode()
+    print(result.stdout.strip())
+    return 0
+
+
+def pin_restore(args, target, pane_id):
+    result = agterm(["session", "restore", shlex.join(attach_argv(args)),
+                     "--target", target, "--pane-id", pane_id, "--json"])
+    result.check_returncode()
+    response = json.loads(result.stdout)
+    if response.get("ok") is not True or response.get("result", {}).get("pane") not in {"left", "right"}:
+        raise ValueError("restore pin did not confirm its target pane")
 
 
 def status_request(payload, target, pane_id):
@@ -53,33 +127,43 @@ class StatusHandler(socketserver.StreamRequestHandler):
 
 
 def ssh_command(args, relay_path, port):
-    remote = [args.remote_bin, "attach", args.name, args.cwd,
-              "--agent", args.agent, "--port", str(port)]
-    if args.user:
-        remote = ["runuser", "-u", args.user, "--"] + remote
     # Dedicated connection: closing it also removes its reverse forward.
     return ["ssh", "-tt", "-o", "BatchMode=yes", "-o", "ControlPath=none",
             "-o", "ForwardAgent=no", "-o", "ConnectTimeout=10",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{port}:{relay_path}",
-            "--", args.host, shlex.join(remote)]
+            "--", args.host, remote_command(args, ["attach", args.name, args.cwd,
+                                                    "--agent", args.agent, "--port", str(port)])]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="root@sancta-choir-1")
     parser.add_argument("--user", default="sancta", help="remote account; empty uses SSH account")
-    parser.add_argument("--name", required=True)
+    parser.add_argument("--name")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--open", action="store_true", help="open a new agterm pane for the named session")
+    mode.add_argument("--pick", action="store_true", help="pick a live remote session and open a pane")
     parser.add_argument("--cwd", default="/var/lib/sancta")
     parser.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
     parser.add_argument("--remote-bin", default="agt-zmx-host", help="host executable or built Nix store path")
     args = parser.parse_args()
+    if not args.pick and not args.name:
+        parser.error("--name is required unless --pick is used")
+    if args.open or args.pick:
+        return open_session(args, args.pick)
     target = os.environ.get("AGTERM_SESSION_ID", "")
     pane_id = os.environ.get("AGTERM_PANE_ID", "")
     agterm_socket = os.environ.get("AGTERM_SOCKET", "")
     if not target or not pane_id or not agterm_socket:
         parser.error("run inside an agterm pane with session, pane ID and socket environment")
     uuid.UUID(target)
+    # Pin only the pane running this client; never rely on the selected UI pane.
+    # Preserve remote identity while refreshing local target IDs after app restart.
+    try:
+        pin_restore(args, target, pane_id)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        print("Could not pin app-restart restoration; re-run this client manually after restart.", file=sys.stderr)
     # Keep the Unix socket short enough for SSH forwarding on macOS.
     with tempfile.TemporaryDirectory(prefix="agt-zmx-", dir="/tmp") as directory:
         relay_path = str(Path(directory) / "relay.sock")
