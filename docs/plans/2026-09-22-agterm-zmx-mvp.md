@@ -180,9 +180,9 @@ owner approval and must be recorded separately from these build-sandbox tests.
 |---|---|---|
 | Phase 1: real SSH reconnect retains PID | Passed on choir; evidence below | Complete for the isolated shell |
 | Phase 2: real Claude events and Codex persistence | Both exact agent PIDs survive SSH reconnect; Claude real hooks and tool result accepted | Complete for the fresh pilots; migration is separate |
-| Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; picker/targeting tests pass on Mac and Linux | Live picker and approved app restart acceptance |
+| Phase 3: picker, pane launch, app restoration | Pane launch and restore pin accepted live; native picker opened an attachment to the Claude pilot | Approved app restart acceptance |
 | Phase 4: selected tmux workflows migrated | Owner selected the main Sancta Claude conversation; no existing workflow changed | Prepare exact conversation handoff and tmux fallback, then obtain interruption approval before migration |
-| Phase 5: Codex status and cold recovery | Codex launch-specific lifecycle profile prepared and preservation tested | Trust/verify real hooks, human-dialog status, document and test recovery |
+| Phase 5: Codex status and cold recovery | Codex active/completed hooks accepted before and after real SSH reconnect; owner files preserved in tests | Human-dialog status, document and test cold recovery |
 
 Codex's bundled agterm integration treats `PermissionRequest` as an approval
 candidate: automatic review can resolve it without showing a human dialog.
@@ -230,5 +230,62 @@ a new turn was accepted.
 The failed first shell pilot pane is
 `264B7B5F-F31D-4161-B895-507ACBF52661`; its daemon is gone. Its record and the
 `shell-debug-20260922` record are retained as failed-pilot evidence. The picker
-excludes both because they are not live. No claim of Codex automatic status,
-agterm app-restart acceptance, or tmux migration follows from these tests.
+excludes both because they are not live. No claim of agterm app-restart acceptance
+or tmux migration follows from these tests.
+
+### Codex lifecycle pilot
+
+Commit `f2bf89b2cbb7dbc29d998d76c28a19ec10dbccc8` passed all 14 tests on Mac
+and choir, including actual zmx PTY persistence and preservation of existing
+Codex configuration/auth files when creating a separate profile. Built package:
+`/nix/store/7jgsnzxw2hzsarj90mw9n4sa13ybps72-agterm-zmx-host-0.1.0`;
+rooted at `/root/agterm-zmx-pilot-f2bf89b`.
+
+Fresh pilot `codex-status-pilot-20260922` runs in agterm session
+`34CA40F3-B0FE-40CE-8475-2F36A23AF6AF`. The normal Codex hook-trust screen
+appeared; `/hooks` subsequently confirmed seven installed and seven active hooks.
+No hook-trust bypass flag or sandbox relaxation was used. An attempted numeric
+review-menu selection appeared as a conversation prompt instead; do not count
+that injection as proof of navigating the review submenu. The active inventory
+and actual lifecycle events are the acceptance evidence.
+
+A deliberate `sleep 2` turn showed `active → completed` in the owning pane and
+returned exactly `ZMX_CODEX_STATUS_ACCEPTED`. An SSH escape disconnect changed
+the route port from 53043 to 45137; Codex PID 3376847 (started 20:23:48 host time)
+survived. A new no-tools turn after reconnect again showed `active → completed`
+and returned exactly `ZMX_CODEX_STATUS_RECONNECTED`.
+Human approval-dialog `blocked` status is not implemented or accepted yet.
+
+### Selected migration preflight
+
+The owner selected the main Sancta Claude conversation. Read-only inspection
+found `sancta-session.scope` inactive and only one Sancta-owned tmux pane with
+Claude foreground: `4:0.0`, cwd `/home/nixos`, shell PID 3270087, Claude PID
+3270160. Its cgroup is an existing user-manager tmux-spawn scope, not
+`sancta-session.scope`; no explicit resume UUID was present in its argv.
+The owner explicitly confirmed that this is the intended conversation.
+
+Do not invoke `sancta-session` or `sancta-reconnect` merely to discover identity:
+their documented reconciliation can stop an existing conversation. Before
+migration, identify the current conversation UUID without printing its contents,
+record the existing scope protections, and prepare an explicit same-conversation
+resume plus tmux fallback. The current fresh-session helper alone is insufficient
+for this handoff. No existing pane or process has been stopped.
+
+### Native picker acceptance and review follow-up
+
+The native picker returned a selection of `claude-pilot-20260922` and opened
+agterm session `269D3EC7-A557-43B8-844E-4EE87A07E5CB`. Its restore command pins
+that same remote session, agent, cwd, and the tested package. The original Claude
+PID 3370919 remained alive. The latest attachment becomes the status recipient;
+two attached panes do not both receive hook status under the current contract.
+
+The selected main Sancta process has one matching Claude session metadata record
+with an explicit conversation UUID. Exact handoff details are kept in a local
+mode-0600 review file; conversation contents were not read or published. The
+existing source process has not been interrupted.
+
+Automated review found a duplicate unstable nixpkgs import in the package wiring.
+The package now uses the existing architecture-specific binding. Both Linux
+package derivation evaluations pass, and the x86_64 derivation remains identical
+to the package tested above. No rebuild or redeployment is needed for that fix.

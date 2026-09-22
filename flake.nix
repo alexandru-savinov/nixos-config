@@ -209,7 +209,7 @@
           vigil = pkgs.callPackage ./pkgs/vigil.nix { };
 
           agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
-            zmx = (import nixpkgs-unstable { inherit system; }).zmx;
+            zmx = (if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64).zmx;
           };
 
           # Declarative n8n VM test (#42). A package (not a check) so plain
