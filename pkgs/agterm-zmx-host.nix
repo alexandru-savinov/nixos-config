@@ -1,11 +1,11 @@
-{
-  lib,
-  stdenvNoCC,
-  makeWrapper,
-  python3,
-  bash,
-  zmx,
-  systemd,
+{ lib
+, stdenvNoCC
+, makeWrapper
+, python3
+, bash
+, zmx
+, systemd
+,
 }:
 
 stdenvNoCC.mkDerivation {
