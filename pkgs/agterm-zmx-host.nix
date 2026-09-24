@@ -15,6 +15,7 @@ stdenvNoCC.mkDerivation {
     ln -s agt-ask $out/bin/agt-ui
     makeWrapper ${python3}/bin/python3 $out/bin/agt-zmx-host \
       --add-flags "$out/libexec/agterm-zmx/host.py" \
+      --prefix PATH : "$out/bin" \
       --prefix PATH : ${lib.makeBinPath [ zmx bash systemd ]}
   '';
   meta = {
