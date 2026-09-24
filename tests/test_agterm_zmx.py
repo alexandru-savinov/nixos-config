@@ -46,7 +46,8 @@ class ProtocolTests(unittest.TestCase):
         from unittest.mock import Mock
         with tempfile.TemporaryDirectory(dir="/tmp") as directory:
             with client.Relay(directory + "/relay", client.StatusHandler) as relay:
-                relay.target, relay.pane_id, relay.token = "session", "pane", FIXTURE_TOKEN
+                relay.target, relay.pane_id = "session", "pane"
+                relay.token = FIXTURE_TOKEN
                 relay.ui = Mock()
                 relay.tracker.receive = Mock()
                 runner = threading.Thread(target=relay.serve_forever)
