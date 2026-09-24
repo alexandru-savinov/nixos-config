@@ -197,6 +197,7 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
+          unstable = if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64;
         in
         {
           # Default package (what runs with `nix run github:user/repo`)
@@ -248,15 +249,14 @@
             ];
             text = builtins.readFile ./scripts/bootstrap.sh;
           };
-        } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
-          # This rollout targets choir only; do not expose untested ARM packages.
+          # Shared helper for choir (x86_64) and rpi5 (aarch64).
           agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
-            zmx = pkgs-unstable-x86.zmx;
+            zmx = unstable.zmx;
           };
           # Explicit PTY acceptance; keep terminal timing out of general checks.
           agterm-zmx-tests = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix {
             integration = true;
-            zmx = pkgs-unstable-x86.zmx;
+            zmx = unstable.zmx;
           };
         });
 

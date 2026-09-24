@@ -356,20 +356,21 @@ def main():
         print(f"Invalid remote configuration: {error}", file=sys.stderr)
         return 1
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default=config.get("host", "root@sancta-choir-1"))
-    parser.add_argument("--user", default=config.get("user", "sancta"), help="remote account; empty uses SSH account")
+    parser.add_argument("--profile", help="configured remote host, such as choir or rpi5")
+    parser.add_argument("--host")
+    parser.add_argument("--user", default=None, help="remote account; empty uses SSH account")
     parser.add_argument("--name")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--open", action="store_true", help="open a new agterm pane for the named session")
     mode.add_argument("--pick", action="store_true", help="pick a live remote session and open a pane")
-    parser.add_argument("--cwd", default=config.get("cwd", "/var/lib/sancta"))
+    parser.add_argument("--cwd", default=None)
     parser.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
     parser.add_argument("--resume", help="explicit Claude or Codex conversation UUID; requires a stopped source")
-    parser.add_argument("--user-scope", action="store_true", help="create backend outside the SSH service cgroup")
-    parser.add_argument("--remote-bin", default=config.get("remote_bin", "agt-zmx-host"), help="host executable or built Nix store path")
+    parser.add_argument("--user-scope", action="store_true", default=None, help="create backend outside the SSH service cgroup")
+    parser.add_argument("--remote-bin", default=None, help="host executable or built Nix store path")
     mode.add_argument("--menu", action="store_true", help="native picker for existing or new remote sessions")
     mode.add_argument("--session", help="attach a configured named session, such as sancta")
-    parser.add_argument("--workspace", default=config.get("workspace", "choir"))
+    parser.add_argument("--workspace", default=None)
     parser.add_argument("--title", help="display name, independent of the backend identity")
     parser.add_argument("--split", action="store_true", help="open into a new split; never replace an existing split")
     args = parser.parse_args()
@@ -377,6 +378,14 @@ def main():
         parser.error("--split requires --menu, --session or --open")
     if not (args.pick or args.menu or args.session) and not args.name:
         parser.error("--name is required unless --pick is used")
+    from types import SimpleNamespace
+    try:
+        config = interface.select_profile(SimpleNamespace(agterm=agterm), args, config)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"Could not select remote host: {error}", file=sys.stderr)
+        return 1
+    if config is None:
+        return 0
     if args.open or args.pick or args.menu or args.session:
         try:
             if args.pick:

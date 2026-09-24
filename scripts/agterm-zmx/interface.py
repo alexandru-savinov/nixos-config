@@ -8,13 +8,48 @@ import uuid
 
 
 def preferences():
-    path = Path(os.environ.get("AGT_REMOTE_CONFIG", Path.home() / ".config/agterm/remote-choir.json"))
+    preferred = Path.home() / ".config/agterm/remote-hosts.json"
+    fallback = Path.home() / ".config/agterm/remote-choir.json"
+    path = Path(os.environ.get("AGT_REMOTE_CONFIG", preferred if preferred.exists() else fallback))
     if not path.exists():
         return {}
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
         raise ValueError("remote configuration must be an object")
     return data
+
+
+def select_profile(client, args, config):
+    """Choose a host before discovery; explicit restore arguments remain authoritative."""
+    profiles = config.get("hosts")
+    selected = getattr(args, "profile", None)
+    if profiles is not None:
+        if not isinstance(profiles, dict) or not profiles or not all(
+                isinstance(name, str) and isinstance(value, dict) for name, value in profiles.items()):
+            raise ValueError("hosts must be a nonempty mapping of named configurations")
+        if selected is None and args.menu and args.host is None:
+            selected = pick(client, "Remote host", [
+                {"id": name, "label": value.get("label", name)} for name, value in profiles.items()])
+            if selected is None:
+                return None
+        if selected is None:
+            matches = [name for name, value in profiles.items() if value.get("host") == args.host]
+            selected = matches[0] if len(matches) == 1 else config.get("default_host", "choir")
+        if selected not in profiles:
+            raise ValueError("unknown remote host profile")
+        config = profiles[selected]
+    elif selected is not None and selected != "choir":
+        raise ValueError("unknown remote host profile")
+    defaults = dict(host="root@sancta-choir-1", user="sancta", cwd="/var/lib/sancta",
+                    workspace=selected or "choir", remote_bin="agt-zmx-host")
+    for field, default in defaults.items():
+        if getattr(args, field) is None:
+            setattr(args, field, config.get(field, default))
+    # Raw restore commands encode scope mode by presence/absence of the flag.
+    if args.user_scope is None:
+        gui = args.open or args.pick or args.menu or args.session
+        args.user_scope = bool(config.get("user_scope", False)) if gui else False
+    return config
 
 
 def ctl(client, words, **kwargs):
@@ -154,10 +189,10 @@ def run(client, args, config):
             for alias in config.get("aliases", {}).values():
                 if alias.get("name") == item["id"]:
                     item["label"] = alias.get("title", item["label"])
-        choices += [{"id": "new:" + agent, "label": "New " + label, "subtitle": "Start on choir"}
+        choices += [{"id": "new:" + agent, "label": "New " + label, "subtitle": "Start on " + args.workspace}
                     for agent, label in [("claude", "Claude conversation"), ("codex", "Codex conversation"),
                                          ("shell", "shell")]]
-        selected = pick(client, "Choir · attach or start a session", choices)
+        selected = pick(client, args.workspace + " · attach or start a session", choices)
         if selected is None:
             return 0
         if not selected.startswith("new:"):

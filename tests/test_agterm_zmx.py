@@ -217,6 +217,51 @@ class ProtocolTests(unittest.TestCase):
         values.update(changes)
         return Namespace(**values)
 
+    def host_args(self, **changes):
+        return self.gui_args(host=None, user=None, cwd=None, workspace=None, remote_bin=None,
+                             user_scope=None, **changes)
+
+    def test_host_picker_resolves_rpi5_before_any_remote_inventory(self):
+        config = {"default_host": "choir", "hosts": {
+            "choir": {"host": "root@choir", "user": "sancta"},
+            "rpi5": {"host": "nixos@rpi5", "user": "", "cwd": "/home/nixos",
+                     "remote_bin": "/arm/helper", "user_scope": True}}}
+        args = self.host_args(menu=True, open=False, pick=False, profile=None)
+        with patch.object(interface, "pick", return_value="rpi5"), \
+                patch.object(interface, "inventory", side_effect=AssertionError("early SSH")):
+            chosen = interface.select_profile(client, args, config)
+        self.assertEqual(chosen, config["hosts"]["rpi5"])
+        self.assertEqual((args.host, args.user, args.cwd, args.workspace, args.remote_bin),
+                         ("nixos@rpi5", "", "/home/nixos", "rpi5", "/arm/helper"))
+        self.assertTrue(args.user_scope)
+        with patch.object(interface, "pick", return_value=None):
+            self.assertIsNone(interface.select_profile(client,
+                self.host_args(menu=True, open=False, pick=False, profile=None), config))
+
+    def test_host_profile_preserves_explicit_restore_identity_and_scope(self):
+        config = {"default_host": "choir", "hosts": {
+            "choir": {"host": "root@choir", "user_scope": True},
+            "rpi5": {"host": "nixos@rpi5", "user": "", "user_scope": True}}}
+        args = self.gui_args(host="nixos@rpi5", user="", cwd="/saved", remote_bin="/saved/helper",
+                             user_scope=None, profile=None, open=False, pick=False)
+        with patch.object(interface, "pick", side_effect=AssertionError("unexpected picker")):
+            chosen = interface.select_profile(client, args, config)
+        self.assertEqual(chosen, config["hosts"]["rpi5"])
+        self.assertEqual((args.host, args.user, args.cwd, args.remote_bin),
+                         ("nixos@rpi5", "", "/saved", "/saved/helper"))
+        self.assertFalse(args.user_scope)
+        args.profile = "missing"
+        with self.assertRaisesRegex(ValueError, "unknown remote host"):
+            interface.select_profile(client, args, config)
+
+    def test_legacy_choir_profile_and_explicit_sancta_shortcut(self):
+        args = self.host_args(menu=False, open=False, pick=False, session="sancta", profile="choir")
+        config = {"host": "root@choir", "user_scope": True}
+        with patch.object(interface, "pick", side_effect=AssertionError("unexpected picker")):
+            self.assertEqual(interface.select_profile(client, args, config), config)
+        self.assertEqual(args.host, "root@choir")
+        self.assertTrue(args.user_scope)
+
     def test_gui_alias_uses_record_identity_and_rejects_missing_backend(self):
         args = self.gui_args(session="sancta")
         record = dict(name="main", cwd="/original", agent="claude", resume="saved-id",

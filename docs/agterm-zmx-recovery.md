@@ -4,6 +4,26 @@ SSH loss, application restart, and host restart require different recovery actio
 Do not delete session records to make an error disappear: doing so can start a new
 conversation under an old name.
 
+## Choosing a host from the Mac
+
+`agt-zmx --menu` selects a host before fetching its sessions. An unavailable host
+therefore does not prevent choosing the other host. Use `agt-zmx --profile rpi5
+--menu` or `agt-zmx --profile choir --menu` to skip host selection (each command
+belongs on one shell line). Add `--split` to open into an unused split.
+
+The Mac profile file is `~/.config/agterm/remote-hosts.json`, with `default_host`
+and a `hosts` mapping. Each host owns its SSH destination, remote account,
+immutable helper path, working directory, aliases and project choices. The old
+`remote-choir.json` remains a fallback until the new configuration is installed.
+The `sancta` shortcut explicitly selects choir, independently of the default host.
+Existing restore commands retain their explicit host, account, backend and scope.
+
+On another terminal, SSH to the account that owns the backend before attaching
+with zmx. The Mac status/UI bridge belongs to its attachment; a plain terminal
+attachment does not provide native agterm UI. Host-side friendly alias commands
+and their acceptance remain part of the rollout, not a prerequisite to recovering
+an existing backend with its exact zmx name.
+
 ## SSH connection lost
 
 The Mac launcher retries SSH automatically. Reattachment updates the status route
