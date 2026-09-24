@@ -10,6 +10,8 @@ import re
 import shlex
 import shutil
 import socket
+import stat
+import pwd
 import subprocess
 import sys
 import tempfile
@@ -78,13 +80,68 @@ def status(name, value):
         return
     try:
         route = json.loads((state_dir() / (session_name(name) + ".route")).read_text())
-        port = route["port"]
-        if type(port) is not int or not 1024 <= port <= 65535:
-            return
-        with socket.create_connection(("127.0.0.1", port), timeout=1) as connection:
+        address = validate_route(route["socket"])
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(1)
+            connection.connect(address)
             connection.sendall((json.dumps({"status": value}) + "\n").encode())
     except (OSError, ValueError, KeyError, TypeError):
         pass  # Detached sessions must continue when there is no Mac to notify.
+
+
+def prepare_route():
+    # SSH may run as root; grant_route transfers its socket to this backend user.
+    directory = Path(tempfile.mkdtemp(prefix="relay-", dir=state_dir()))
+    return str(directory / "socket")
+
+
+def grant_route(user, address):
+    account = pwd.getpwnam(user)
+    path = Path(address)
+    root = Path(account.pw_dir) / ".local/state/agt-zmx"
+    if (path.name != "socket" or not path.parent.name.startswith("relay-")
+            or path.parent.parent.resolve() != root.resolve()):
+        raise ValueError("invalid forwarded socket path")
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        parent = os.fstat(fd)
+        info = os.stat("socket", dir_fd=fd, follow_symlinks=False)
+        if (parent.st_uid != account.pw_uid or stat.S_IMODE(parent.st_mode) != 0o700
+                or not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600):
+            raise ValueError("forwarded socket ownership or permissions differ")
+        os.chown("socket", account.pw_uid, account.pw_gid, dir_fd=fd, follow_symlinks=False)
+    finally:
+        os.close(fd)
+
+
+def validate_route(address, require_socket=True):
+    if not isinstance(address, str):
+        raise ValueError("invalid relay address")
+    path = Path(address)
+    root = state_dir().resolve()
+    parent = path.parent
+    if (path.name != "socket" or not parent.name.startswith("relay-")
+            or parent.parent.resolve() != root or parent.is_symlink()):
+        raise ValueError("relay must be inside the private state directory")
+    info = parent.stat()
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("relay directory must be private and owned by this user")
+    if require_socket:
+        socket_info = path.lstat()
+        if (not stat.S_ISSOCK(socket_info.st_mode) or socket_info.st_uid != os.getuid()
+                or stat.S_IMODE(socket_info.st_mode) != 0o600):
+            raise ValueError("relay socket must be private and owned by this user")
+    return str(path)
+
+
+def remove_route(address):
+    path = Path(validate_route(address, require_socket=False))
+    if path.exists():
+        if not stat.S_ISSOCK(path.lstat().st_mode):
+            raise ValueError("refusing to remove a non-socket relay")
+        path.unlink()
+    path.parent.rmdir()
 
 
 def hooks(name):
@@ -158,7 +215,10 @@ def validate_resume(agent, identifier, config_dir=None):
         record = json.loads(path.read_text())
         if record.get("sessionId") != identifier:
             continue
-        pid = int(record["pid"])
+        try:
+            pid = int(record.get("pid"))
+        except (ValueError, TypeError):
+            raise ValueError("invalid conversation process metadata") from None
         if pid <= 0:
             raise ValueError("invalid conversation process metadata")
         try:
@@ -212,8 +272,9 @@ def launch(name):
     os.execvp("bash", ["bash", "--noprofile", "--norc", "-ic", line])
 
 
-def attach(name, cwd, agent, port, resume=None, user_scope=False):
+def attach(name, cwd, agent, relay, resume=None, user_scope=False):
     qualified = session_name(name)
+    relay = validate_route(relay)
     cwd = str(Path(cwd).resolve(strict=True))
     if not Path(cwd).is_dir():
         raise ValueError("working directory is not a directory")
@@ -244,7 +305,7 @@ def attach(name, cwd, agent, port, resume=None, user_scope=False):
             if resume is not None:
                 validate_resume(agent, resume)
             write_json(path, record)
-        write_json(directory / (qualified + ".route"), {"port": port})
+        write_json(directory / (qualified + ".route"), {"socket": relay})
     # runuser preserves the SSH caller's cwd (often /root). zmx initializes its
     # daemon there before our launch callback runs; an unprivileged daemon cannot
     # enter /root. Establish the requested directory for the backend itself.
@@ -266,11 +327,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     commands.add_parser("list")
+    commands.add_parser("prepare-route")
+    sub = commands.add_parser("grant-route")
+    sub.add_argument("user")
+    sub.add_argument("socket")
+    sub = commands.add_parser("remove-route")
+    sub.add_argument("socket")
     sub = commands.add_parser("attach")
     sub.add_argument("name")
     sub.add_argument("cwd")
     sub.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
-    sub.add_argument("--port", type=int, required=True)
+    sub.add_argument("--socket", required=True)
     sub.add_argument("--resume", help="explicit Claude or Codex conversation UUID; source must be stopped")
     sub.add_argument("--user-scope", action="store_true", help="start backend in an existing systemd user manager")
     sub = commands.add_parser("status")
@@ -281,9 +348,13 @@ def main():
     args = parser.parse_args()
     try:
         if args.action == "attach":
-            if not 1024 <= args.port <= 65535:
-                raise ValueError("invalid relay port")
-            attach(args.name, args.cwd, args.agent, args.port, args.resume, args.user_scope)
+            attach(args.name, args.cwd, args.agent, args.socket, args.resume, args.user_scope)
+        elif args.action == "prepare-route":
+            print(json.dumps({"socket": prepare_route()}))
+        elif args.action == "grant-route":
+            grant_route(args.user, args.socket)
+        elif args.action == "remove-route":
+            remove_route(args.socket)
         elif args.action == "launch":
             launch(args.name)
         elif args.action == "status":

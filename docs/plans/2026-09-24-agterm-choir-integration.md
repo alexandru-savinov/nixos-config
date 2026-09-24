@@ -30,6 +30,24 @@ backends retain their original environment; do not restart Sancta implicitly.
 
 ## Platform limits
 
+The revised transport uses a remote Unix socket in a 0700 directory owned by
+the backend user. SSH creates the socket as root; a checked ownership handoff
+transfers that 0600 socket before dropping privileges. No loopback TCP listener
+or new authentication credential is used. Other unprivileged host users cannot
+reach the relay through the filesystem. This protects status as well as UI.
+
+Old running agents retain hooks pointing at the previous helper, which only
+understands TCP route files. They must be cleanly resumed with the new helper
+before enabling this transport for their attachment. The main Sancta resume
+requires explicit owner approval; preserve its conversation identity and tmux
+fallback. Do not claim a client-only upgrade preserves its old status hooks.
+
+Claude's `PermissionRequest` event is confirmed in the official hook reference:
+https://code.claude.com/docs/en/hooks#permissionrequest . The event represents a
+permission decision, not proof that a human dialog remains visible; another hook
+can decide it. Live Claude blocked-state acceptance is still required and must
+not be inferred from Codex's separate observed-dialog acceptance.
+
 Agterm has one HUD slot per session. Two split panes cannot display independent
 HUDs simultaneously. The bridge uses a per-session advisory lease and refuses
 an occupied slot; update/close compare the owned panel fingerprint first.
