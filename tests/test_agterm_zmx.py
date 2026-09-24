@@ -234,6 +234,14 @@ class ProtocolTests(unittest.TestCase):
                 interface.run(client, args, config)
             place.assert_not_called()
 
+    def test_direct_open_does_not_require_remote_inventory(self):
+        with patch.object(interface, "inventory", side_effect=RuntimeError("unrelated inventory unavailable")) as inventory, \
+                patch.object(interface, "place", return_value=0) as place:
+            args = self.gui_args()
+            self.assertEqual(interface.run(client, args, {}), 0)
+            inventory.assert_not_called()
+            place.assert_called_once_with(client, args, {})
+
     def test_gui_menu_cancellation_at_each_stage_creates_nothing(self):
         for replies in [[None], ["new:shell", None], ["new:shell", "/work", None]]:
             with patch.object(interface, "inventory", return_value=[]), \

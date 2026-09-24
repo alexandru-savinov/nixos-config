@@ -138,7 +138,7 @@ def use_record(args, record):
 
 def run(client, args, config):
     args.user_scope = args.user_scope or config.get("user_scope", False)
-    records = inventory(client, args)
+    records = inventory(client, args) if args.session or args.menu else []
     if args.session:
         alias = config.get("aliases", {}).get(args.session)
         if not alias:
