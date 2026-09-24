@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Attach one remote zmx session from an agterm pane, reconnecting after SSH loss."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -86,8 +87,8 @@ def open_session(args, pick=False):
         args.name, args.cwd, args.agent = record["name"], record["cwd"], record["agent"]
         args.resume = record.get("resume")
         args.user_scope = record.get("user_scope", False)
-    result = agterm(["session", "new", "--name", f"zmx / {args.name}",
-                     "--workspace-name", "Remote zmx", "--create-workspace",
+    result = agterm(["session", "new", "--name", getattr(args, "title", None) or args.name,
+                     "--workspace-name", getattr(args, "workspace", "choir"), "--create-workspace",
                      "--command", shlex.join(attach_argv(args)), "--wait", *selector])
     result.check_returncode()
     print(result.stdout.strip())
@@ -183,47 +184,125 @@ class StatusHandler(socketserver.StreamRequestHandler):
     def handle(self):
         try:
             self.connection.settimeout(1)
-            raw = self.rfile.readline(257)
-            if len(raw) > 256 or not raw.endswith(b"\n"):
+            raw = self.rfile.readline(4097)
+            if len(raw) > 4096 or not raw.endswith(b"\n"):
                 return
             payload = json.loads(raw)
+            if isinstance(payload, dict) and "ui" in payload:
+                bridge = getattr(self.server, "ui", None)
+                if bridge is None:
+                    raise ValueError("UI bridge unavailable")
+                try:
+                    outcome = (bridge.ask(payload, self.connection) if payload["ui"] == "ask"
+                               else bridge.hud(payload))
+                except (OSError, ValueError, TypeError):
+                    outcome = {"result": "error", "reason": "native question unavailable or invalid request"}
+                self.wfile.write((json.dumps(outcome) + "\n").encode())
+                return
+            if len(raw) > 256:
+                return
             status_request(payload, self.server.target, self.server.pane_id)
             self.server.tracker.receive(payload["status"])
         except (OSError, ValueError, TypeError):
             pass
 
 
-def ssh_command(args, relay_path, port):
+def ssh_command(args, relay_path, port, connected_path=None):
     # Dedicated connection: closing it also removes its reverse forward.
+    ready = (["-o", "PermitLocalCommand=yes", "-o",
+              "LocalCommand=" + shlex.join(["/usr/bin/touch", str(connected_path)])]
+             if connected_path else [])
     return ["ssh", "-tt", "-o", "BatchMode=yes", "-o", "ControlPath=none",
             "-o", "ForwardAgent=no", "-o", "ConnectTimeout=10",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{port}:{relay_path}",
-            "--", args.host, remote_command(args, ["attach", args.name, args.cwd,
+            *ready, "--", args.host, remote_command(args, ["attach", args.name, args.cwd,
                                                     "--agent", args.agent, "--port", str(port)]
                                                     + (["--resume", args.resume] if getattr(args, "resume", None) else [])
                                                     + (["--user-scope"] if getattr(args, "user_scope", False) else []))]
 
 
+def wait_for_ssh(command, connected_path, on_connected):
+    """Observe SSH's local post-connect callback separately from agent status."""
+    connected_path.unlink(missing_ok=True)
+    process = subprocess.Popen(command)
+    announced = False
+    try:
+        while True:
+            if connected_path.exists() and not announced:
+                announced = True
+                on_connected()
+            try:
+                return process.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                pass
+    except BaseException:
+        process.terminate()  # Only the local attachment, never the remote scope.
+        process.wait(timeout=5)
+        raise
+
+
+def connection_notice(name, message, target):
+    print(f"{name}: {message}", flush=True)
+    if sys.stdout.isatty():
+        # A terminal notification belongs to this exact surface, including a
+        # split after promotion/swap. Agterm applies the owner's banner settings.
+        clean = "".join(c for c in f"{name}: {message}" if c.isprintable())
+        sys.stdout.write("\x1b]9;" + clean + "\x07")
+        sys.stdout.flush()
+        return
+    try:
+        agterm(["notify", f"{name}: {message}", "--title", "Remote connection",
+                "--target", target], timeout=3)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
+
+def load_interface(name="interface"):
+    spec = importlib.util.spec_from_file_location("agt_zmx_" + name, Path(__file__).with_name(name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def main():
+    interface = load_interface()
+    try:
+        config = interface.preferences()
+    except (OSError, ValueError) as error:
+        print(f"Invalid remote configuration: {error}", file=sys.stderr)
+        return 1
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="root@sancta-choir-1")
-    parser.add_argument("--user", default="sancta", help="remote account; empty uses SSH account")
+    parser.add_argument("--host", default=config.get("host", "root@sancta-choir-1"))
+    parser.add_argument("--user", default=config.get("user", "sancta"), help="remote account; empty uses SSH account")
     parser.add_argument("--name")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--open", action="store_true", help="open a new agterm pane for the named session")
     mode.add_argument("--pick", action="store_true", help="pick a live remote session and open a pane")
-    parser.add_argument("--cwd", default="/var/lib/sancta")
+    parser.add_argument("--cwd", default=config.get("cwd", "/var/lib/sancta"))
     parser.add_argument("--agent", choices=["shell", "claude", "codex"], default="shell")
     parser.add_argument("--resume", help="explicit Claude or Codex conversation UUID; requires a stopped source")
     parser.add_argument("--user-scope", action="store_true", help="create backend outside the SSH service cgroup")
-    parser.add_argument("--remote-bin", default="agt-zmx-host", help="host executable or built Nix store path")
+    parser.add_argument("--remote-bin", default=config.get("remote_bin", "agt-zmx-host"), help="host executable or built Nix store path")
+    mode.add_argument("--menu", action="store_true", help="native picker for existing or new remote sessions")
+    mode.add_argument("--session", help="attach a configured named session, such as sancta")
+    parser.add_argument("--workspace", default=config.get("workspace", "choir"))
+    parser.add_argument("--title", help="display name, independent of the backend identity")
+    parser.add_argument("--split", action="store_true", help="open into a new split; never replace an existing split")
     args = parser.parse_args()
-    if not args.pick and not args.name:
+    if args.split and not (args.menu or args.session or args.open):
+        parser.error("--split requires --menu, --session or --open")
+    if not (args.pick or args.menu or args.session) and not args.name:
         parser.error("--name is required unless --pick is used")
-    if args.open or args.pick:
+    if args.open or args.pick or args.menu or args.session:
         try:
-            return open_session(args, args.pick)
+            if args.pick:
+                return open_session(args, True)
+            # Pass this module's operations without importing a second client.
+            from types import SimpleNamespace
+            client = SimpleNamespace(agterm=agterm, remote_command=remote_command,
+                                     picker_items=picker_items, attach_argv=attach_argv)
+            return interface.run(client, args, config)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             if isinstance(error, subprocess.TimeoutExpired):
                 detail = "request timed out; check SSH connectivity and agterm"
@@ -231,7 +310,8 @@ def main():
                 detail = f"SSH or agterm command failed (exit {error.returncode}); check connectivity and retry"
             else:
                 detail = str(error)
-            print(f"Could not open zmx pane: {detail}", file=sys.stderr)
+            from types import SimpleNamespace
+            interface.report_error(SimpleNamespace(agterm=agterm), f"Could not open zmx pane: {detail}")
             return 1
     target = os.environ.get("AGTERM_SESSION_ID", "")
     pane_id = os.environ.get("AGTERM_PANE_ID", "")
@@ -257,12 +337,29 @@ def main():
             if args.agent == "codex":
                 monitor = threading.Thread(target=watch_codex_dialog, args=(relay, monitor_stop), daemon=True)
                 monitor.start()
+            disconnected = False
             try:
                 while True:
+                    relay.ui = load_interface("ui").Bridge(agterm_socket, target, pane_id)
                     port = random.SystemRandom().randrange(20000, 60000)
-                    result = subprocess.run(ssh_command(args, relay_path, port))
-                    if result.returncode != 255:
-                        return result.returncode
+                    connected_path = Path(directory) / "ssh-connected"
+                    def connected():
+                        nonlocal disconnected
+                        if disconnected:
+                            connection_notice(args.name, "SSH reconnected", target)
+                        disconnected = False
+                    try:
+                        result = wait_for_ssh(ssh_command(args, relay_path, port, connected_path),
+                                              connected_path, connected)
+                    finally:
+                        relay.ui.disconnect()
+                    if result != 255:
+                        if result:
+                            connection_notice(args.name, "remote command ended; see this pane for details", target)
+                        return result
+                    if not disconnected:
+                        connection_notice(args.name, "SSH disconnected or forwarding failed; reconnecting", target)
+                    disconnected = True
                     print("SSH disconnected or forwarding failed; retrying in 5s. Ctrl-C stops retries.", flush=True)
                     time.sleep(5)
             except KeyboardInterrupt:

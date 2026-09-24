@@ -28,10 +28,205 @@ def load(name):
     return module
 
 
-client, host = load("client"), load("host")
+client, host, interface = load("client"), load("host"), load("interface")
+ui = load("ui")
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_hud_ownership_update_disconnect_and_foreign_slot(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(ui.Path, "home", return_value=Path(directory)):
+            first = ui.Bridge("socket", "session", "pane-a")
+            second = ui.Bridge("socket", "session", "pane-b")
+            state = {}
+            requests = []
+            def call(request):
+                requests.append(request)
+                if request["cmd"] == "session.hud.close":
+                    state.pop("hud", None)
+                else:
+                    state["hud"] = dict(request["args"])
+                return {}
+            with patch.object(first, "require_native_ui"), patch.object(second, "require_native_ui"), \
+                    patch.object(first, "session", return_value=state), \
+                    patch.object(second, "session", return_value=state), \
+                    patch.object(first, "call", side_effect=call):
+                first.hud(dict(ui="hud.open", message="Counting files"))
+                self.assertEqual(requests[-1]["args"]["paneID"], "pane-a")
+                with self.assertRaises(BlockingIOError):
+                    second.hud(dict(ui="hud.open", message="Other task"))
+                first.hud(dict(ui="hud.update", message="Count complete"))
+                first.disconnect()
+                self.assertNotIn("hud", state)
+                self.assertIsNone(first.hud_lease)
+                state["hud"] = {"message": "Owner panel"}
+                with self.assertRaises(ValueError):
+                    second.hud(dict(ui="hud.open", message="Other task"))
+                self.assertEqual(state["hud"]["message"], "Owner panel")
+
+    def test_hud_does_not_close_replaced_panel_or_accept_target(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(ui.Path, "home", return_value=Path(directory)):
+            bridge = ui.Bridge("socket", "session", "pane")
+            state = {}
+            def call(request):
+                state["hud"] = dict(request["args"])
+                return {}
+            with patch.object(bridge, "require_native_ui"), patch.object(bridge, "session", return_value=state), \
+                    patch.object(bridge, "call", side_effect=call) as send:
+                with self.assertRaises(ValueError):
+                    bridge.hud(dict(ui="hud.open", message="Text", target="other"))
+                bridge.hud(dict(ui="hud.open", message="Mine"))
+                state["hud"] = {"message": "Replacement"}
+                bridge.disconnect()
+                self.assertEqual(send.call_count, 1)
+                self.assertEqual(state["hud"]["message"], "Replacement")
+
+    def test_custom_picker_returns_query_and_rejects_unexpected_custom(self):
+        reply = subprocess.CompletedProcess([], 0, '{"result":"custom","query":"/work/new"}')
+        with patch.object(client, "agterm", return_value=reply):
+            self.assertEqual(interface.pick(client, "Directory", [], True), "/work/new")
+            with self.assertRaises(ValueError):
+                interface.pick(client, "Session", [])
+
+    def test_question_rejects_target_injection_and_invalid_choices(self):
+        payload = dict(ui="ask", title="Choose", buttons=[dict(id="yes", label="Yes")])
+        request = ui.question(payload, "local-session", "local-pane")
+        self.assertEqual(request["target"], "local-session")
+        self.assertEqual(request["args"]["paneID"], "local-pane")
+        for bad in [dict(payload, target="other"), dict(payload, title="escape\x1b"),
+                    dict(payload, buttons=payload["buttons"] * 2),
+                    dict(payload, buttons=[dict(id="yes", label="Yes", command="exec")])]:
+            with self.assertRaises(ValueError):
+                ui.question(bad, "local-session", "local-pane")
+
+    def test_question_answer_cancel_disconnect_and_timeout(self):
+        payload = dict(ui="ask", title="Choose", buttons=[dict(id="yes", label="Yes")])
+        for state in ["answered", "escaped", "cancelled", "disconnect", "timeout", "invalid"]:
+            with self.subTest(state=state):
+                bridge = ui.Bridge("unused", "session", "pane")
+                calls = []
+                def call(request):
+                    calls.append(request)
+                    if request["cmd"] == "version":
+                        return {"app": {"version": "0.31.0"}}
+                    if request["cmd"] == "ask.open":
+                        return {"id": "owned-question"}
+                    return {"ask": {"result": state if state != "invalid" else "answered",
+                                    "id": "yes" if state != "invalid" else "unknown"}}
+                with patch.object(bridge, "call", side_effect=call), \
+                        patch.object(bridge, "peer_closed", return_value=state == "disconnect"):
+                    if state == "invalid":
+                        with self.assertRaises(ValueError):
+                            bridge.ask(payload, None)
+                    else:
+                        result = bridge.ask(payload, None, timeout=0 if state == "timeout" else 1)
+                        self.assertEqual(result["result"], state if state in {"answered", "escaped"}
+                                         else "cancelled")
+                    self.assertEqual(any(c["cmd"] == "ask.cancel" for c in calls),
+                                     state in {"disconnect", "timeout", "invalid"})
+                    self.assertFalse(bridge.lock.locked())
+
+    def test_question_refuses_old_app_before_opening(self):
+        bridge = ui.Bridge("unused", "session", "pane")
+        with patch.object(bridge, "call", return_value={"app": {"version": "0.26.1"}}) as call:
+            with self.assertRaisesRegex(ValueError, "0.31.0"):
+                bridge.ask(dict(ui="ask", title="Choose", buttons=[dict(id="a", label="A")]), None)
+            self.assertEqual(call.call_count, 1)
+
+    def test_ssh_connection_notice_requires_local_ready_marker(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ready"
+            callback = Mock()
+            process = Mock()
+            def wait(timeout):
+                if not path.exists():
+                    path.touch()
+                    raise subprocess.TimeoutExpired("ssh", timeout)
+                return 0
+            process.wait.side_effect = wait
+            with patch.object(client.subprocess, "Popen", return_value=process):
+                self.assertEqual(client.wait_for_ssh(["ssh"], path, callback), 0)
+            callback.assert_called_once()
+            callback.reset_mock()
+            process.wait.side_effect = None
+            process.wait.return_value = 255
+            with patch.object(client.subprocess, "Popen", return_value=process):
+                self.assertEqual(client.wait_for_ssh(["ssh"], path, callback), 255)
+            callback.assert_not_called()
+
+    def gui_args(self, **changes):
+        from argparse import Namespace
+        values = dict(host="root@choir", user="sancta", remote_bin="/helper", name="test",
+                      cwd="/work", agent="shell", resume=None, user_scope=False,
+                      workspace="choir", title=None, split=False, session=None, menu=False)
+        values.update(changes)
+        return Namespace(**values)
+
+    def test_gui_alias_uses_record_identity_and_rejects_missing_backend(self):
+        args = self.gui_args(session="sancta")
+        record = dict(name="main", cwd="/original", agent="claude", resume="saved-id",
+                      user_scope=True, alive=True)
+        config = {"aliases": {"sancta": {"name": "main", "title": "sancta"}}}
+        with patch.object(interface, "inventory", return_value=[record]), \
+                patch.object(interface, "place", return_value=0) as place:
+            self.assertEqual(interface.run(client, args, config), 0)
+            self.assertEqual((args.name, args.cwd, args.resume, args.user_scope),
+                             ("main", "/original", "saved-id", True))
+            place.assert_called_once()
+        with patch.object(interface, "inventory", return_value=[]), \
+                patch.object(interface, "place") as place:
+            with self.assertRaisesRegex(ValueError, "missing"):
+                interface.run(client, args, config)
+            place.assert_not_called()
+
+    def test_gui_menu_cancellation_at_each_stage_creates_nothing(self):
+        for replies in [[None], ["new:shell", None], ["new:shell", "/work", None]]:
+            with patch.object(interface, "inventory", return_value=[]), \
+                    patch.object(interface, "pick", side_effect=replies), \
+                    patch.object(interface, "place") as place:
+                self.assertEqual(interface.run(client, self.gui_args(menu=True), {}), 0)
+                place.assert_not_called()
+
+    def test_gui_new_conversation_cannot_reuse_old_record(self):
+        record = dict(name="existing", cwd="/work", agent="shell", alive=False)
+        with patch.object(interface, "inventory", return_value=[record]), \
+                patch.object(interface, "pick", side_effect=["new:claude", "/work", "existing"]), \
+                patch.object(interface, "place") as place:
+            with self.assertRaisesRegex(ValueError, "already recorded"):
+                interface.run(client, self.gui_args(menu=True), {})
+            place.assert_not_called()
+
+    def test_gui_focus_matches_host_user_backend_not_title(self):
+        args = self.gui_args()
+        command = __import__('shlex').join(client.attach_argv(args))
+        tree = {"tree": {"workspaces": [{"sessions": [
+            {"id": "wrong", "name": "test", "restoreCommand": command.replace("root@choir", "root@other")},
+            {"id": "right", "name": "renamed by owner", "restoreCommand": command},
+        ]}]}}
+        with patch.object(interface, "ctl", side_effect=[{"windows": [{"id": "window", "open": True}]}, tree, {}, {}]) as ctl:
+            self.assertTrue(interface.focus_existing(client, args))
+            self.assertEqual(ctl.call_args.args[1], ["session", "select", "--target", "right", "--window", "window"])
+
+    def test_gui_split_refuses_hidden_existing_pane_before_typing(self):
+        tree = {"tree": {"workspaces": [{"sessions": [{"id": "target", "hasSplit": True, "split": False}]}]}}
+        with patch.dict(os.environ, {"AGTERM_SESSION_ID": "target", "AGT_SESSION_ID": "target"}), \
+                patch.object(interface, "focus_existing", return_value=False), \
+                patch.object(interface, "ctl", return_value=tree) as ctl:
+            with self.assertRaisesRegex(ValueError, "already has a split"):
+                interface.place(client, self.gui_args(split=True), {})
+            self.assertEqual(ctl.call_count, 1)
+
+    def test_gui_display_name_is_separate_from_restore_identity(self):
+        args = self.gui_args(name="technical-backend")
+        config = {"aliases": {"sancta": {"name": args.name, "title": "sancta", "workspace": "choir"}}}
+        with patch.object(interface, "focus_existing", return_value=False), \
+                patch.object(interface, "ctl", return_value={"id": "created"}) as ctl:
+            interface.place(client, args, config)
+            command = ctl.call_args_list[0].args[1]
+            self.assertEqual(command[command.index("--name") + 1], "sancta")
+            self.assertEqual(command[command.index("--workspace-name") + 1], "choir")
+            self.assertIn("technical-backend", command[command.index("--command") + 1])
+
     def test_picker_transport_failures_are_clean_nonzero_diagnostics(self):
         import io
         for error in [subprocess.CalledProcessError(255, ["ssh"]),
@@ -352,6 +547,37 @@ Press enter to confirm or esc to cancel
                     relay.shutdown()
                     runner.join()
                     agterm.close()
+
+    def test_question_roundtrip_over_real_relay(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+            with client.Relay(directory + "/relay", client.StatusHandler) as relay:
+                relay.target, relay.pane_id = "session-a", "pane-b"
+                relay.ui = ui.Bridge("unused", relay.target, relay.pane_id)
+                requests = []
+                def call(request):
+                    requests.append(request)
+                    if request["cmd"] == "version":
+                        return {"app": {"version": "0.31.0"}}
+                    if request["cmd"] == "ask.open":
+                        return {"id": "owned"}
+                    return {"ask": {"result": "answered", "id": "continue"}}
+                runner = threading.Thread(target=relay.serve_forever)
+                runner.start()
+                try:
+                    with patch.object(relay.ui, "call", side_effect=call):
+                        with socket.socket(socket.AF_UNIX) as sender:
+                            sender.settimeout(3)
+                            sender.connect(directory + "/relay")
+                            sender.sendall(json.dumps(dict(ui="ask", title="Continue?", buttons=[
+                                dict(id="continue", label="Continue")])).encode() + b"\n")
+                            self.assertEqual(json.loads(sender.recv(4096)),
+                                             dict(result="answered", id="continue"))
+                    opened = next(r for r in requests if r["cmd"] == "ask.open")
+                    self.assertEqual((opened["target"], opened["args"]["paneID"]),
+                                     ("session-a", "pane-b"))
+                finally:
+                    relay.shutdown()
+                    runner.join()
 
 
 @unittest.skipUnless(os.environ.get("AGT_ZMX_TEST_BINARY"), "set AGT_ZMX_TEST_BINARY for real PTY acceptance")
