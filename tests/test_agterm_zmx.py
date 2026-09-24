@@ -275,6 +275,19 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown remote host"):
             interface.select_profile(client, args, config)
 
+    def test_unknown_host_cannot_inherit_choir_but_explicit_restore_survives(self):
+        config = {"hosts": {"choir": {"host": "root@choir", "user": "sancta"}}}
+        args = self.host_args(menu=False, open=True, pick=False, profile=None)
+        args.host = "nixos@unregistered"
+        with self.assertRaisesRegex(ValueError, "no unique profile"):
+            interface.select_profile(None, args, config)
+        args.user, args.cwd, args.remote_bin, args.workspace = "", "/saved", "/saved/helper", "saved"
+        args.open = False
+        self.assertEqual(interface.select_profile(None, args, config), {})
+        self.assertEqual((args.host, args.user, args.cwd, args.remote_bin),
+                         ("nixos@unregistered", "", "/saved", "/saved/helper"))
+        self.assertFalse(args.user_scope)
+
     def test_legacy_choir_profile_and_explicit_sancta_shortcut(self):
         args = self.host_args(menu=False, open=False, pick=False, session="sancta", profile="choir")
         config = {"host": "root@choir", "user_scope": True}

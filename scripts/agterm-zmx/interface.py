@@ -34,10 +34,19 @@ def select_profile(client, args, config):
                 return None
         if selected is None:
             matches = [name for name, value in profiles.items() if value.get("host") == args.host]
-            selected = matches[0] if len(matches) == 1 else config.get("default_host", "choir")
-        if selected not in profiles:
-            raise ValueError("unknown remote host profile")
-        config = profiles[selected]
+            if args.host is not None and len(matches) != 1:
+                explicit = all(getattr(args, field) is not None
+                               for field in ("user", "cwd", "remote_bin", "workspace"))
+                if not explicit or args.menu or args.session:
+                    raise ValueError("explicit host has no unique profile; choose --profile or specify all connection fields")
+                # Old restore commands remain usable after a profile is removed.
+                config = {}
+            else:
+                selected = matches[0] if matches else config.get("default_host", "choir")
+        if selected is not None:
+            if selected not in profiles:
+                raise ValueError("unknown remote host profile")
+            config = profiles[selected]
     elif selected is not None and selected != "choir":
         raise ValueError("unknown remote host profile")
     defaults = dict(host="root@sancta-choir-1", user="sancta", cwd="/var/lib/sancta",
