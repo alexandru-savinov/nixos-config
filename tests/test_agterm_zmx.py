@@ -502,8 +502,17 @@ ctx5%
             project.mkdir(parents=True)
             transcript = project / (identifier + ".jsonl")
             transcript.write_text('private test sentinel, never parsed')
-            host.validate_resume("claude", identifier, root)
+            with self.assertRaisesRegex(ValueError, "cannot inspect conversation process metadata"):
+                host.validate_resume("claude", identifier, root)
+            (root / "sessions").write_text("not a directory")
+            with self.assertRaisesRegex(ValueError, "cannot inspect conversation process metadata"):
+                host.validate_resume("claude", identifier, root)
+            (root / "sessions").unlink()
             (root / "sessions").mkdir()
+            with patch.object(Path, "iterdir", side_effect=PermissionError):
+                with self.assertRaisesRegex(ValueError, "cannot inspect conversation process metadata"):
+                    host.validate_resume("claude", identifier, root)
+            host.validate_resume("claude", identifier, root)
             metadata = root / "sessions" / "test.json"
             metadata.write_text(json.dumps({"sessionId": identifier, "pid": os.getpid()}))
             with self.assertRaisesRegex(ValueError, "live process"):

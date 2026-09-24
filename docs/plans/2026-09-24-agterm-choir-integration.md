@@ -137,3 +137,13 @@ A local socket regression reproduced the missing bound before the fix. The
 corrected relay rejects excess concurrent peers and accepts new work after
 occupied slots are released. The combined 44-test suite passed with the optional
 real-PTY case skipped. Both client corrections remain staged for main Sancta.
+
+## Resume inventory guard
+
+Review found that globbing a missing Claude sessions directory silently skipped
+the live-writer check. The staged helper now enumerates that directory explicitly
+and refuses resume if it is missing, is not a directory, or cannot be read.
+The regression failed before the fix and passed afterward; the complete 44-test
+suite passed with one optional PTY test skipped. Transcript contents remain unread.
+This helper change is staged only. It does not change the built Mac client or
+authorize replacing the deployed helper or restarting Sancta.

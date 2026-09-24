@@ -174,7 +174,15 @@ def validate_resume(agent, identifier, config_dir=None):
     if not any((directory / "projects").glob("*/" + identifier + ".jsonl")):
         raise ValueError("conversation transcript not found; refusing to start a fresh conversation")
     # Inspect metadata only. Never read transcript contents or stop an old agent.
-    for path in (directory / "sessions").glob("*.json"):
+    try:
+        # glob silently treats a missing/unreadable directory as no matches.
+        # An unavailable inventory is not evidence that the old writer exited.
+        paths = list((directory / "sessions").iterdir())
+    except OSError:
+        raise ValueError("cannot inspect conversation process metadata; refusing resume") from None
+    for path in paths:
+        if path.suffix != ".json":
+            continue
         record = json.loads(path.read_text())
         if record.get("sessionId") != identifier:
             continue
