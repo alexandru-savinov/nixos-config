@@ -400,6 +400,62 @@ ctx5%
         self.assertEqual(tracker.latest, 'idle')
         self.assertEqual(send.call_count, 3)
 
+    def test_relay_bounds_connections_and_reuses_released_slots(self):
+        ready, release = threading.Event(), threading.Event()
+        count_lock = threading.Lock()
+        started = []
+
+        class HoldingHandler(client.socketserver.BaseRequestHandler):
+            def handle(self):
+                with count_lock:
+                    started.append(1)
+                    if len(started) == 2:
+                        ready.set()
+                release.wait(3)
+                try:
+                    self.request.sendall(b'ok')
+                except OSError:
+                    pass
+
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory, \
+                patch.object(client.Relay, 'max_connections', 2, create=True), \
+                client.Relay(directory + '/relay', HoldingHandler) as relay:
+            runner = threading.Thread(target=relay.serve_forever)
+            runner.start()
+            peers = []
+            try:
+                for _ in range(2):
+                    peer = socket.socket(socket.AF_UNIX)
+                    peer.settimeout(1)
+                    peer.connect(directory + '/relay')
+                    peers.append(peer)
+                self.assertTrue(ready.wait(1))
+                with socket.socket(socket.AF_UNIX) as rejected:
+                    rejected.settimeout(1)
+                    rejected.connect(directory + '/relay')
+                    self.assertEqual(rejected.recv(1), b'')
+                self.assertEqual(len(started), 2)
+                release.set()
+                for peer in peers:
+                    self.assertEqual(peer.recv(2), b'ok')
+                    self.assertEqual(peer.recv(1), b'')
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    with socket.socket(socket.AF_UNIX) as following:
+                        following.settimeout(1)
+                        following.connect(directory + '/relay')
+                        if following.recv(2) == b'ok':
+                            break
+                    time.sleep(.01)
+                else:
+                    self.fail('Relay did not release completed connection slots')
+            finally:
+                release.set()
+                for peer in peers:
+                    peer.close()
+                relay.shutdown()
+                runner.join(timeout=3)
+
     def test_lost_daemon_never_relaunches_or_overwrites_recovery_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

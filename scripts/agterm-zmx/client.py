@@ -188,10 +188,32 @@ class StatusTracker:
 
 class Relay(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
+    request_queue_size = 16
+    max_connections = 16
 
     def __init__(self, *args, **kwargs):
+        self.connection_slots = threading.BoundedSemaphore(self.max_connections)
         super().__init__(*args, **kwargs)
         self.tracker = StatusTracker(self.forward)
+
+    def process_request(self, request, client_address):
+        # Acquire before ThreadingMixIn creates a thread. Peers sharing the
+        # remote host can connect before authentication, so never queue an
+        # unbounded number of workers or wait here behind a pending question.
+        if not self.connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connection_slots.release()
 
     def forward(self, value):
         request = status_request({"status": value}, self.target, self.pane_id)

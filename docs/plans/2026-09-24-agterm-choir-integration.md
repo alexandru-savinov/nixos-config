@@ -35,6 +35,10 @@ The token travels through encrypted SSH stdin, never argv or environment, and
 is stored in a 0600 route file under the backend user's 0700 state directory.
 The Mac checks it before dispatch and invalidates it on disconnect. Other host
 users can reach the TCP listener but cannot submit authenticated requests.
+The relay caps concurrent handlers at 16 and the accept backlog at 16. Excess
+connections are closed before a worker thread is created; handler completion or
+thread-start failure releases its slot. Saturation can still delay delivery,
+but does not create an unbounded number of Mac worker threads.
 Activation approval must explicitly include creation of these short-lived
 tokens; existing credentials are not changed or re-keyed.
 
@@ -127,3 +131,9 @@ SSH/UI acceptance was run separately. The native layout probe is conservative
 and currently covers the observed English Claude UI. This correction remains
 staged until its immutable client package is built and activated; the running
 main Sancta attachment still uses the previous client.
+
+The follow-up review identified unbounded pre-authentication connection threads.
+A local socket regression reproduced the missing bound before the fix. The
+corrected relay rejects excess concurrent peers and accepts new work after
+occupied slots are released. The combined 44-test suite passed with the optional
+real-PTY case skipped. Both client corrections remain staged for main Sancta.
