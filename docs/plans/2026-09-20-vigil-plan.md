@@ -131,7 +131,14 @@ hosts only. Schema validation does not resolve DNS; owners must mark remote
 hostname targets with `peer = true`. This annotation is not an SSRF boundary.
 Strings are single-line; `nume` and `verifica` use the closed values above.
 `picat_dupa` is 1–12. `tinta` is a nonempty string except for `cmd`'s argv array.
-`la` and `tinta_glob` are not contract keys. No implied defaults for expectations:
+`la` and `tinta_glob` are not contract keys. Two optional labels borrow the
+Open Data Contract Standard's vocabulary and never change a verdict:
+`dimension` (what kind of promise: ODCS's `accuracy`, `completeness`,
+`conformity`, `consistency`, `coverage`, `timeliness`, `uniqueness`, plus our
+plain `availability`) and `driver` (whom it serves: ODCS's `regulatory`,
+`analytics`, `operational`, plus our `family`). Both are closed sets in both
+validators; when declared they are echoed on the per-contract run line so a
+failed promise can be read by kind and by owner. No implied defaults for expectations:
 
 | verifica | target and required expectation | optional expectation |
 |---|---|---|
@@ -142,11 +149,13 @@ Strings are single-line; `nume` and `verifica` use the closed values above.
 | disk | absolute path; `prag` integer 1–100 (failure at use ≥ threshold) | none |
 | mount | absolute mountpoint; no `astept` or `prag` | none |
 | cmd | nonempty array of strings, absolute executable first; `astept = { valoare = "<expected>" }`, compared with trimmed stdout | none |
-| hass-state | generic entity identifier, no URL; `astept = { valoare = "<expected state>" }` | none |
+| hass-state | generic entity identifier, no URL; exactly one of `astept = { valoare = "<expected state>" }` or `astept = { disponibil = true }` (state ∉ {unavailable, unknown}) | none |
 
 Durations are positive integers suffixed `s`, `m`, `h`, or `d`. Other expectation
-keys and combinations are rejected. `hass-state` compares the returned `.state`
-with `valoare`; unavailable/unknown state is picat; absent/malformed state is
+keys and combinations are rejected. `hass-state` with `valoare` compares the returned `.state`;
+with `disponibil = true` any real state is verde — the only safe shape for a
+device whose state cycles with use, since a fixed `valoare` would turn each use
+into an incident; unavailable/unknown state is picat in both modes; absent/malformed state is
 NECITIT. Error messages are fixed type-level codes, never parser excerpts,
 raw filenames, command output, URLs, entities, or exception messages. A malformed
 file with no usable name gets `invalid-<sha256-of-full-path, first 16 hex>` as

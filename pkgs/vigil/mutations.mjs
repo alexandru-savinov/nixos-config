@@ -19,6 +19,8 @@ const mutations = [
   ['row-only-sends', 'vigil-say.mjs', "if (env.VIGIL_SAY === '0') return 0;\n  const marker", "if (false) return 0;\n  const marker"],
   ['absent-tick-success', 'vigil-tick.mjs', "status = '404 Not Found'; body = 'tick-absent\\n'", "status = '200 OK'; body = 'tick-absent\\n'"],
   ['failed-run-publishes', 'vigil-tick.mjs', "!['0', '1', '2'].includes(env.EXIT_STATUS)", 'false'],
+  ['vocabulary-dropped', 'vigil-check.mjs', "...(c.dimension !== undefined && { dimension: c.dimension }), ...(c.driver !== undefined && { driver: c.driver }),", ''],
+  ['disponibil-unavailable-green', 'lib/checks.mjs', "if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');\n        if (c.astept.disponibil === true) return green();", "if (c.astept.disponibil === true) return green();\n        if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');"],
 ];
 const source = path.dirname(fileURLToPath(import.meta.url));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-mutants-'));

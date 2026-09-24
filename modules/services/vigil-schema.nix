@@ -99,11 +99,14 @@ let
       peer = !(tailnet host || lib.hasPrefix "fd7a:115c:a1e0:" (lib.toLower host)) || (c.peer or false);
     in
     keys document [ "contract" "spune" ] [ "contract" "spune" ]
-    && keys c [ "nume" "ce" "verifica" "tinta" "astept" "prag" "picat_dupa" "peer" ] [ "nume" "ce" "verifica" "tinta" "picat_dupa" ]
+    && keys c [ "nume" "ce" "verifica" "tinta" "astept" "prag" "picat_dupa" "peer" "dimension" "driver" ] [ "nume" "ce" "verifica" "tinta" "picat_dupa" ]
     && keys document.spune [ "nivel" ] [ "nivel" ]
     && name c.nume && text c.ce && utf16Length c.ce <= 200
     && builtins.elem kind [ "tcp" "http" "unit" "age" "disk" "mount" "cmd" "hass-state" ]
     && integer c.picat_dupa 1 12 && (!(c ? peer) || builtins.isBool c.peer)
+    # Borrowed vocabulary: closed label sets, mirrored from lib/schema.mjs.
+    && (!(c ? dimension) || builtins.elem c.dimension [ "accuracy" "completeness" "conformity" "consistency" "coverage" "timeliness" "uniqueness" "availability" ])
+    && (!(c ? driver) || builtins.elem c.driver [ "regulatory" "analytics" "operational" "family" ])
     && builtins.elem document.spune.nivel [ "nota" "incident" ] && peer
     && (if kind == "cmd" then builtins.isList target && builtins.length target > 0
     && builtins.length target <= 32 && lib.all text target && absolute (builtins.head target) else text target)
@@ -113,7 +116,14 @@ let
     && keys expectation [ "status" "body" "prospetime" ] [ "status" ] && integer expectation.status 100 599
     && (!(expectation ? body) || text expectation.body)
     && (!(expectation ? prospetime) || duration expectation.prospetime)
-    else if builtins.elem kind [ "cmd" "hass-state" ] then keys expectation [ "valoare" ] [ "valoare" ] && text expectation.valoare
+    else if kind == "cmd" then keys expectation [ "valoare" ] [ "valoare" ] && text expectation.valoare
+    # hass-state: exactly one of `valoare` (state equality) or `disponibil = true`
+    # (state is not unavailable/unknown). Mirrors lib/schema.mjs; the fixtures
+    # in pkgs/vigil/schema-fixtures.json hold both sides to the same answers.
+    else if kind == "hass-state" then keys expectation [ "valoare" "disponibil" ] [ ]
+    && ((expectation ? valoare) != (expectation ? disponibil))
+    && (!(expectation ? valoare) || text expectation.valoare)
+    && (!(expectation ? disponibil) || expectation.disponibil == true)
     else !(c ? astept))
     && (if kind == "age" then (absolute target || matches "unit:[a-zA-Z0-9@_.:-]+\\.service" target) && duration (c.prag or null)
     else if kind == "disk" then absolute target && integer (c.prag or null) 1 100 else !(c ? prag))

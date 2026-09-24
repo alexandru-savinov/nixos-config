@@ -126,7 +126,9 @@ nume = "private-1"
 ce = "Local condition"
 verifica = "hass-state"
 tinta = "sensor.example"
-astept = { valoare = "on" }
+dimension = "availability"      # optional label: what kind of promise
+driver = "family"               # optional label: whose promise (this one is hers)
+astept = { disponibil = true }   # NOT valoare: a state that cycles (docked → cleaning) would alert on every use
 picat_dupa = 2
 
 [spune]
