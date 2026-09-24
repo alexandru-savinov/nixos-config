@@ -43,7 +43,7 @@ actual Tailscale SSH forwarding test. Choir's ordinary alias uses Tailscale SSH,
 so OpenSSH daemon forwarding settings do not establish transport support. The
 unsupported Unix-forward implementation has been replaced, not deployed.
 
-Old running agents retain hooks pointing at the previous helper, which only
+Old running agents retain hooks pointing at the previous helper, which
 does not authenticate its status requests. They must be cleanly resumed with the new helper
 before enabling this transport for their attachment. The main Sancta resume
 requires explicit owner approval; preserve its conversation identity and tmux
@@ -52,8 +52,9 @@ fallback. Do not claim a client-only upgrade preserves its old status hooks.
 Claude's `PermissionRequest` event is confirmed in the official hook reference:
 https://code.claude.com/docs/en/hooks#permissionrequest . The event represents a
 permission decision, not proof that a human dialog remains visible; another hook
-can decide it. Live Claude blocked-state acceptance is still required and must
-not be inferred from Codex's separate observed-dialog acceptance.
+can decide it. Live acceptance subsequently observed a real Claude Bash permission dialog
+and blocked status in its own pane; the request was cancelled without approval.
+Codex was tested separately with its own genuine command-approval dialog.
 
 Agterm has one HUD slot per session. Two split panes cannot display independent
 HUDs simultaneously. The bridge uses a per-session advisory lease and refuses
@@ -71,9 +72,41 @@ and question cancellation tests do not constitute live native UI acceptance.
 The 0.31.0 DMG checksum, app signature and Gatekeeper notarization were verified
 without installing or launching it.
 
-Still required: declarative Mac package/config/shortcuts, live picker choices,
-native HUD open/update/close for a real remote task, selected question reply and
-cancellation/disconnect acceptance, restored panes using installed package paths,
-and PR checks. Production deployment, app restart and Sancta interruption each
-require owner approval. Do not claim the full six-phase goal complete before
-those acceptance checks pass.
+## Approved activation and native acceptance
+
+The owner approved activation, per-attachment token creation, a clean Sancta
+resume, and the app upgrade/restart. The first automated clean Sancta exit failed
+and did not force-kill anything. After the owner exited it, its old backend was
+also gone. Its unchanged saved conversation was recovered in
+`sancta-main-20260924`; metadata proved exactly one writer using the new hooks.
+The old record and tmux fallback were preserved.
+
+The installed Mac package, profile, wrapper and shortcuts use immutable Nix
+paths. Both packages have GC roots. Homebrew installed agterm 0.31.0. An early
+reopen initially ran the old binary; the final owner-completed reopen was
+verified as 0.31.0. Both remote panes restored and the same Sancta writer survived.
+
+Live acceptance on 0.31.0 established:
+
+- Installed `sancta` focuses the recovered pane without duplicating it.
+- A remote file-check task read and hashed four helper-package files; its HUD
+  opened in the disposable pane, updated with the result and closed.
+- The owner's native Received button returned `answered/received` to choir.
+- Native cancellation returned exit 2 and no answer ID.
+- Disconnecting only the disposable SSH tunnel removed its pending question
+  and HUD; automatic reconnect accepted another authenticated UI request.
+- Fresh Claude and Codex each produced `active` then `completed` in their own
+  pane on a harmless response-only task. Codex's seven hooks were verified
+  against the immutable helper before approval through its hook-review UI.
+- In more restrictive disposable permission modes, both agents showed actual
+  permission dialogs and `blocked` in the owning pane. Both requests were
+  cancelled without granting access. Main Sancta's permission policy was untouched.
+- The installed split workflow created a new right backend with its own
+  immutable restore pin while preserving the left shell backend. A terminal
+  notification from the right split registered as unread in that session.
+
+Remaining: owner confirmation of visible notification/click routing and native
+picker selection, final cleanup/status checks, and current PR check acceptance.
+Forty local/package integration tests passed before activation; those automated
+tests supplement rather than replace the native evidence above. The complete
+six-phase goal remains open until the remaining acceptance requirements pass.
