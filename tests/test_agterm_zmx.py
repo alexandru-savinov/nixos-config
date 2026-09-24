@@ -1,5 +1,6 @@
 """Protocol and reconnect regressions; optional real-zmx PTY acceptance test."""
 import importlib.util
+import io
 import fcntl
 import json
 import os
@@ -32,67 +33,62 @@ client, host, interface = load("client"), load("host"), load("interface")
 ui = load("ui")
 
 
-def fixture_route():
-    address = host.prepare_route()
-    with socket.socket(socket.AF_UNIX) as channel:
-        channel.bind(address)
-    os.chmod(address, 0o600)
-    return address
+FIXTURE_TOKEN = "a" * 64
+
+def stage_route(name, port):
+    with patch.object(host.sys, "stdin", io.StringIO(json.dumps({"token": FIXTURE_TOKEN}) + "\n")):
+        host.prepare_route(name, port)
+    return port
 
 
 class ProtocolTests(unittest.TestCase):
-    def test_forwarded_socket_grant_checks_type_owner_and_parent(self):
-        from types import SimpleNamespace
+    def test_relay_rejects_missing_wrong_and_rotated_tokens_over_real_sockets(self):
+        from unittest.mock import Mock
         with tempfile.TemporaryDirectory(dir="/tmp") as directory:
-            account = SimpleNamespace(pw_dir=directory, pw_uid=os.getuid(), pw_gid=os.getgid())
-            with patch.dict(os.environ, {"AGT_ZMX_STATE": str(Path(directory) / ".local/state/agt-zmx")}), \
-                    patch.object(host.pwd, "getpwnam", return_value=account):
-                address = fixture_route()
-                host.grant_route("backend", address)
-                self.assertEqual(Path(address).stat().st_uid, os.getuid())
-                Path(address).parent.chmod(0o755)
-                with self.assertRaises(ValueError):
-                    host.grant_route("backend", address)
-                Path(address).parent.chmod(0o700)
-                Path(address).unlink()
-                Path(address).write_text("not a socket")
-                with self.assertRaises(ValueError):
-                    host.grant_route("backend", address)
+            with client.Relay(directory + "/relay", client.StatusHandler) as relay:
+                relay.target, relay.pane_id, relay.token = "session", "pane", FIXTURE_TOKEN
+                relay.ui = Mock()
+                relay.tracker.receive = Mock()
+                runner = threading.Thread(target=relay.serve_forever)
+                runner.start()
+                def send(payload):
+                    with socket.socket(socket.AF_UNIX) as channel:
+                        channel.settimeout(2)
+                        channel.connect(directory + "/relay")
+                        channel.sendall((json.dumps(payload) + "\n").encode())
+                        self.assertEqual(channel.recv(4096), b"")
+                try:
+                    send({"status": "active"})
+                    send({"token": "wrong", "payload": {"status": "active"}})
+                    send({"token": "wrong", "payload": {"ui": "ask", "title": "Forged"}})
+                    relay.tracker.receive.assert_not_called()
+                    relay.ui.ask.assert_not_called()
+                    send({"token": FIXTURE_TOKEN, "payload": {"status": "active"}})
+                    relay.tracker.receive.assert_called_once_with("active")
+                    relay.token = "b" * 64
+                    send({"token": FIXTURE_TOKEN, "payload": {"status": "blocked"}})
+                    self.assertEqual(relay.tracker.receive.call_count, 1)
+                    send({"token": relay.token, "payload": {"status": "completed"}})
+                    self.assertEqual(relay.tracker.receive.call_count, 2)
+                finally:
+                    relay.shutdown()
+                    runner.join()
 
-    def test_private_route_refuses_other_paths_permissions_and_symlinks(self):
+    def test_route_token_uses_ssh_stdin_and_private_staging_file(self):
+        result = subprocess.CompletedProcess([], 0, "", "")
+        with patch.object(client.subprocess, "run", return_value=result) as run:
+            client.prepare_route(self.gui_args(), 22222, FIXTURE_TOKEN)
+            self.assertNotIn(FIXTURE_TOKEN, str(run.call_args.args))
+            self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"token": FIXTURE_TOKEN})
         with tempfile.TemporaryDirectory(dir="/tmp") as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
-            address = fixture_route()
-            self.assertEqual(host.validate_route(address), address)
-            parent = Path(address).parent
-            parent.chmod(0o755)
-            with self.assertRaises(ValueError):
-                host.validate_route(address)
-            parent.chmod(0o700)
-            os.chmod(address, 0o666)
-            with self.assertRaises(ValueError):
-                host.validate_route(address)
-            os.chmod(address, 0o600)
-            outside = Path(directory) / "ordinary-file"
-            outside.write_text("owner data")
-            Path(address).unlink()
-            Path(address).symlink_to(outside)
-            with self.assertRaises(ValueError):
-                host.validate_route(address)
-            with self.assertRaises(ValueError):
-                host.remove_route(address)
-            self.assertEqual(outside.read_text(), "owner data")
-
-    def test_forward_uses_private_socket_and_grants_before_dropping_user(self):
-        args = self.gui_args()
-        command = client.ssh_command(args, "/tmp/local", "/private/relay-test/socket")
-        self.assertEqual(command[command.index("-R") + 1], "/private/relay-test/socket:/tmp/local")
-        self.assertNotIn("127.0.0.1", " ".join(command))
-        remote = shlex.split(command[-1])
-        self.assertEqual(remote[:4], ["/helper", "grant-route", "sancta", "/private/relay-test/socket"])
-        self.assertLess(remote.index("grant-route"), remote.index("runuser"))
+            stage_route("test", 22222)
+            path = Path(directory) / "agt-mvp-test.pending-22222"
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text())["token"], FIXTURE_TOKEN)
+            self.assertFalse((Path(directory) / "agt-mvp-test.route").exists())
 
     def test_hud_ownership_update_disconnect_and_foreign_slot(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory, patch.object(ui.Path, "home", return_value=Path(directory)):
+        with tempfile.TemporaryDirectory() as directory, patch.object(ui.Path, "home", return_value=Path(directory)):
             first = ui.Bridge("socket", "session", "pane-a")
             second = ui.Bridge("socket", "session", "pane-b")
             state = {}
@@ -122,7 +118,7 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(state["hud"]["message"], "Owner panel")
 
     def test_hud_does_not_close_replaced_panel_or_accept_target(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory, patch.object(ui.Path, "home", return_value=Path(directory)):
+        with tempfile.TemporaryDirectory() as directory, patch.object(ui.Path, "home", return_value=Path(directory)):
             bridge = ui.Bridge("socket", "session", "pane")
             state = {}
             def call(request):
@@ -192,7 +188,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_ssh_connection_notice_requires_local_ready_marker(self):
         from unittest.mock import Mock
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "ready"
             callback = Mock()
             process = Mock()
@@ -299,7 +295,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_codex_resume_respects_native_writer_lock_without_mutating_it(self):
         identifier = '11111111-2222-3333-4444-555555555555'
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with self.assertRaisesRegex(ValueError, 'transcript not found'):
                 host.validate_resume('codex', identifier, root)
@@ -358,7 +354,7 @@ Press enter to confirm or esc to cancel
         self.assertEqual(send.call_count, 2)
 
     def test_lost_daemon_never_relaunches_or_overwrites_recovery_evidence(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             record = root / "agt-mvp-ended.json"
             route = root / "agt-mvp-ended.route"
@@ -370,32 +366,32 @@ Press enter to confirm or esc to cancel
                     patch.object(host.subprocess, "check_output", return_value=""), \
                     patch.object(host.os, "execvpe") as execute:
                 with self.assertRaisesRegex(ValueError, "preserve this record"):
-                    host.attach("ended", directory, "claude", fixture_route())
+                    host.attach("ended", directory, "claude", stage_route("ended", 33333))
                 execute.assert_not_called()
             self.assertEqual((record.read_bytes(), route.read_bytes()), original)
 
     def test_scope_wraps_backend_creation_but_not_reattachment(self):
         original = Path.cwd()
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             try:
                 with patch.dict(os.environ, {"AGT_ZMX_STATE": str(root / "state")}), \
                         patch.object(host.shutil, "which", return_value="/bin/tool"), \
                         patch.object(host.os, "execvpe") as execute:
-                    host.attach("scoped", directory, "shell", fixture_route(), user_scope=True)
+                    host.attach("scoped", directory, "shell", stage_route("scoped", 22222), user_scope=True)
                     binary, argv, env = execute.call_args[0]
                     self.assertEqual(binary, "systemd-run")
                     self.assertIn("--unit=agt-mvp-scoped.scope", argv)
                     self.assertEqual(env["XDG_RUNTIME_DIR"], f"/run/user/{os.getuid()}")
                     with patch.object(host.subprocess, "check_output", return_value="agt-mvp-scoped\n"):
-                        host.attach("scoped", directory, "shell", fixture_route(), user_scope=True)
+                        host.attach("scoped", directory, "shell", stage_route("scoped", 22223), user_scope=True)
                     self.assertEqual(execute.call_args[0][0], "zmx")
             finally:
                 os.chdir(original)
 
     def test_resume_requires_existing_transcript_and_stopped_process(self):
         identifier = "11111111-2222-3333-4444-555555555555"
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with self.assertRaisesRegex(ValueError, "transcript not found"):
                 host.validate_resume("claude", identifier, root)
@@ -411,8 +407,8 @@ Press enter to confirm or esc to cancel
                 host.validate_resume("claude", identifier, root)
             with patch.object(host.os, "kill", side_effect=ProcessLookupError):
                 host.validate_resume("claude", identifier, root)
-            for invalid in [None, "invalid", 0, -1]:
-                metadata.write_text(json.dumps({"sessionId": identifier, "pid": invalid}))
+            for value in [None, "invalid", 0, -1]:
+                metadata.write_text(json.dumps({"sessionId": identifier, "pid": value}))
                 with self.assertRaisesRegex(ValueError, "invalid conversation process metadata"):
                     host.validate_resume("claude", identifier, root)
             metadata.write_text(json.dumps({"sessionId": identifier}))
@@ -424,7 +420,7 @@ Press enter to confirm or esc to cancel
                     host.validate_resume(agent, value, root)
 
     def test_resume_lock_survives_parent_handoff_and_releases_after_exit(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
             lock = host.resume_lock("test")
             child = subprocess.Popen(["bash", "-c", "read -r value"], stdin=subprocess.PIPE,
                                      pass_fds=(lock.fileno(),))
@@ -441,11 +437,11 @@ Press enter to confirm or esc to cancel
         args = Namespace(host="host", user="sancta", name="resume", agent="claude", cwd="/tmp",
                          remote_bin="agt-zmx-host", resume="11111111-2222-3333-4444-555555555555")
         self.assertEqual(client.attach_argv(args)[-2:], ["--resume", args.resume])
-        command = shlex.split(client.ssh_command(args, "/tmp/socket", "/private/relay-test/socket")[-1])
+        command = shlex.split(client.ssh_command(args, "/tmp/socket", 22222)[-1])
         self.assertEqual(command[-2:], ["--resume", args.resume])
 
     def test_codex_profile_preserves_owner_files_and_requires_normal_hook_trust(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "config.toml").write_text('# owner configuration\n')
             (root / "auth.json").write_text('test credential sentinel')
@@ -466,7 +462,7 @@ Press enter to confirm or esc to cancel
 
     def test_backend_starts_in_requested_directory_not_ssh_callers_directory(self):
         original = Path.cwd()
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             requested = root / "project"
             requested.mkdir()
@@ -474,7 +470,7 @@ Press enter to confirm or esc to cancel
                 with patch.dict(os.environ, {"AGT_ZMX_STATE": str(root / "state"), "PWD": "/root"}), \
                         patch.object(host.shutil, "which", return_value="/bin/tool"), \
                         patch.object(host.os, "execvpe") as execute:
-                    host.attach("cwd-test", str(requested), "shell", fixture_route())
+                    host.attach("cwd-test", str(requested), "shell", stage_route("cwd-test", 22222))
                     self.assertEqual(Path.cwd(), requested.resolve())
                     self.assertEqual(execute.call_args[0][2]["PWD"], str(requested.resolve()))
             finally:
@@ -516,7 +512,7 @@ Press enter to confirm or esc to cancel
                 client.pin_restore(args, "new-session", "new-pane")
 
     def test_missing_inventory_is_read_only(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "not-created"
             with patch.dict(os.environ, {"AGT_ZMX_STATE": str(missing)}):
                 self.assertEqual(host.inventory(), [])
@@ -547,22 +543,20 @@ Press enter to confirm or esc to cancel
             self.assertNotIn("--dangerously-skip-permissions", command)
 
     def test_routing_changes_on_reattach(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
             listeners = []
             try:
                 for _ in range(2):
-                    address = host.prepare_route()
-                    listener = socket.socket(socket.AF_UNIX)
-                    listener.bind(address)
-                    os.chmod(address, 0o600)
+                    listener = socket.socket()
+                    listener.bind(("127.0.0.1", 0))
                     listener.listen()
                     listener.settimeout(1)
                     listeners.append(listener)
-                    host.write_json(Path(directory) / "agt-mvp-test.route", {"socket": address})
+                    host.write_json(Path(directory) / "agt-mvp-test.route", {"port": listener.getsockname()[1], "token": FIXTURE_TOKEN})
                     host.status("test", "active")
                     connection, _ = listener.accept()
                     with connection:
-                        self.assertEqual(json.loads(connection.recv(256)), {"status": "active"})
+                        self.assertEqual(json.loads(connection.recv(256)), {"token": FIXTURE_TOKEN, "payload": {"status": "active"}})
                 listeners[0].settimeout(0.05)
                 with self.assertRaises(socket.timeout):
                     listeners[0].accept()
@@ -571,16 +565,15 @@ Press enter to confirm or esc to cancel
                     listener.close()
 
     def test_detached_status_is_nonfatal(self):
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
             host.status("detached", "completed")
 
     def test_remote_arguments_survive_ssh_shell_quoting(self):
         from argparse import Namespace
         args = Namespace(name="trial", cwd="/tmp/project with ' quotes", agent="shell",
                          user="sancta", host="root@sancta-choir-1", remote_bin="agt-zmx-host")
-        command = client.ssh_command(args, "/tmp/relay.sock", "/private/relay-test/socket")
+        command = client.ssh_command(args, "/tmp/relay.sock", 22222)
         remote = shlex.split(command[-1])
-        remote = remote[remote.index("&&") + 1:]
         self.assertEqual(remote[:4], ["runuser", "-u", "sancta", "--"])
         self.assertEqual(remote[7], args.cwd)
         self.assertIn("ControlPath=none", command)
@@ -602,12 +595,13 @@ Press enter to confirm or esc to cancel
             receiver.start()
             with client.Relay(directory + "/relay", client.StatusHandler) as relay:
                 relay.target, relay.pane_id, relay.agterm_socket = "session-a", "pane-b", directory + "/app"
+                relay.token = FIXTURE_TOKEN
                 runner = threading.Thread(target=relay.serve_forever)
                 runner.start()
                 try:
                     with socket.socket(socket.AF_UNIX) as sender:
                         sender.connect(directory + "/relay")
-                        sender.sendall(b'{"status":"blocked"}\n')
+                        sender.sendall((json.dumps({"token": FIXTURE_TOKEN, "payload": {"status": "blocked"}}) + "\n").encode())
                     receiver.join(3)
                     self.assertEqual(received[0]["target"], "session-a")
                     self.assertEqual(received[0]["args"]["paneID"], "pane-b")
@@ -620,6 +614,7 @@ Press enter to confirm or esc to cancel
         with tempfile.TemporaryDirectory(dir="/tmp") as directory:
             with client.Relay(directory + "/relay", client.StatusHandler) as relay:
                 relay.target, relay.pane_id = "session-a", "pane-b"
+                relay.token = FIXTURE_TOKEN
                 relay.ui = ui.Bridge("unused", relay.target, relay.pane_id)
                 requests = []
                 def call(request):
@@ -636,8 +631,8 @@ Press enter to confirm or esc to cancel
                         with socket.socket(socket.AF_UNIX) as sender:
                             sender.settimeout(3)
                             sender.connect(directory + "/relay")
-                            sender.sendall(json.dumps(dict(ui="ask", title="Continue?", buttons=[
-                                dict(id="continue", label="Continue")])).encode() + b"\n")
+                            sender.sendall(json.dumps({"token": FIXTURE_TOKEN, "payload": dict(ui="ask", title="Continue?", buttons=[
+                                dict(id="continue", label="Continue")])}).encode() + b"\n")
                             self.assertEqual(json.loads(sender.recv(4096)),
                                              dict(result="answered", id="continue"))
                     opened = next(r for r in requests if r["cmd"] == "ask.open")
@@ -661,12 +656,12 @@ class LiveZmxTests(unittest.TestCase):
                                ZMX_DIR=str(root / "state/sockets"), TERM="xterm-256color")
             environment.pop("ZMX_SESSION", None)
             environment.pop("ZMX_SESSION_PREFIX", None)
-            with patch.dict(os.environ, environment):
-                address = fixture_route()
             argv = [sys.executable, str(SCRIPTS / "host.py"), "attach", "acceptance", directory,
-                    "--agent", "shell", "--socket", address]
+                    "--agent", "shell", "--port", "22222"]
             processes, masters = [], []
             def start():
+                with patch.dict(os.environ, environment):
+                    stage_route("acceptance", 22222)
                 master, slave = pty.openpty()
                 process = subprocess.Popen(argv, env=environment, stdin=slave, stdout=slave, stderr=slave,
                                            start_new_session=True)

@@ -41,13 +41,13 @@ def main():
         parser.error("run inside an agterm remote zmx session")
     name = qualified.removeprefix("agt-mvp-")
     route = json.loads((host.state_dir() / (host.session_name(name) + ".route")).read_text())
-    address = host.validate_route(route.get("socket"))
-    payload = (json.dumps(request) + "\n").encode()
-    if len(payload) > 4096:
+    port = route.get("port")
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise ValueError("invalid attachment route")
+    payload = (json.dumps(host.envelope(route, request)) + "\n").encode()
+    if len(payload) > 6144:
         raise ValueError("question too large")
-    with socket.socket(socket.AF_UNIX) as channel:
-        channel.settimeout(3)
-        channel.connect(address)
+    with socket.create_connection(("127.0.0.1", port), timeout=3) as channel:
         channel.settimeout(310)
         channel.sendall(payload)
         with channel.makefile("rb") as stream:

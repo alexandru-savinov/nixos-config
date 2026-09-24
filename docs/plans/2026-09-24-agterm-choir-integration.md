@@ -30,14 +30,21 @@ backends retain their original environment; do not restart Sancta implicitly.
 
 ## Platform limits
 
-The revised transport uses a remote Unix socket in a 0700 directory owned by
-the backend user. SSH creates the socket as root; a checked ownership handoff
-transfers that 0600 socket before dropping privileges. No loopback TCP listener
-or new authentication credential is used. Other unprivileged host users cannot
-reach the relay through the filesystem. This protects status as well as UI.
+The transport uses a per-attachment 256-bit token for every status/UI request.
+The token travels through encrypted SSH stdin, never argv or environment, and
+is stored in a 0600 route file under the backend user's 0700 state directory.
+The Mac checks it before dispatch and invalidates it on disconnect. Other host
+users can reach the TCP listener but cannot submit authenticated requests.
+Activation approval must explicitly include creation of these short-lived
+tokens; existing credentials are not changed or re-keyed.
+
+A private Unix-forward prototype passed kernel permission tests but failed the
+actual Tailscale SSH forwarding test. Choir's ordinary alias uses Tailscale SSH,
+so OpenSSH daemon forwarding settings do not establish transport support. The
+unsupported Unix-forward implementation has been replaced, not deployed.
 
 Old running agents retain hooks pointing at the previous helper, which only
-understands TCP route files. They must be cleanly resumed with the new helper
+does not authenticate its status requests. They must be cleanly resumed with the new helper
 before enabling this transport for their attachment. The main Sancta resume
 requires explicit owner approval; preserve its conversation identity and tmux
 fallback. Do not claim a client-only upgrade preserves its old status hooks.

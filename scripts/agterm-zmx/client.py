@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Attach one remote zmx session from an agterm pane, reconnecting after SSH loss."""
 import argparse
+import hmac
 import importlib.util
 import json
 import os
 from pathlib import Path
+import random
+import secrets
 import re
 import shlex
 import shutil
@@ -47,10 +50,6 @@ def remote_command(args, command):
     words = [args.remote_bin, *command]
     if args.user:
         words = ["runuser", "-u", args.user, "--", *words]
-        if command[0] == "attach":
-            address = command[command.index("--socket") + 1]
-            grant = [args.remote_bin, "grant-route", args.user, address]
-            return shlex.join(grant) + " && " + shlex.join(words)
     return shlex.join(words)
 
 
@@ -187,10 +186,16 @@ class StatusHandler(socketserver.StreamRequestHandler):
     def handle(self):
         try:
             self.connection.settimeout(1)
-            raw = self.rfile.readline(4097)
-            if len(raw) > 4096 or not raw.endswith(b"\n"):
+            raw = self.rfile.readline(6145)
+            if len(raw) > 6144 or not raw.endswith(b"\n"):
                 return
-            payload = json.loads(raw)
+            envelope = json.loads(raw)
+            expected = getattr(self.server, "token", None)
+            if (not isinstance(envelope, dict) or set(envelope) != {"token", "payload"}
+                    or not isinstance(expected, str) or not isinstance(envelope["token"], str)
+                    or not hmac.compare_digest(envelope["token"], expected)):
+                return
+            payload = envelope["payload"]
             if isinstance(payload, dict) and "ui" in payload:
                 bridge = getattr(self.server, "ui", None)
                 if bridge is None:
@@ -202,15 +207,13 @@ class StatusHandler(socketserver.StreamRequestHandler):
                     outcome = {"result": "error", "reason": "native question unavailable or invalid request"}
                 self.wfile.write((json.dumps(outcome) + "\n").encode())
                 return
-            if len(raw) > 256:
-                return
             status_request(payload, self.server.target, self.server.pane_id)
             self.server.tracker.receive(payload["status"])
         except (OSError, ValueError, TypeError):
             pass
 
 
-def ssh_command(args, relay_path, remote_socket, connected_path=None):
+def ssh_command(args, relay_path, port, connected_path=None):
     # Dedicated connection: closing it also removes its reverse forward.
     ready = (["-o", "PermitLocalCommand=yes", "-o",
               "LocalCommand=" + shlex.join(["/usr/bin/touch", str(connected_path)])]
@@ -218,28 +221,24 @@ def ssh_command(args, relay_path, remote_socket, connected_path=None):
     return ["ssh", "-tt", "-o", "BatchMode=yes", "-o", "ControlPath=none",
             "-o", "ForwardAgent=no", "-o", "ConnectTimeout=10",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-            "-o", "ExitOnForwardFailure=yes",
-            "-o", "StreamLocalBindUnlink=yes", "-R", f"{remote_socket}:{relay_path}",
+            "-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{port}:{relay_path}",
             *ready, "--", args.host, remote_command(args, ["attach", args.name, args.cwd,
-                                                    "--agent", args.agent, "--socket", remote_socket]
+                                                    "--agent", args.agent, "--port", str(port)]
                                                     + (["--resume", args.resume] if getattr(args, "resume", None) else [])
                                                     + (["--user-scope"] if getattr(args, "user_scope", False) else []))]
 
 
-def route_command(args, words):
-    return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--",
-                           args.host, remote_command(args, words)],
-                          capture_output=True, text=True, timeout=20, check=True)
-
-
-def prepare_route(args):
-    address = json.loads(route_command(args, ["prepare-route"]).stdout).get("socket")
-    # Colons/control bytes would alter OpenSSH's forwarding specification.
-    if (not isinstance(address, str) or not address.startswith("/") or len(address.encode()) > 100
-            or ":" in address or any(ord(c) < 33 for c in address)
-            or not re.search(r"/relay-[a-zA-Z0-9_-]+/socket$", address)):
-        raise ValueError("host returned an invalid private relay socket")
-    return address
+def prepare_route(args, port, token):
+    # Token travels through encrypted SSH stdin, never argv, environment or logs.
+    result = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--",
+                             args.host, remote_command(args, ["prepare-route", args.name, str(port)])],
+                            input=json.dumps({"token": token}) + "\n", capture_output=True,
+                            text=True, timeout=20)
+    if result.returncode:
+        if result.returncode == 255:
+            raise ConnectionError("SSH unavailable during route preparation")
+        # Do not expose a CalledProcessError containing its captured data.
+        raise ValueError("private route preparation failed; check helper version and SSH connectivity")
 
 
 def wait_for_ssh(command, connected_path, on_connected):
@@ -358,10 +357,11 @@ def main():
                 monitor = threading.Thread(target=watch_codex_dialog, args=(relay, monitor_stop), daemon=True)
                 monitor.start()
             disconnected = False
-            remote_socket = None
             try:
                 while True:
                     relay.ui = load_interface("ui").Bridge(agterm_socket, target, pane_id)
+                    port = random.SystemRandom().randrange(20000, 60000)
+                    relay.token = secrets.token_hex(32)
                     connected_path = Path(directory) / "ssh-connected"
                     def connected():
                         nonlocal disconnected
@@ -369,23 +369,14 @@ def main():
                             connection_notice(args.name, "SSH reconnected", target)
                         disconnected = False
                     try:
-                        remote_socket = prepare_route(args)
-                        result = wait_for_ssh(ssh_command(args, relay_path, remote_socket, connected_path),
+                        prepare_route(args, port, relay.token)
+                        result = wait_for_ssh(ssh_command(args, relay_path, port, connected_path),
                                               connected_path, connected)
-                    except (OSError, subprocess.TimeoutExpired):
-                        result = 255
-                    except subprocess.CalledProcessError as error:
-                        if error.returncode != 255:
-                            raise
+                    except (ConnectionError, subprocess.TimeoutExpired):
                         result = 255
                     finally:
+                        relay.token = None
                         relay.ui.disconnect()
-                        if remote_socket:
-                            try:
-                                route_command(args, ["remove-route", remote_socket])
-                            except (OSError, subprocess.SubprocessError):
-                                print("Remote relay cleanup deferred: host unreachable.", file=sys.stderr)
-                            remote_socket = None
                     if result != 255:
                         if result:
                             connection_notice(args.name, "remote command ended; see this pane for details", target)
@@ -398,18 +389,13 @@ def main():
             except KeyboardInterrupt:
                 return 130
             except (OSError, ValueError, subprocess.SubprocessError):
-                print("Could not establish the private remote relay; check helper version and SSH connectivity.", file=sys.stderr)
+                print("Could not establish the authenticated relay; check SSH connectivity and helper version.", file=sys.stderr)
                 return 1
             finally:
                 monitor_stop.set()
                 if monitor:
                     monitor.join(timeout=4)
                 relay.shutdown()
-                if remote_socket:
-                    try:
-                        route_command(args, ["remove-route", remote_socket])
-                    except (OSError, subprocess.SubprocessError):
-                        print("Remote relay cleanup deferred: host unreachable.", file=sys.stderr)
 
 
 if __name__ == "__main__":
