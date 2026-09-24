@@ -125,6 +125,31 @@ def codex_approval_visible(text):
                 and any("no, and tell codex what to do differently (esc)" in line for line in lines))
 
 
+def claude_empty_prompt_visible(text):
+    """Recognize the observed empty composer, not merely a missing dialog.
+
+    Claude does not emit Stop for Esc at a permission prompt. Read the visible
+    screen only; an unknown layout or ongoing activity must not clear blocked.
+    """
+    lines = [line.strip().lower() for line in text.splitlines() if line.strip()]
+    if any("esc to interrupt" in line or (
+            re.match(r"^[✢✳✶✻✽]", line) and not re.search(r"\bfor \d.* · done \d", line))
+           for line in lines):
+        return False
+    for index, line in enumerate(lines):
+        if line != "❯" or not 0 < index < len(lines) - 1:
+            continue
+        borders = (lines[index - 1], lines[index + 1])
+        if not all(len(border) >= 8 and set(border) == {"─"} for border in borders):
+            continue
+        footer = lines[index + 2:]
+        if 1 <= len(footer) <= 3 and any(
+                marker in footer[-1] for marker in ("manual mode on", "auto mode on",
+                                                     "accept edits on", "plan mode on")):
+            return True
+    return False
+
+
 class StatusTracker:
     def __init__(self, send):
         self.send = send
@@ -142,6 +167,14 @@ class StatusTracker:
     def snapshot(self):
         with self.lock:
             return self.generation
+
+    def observe_claude(self, text, generation):
+        ready = claude_empty_prompt_visible(text)
+        with self.lock:
+            if generation != self.generation or self.latest != "blocked" or not ready:
+                return
+            self.send("idle")
+            self.latest, self.dialog = "idle", False
 
     def observe(self, text, generation):
         visible = codex_approval_visible(text)
@@ -170,14 +203,23 @@ class Relay(socketserver.ThreadingUnixStreamServer):
                 print("agterm rejected a status update", file=sys.stderr)
 
 
-def watch_codex_dialog(relay, stop):
+def watch_agent_prompt(relay, stop, agent):
     while not stop.wait(0.75):
+        if agent == "claude":
+            with relay.tracker.lock:
+                if relay.tracker.latest != "blocked":
+                    continue
         generation = relay.tracker.snapshot()
         try:
+            # Claude's activity indicator can be above the composer. Inspect the
+            # visible screen rather than a tail that could omit it. Never persist
+            # or forward the text. Codex's dialog has a bounded footer layout.
+            tail = ["--lines", "24"] if agent == "codex" else []
             result = agterm(["session", "text", "--target", relay.target,
-                             "--pane-id", relay.pane_id, "--lines", "24"], timeout=3)
+                             "--pane-id", relay.pane_id, *tail], timeout=3)
             if result.returncode == 0 and not stop.is_set():
-                relay.tracker.observe(result.stdout, generation)
+                observe = relay.tracker.observe if agent == "codex" else relay.tracker.observe_claude
+                observe(result.stdout, generation)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
 
@@ -353,8 +395,9 @@ def main():
             worker.start()
             monitor_stop = threading.Event()
             monitor = None
-            if args.agent == "codex":
-                monitor = threading.Thread(target=watch_codex_dialog, args=(relay, monitor_stop), daemon=True)
+            if args.agent in {"codex", "claude"}:
+                monitor = threading.Thread(target=watch_agent_prompt,
+                                           args=(relay, monitor_stop, args.agent), daemon=True)
                 monitor.start()
             disconnected = False
             try:

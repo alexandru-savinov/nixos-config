@@ -354,6 +354,52 @@ Press enter to confirm or esc to cancel
         tracker.observe(self.approval_screen, tracker.snapshot())
         self.assertEqual(send.call_count, 2)
 
+    claude_ready_screen = """────────────────────
+❯
+────────────────────
+ctx5%
+⏸ manual mode on · ← 1 agent
+"""
+
+    def test_claude_cancelled_permission_clears_only_at_empty_ready_prompt(self):
+        sent = []
+        tracker = client.StatusTracker(sent.append)
+        tracker.receive('blocked')
+        for screen in ['', '❯', self.approval_screen,
+                       self.claude_ready_screen.replace('❯', '❯ draft text'),
+                       '✻ Thinking…\n' + self.claude_ready_screen,
+                       'esc to interrupt\n' + self.claude_ready_screen]:
+            tracker.observe_claude(screen, tracker.snapshot())
+            self.assertEqual(sent, ['blocked'])
+        tracker.observe_claude(self.claude_ready_screen, tracker.snapshot())
+        tracker.observe_claude(self.claude_ready_screen, tracker.snapshot())
+        self.assertEqual(sent, ['blocked', 'idle'])
+        self.assertTrue(client.claude_empty_prompt_visible(
+            '✻ Cogitated for 2s · done 2:44 PM\n' + self.claude_ready_screen))
+
+    def test_claude_ready_probe_cannot_overwrite_new_activity_or_completion(self):
+        sent = []
+        tracker = client.StatusTracker(sent.append)
+        tracker.receive('blocked')
+        stale = tracker.snapshot()
+        tracker.receive('active')
+        tracker.observe_claude(self.claude_ready_screen, stale)
+        tracker.observe_claude(self.claude_ready_screen, tracker.snapshot())
+        tracker.receive('completed')
+        tracker.observe_claude(self.claude_ready_screen, tracker.snapshot())
+        self.assertEqual(sent, ['blocked', 'active', 'completed'])
+
+    def test_claude_cancel_delivery_failure_is_retried(self):
+        from unittest.mock import Mock
+        send = Mock(side_effect=[None, OSError('temporarily disconnected'), None])
+        tracker = client.StatusTracker(send)
+        tracker.receive('blocked')
+        with self.assertRaises(OSError):
+            tracker.observe_claude(self.claude_ready_screen, tracker.snapshot())
+        tracker.observe_claude(self.claude_ready_screen, tracker.snapshot())
+        self.assertEqual(tracker.latest, 'idle')
+        self.assertEqual(send.call_count, 3)
+
     def test_lost_daemon_never_relaunches_or_overwrites_recovery_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

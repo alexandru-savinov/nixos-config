@@ -110,3 +110,20 @@ picker selection, final cleanup/status checks, and current PR check acceptance.
 Forty local/package integration tests passed before activation; those automated
 tests supplement rather than replace the native evidence above. The complete
 six-phase goal remains open until the remaining acceptance requirements pass.
+
+## Claude cancellation regression found during acceptance
+
+Claude 2.1.270 did not emit a clearing lifecycle hook when Esc cancelled its
+permission dialog, leaving the deployed client falsely blocked. The candidate
+client now probes only a blocked Claude attachment's visible screen for the
+observed empty idle composer. It does not save or forward that screen text.
+Unknown layouts, nonempty composers, ongoing activity and newer lifecycle events
+prevent clearing. Completed timing lines are distinguished from busy spinners.
+
+The candidate passed a real repeat of the request/cancel sequence on a disposable
+backend: blocked cleared to idle without approving the command. The 43-test
+suite passed with the optional real-PTY case skipped in this invocation; real
+SSH/UI acceptance was run separately. The native layout probe is conservative
+and currently covers the observed English Claude UI. This correction remains
+staged until its immutable client package is built and activated; the running
+main Sancta attachment still uses the previous client.
