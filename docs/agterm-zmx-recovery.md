@@ -18,11 +18,24 @@ immutable helper path, working directory, aliases and project choices. The old
 The `sancta` shortcut explicitly selects choir, independently of the default host.
 Existing restore commands retain their explicit host, account, backend and scope.
 
-On another terminal, SSH to the account that owns the backend before attaching
-with zmx. The Mac status/UI bridge belongs to its attachment; a plain terminal
-attachment does not provide native agterm UI. Host-side friendly alias commands
-and their acceptance remain part of the rollout, not a prerequisite to recovering
-an existing backend with its exact zmx name.
+On another terminal or mobile, SSH to the account that owns the backend:
+
+```sh
+# Choir: after logging in, switch to the Sancta account if necessary.
+sudo -iu sancta
+sessions list
+sessions attach sancta
+# RPi5: SSH as nixos, then use the exact name from the listing.
+sessions list
+sessions attach NAME
+```
+
+Detach with Ctrl+\\ to leave the remote process running. `sessions attach` refuses
+missing or ended records, keeps the Mac route intact, and never starts another
+agent. If the daemon disappears during attachment, the fallback command exits
+instead of starting a fresh shell. The `sancta` alias is scoped to the Sancta
+account in `/etc/agt-zmx-aliases.json`. A plain terminal does not provide native
+agterm HUDs or questions; these belong to the current Mac attachment.
 
 ## SSH connection lost
 

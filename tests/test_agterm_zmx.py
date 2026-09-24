@@ -31,6 +31,8 @@ def load(name):
 
 client, host, interface = load("client"), load("host"), load("interface")
 ui = load("ui")
+with patch.dict(sys.modules, {"host": host}):
+    sessions = load("sessions")
 
 
 FIXTURE_TOKEN = "a" * 64
@@ -42,6 +44,25 @@ def stage_route(name, port):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_terminal_attach_refuses_missing_or_ended_backend(self):
+        for records in [[], [{"name": "example", "alive": False}]]:
+            with patch.object(sessions, "resolve", return_value="example"), \
+                 patch.object(host, "inventory", return_value=records), \
+                 patch.object(sessions.os, "execvpe") as execute:
+                with self.assertRaisesRegex(ValueError, "not running"):
+                    sessions.attach("example")
+                execute.assert_not_called()
+
+    def test_terminal_attach_preserves_routes_and_never_starts_agent(self):
+        with patch.object(sessions, "resolve", return_value="example"), \
+             patch.object(host, "inventory", return_value=[{"name": "example", "alive": True}]), \
+             patch.object(sessions.os, "execvpe") as execute, \
+             patch.object(host, "write_json", side_effect=AssertionError("route mutation")):
+            sessions.attach("example")
+            command = execute.call_args.args[1]
+            self.assertEqual(command, ["zmx", "attach", "agt-mvp-example", "false"])
+            self.assertIn("ZMX_DIR", execute.call_args.args[2])
+
     def test_relay_rejects_missing_wrong_and_rotated_tokens_over_real_sockets(self):
         from unittest.mock import Mock
         with tempfile.TemporaryDirectory(dir="/tmp") as directory:

@@ -17,7 +17,10 @@ stdenvNoCC.mkDerivation {
   dontBuild = true;
   installPhase = ''
     mkdir -p $out/libexec/agterm-zmx $out/bin
-    cp host.py remote_ui.py $out/libexec/agterm-zmx/
+    cp host.py remote_ui.py sessions.py $out/libexec/agterm-zmx/
+    makeWrapper ${python3}/bin/python3 $out/bin/sessions \
+      --add-flags "$out/libexec/agterm-zmx/sessions.py" \
+      --prefix PATH : ${lib.makeBinPath [ zmx ]}
     makeWrapper ${python3}/bin/python3 $out/bin/agt-ask \
       --add-flags "$out/libexec/agterm-zmx/remote_ui.py"
     ln -s agt-ask $out/bin/agt-ui
