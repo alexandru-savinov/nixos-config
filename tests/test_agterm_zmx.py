@@ -693,6 +693,13 @@ ctx5%
             self.assertEqual(ctl.call_count, 1)
             self.assertEqual(ctl.call_args[0][0][0], "pick")
 
+    def test_login_style_python_argv_cannot_corrupt_restore_executable(self):
+        args = self.gui_args()
+        with patch.object(client.sys, "executable", "/nonexistent/-/nix/store/python3"):
+            command = client.attach_argv(args)
+        self.assertEqual(command[0], str(Path(sys.exec_prefix) / "bin/python3"))
+        self.assertTrue(os.access(command[0], os.X_OK))
+
     def test_restore_pin_preserves_remote_identity_and_uses_current_pane(self):
         from argparse import Namespace
         args = Namespace(host="root@host", user="sancta", remote_bin="/nix/store/pkg/bin/agt-zmx-host",

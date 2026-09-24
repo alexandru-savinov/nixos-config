@@ -36,7 +36,15 @@ def agterm(arguments, input_text=None, timeout=None):
 
 
 def attach_argv(args):
-    command = [sys.executable, str(Path(__file__).resolve()), "--host", args.host,
+    # agterm can launch Python with a login-style argv[0] ("-/nix/...").
+    # CPython then exposes a nonexistent cwd-prefixed sys.executable. Its
+    # interpreter prefix remains correct and gives a stable absolute fallback.
+    executable = Path(sys.executable)
+    if not executable.is_file():
+        executable = Path(sys.exec_prefix) / "bin/python3"
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise ValueError("cannot resolve the running Python interpreter for restoration")
+    command = [str(executable), str(Path(__file__).resolve()), "--host", args.host,
             "--user", args.user, "--name", args.name, "--cwd", args.cwd,
             "--agent", args.agent, "--remote-bin", args.remote_bin]
     if getattr(args, "resume", None):
