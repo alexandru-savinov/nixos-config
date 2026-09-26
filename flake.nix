@@ -273,6 +273,10 @@
           agterm-sancta-scope = import ./tests/agterm-sancta-scope.nix {
             inherit pkgs;
           };
+          sancta-guard-wrapper = import ./tests/sancta-guard-wrapper.nix {
+            inherit pkgs;
+            settings = self.nixosConfigurations.sancta-choir.config.environment.etc."claude-code/managed-settings.json".text;
+          };
           # Module evaluation tests — verify all service modules evaluate
           # correctly with minimal config, and that assertions fire for
           # invalid inputs (e.g. secrets in /nix/store).

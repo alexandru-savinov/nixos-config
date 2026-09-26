@@ -73,14 +73,14 @@ def main():
         (repo / "shell.nix").write_text("# nixos-config secret-hook v2\n")
         payload = {"tool_name": "Bash", "cwd": str(repo),
                    "tool_input": {"command": "git commit --no-verify --allow-empty -m fixture"}}
-        check("actual guard blocks unscanned commit input", 2, payload)
+        check("supplied guard blocks unscanned commit input", 2, payload)
         # A user-settings schema rewrite cannot remove this separate managed
         # entry. Re-run the same rendered command after replacing a fixture.
         user_settings = root / "settings.json"
         user_settings.write_text(json.dumps({"hooks": {"PreToolUse": []}, "unrelated": True}))
         user_settings.write_text(json.dumps({"modelSettings": {}, "unrelated": True}))
         check("managed guard survives user-settings replacement", 2, payload)
-        check("actual guard allows harmless input", 0,
+        check("supplied guard allows harmless input", 0,
               {"tool_name": "Bash", "cwd": str(repo), "tool_input": {"command": "git status"}})
         assert subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "HEAD"],
                               capture_output=True).returncode != 0
