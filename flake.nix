@@ -103,15 +103,18 @@
       # an open socket/pipe (e.g. a shell harness that leaves stdin open for
       # commands containing a heredoc), it blocks forever waiting for EOF.
       # This wrapper makes that mechanically impossible: with no args it
-      # explicitly formats "." instead of stdin; with args (e.g. CI's
-      # `nix fmt -- --check .`) it passes them straight through unchanged.
+      # explicitly formats the flake root instead of stdin — $PRJ_ROOT, which
+      # `nix fmt` sets to the closest parent flake, so a bare run from a
+      # subdirectory still covers the whole repo ("." only as fallback);
+      # with args (e.g. CI's `nix fmt -- --check .`) it passes them
+      # straight through unchanged.
       formatter = forAllSystems (system:
         nixpkgsFor.${system}.writeShellApplication {
           name = "nixpkgs-fmt-wrapper";
           runtimeInputs = [ nixpkgsFor.${system}.nixpkgs-fmt ];
           text = ''
             if [ "$#" -eq 0 ]; then
-              exec nixpkgs-fmt .
+              exec nixpkgs-fmt "''${PRJ_ROOT:-.}"
             else
               exec nixpkgs-fmt "$@"
             fi
