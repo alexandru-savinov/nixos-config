@@ -240,6 +240,16 @@
 #                      condition the agent can close by itself, verifiable
 #                      by a fact — feedback_hook_loop_presence.md).
 #
+#  11. hooks.PreToolUse (garda-secret-hook, Bash) — ADDED 2026-09-26.
+#                      Third member of key 6's class, rendered the same way.
+#                      It was first registered in the user layer
+#                      (~/.claude/settings.json) on 2026-09-22 and was erased
+#                      there by the harness on 2026-09-26 — the exact failure
+#                      mode this file exists for. Self-test:
+#                      `garda-secret-hook.mjs --autoproba`. What it matches is
+#                      documented in its own header on the soul volume, not
+#                      here (same public-repo reason as key 9).
+#
 # HERDR COLLISION — WHY SessionStart/SessionEnd ARE NOT HERE
 # ------------------------------------------------------------
 # (2026-08-26, PR #584 review finding MEDIUM.) This file is machine-wide, and
@@ -354,10 +364,10 @@
 # THE WORKS-BY-LUCK TRAP (same class as sancta-statusline-refresh.nix)
 # ----------------------------------------------------------------------
 # Every command below except the clock points at a path on the LUKS SOUL
-# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — EIGHT distinct
-# scripts as of 2026-08-31 (statusline.sh, memory-index-hook, evidence-gate,
+# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — NINE distinct
+# scripts as of 2026-09-26 (statusline.sh, memory-index-hook, evidence-gate,
 # transcript-scan-guard, pipe-status-advisor, sancta-procstate,
-# goal-sau-guard, comanda-distructiva). That means:
+# goal-sau-guard, comanda-distructiva, garda-secret-hook). That means:
 #
 # This list is the CHECKLIST for the post-deploy verification named in the
 # second bullet below — the one thing that can close a gap eval cannot see
@@ -548,6 +558,8 @@ let
         # above, for the reason stated at the top of `settings`: the two
         # guards must be able to fail independently.
         (preToolUseEntry "Bash" (guardedBlockingCommand cfg.destructiveCommandGuardScript))
+        # Key 11. Own element for the same independent-failure reason.
+        (preToolUseEntry "Bash" (guardedBlockingCommand cfg.secretHookGuardScript))
       ];
       PostToolUse = [
         (matchedEntry "Write|Edit" (guardedSoulCommand cfg.memoryIndexHookScript))
@@ -706,6 +718,17 @@ in
         gap. Self-test: `comanda-distructiva.mjs --autoproba`, which asserts
         both directions (dangerous blocked, everyday allowed) and the message
         text, and exits non-zero on any failure.
+      '';
+    };
+
+    secretHookGuardScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/hooks/garda-secret-hook.mjs";
+      description = ''
+        Path to the third PreToolUse guard on Bash (header key 11). Same
+        soul-volume, works-by-luck caveat as the other guard paths — eval
+        cannot see the file, so the post-deploy check closes the gap.
+        Self-test: `garda-secret-hook.mjs --autoproba`.
       '';
     };
 
