@@ -38,10 +38,16 @@ def main():
     commands = parser.add_subparsers(dest='action', required=True)
     commands.add_parser('list')
     commands.add_parser('attach').add_argument('name')
+    recovery = commands.add_parser('resume', help='recover a stopped conversation; no interactive resume picker')
+    recovery.add_argument('agent', choices=['claude', 'codex'])
+    recovery.add_argument('identifier', help='explicit conversation UUID, never a name or picker')
+    recovery.add_argument('--cwd', required=True)
     args = parser.parse_args()
     try:
         if args.action == 'attach':
             attach(args.name)
+        elif args.action == 'resume':
+            host.resume_terminal(args.agent, args.identifier, args.cwd)
         else:
             for record in host.inventory():
                 # No resume identifiers, routes, or transcript contents in output.

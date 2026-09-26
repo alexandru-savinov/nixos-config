@@ -10,9 +10,11 @@ import re
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
+import uuid
 
 
 STATES = {"idle", "active", "blocked", "completed"}
@@ -199,15 +201,40 @@ def validate_resume(agent, identifier, config_dir=None):
         raise ValueError("conversation still has a live process; exit it cleanly before resuming")
 
 
-def resume_lock(identifier):
-    # Keep this descriptor in the agent's parent shell across exec. Serializes
-    # cooperating resume launches, including the gap before Claude writes metadata.
-    lock = (state_dir() / ("resume-" + identifier + ".lock")).open("a")
+def resume_lock(identifier, agent="claude"):
+    # Independent of backend name and AGT_ZMX_STATE: all cooperating launchers
+    # using the same agent configuration must contend for the same inode.
+    if agent not in {"claude", "codex"} or not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", identifier):
+        raise ValueError("conversation lock requires an agent and explicit UUID")
+    variable, fallback = (("CLAUDE_CONFIG_DIR", ".claude") if agent == "claude"
+                          else ("CODEX_HOME", ".codex"))
+    directory = Path(os.environ.get(variable, Path.home() / fallback)).resolve() / "agt-writer-locks"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError("conversation lock directory must be private and owned by this user")
+        try:
+            fd = os.open(identifier + ".lock", os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=descriptor)
+        except FileExistsError:
+            # Separate creation from opening the winner's inode. Never unlink
+            # a stale lock: removing it would permit two independently locked
+            # files for the same conversation.
+            fd = os.open(identifier + ".lock", os.O_RDWR | os.O_NOFOLLOW, dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
+    lock = os.fdopen(fd, "a")
+    info = os.fstat(lock.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600:
+        lock.close()
+        raise ValueError("conversation lock must be a private, singly linked regular file")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close()
-        raise ValueError("another zmx launch owns this conversation") from None
+        raise ValueError("another launch owns this conversation") from None
     os.set_inheritable(lock.fileno(), True)
     return lock
 
@@ -224,23 +251,57 @@ def launch(name):
         os.execvp("bash", ["bash", "--noprofile", "--norc", "-i"])
     command = [agent]
     conversation_lock = None
-    if record.get("resume"):
-        conversation_lock = resume_lock(record["resume"])
-        validate_resume(agent, record["resume"])
-    if agent == "claude":
-        command += ["--settings", json.dumps(hooks(name))]
+    try:
         if record.get("resume"):
-            command += ["--resume", record["resume"]]
-    elif agent == "codex":
-        command += ["--profile", codex_profile(name)]
-        print("zmx status hooks require review in Codex /hooks before they can run.", flush=True)
-        if record.get("resume"):
-            command += ["resume", record["resume"]]
-    # Never call sancta-session / sancta-reconnect or reconcile an old process.
-    # Keep a real interactive shell with job control as the agent's parent.
-    unlock = f"; exec {conversation_lock.fileno()}>&-" if conversation_lock else ""
-    line = shlex.join(command) + unlock + "; exec bash -l"
-    os.execvp("bash", ["bash", "--noprofile", "--norc", "-ic", line])
+            conversation_lock = resume_lock(record["resume"], agent)
+            validate_resume(agent, record["resume"])
+        if agent == "claude":
+            if not record.get("resume"):
+                identifier = record.get("conversation")
+                if not identifier:
+                    raise ValueError("legacy fresh-agent record has no locked identity; recover explicitly")
+                conversation_lock = resume_lock(identifier, agent)
+                directory = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+                if any((directory / "projects").glob("*/" + identifier + ".jsonl")):
+                    raise ValueError("conversation already exists; recover explicitly instead of starting it again")
+                command += ["--session-id", identifier]
+            command += ["--settings", json.dumps(hooks(name))]
+            if record.get("resume"):
+                command += ["--resume", record["resume"]]
+        elif agent == "codex":
+            command += ["--profile", codex_profile(name)]
+            print("zmx status hooks require review in Codex /hooks before they can run.", flush=True)
+            if record.get("resume"):
+                command += ["resume", record["resume"]]
+        # Never call sancta-session / sancta-reconnect or reconcile an old process.
+        # Keep a real interactive shell with job control as the agent's parent.
+        # The parent keeps the lock until the agent exits. An ended agent backend
+        # must not become an unguarded login shell in which resume bypasses launch.
+        line = shlex.join(command) + '; code=$?; exit "$code"'
+        os.execvp("bash", ["bash", "--noprofile", "--norc", "-ic", line])
+    finally:
+        if conversation_lock is not None:
+            conversation_lock.close()
+
+
+def resume_terminal(agent, identifier, cwd):
+    """Explicit stopped-conversation recovery, sharing the zmx writer lock.
+
+    No argument pass-through: picker/continue/fork/config overrides cannot
+    silently change the identity whose lock we acquired.
+    """
+    directory = Path(cwd).resolve(strict=True)
+    if not directory.is_dir():
+        raise ValueError("working directory is not a directory")
+    lock = resume_lock(identifier, agent)
+    try:
+        validate_resume(agent, identifier)
+        command = [agent, "--resume" if agent == "claude" else "resume", identifier]
+        os.chdir(directory)
+        os.execvp("bash", ["bash", "--noprofile", "--norc", "-ic",
+                           shlex.join(command) + '; code=$?; exit "$code"'])
+    finally:
+        lock.close()
 
 
 def attach(name, cwd, agent, port, resume=None, user_scope=False):
@@ -265,7 +326,8 @@ def attach(name, cwd, agent, port, resume=None, user_scope=False):
         path = directory / (qualified + ".json")
         creating = not path.exists()
         if path.exists():
-            if json.loads(path.read_text()) != record:
+            existing = json.loads(path.read_text())
+            if {k: v for k, v in existing.items() if k != "conversation"} != record:
                 raise ValueError("name already belongs to a different directory or agent; choose a new name")
             # A lost daemon is not a live conversation. Do not silently restart it.
             live = subprocess.check_output(["zmx", "list", "--short"], env=environment, text=True)
@@ -280,6 +342,8 @@ def attach(name, cwd, agent, port, resume=None, user_scope=False):
         if route.get("port") != port:
             raise ValueError("attachment route changed; retry from the owning client")
         if creating:
+            if agent == "claude" and resume is None:
+                record["conversation"] = str(uuid.uuid4())
             write_json(path, record)
         write_json(directory / (qualified + ".route"), route)
         route_path.unlink()
@@ -288,8 +352,9 @@ def attach(name, cwd, agent, port, resume=None, user_scope=False):
     # enter /root. Establish the requested directory for the backend itself.
     os.chdir(cwd)
     environment["PWD"] = cwd
-    command = ["zmx", "attach", qualified, sys.executable,
-               str(Path(__file__).resolve()), "launch", name]
+    payload = ([sys.executable, str(Path(__file__).resolve()), "launch", name]
+               if creating else ["false"])
+    command = ["zmx", "attach", qualified, *payload]
     if creating and user_scope:
         # Scope the backend's birth, not each attachment. Its daemon remains in
         # the user-manager scope when the SSH client disconnects.
