@@ -171,16 +171,6 @@
 #                      does not gate a tool call), so it renders via
 #                      guardedSoulCommand/hookEntry like keys 2-3 rather than
 #                      guardedBlockingCommand like key 6.
-#  10. hooks.PreToolUse (garda-secret-hook, Bash) — ADDED 2026-09-26.
-#                      Third member of key 6's class, rendered the same way.
-#                      It was first registered in the user layer
-#                      (~/.claude/settings.json) on 2026-09-22 and was erased
-#                      there by the harness on 2026-09-26 — the exact failure
-#                      mode this file exists for. Self-test:
-#                      `garda-secret-hook.mjs --autoproba`. What it matches is
-#                      documented in its own header on the soul volume, not
-#                      here (same public-repo reason as key 9).
-#
 #   9. hooks.PreToolUse (comanda-distructiva, Bash) — ADDED 2026-08-31.
 #                      Second member of key 6's class, and rendered the same
 #                      way for the same reason. It stops a small set of
@@ -249,6 +239,16 @@
 #                      is a matter of how a /goal is written (at least one
 #                      condition the agent can close by itself, verifiable
 #                      by a fact — feedback_hook_loop_presence.md).
+#
+#  11. hooks.PreToolUse (garda-secret-hook, Bash) — ADDED 2026-09-26.
+#                      Third member of key 6's class, rendered the same way.
+#                      It was first registered in the user layer
+#                      (~/.claude/settings.json) on 2026-09-22 and was erased
+#                      there by the harness on 2026-09-26 — the exact failure
+#                      mode this file exists for. Self-test:
+#                      `garda-secret-hook.mjs --autoproba`. What it matches is
+#                      documented in its own header on the soul volume, not
+#                      here (same public-repo reason as key 9).
 #
 # HERDR COLLISION — WHY SessionStart/SessionEnd ARE NOT HERE
 # ------------------------------------------------------------
@@ -558,7 +558,7 @@ let
         # above, for the reason stated at the top of `settings`: the two
         # guards must be able to fail independently.
         (preToolUseEntry "Bash" (guardedBlockingCommand cfg.destructiveCommandGuardScript))
-        # Key 10. Own element for the same independent-failure reason.
+        # Key 11. Own element for the same independent-failure reason.
         (preToolUseEntry "Bash" (guardedBlockingCommand cfg.secretHookGuardScript))
       ];
       PostToolUse = [
@@ -725,7 +725,7 @@ in
       type = types.str;
       default = "/var/lib/sancta/.claude/hooks/garda-secret-hook.mjs";
       description = ''
-        Path to the third PreToolUse guard on Bash (header key 10). Same
+        Path to the third PreToolUse guard on Bash (header key 11). Same
         soul-volume, works-by-luck caveat as the other guard paths — eval
         cannot see the file, so the post-deploy check closes the gap.
         Self-test: `garda-secret-hook.mjs --autoproba`.
