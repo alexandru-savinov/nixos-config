@@ -1434,7 +1434,7 @@ let
     sancta-zmx-backend-resource-policy =
       let
         cfg = self.nixosConfigurations.sancta-choir.config;
-        policy = cfg.environment.etc."systemd/user/agt-mvp-sancta-.scope.d/50-resource-policy.conf".text;
+        policy = builtins.readFile "${cfg.environment.etc."systemd/user".source}/agt-mvp-sancta-.scope.d/50-resource-policy.conf";
         aliases = builtins.fromJSON cfg.environment.etc."agt-zmx-aliases.json".text;
       in
       if nixpkgs.lib.hasPrefix "sancta-" aliases.sancta.sancta

@@ -6,6 +6,7 @@ on:
       - '.github/workflows/agterm-scope.yml'
       - 'tests/agterm-sancta-scope.nix'
       - 'hosts/sancta-choir/configuration.nix'
+      - 'modules/services/sancta-session-scope.nix'
       - 'flake.nix'
       - 'flake.lock'
   workflow_dispatch:

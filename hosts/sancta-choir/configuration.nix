@@ -46,6 +46,7 @@
     ../../modules/services/claude-shared.nix
     ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
+    ../../modules/services/sancta-session-scope.nix
     ../../modules/services/open-webui.nix
     # ── Sancta home + live membrane worker ────────────────────────────────
     ./soul-volume.nix # encrypted ~/.claude (LUKS-on-loopback, non-destructive)
@@ -167,19 +168,6 @@
         ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions attach sancta
     '')
   ];
-
-  # Preserve the legacy Sancta resource policy on the actual persistent
-  # backend, not the short-lived SSH attachment. systemd's dash-prefix drop-in
-  # lookup covers agt-mvp-sancta-main-* and named sancta-* recovery scopes.
-  # Keep recovery names under sancta- so they receive this policy as well.
-  environment.etc."systemd/user/agt-mvp-sancta-.scope.d/50-resource-policy.conf".text = ''
-    [Scope]
-    MemoryHigh=4G
-    MemoryMax=5G
-    MemorySwapMax=2G
-    OOMPolicy=continue
-    TimeoutStopSec=45
-  '';
 
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
   # which clobbers the claude agent-state hook that `herdr integration install`
@@ -463,7 +451,7 @@
   # OOMPolicy. That is not a claim OOMPolicy can never fire — a kernel or
   # cgroup-local OOM kill still increments the counter, which is why the
   # Sancta zmx backend's user scope carries OOMPolicy=continue through the
-  # agt-mvp-sancta-.scope.d drop-in above. The SSH attachment is only a client;
+  # agt-mvp-sancta-.scope.d drop-in from sancta-session-scope.nix. The SSH attachment is only a client;
   # the writer lives under user@993.service, outside tailscaled.service.
   #
   # Note the kill is SILENT on this headless host: earlyoom's largest-victim

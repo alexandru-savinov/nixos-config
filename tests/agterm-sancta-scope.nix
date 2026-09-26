@@ -1,15 +1,15 @@
-{ pkgs, policy }:
+{ pkgs }:
 
 pkgs.testers.runNixOSTest {
   name = "agterm-sancta-scope";
   nodes.machine = { ... }: {
+    imports = [ ../modules/services/sancta-session-scope.nix ];
     virtualisation.memorySize = 768;
     users.users.fixture = {
       isNormalUser = true;
       uid = 1000;
       linger = true;
     };
-    environment.etc."systemd/user/agt-mvp-sancta-.scope.d/50-resource-policy.conf".text = policy;
     system.stateVersion = "25.11";
   };
   testScript = ''
