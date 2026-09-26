@@ -181,6 +181,12 @@ in
   # owner confirmation: PR #534 issuecomment-5026053880.
   "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
 
+  # Dedicated OpenRouter key for Jev only, with a $1 credit limit set AT OPENROUTER
+  # (the provider refuses past the limit, before any upstream call). Choir only:
+  # no other host asks Jev. Separate from openrouter-api-key so a bug in the Jev
+  # sender can never spend the key n8n and open-webui share.
+  "jev-openrouter-key.age".publicKeys = users ++ [ sancta-choir ];
+
   # Keyfile that unlocks the encrypted soul volume on sancta-choir (LUKS-on-
   # loopback for ~/.claude). Root reads /run/agenix/soul-volume-key at boot for
   # cryptsetup; rpi5 included so Alexandru can generate/manage it from here.

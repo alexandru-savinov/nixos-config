@@ -471,6 +471,8 @@
       # activation. Owned by the `sancta` worker user with agenix's 0400 mode.
       # This repo holds NO plaintext key — the .age is age-encrypted.
       anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
+      # Jev (typesafe/jev-1.13) — its own $1-capped key, read by the jev-ci wq handler.
+      jev-openrouter-key = ownedSecret "sancta" "jev-openrouter-key";
 
       # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
       # volume). LIVE: soul-volume-key.age exists (random 256-bit; recipients

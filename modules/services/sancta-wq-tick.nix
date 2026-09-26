@@ -336,6 +336,8 @@ in
           "-${contractRepo}/.git/"
           "-${indexRoot}/register-history.jsonl"
           "-${indexRoot}/HARTA.md"
+          # jev-ci appends forecasts and resolutions to the Jev calibration journal.
+          "-${indexRoot}/council/jev-journal.jsonl"
         ];
 
         PrivateTmp = true;
