@@ -666,7 +666,11 @@ let
             # state must reach the status bar in the mounted-but-heartbeat-
             # stale case; in the mount-absent case this refresher itself may
             # be silent, and systemctl --failed + the journal stay the alarm.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service" env;
+            # sancta-absent-guard.service joined on 2026-09-26: the clock for
+            # the house's absence guard. The bar's own violation count comes
+            # from `absent-guard --count`, so is-failed on this unit is what
+            # says whether that number is being produced at all.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
@@ -1421,6 +1425,148 @@ let
               services.sancta-archive-deadman = {
                 enable = true;
                 heartbeatFile = "/var/lib/sancta/.claude/transcript-archive/last-run.json";
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
+    # ── sancta-absent-guard ───────────────────────────────────────
+    # The clock the house's absence guard never had (2026-09-26). It is the
+    # DELIBERATE OPPOSITE of sancta-archive-deadman above, and both directions
+    # are pinned here so that "make these two consistent" fails the build in
+    # whichever direction someone tries it:
+    #   the dead-man must keep NO mount gate (its job is to speak when the
+    #   volume is absent), and this one must KEEP one (every input it has is on
+    #   the volume, so without the mount it could only report seven MISSING
+    #   producers and mean "the volume is not here" — an alarm the dead-man
+    #   already owns and owns better).
+    sancta-absent-guard-choir-wiring =
+      let
+        choir = self.nixosConfigurations.sancta-choir.config;
+        svc = choir.systemd.services.sancta-absent-guard;
+        timer = choir.systemd.timers.sancta-absent-guard;
+        soulRoot = toString choir.services.sancta-soul-volume.mountPoint;
+        indexRoot = "${soulRoot}/index";
+        cfg = choir.services.sancta-absent-guard;
+        env = svc.serviceConfig.Environment or [ ];
+        execStart = toString (svc.serviceConfig.ExecStart or "");
+
+        # NOTE: unlike the archive-deadman block above, this one does NOT
+        # readFile the ExecStart script. That one can, because its ExecStart is
+        # a bare store path; here it is "<store script> <off-store guard>", and
+        # every Nix string op that would extract the first token (splitString,
+        # match) STRIPS the store-path context — which is what makes readFile
+        # realise the script in the first place (tests/unit-script-refs.nix's
+        # header is the worked example). The script's BEHAVIOUR is asserted
+        # where it belongs anyway: tests/sancta-absent-guard.nix runs this very
+        # ExecStart against fixtures and pins each exit code and message.
+        checks = {
+          # THE GATE, in all three forms it could be removed.
+          hasMountCondition = (svc.unitConfig.ConditionPathIsMountPoint or null) == soulRoot;
+          hasMountRequires = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
+          hasMountAfter = builtins.elem "sancta-soul-mount.service" (svc.after or [ ]);
+
+          # …and the dead-man must still NOT have it. Asserted from HERE too,
+          # so the "consistency" refactor fails even if someone edits only this
+          # family's newest member and reasons outward from it.
+          deadmanStillUngated =
+            (choir.systemd.services.sancta-archive-deadman.unitConfig.ConditionPathIsMountPoint or null) == null;
+
+          # The wrapper is store-backed — that is what makes
+          # tests/unit-script-refs.nix a real check for it, where the soul-side
+          # guard it invokes is structurally invisible.
+          execIsStorePath = nixpkgs.lib.hasPrefix builtins.storeDir execStart;
+
+          # …and the guard arrives as ARGV, not through Environment=. That is
+          # what keeps the unit in scope for tests/execstart-path-contract.nix
+          # and so forces a committed $PATH contract for the guard's own
+          # shebang — the #564 class (bash missing from PATH) with paperwork.
+          guardPassedAsArgv = nixpkgs.lib.hasInfix " ${cfg.guardScript}" execStart;
+          guardNotHiddenInEnv =
+            !(nixpkgs.lib.any (e: nixpkgs.lib.hasSuffix "=${cfg.guardScript}" e) env);
+
+          # Inputs on the soul volume — the premise the gate rests on.
+          guardOnSoul = nixpkgs.lib.hasPrefix "${soulRoot}/" cfg.guardScript;
+          tableOnSoul = nixpkgs.lib.hasPrefix "${soulRoot}/" cfg.producersTable;
+          tableInEnv = builtins.elem "SANCTA_ABSENT_PRODUCERS=${cfg.producersTable}" env;
+
+          # THE CADENCE RELATION, single-sourced. The timer period and the
+          # number the wrapper checks against the guard's own max_age must be
+          # the SAME option, or they are two settings that can drift — the
+          # exact class this module is built around.
+          cadenceSingleSourced =
+            (timer.timerConfig.OnUnitActiveSec or "") == "${toString cfg.intervalSeconds}s"
+            && builtins.elem "SANCTA_ABSENT_INTERVAL_SEC=${toString cfg.intervalSeconds}" env;
+
+          # …and it must be under the guard's own 6h self-window with room for
+          # the randomized delay. 6h is read off the live producers.json row,
+          # which no build can see, so the literal is pinned here and the
+          # relation itself is re-checked at RUNTIME on every beat.
+          cadenceUnderSelfWindow = cfg.intervalSeconds <= 21600;
+
+          # A host that was off is exactly when producers went quiet unnoticed.
+          beatsAfterBoot = (timer.timerConfig.OnBootSec or "") != "";
+          timerArmed = builtins.elem "timers.target" (timer.wantedBy or [ ]);
+
+          # The marker's directory must be writable or the guard's own
+          # tmp+rename fails, the marker ages, and the guard reports ITSELF
+          # stale forever — a red unit that means nothing but its own sandbox
+          # (the register-history EROFS scar, 2026-08-23).
+          markerDirWritable =
+            builtins.elem "-${indexRoot}/" (svc.serviceConfig.ReadWritePaths or [ ]);
+          stillSandboxed = (svc.serviceConfig.ProtectSystem or "") == "strict";
+
+          # The guard's shebang interpreter must be on the unit's PATH. This is
+          # the #564 shape verbatim; the contract file declares it, this asserts
+          # the module actually provisions it.
+          pathHasBash =
+            nixpkgs.lib.any (p: (p.pname or "") == "bash-interactive" || (p.pname or "") == "bash")
+              (svc.path or [ ]);
+          pathHasJq = nixpkgs.lib.any (p: (p.pname or "") == "jq") (svc.path or [ ]);
+          pathHasFind = nixpkgs.lib.any (p: (p.pname or "") == "findutils") (svc.path or [ ]);
+
+          # No onFailure chain: every alert path in this house runs through a
+          # tool on the soul volume, so a hook here would hand the guard a
+          # dependency on the substrate it is watching. The red unit plus the
+          # bar is the whole alarm.
+          noFailureChain = (svc.onFailure or [ ]) == [ ];
+
+          statuslineSurfaced =
+            builtins.elem "sancta-absent-guard.service"
+              choir.services.sancta-statusline-refresh.units;
+        };
+
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir absent-guard wiring — failed checks: ${builtins.toJSON failed}";
+
+    # Negative arm for the module's own assertion: inputs moved OFF the soul
+    # volume must be refused. ConditionPathIsMountPoint is a SKIP, not a
+    # failure, so a unit gated on the mount whose real inputs live elsewhere
+    # would go quiet with nothing red anywhere — the exact silence this module
+    # exists to end, rebuilt by a one-line option override.
+    sancta-absent-guard-offsoul-inputs-rejected =
+      shouldFail "absent-guard: rejects a guard script outside the soul mount"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-absent-guard.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-absent-guard = {
+                enable = true;
+                guardScript = "/var/lib/sancta/elsewhere/bin/absent-guard";
               };
               users.users.sancta = {
                 isSystemUser = true;

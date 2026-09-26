@@ -57,6 +57,7 @@
     ../../modules/services/sancta-wq-tick.nix # beat the work queue without a live session
     ../../modules/services/sancta-transcript-archive.nix # closed transcripts → encrypted objects rpi5 already pulls
     ../../modules/services/sancta-archive-deadman.nix # the one archive watcher that does NOT need the soul mount
+    ../../modules/services/sancta-absent-guard.nix # the clock the house's absence guard never had
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
   ];
 
@@ -579,6 +580,13 @@
     # case the refresher itself may be silent, and `systemctl --failed` plus
     # the journal remain the alarm that needs nothing.
     "sancta-archive-deadman.service"
+    # The absence guard's clock (2026-09-26). Same oneshot reader contract as
+    # doctrine-guard above. It belongs on the bar more than most: the bar's own
+    # violation count comes from `absent-guard --count`, and until this unit
+    # existed nothing recomputed it — a green count meant only that nobody had
+    # run the guard. `is-failed` on the unit is what says whether the number
+    # beside it is being produced at all.
+    "sancta-absent-guard.service"
   ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
@@ -609,6 +617,19 @@
   # nothing, and simply goes red when the mount is absent or the archive
   # heartbeat's embedded ts goes stale. The red unit IS the alarm.
   services.sancta-archive-deadman.enable = true;
+
+  # The absence guard finally gets a clock (2026-09-26). index/bin/absent-guard
+  # is the one thing that asks "when did this last produce anything?" of every
+  # producer in the house — and `systemctl list-timers --all` had no unit for it
+  # at all. It ran only when a live session happened to call it: the same
+  # coincidence-instead-of-a-clock that sancta-wq-tick was built to end. On the
+  # night this landed the guard was reporting ITSELF stale at 26h against its
+  # own 6h window, next to northstar MISSING, dreams stale 48d, ledger stale
+  # 34d. Scheduling it revives none of those; it only makes their silence
+  # impossible to miss, which is why this unit will be RED on its first beat.
+  # Mount-gated, unlike the dead-man above, because every input it has lives on
+  # the soul volume — see the module header, and do not make the two consistent.
+  services.sancta-absent-guard.enable = true;
 
   services.vigil = {
     enable = true;

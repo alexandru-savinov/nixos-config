@@ -238,6 +238,65 @@
           ];
         };
 
+        # sancta-absent-guard — modules/services/sancta-absent-guard.nix.
+        # ExecStart is `<store>/sancta-absent-guard-check /var/lib/sancta/
+        # .claude/index/bin/absent-guard` and ExecStartPre is `<store>/test -x`
+        # on that same path: the PROGRAM token is a store path both times, the
+        # later token is an off-store absolute path, so the unit is in scope by
+        # the "later non-store absolute token" rule — the same shape as
+        # sancta-wq-tick and sancta-transcript-archive.
+        #
+        # The off-store path was passed as argv rather than through
+        # Environment= ON PURPOSE. Environment= would have made the unit look
+        # pure-store, dropped it out of this checker entirely, and left the
+        # guard's `#!/usr/bin/env bash` shebang resolving through an unchecked
+        # $PATH — which is precisely the #564 failure (sancta-statusline-refresh
+        # exited 127 on every tick because bash was not on its PATH). So
+        # `interpreter = "bash"`, not null: the wrapper invokes the guard
+        # directly and env resolves bash through this unit's $PATH.
+        #
+        # NOT transitive, and that is a fact about the script, not a narrower
+        # rule: bin/absent-guard is a leaf. Read in full on sancta-choir
+        # 2026-09-26 (7371 bytes, mtime 2026-08-02) — one loop over
+        # producers.json, no dispatch to any other script, by absolute path or
+        # otherwise. Unlike bin/wq-tick, which is a dispatcher and therefore had
+        # to declare its children's commands too.
+        #
+        # Every BARE external command it invokes, in order of first appearance:
+        #   dirname — `$(dirname -- "$BASH_SOURCE")` to derive its ROOT,
+        #             from which both producers.json and absent-last.json hang
+        #   jq      — parses the producer table; writes the completion marker
+        #   date    — `+%s` (now), `-u -d @<ts>` (each verdict's evidence date),
+        #             `-u '+%Y-%m-%dT%H:%M:%SZ'` (the marker's ts)
+        #   find    — newest file anywhere under a producer DIRECTORY; this is
+        #             the dreams/ case, where the container's own mtime is fresh
+        #             and its contents are nine days old
+        #   sort    — `-rn` over those mtimes
+        #   head    — `-1` to take the newest
+        #   stat    — `-c %Y` for a producer that is a file or a glob
+        #   mv      — the marker's atomic same-directory rename
+        #   rm      — `-f` on the marker tempfile when the write failed
+        # `printf`, `echo`, `read`, `shopt`, `command`, `[`, `case`, `cd`, `pwd`
+        # are bash builtins — deliberately not listed, same exclusion as the
+        # entries above. `test` comes from the unit itself by full store path
+        # (ExecStartPre), so it is not a $PATH lookup, and the wrapper's own
+        # jq call is a full store path too — this entry is entirely about the
+        # CHILD's lookups.
+        sancta-absent-guard = {
+          interpreter = "bash";
+          commands = [
+            "dirname"
+            "jq"
+            "date"
+            "find"
+            "sort"
+            "head"
+            "stat"
+            "mv"
+            "rm"
+          ];
+        };
+
         sancta-wq-tick = {
           interpreter = "node";
           commands = [
@@ -388,6 +447,14 @@
       # which is the intended direction: a wrong `provides` line can only refuse
       # a real command, never credit an absent one.
       "tail"
+      # `head` added 2026-09-26 for sancta-absent-guard: bin/absent-guard's
+      # newest() takes the newest file under a producer directory with
+      # `find … | sort -rn | head -1`. Same short-map shape as `tail` above and
+      # verified the same way, from the real store path rather than from
+      # memory: `ls /nix/store/wkkwxc04gdw6b263l1h29pjarjnjdyb6-coreutils-9.8/bin`
+      # (resolved via `nix eval --raw .#nixosConfigurations.sancta-choir.pkgs
+      # .coreutils.outPath`) → head present.
+      "head"
       "uniq"
       "tr"
       "cut"
