@@ -60,6 +60,8 @@ let
   cfg = config.services.sancta-doctrine-guard;
   soulRoot = toString config.services.sancta-soul-volume.mountPoint;
   guardScript = ./sancta-doctrine-guard.sh;
+  stampScript = ./sancta-doctrine-guard-stamp.sh;
+  stateDir = "sancta-doctrine-guard";
 in
 {
   options.services.sancta-doctrine-guard = {
@@ -86,6 +88,20 @@ in
       type = types.str;
       default = "10m";
       description = "systemd RandomizedDelaySec, so the guard never lands exactly on another unit's minute.";
+    };
+
+    stampPath = mkOption {
+      type = types.str;
+      readOnly = true;
+      default = "/var/lib/${stateDir}/last-success";
+      description = ''
+        The guard's outcome, carried in one file's mtime (see
+        sancta-doctrine-guard-stamp.sh): now after a clean run, epoch + 1s
+        after any other outcome. vigil reads it with its file `age` check, so
+        watching this unit grants vigil no command execution. Read-only so a
+        host's vigil contract and this module cannot drift apart unnoticed;
+        tests/module-eval.nix asserts the two are equal on sancta-choir.
+      '';
     };
 
     managedSettingsPath = mkOption {
@@ -156,7 +172,16 @@ in
         Type = "oneshot";
         User = cfg.user;
         ExecStart = "${pkgs.bash}/bin/bash ${guardScript}";
+        # Runs after every run, clean or not, with SERVICE_RESULT/EXIT_CODE/
+        # EXIT_STATUS from systemd. It writes only inside StateDirectory below;
+        # the soul volume stays read-only for it, as for the guard.
+        ExecStopPost = "${pkgs.bash}/bin/bash ${stampScript}";
+        # 0755 so the unprivileged vigil user can stat the stamp. The file is
+        # empty: its mtime is the whole message, and it names nothing private.
+        StateDirectory = stateDir;
+        StateDirectoryMode = "0755";
         Environment = [
+          "SANCTA_DOCTRINE_STAMP=${cfg.stampPath}"
           "SANCTA_DOCTRINE_ROOT=${soulRoot}"
           # Belt and braces beside ConditionPathIsMountPoint above; the unit
           # gate is the real one, this only makes the script safe standalone.
