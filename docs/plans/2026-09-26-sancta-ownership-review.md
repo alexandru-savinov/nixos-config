@@ -1,6 +1,6 @@
 # Sancta conversation ownership: autonomous preparation
 
-Status: in progress; no production activation or session interruption authorized.
+Status: autonomous implementation and test evidence prepared; latest automated review pending. No production activation or session interruption authorized.
 
 ## Verified evidence
 
@@ -10,7 +10,7 @@ Status: in progress; no production activation or session interruption authorized
 - The latest read-only process inventory found one live Claude process associated with the main conversation. No process was stopped by this work.
 - The secret-guard source exists and is executable; registration is absent from both user and managed settings. Actual live hook enforcement remains unverified.
 
-## Changes staged so far
+## Prepared changes
 
 - Existing zmx backend attachments use `false` as the create-if-missing payload. Loss after inventory must not start a replacement agent.
 - Explicit conversation locks are shared by agent configuration directory instead of backend state directory. Lock paths reject symlinks and multiply linked files and require private ownership and modes.
@@ -27,34 +27,77 @@ Status: in progress; no production activation or session interruption authorized
 - The helper built natively at `/nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0`; both packaged CLI help commands passed. This is a build artifact, not an installed production profile.
 - Existing guard source copied read-only to a private local fixture: SHA-256 `4844e499f22f319304ebcaa664b8add3ac7ee2d51dd920d425330f8ecf639b96`. All 21 self-tests passed, including stdin-level allow and block. No real secret or production repository was used. The program is a command-pattern tripwire, not a secret scanner or containment boundary; constructed commands and a misleading hook marker can bypass it.
 
-## Remaining implementation and adversarial review
+## Requirement audit
 
-Automated review found that replacing the legacy scope launcher also removed
-its resource limits. The staged correction moves those same limits to a choir
-user-unit drop-in for `agt-mvp-sancta-*.scope`, with an assertion that the Sancta
-alias uses the matching prefix. Read-only `/proc` inspection confirmed the
-surviving backend is already under `user@993.service`, outside tailscaled's
-cgroup; the old review's claim that the agent moved back into tailscaled was not
-supported by that observation. The missing memory ceilings were a valid finding.
-Both stale scope comments were corrected. Native module validation must be rerun
-for this correction. Prefix drop-in lookup follows the upstream
+| Requirement | Evidence and boundary |
+| --- | --- |
+| Read-only diagnosis | Owner confirmed manual raw resume; process metadata and cgroups were inspected without transcript content. Settings migration attribution remains a hypothesis. |
+| Supported Mac/SSH attachment | Existing Mac alias selects the named backend; terminal attach and legacy `sancta-session` are attachment-only. Tests reject missing backends and assert no agent launch payload on reattachment. |
+| Atomic ownership | Shared per-agent configuration lock covers explicit zmx/terminal recovery and new Claude identities. Concurrent contenders produce one owner; stale files are reused without inode replacement. |
+| Crash and recovery | Disposable process tests cover normal exit, owner SIGKILL, inherited descriptor retention after parent death and release after the remaining child exits. Real Claude descriptor behavior remains a live acceptance gate. |
+| Persistence and routing | Native PTY test retains the same shell PID across client loss and reconnect. Automated tests cover host/account/backend matching, alias routing, no duplicate pane creation and correct-pane restore identity. Human UI acceptance is not claimed. |
+| Guard restoration | Managed registration preserves unrelated user settings. Existing source passed 21 fixtures; rendered wrapper passed 13 cases on both Mac and exact Linux dependencies. Runtime Claude loading remains deferred. |
+| Preserved resource policy | Native module assertion and isolated VM passed. The VM reads back all five scope properties and verifies the loaded prefix drop-in. |
+| Reviewable delivery | NixOS PR #618 and Darwin PR #29, native helper artifact, secret-scan/format checks, owner-script replacement template and separate activation/rollback procedure. Latest automated review remains pending. |
+
+The first automated review correctly identified missing legacy memory ceilings.
+Read-only `/proc` inspection also confirmed the surviving writer already lives
+outside tailscaled's cgroup. The correction preserves the ceilings on the real
+backend using `modules/services/sancta-session-scope.nix`. The first VM build
+caught a nested `environment.etc` collision; packaging through `systemd.packages`
+fixed it. The corrected VM run
+[36249215579](https://github.com/alexandru-savinov/nixos-config/actions/runs/36249215579)
+passed, and the review thread was resolved. Native module validation at `0af4414`
+also passed, producing `/nix/store/ayps6m34gfn519xzxhqvqp8jckbpf3ki-module-eval-tests`.
+The second review identified missing CI coverage for the rendered guard wrapper.
+The dedicated workflow now builds `sancta-guard-wrapper` with a synthetic public
+fixture; the private guard source remains outside the repository. Its first run
+caught an invalid fixture shebang inside the Nix sandbox because the harmless
+allow case failed. Patching the fixture interpreter fixed this, and both the
+wrapper gate and scope VM passed at `08fae03` in run
+[36249811113](https://github.com/alexandru-savinov/nixos-config/actions/runs/36249811113).
+That review thread is resolved. The synthetic gate checks wrapper behavior;
+the separate private-source fixture run supplies evidence about the existing guard.
+
+Prefix matching follows the upstream
 [systemd unit documentation](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml).
 
-1. Review every supported launch/recovery command against the shared ownership mechanism. Direct execution of an unwrapped Claude binary, in-session conversation switching, and the old soul-volume launcher remain cooperative-lock bypasses. A launcher cannot prevent the same user from executing another binary or removing their own lock file. Do not claim universal enforcement. Codex fresh sessions retain native identity/writer-lock behavior; the added shared lock covers explicit Codex recovery.
-2. Validate the legacy entry point replacement and prepare the soul-volume script migration for separately approved activation.
-3. Verify rendered managed registration and wrapper enforcement in fixtures, including missing, crashed and timed-out guards and simulated user-settings rewrites.
-4. Test lock inheritance, simultaneous launch, parent/agent crashes, stale files, separate backend namespaces and repeated attachment using disposable processes and transcripts.
-5. Run relevant module/package checks, review the complete diff, create PRs and prepare exact activation and rollback steps.
+## Residual findings and operating boundary
 
-Draft PR #618 is stacked on #612. Companion Darwin PR #29 is stacked on #28 and
-pins choir to the built immutable helper; the existing installed profile remains
-unchanged. The main-target Nix workflow does not run on the stacked NixOS base.
-Native Linux test/module validation completed in an isolated temporary checkout
-at revision `bf1f6b3`, one build worker/core, without activation. Follow-up
-artifact and exact-wrapper checks used `2f79785` with unchanged helper sources.
-The transition review
-is in `2026-09-26-sancta-activation.md`; the owner reconnect replacement template is
-`scripts/sancta-reconnect-attach.sh` and is deliberately not installed automatically.
+- These are cooperative locks, not containment against the owning account.
+  Direct unwrapped Claude execution, in-session conversation switching, changed
+  configuration roots, lock-file removal and old running launchers can bypass
+  them. The normal supported path is attachment; explicit stopped recovery uses
+  `sessions resume` or the zmx helper. No resume picker is supported for recovery.
+- A child that closes inherited descriptors may lose inherited ownership after
+  its parent dies. Metadata checks provide an additional refusal path, not an
+  atomic replacement for the lock. The fake-agent crash test must not be cited
+  as proof about the real Claude runtime.
+- The owner soul-volume reconnect script remains untouched. Its attachment-only
+  replacement is a reviewed migration template, not an automatic activation.
+- The secret guard is a command-pattern tripwire. Constructed commands or a
+  misleading hook marker can defeat it. Registration durability does not turn it
+  into a secret scanner or prove that a currently running agent loaded it.
+- Plain-terminal recovery has no agterm lifecycle bridge and stays in its terminal
+  process tree. Use a `sancta-`-prefixed zmx backend with user scoping for persistent,
+  resource-bounded Sancta recovery.
+
+## Delivery
+
+NixOS [PR #618](https://github.com/alexandru-savinov/nixos-config/pull/618) is stacked
+on #612. Darwin [PR #29](https://github.com/alexandru-savinov/darwin-config/pull/29)
+is stacked on #28; its CI and evaluated choir pin passed. The installed profiles
+remain unchanged. The main-target Nix workflow does not run on the stacked NixOS
+base, so native checks and the dedicated VM workflow supply the evidence here.
+
+Native integration validation used `bf1f6b3`; exact guard-wrapper checks used
+`2f79785`; neither helper sources nor guard registration changed in the later
+scope-policy correction. The helper artifact is unchanged and matches Darwin's
+pin. Both package CLI entry points were smoke-tested without launching agents.
+
+Transition and rollback: [activation review](2026-09-26-sancta-activation.md).
+Owner-script template: `scripts/sancta-reconnect-attach.sh`. Source-controlled
+recovery instructions use the guarded path, not raw `claude --resume`.
 
 ## Deferred production gates
 
