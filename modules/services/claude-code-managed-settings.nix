@@ -548,6 +548,10 @@ let
         # above, for the reason stated at the top of `settings`: the two
         # guards must be able to fail independently.
         (preToolUseEntry "Bash" (guardedBlockingCommand cfg.destructiveCommandGuardScript))
+        # Keep registration out of mutable user settings: a harness schema
+        # migration must not erase the secret guard. Missing/crashed guards
+        # are blocking failures, using the same bounded wrapper as above.
+        (preToolUseEntry "Bash" (guardedBlockingCommand cfg.secretGuardScript))
       ];
       PostToolUse = [
         (matchedEntry "Write|Edit" (guardedSoulCommand cfg.memoryIndexHookScript))
@@ -682,6 +686,18 @@ in
         bit). Restricts what the agent may do, so it belongs in the managed
         layer under this module's test (header key 6). Same works-by-luck
         caveat as the other soul-volume paths.
+      '';
+    };
+
+    secretGuardScript = mkOption {
+      type = types.str;
+      default = "/var/lib/sancta/.claude/hooks/garda-secret-hook.mjs";
+      description = ''
+        Existing executable secret guard on Sancta's soul volume. Registration
+        is managed independently of mutable user settings. A missing executable,
+        crash or timeout blocks Bash rather than silently dropping protection.
+        Deployment requires verifying the source and its disposable fixtures;
+        the managed registration alone does not prove a live agent loaded it.
       '';
     };
 
