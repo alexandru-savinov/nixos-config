@@ -80,7 +80,8 @@ let
           directory = ../hosts/sancta-choir/vigil-contracts;
         };
       in
-      builtins.length (builtins.attrNames endpoints) == 9
+      builtins.length (builtins.attrNames endpoints) == 10
+      && endpoints ? choir-vigil-doctrine-guard
       && endpoints.choir-vigil-galeria.url == "http://100.94.191.54:8747/checks/galeria"
       && builtins.elem "[BODY].detail == ok" endpoints.choir-vigil-galeria.conditions
       && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints);

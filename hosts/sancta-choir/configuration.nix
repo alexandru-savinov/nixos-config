@@ -615,7 +615,12 @@
   services.vigil = {
     enable = true;
     contractsDirs = [ ./vigil-contracts ];
-    expectedContracts = 9;
+    # doctrine-guard.toml is a plain file `age` check on the stamp that
+    # sancta-doctrine-guard's own ExecStopPost writes (its stampPath option):
+    # mtime = now after a clean run, epoch + 1s after any other outcome, so a
+    # failed run reads picat on the next tick and a guard that stops running
+    # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
+    expectedContracts = 10;
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };
