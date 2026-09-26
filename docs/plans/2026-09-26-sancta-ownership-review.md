@@ -62,7 +62,7 @@ the separate private-source fixture run supplies evidence about the existing gua
 The subsequent review identified that the stacked-branch workflow did not run
 lock-safety tests, despite successful local and native builds. The workflow now
 also builds the protocol suite, real-zmx reconnect integration, helper package
-and module assertions, and watches their source paths. Their CI result is pending;
+and module assertions, and watches their source paths. The first expanded run exposed a pure-evaluation symlink restriction in the policy assertion. Its content checks now run against the same generated file during the sandboxed build phase. Their CI result is pending;
 this delivery remains draft until that gate and review complete.
 
 Prefix matching follows the upstream
