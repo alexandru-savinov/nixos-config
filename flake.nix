@@ -197,6 +197,7 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
+          unstable = if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64;
         in
         {
           # Default package (what runs with `nix run github:user/repo`)
@@ -248,6 +249,15 @@
             ];
             text = builtins.readFile ./scripts/bootstrap.sh;
           };
+          # Shared helper for choir (x86_64) and rpi5 (aarch64).
+          agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
+            zmx = unstable.zmx;
+          };
+          # Explicit PTY acceptance; keep terminal timing out of general checks.
+          agterm-zmx-tests = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix {
+            integration = true;
+            zmx = unstable.zmx;
+          };
         });
 
       # Checks - run with `nix flake check`
@@ -259,6 +269,7 @@
           pkgs = nixpkgsFor.x86_64-linux;
         in
         {
+          agterm-zmx = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix { };
           # Module evaluation tests — verify all service modules evaluate
           # correctly with minimal config, and that assertions fire for
           # invalid inputs (e.g. secrets in /nix/store).
