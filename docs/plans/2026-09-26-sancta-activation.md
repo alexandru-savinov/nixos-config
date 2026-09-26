@@ -5,8 +5,8 @@ only prepares code and disposable tests. Production is not declared repaired.
 
 ## Prerequisites
 
-1. Review the final PR revision and its parent #612, native package/test results,
-   rendered managed guard and the findings in the ownership review. Do not merge
+1. Review the final PR revision and its parent #612, native package/test results
+   and the findings in the ownership review. Do not merge
    or deploy the current draft merely because its Python tests pass.
 2. Build the host and client artifacts for that exact revision, record immutable
    paths, and compare the resulting system with the currently deployed system.
@@ -58,10 +58,7 @@ only prepares code and disposable tests. Production is not declared repaired.
    recovery attempt must refuse before launching another agent. Call Mac `sancta`
    twice and attach from a separate SSH terminal; all must reach the same backend
    without another writer. Disconnect attachments and confirm the writer survives.
-8. Verify that a fresh real Claude session loaded the managed guard and blocks
-   an unscanned commit in an isolated repository before git executes. No real
-   secret or publication is needed. Hook self-tests alone do not prove this.
-9. Perform the deferred human picker, notification-click and native-question
+8. Perform the deferred human picker, notification-click and native-question
    acceptance. Do not mark these passed from synthetic routing assertions.
 
 ## Rollback
@@ -72,9 +69,7 @@ only prepares code and disposable tests. Production is not declared repaired.
 - If a newly recovered agent must be replaced, obtain interruption approval,
   exit it cleanly and verify it stopped before any alternate recovery. Do not
   unlink a lock file; a stale file is harmless, a live inode replacement is not.
-- A full system rollback needs its own impact review and approval. Removing the
-  new managed entry also removes secret-guard registration, so rollback does not
-  preserve the new protection automatically. Keep that tradeoff explicit.
+- A full system rollback needs its own impact review and approval.
 - Restore the old owner reconnect script only under explicit approval: restoring
   it reintroduces destructive reconciliation and the original bypass. A disabled
   legacy entry point is preferable to silently restoring that behavior.

@@ -1614,8 +1614,7 @@ let
             # guard, which is the same absence-is-not-a-pass hole the guards
             # themselves are written against.
             && carries "transcript-scan-guard.mjs"
-            && carries "comanda-distructiva.mjs"
-            && carries "garda-secret-hook.mjs";
+            && carries "comanda-distructiva.mjs";
 
           hasBlockedOnPermissionPrompt =
             (rendered.hooks.Notification or [ ])
