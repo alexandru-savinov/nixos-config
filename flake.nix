@@ -248,6 +248,16 @@
             ];
             text = builtins.readFile ./scripts/bootstrap.sh;
           };
+        } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          # This rollout targets choir only; do not expose untested ARM packages.
+          agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
+            zmx = pkgs-unstable-x86.zmx;
+          };
+          # Explicit PTY acceptance; keep terminal timing out of general checks.
+          agterm-zmx-tests = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix {
+            integration = true;
+            zmx = pkgs-unstable-x86.zmx;
+          };
         });
 
       # Checks - run with `nix flake check`
@@ -259,6 +269,7 @@
           pkgs = nixpkgsFor.x86_64-linux;
         in
         {
+          agterm-zmx = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix { };
           # Module evaluation tests — verify all service modules evaluate
           # correctly with minimal config, and that assertions fire for
           # invalid inputs (e.g. secrets in /nix/store).

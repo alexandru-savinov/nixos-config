@@ -138,6 +138,8 @@
   # Agent tooling on the system PATH so herdr panes (which inherit the
   # herdr-server unit's PATH, not a login shell's) can find + launch them.
   environment.systemPackages = [
+    # Manual, isolated zmx MVP sessions only; installs no daemon or global hooks.
+    self.packages.${pkgs.system}.agterm-zmx-host
     pkgs.git
     pkgs.curl
     # ralphex — multi-step Claude Code plan orchestrator (umputun/ralphex,
