@@ -97,7 +97,26 @@
     in
     {
       # Formatter for `nix fmt`
-      formatter = forAllSystems (system: nixpkgsFor.${system}.nixpkgs-fmt);
+      #
+      # A bare `nix fmt` passes NO file arguments to the formatter binary.
+      # nixpkgs-fmt with no args formats stdin — and if stdin happens to be
+      # an open socket/pipe (e.g. a shell harness that leaves stdin open for
+      # commands containing a heredoc), it blocks forever waiting for EOF.
+      # This wrapper makes that mechanically impossible: with no args it
+      # explicitly formats "." instead of stdin; with args (e.g. CI's
+      # `nix fmt -- --check .`) it passes them straight through unchanged.
+      formatter = forAllSystems (system:
+        nixpkgsFor.${system}.writeShellApplication {
+          name = "nixpkgs-fmt-wrapper";
+          runtimeInputs = [ nixpkgsFor.${system}.nixpkgs-fmt ];
+          text = ''
+            if [ "$#" -eq 0 ]; then
+              exec nixpkgs-fmt .
+            else
+              exec nixpkgs-fmt "$@"
+            fi
+          '';
+        });
 
       # Exportable NixOS modules for use in external flakes
       # Usage in external flake:
