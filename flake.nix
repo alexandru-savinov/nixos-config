@@ -266,6 +266,17 @@
             inherit pkgs nixpkgs self;
           };
 
+          # Installed-binary fixtures use actual evaluated assertions, loopback only.
+          gatus-native = import ./tests/gatus-native.nix {
+            inherit pkgs;
+            settings = self.nixosConfigurations.rpi5-full.config.services.gatus.settings;
+          };
+
+          gatus-gallery = import ./tests/gatus-gallery.nix {
+            inherit pkgs;
+            settings = self.nixosConfigurations.rpi5-full.config.services.gatus.settings;
+          };
+
           vigil-public-contracts-rpi5 = import ./pkgs/vigil-public-contracts.nix {
             inherit pkgs;
             vigil = self.packages.x86_64-linux.vigil;
