@@ -6,7 +6,8 @@ green public checks and a successful channel probe. Approved choir storage
 cleanup restored all eight checks to green and the disk incident closed
 naturally. PR #600 is now deployed on choir with nine green checks and a real
 channel success. The approved gallery test completed its natural recovery and
-Telegram-confirmed open/close on 2026-09-22; owner inbox-count confirmation
+Telegram-confirmed open/close on 2026-09-22. The owner confirmed exactly one
+open and supplied both received messages; close duplicate-count confirmation
 remains pending. Implementation and local tests alone
 are not deployment evidence. The owner performs
 every switch, re-key, private-contract edit and live acceptance below. No live
@@ -24,9 +25,12 @@ alerts, supply the Telegram environment and confirm a real channel success;
 the warning must disappear. Public contracts enforce this prerequisite at build
 time because their contents are available there.
 
-Gatus displays Vigil through `/status`. Inspect its failed condition to distinguish
-`picat` from `NECITIT`; stale or mismatched evidence cannot show green. This view
-does not send a second set of incident alerts or advance Vigil's state. The
+PR #602 is deployed on both hosts. Gatus retains the two `/status` host summaries
+and adds 16 named public-check rows through `/checks/<public-name>`. Failed
+conditions show the reason, sample progress, incident/delivery state, check time,
+and recovery deadline. All 18 rows passed post-deployment polls. Stale or
+mismatched evidence cannot show green. These views do not send additional
+incident alerts or advance Vigil's state. The
 [reuse decision](2026-09-20-vigil-reuse.md) records why the incident engine remains.
 
 The unit-age checks for `soul-mirror-pull.service` on rpi5 and
@@ -275,8 +279,9 @@ real incident delivery date are recorded.
 - Choir disk recovery, natural incident closure, single-secret re-key, and
   delivery activation are observed. Nine checks are green; the controlled
   gallery open/close flow and Telegram API success are confirmed. Owner
-  confirmation of exactly one visible message per transition remains pending.
+  receipt of both messages is confirmed, including exactly one open; the
+  close duplicate count has not been separately confirmed.
 - Owner-authored private ciphertexts and their activation PR.
-- Owner inbox-count confirmation for the controlled Telegram test, and
+- Owner close-message duplicate-count confirmation for the controlled test, and
   production ack acceptance after a natural NECITIT nota.
 - First real incident date; record it only after a real notification arrives.
