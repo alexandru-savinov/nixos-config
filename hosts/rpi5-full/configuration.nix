@@ -397,8 +397,44 @@ in
       };
     };
 
-    # Functional test suites disabled with Open-WebUI
-    # suites = { chat-chain-test = { ... }; };
+    # Read-only pilot: page + publication metadata, never private artifact URLs.
+    # The owner requires at least one published image. This does not test rendering.
+    suites.gallery-publication = {
+      name = "Gallery publication";
+      group = "choir";
+      interval = "5m";
+      timeout = "30s";
+      endpoints = [
+        {
+          name = "Gallery page";
+          url = "http://100.94.191.54:8739/";
+          client.timeout = "10s";
+          ui.dont-resolve-failed-conditions = true;
+          conditions = [
+            "[STATUS] == 200"
+            "[BODY] == pat(*<img*)"
+            "[BODY] == pat(*/api/latest*)"
+          ];
+        }
+        {
+          name = "Published image metadata";
+          url = "http://100.94.191.54:8739/api/latest";
+          client.timeout = "10s";
+          ui.dont-resolve-failed-conditions = true;
+          conditions = [
+            "[STATUS] == 200"
+            "[BODY].gate == true"
+            "has([BODY].file) == true"
+            "[BODY].file != null"
+            "len([BODY].file) > 0"
+            "has([BODY].mtime) == true"
+            "[BODY].mtime != null"
+            "has([BODY].server_ts) == true"
+          ];
+        }
+      ];
+    };
+    # Paid/state-changing Open-WebUI and upload suites remain disabled.
   };
 
   # Gatus resource limits for RPi5
