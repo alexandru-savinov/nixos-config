@@ -139,6 +139,10 @@
   # Agent tooling on the system PATH so herdr panes (which inherit the
   # herdr-server unit's PATH, not a login shell's) can find + launch them.
   environment.etc."agt-zmx-aliases.json".text = builtins.toJSON {
+    # Staged ownership migration: deploy only after the separately approved
+    # recovery created this backend. The old record stays preserved; switching
+    # before recovery makes `sessions attach sancta` refuse attachment.
+    # See docs/plans/2026-09-27-sancta-approval-package.md.
     sancta.sancta = "sancta-main-owned-20260927";
   };
 
