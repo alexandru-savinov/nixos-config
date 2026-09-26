@@ -30,17 +30,26 @@ only prepares code and disposable tests. Production is not declared repaired.
 3. Install the approved immutable helper and managed registration. This changes
    future launches; it cannot give an existing process a lock retroactively.
    The old backend and agent remain old code until an approved recovery.
+   The host change also adds a user-unit drop-in for `agt-mvp-sancta-*.scope`:
+   MemoryHigh 4 GiB, MemoryMax 5 GiB, MemorySwapMax 2 GiB, OOMPolicy continue,
+   and TimeoutStopSec 45 s. These preserve the legacy Sancta limits on the
+   actual backend. Treat user-manager reload and potential resource-limit
+   application to existing matching scopes as production effects requiring
+   approval; do not assume the drop-in affects only future sessions.
 4. Review the current soul-volume reconnect script against its saved hash, then
    apply `scripts/sancta-reconnect-attach.sh` as a separately approved owner-file
    migration, preserving its ownership and permissions. Its timer kill-only mode
    refuses to sweep, and its ordinary mode attaches. Verify any caller that
    parses its output before replacing it; no timer changes are implicit here.
-5. Update the Mac remote profile's immutable `remote_bin` and the appropriate
+5. Apply the reviewed Darwin PR #29 pin for helper
+   `/nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0`.
+   Update the Mac remote profile's immutable `remote_bin` and the appropriate
    saved pane restoration commands to the built helper/client paths. Update the
    Darwin declarative pin as well. Existing profile pins from #28 refer to the old
    helper and do not automatically change when the host switches.
 6. After an explicitly approved clean agent exit, recover the stopped conversation
-   with the new helper into a new named backend using its explicit private UUID.
+   with the new helper into a new `sancta-`-prefixed backend using its explicit
+   private UUID. The prefix is required for the resource-policy drop-in.
    Preserve the old backend record and transcript; do not edit a live record or
    blindly rerun its creation callback. Update the host and Mac Sancta alias
    together to the new backend name. Review these exact names privately before

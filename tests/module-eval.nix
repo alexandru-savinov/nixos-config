@@ -1431,6 +1431,24 @@ let
           ];
         };
 
+    sancta-zmx-backend-resource-policy =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        policy = cfg.environment.etc."systemd/user/agt-mvp-sancta-.scope.d/50-resource-policy.conf".text;
+        aliases = builtins.fromJSON cfg.environment.etc."agt-zmx-aliases.json".text;
+      in
+      if nixpkgs.lib.hasPrefix "sancta-" aliases.sancta.sancta
+        && builtins.all (line: nixpkgs.lib.hasInfix line policy) [
+        "[Scope]"
+        "MemoryHigh=4G"
+        "MemoryMax=5G"
+        "MemorySwapMax=2G"
+        "OOMPolicy=continue"
+        "TimeoutStopSec=45"
+      ]
+      then true
+      else builtins.throw "FAIL: Sancta backend lost its resource policy or alias prefix";
+
     # ── claude-code-managed-settings ────────────────────────────────
     # /etc/claude-code/managed-settings.json exists specifically because a
     # running Claude Code session rewrites ~/.claude/settings.json from its

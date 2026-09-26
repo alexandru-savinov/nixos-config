@@ -168,6 +168,19 @@
     '')
   ];
 
+  # Preserve the legacy Sancta resource policy on the actual persistent
+  # backend, not the short-lived SSH attachment. systemd's dash-prefix drop-in
+  # lookup covers agt-mvp-sancta-main-* and named sancta-* recovery scopes.
+  # Keep recovery names under sancta- so they receive this policy as well.
+  environment.etc."systemd/user/agt-mvp-sancta-.scope.d/50-resource-policy.conf".text = ''
+    [Scope]
+    MemoryHigh=4G
+    MemoryMax=5G
+    MemorySwapMax=2G
+    OOMPolicy=continue
+    TimeoutStopSec=45
+  '';
+
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
   # which clobbers the claude agent-state hook that `herdr integration install`
   # wires into it — and a no-change `nixos-rebuild switch` re-runs HM but does
@@ -449,7 +462,9 @@
   # does not increment memory.events' oom_kill, so it never trips tailscaled's
   # OOMPolicy. That is not a claim OOMPolicy can never fire — a kernel or
   # cgroup-local OOM kill still increments the counter, which is why the
-  # per-session scope carries its own OOMPolicy=continue.
+  # Sancta zmx backend's user scope carries OOMPolicy=continue through the
+  # agt-mvp-sancta-.scope.d drop-in above. The SSH attachment is only a client;
+  # the writer lives under user@993.service, outside tailscaled.service.
   #
   # Note the kill is SILENT on this headless host: earlyoom's largest-victim
   # default will usually pick the agent session. Pair with a journal alert
