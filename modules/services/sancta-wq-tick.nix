@@ -311,6 +311,17 @@ in
         #                    actual orphans. If bin/harta ever moves to an
         #                    atomic tmp+rename write, this file grant stops
         #                    working and must be re-argued as a directory.
+        #   council/jev-journal.jsonl — the jev-ci handler's calibration
+        #                    journal. Its only writer is jev-journal.mjs
+        #                    (private soul substrate, skills/council/scripts),
+        #                    and every write there is fs.appendFileSync on this
+        #                    one inode — append, resolve (a corrected row is
+        #                    APPENDED, history is never rewritten), no tmp,
+        #                    no rename. Verified by reading that file on
+        #                    2026-09-26 (line 112 is the only production write).
+        #                    FILE-granular for the register-history reason. If
+        #                    that tool ever moves to tmp+rename, this grant
+        #                    stops working and must be re-argued as a directory.
         #
         # Everything else the handlers touch is READ-ONLY, verified by reading
         # each one: memory-index runs `--check` (compares, never writes; only
@@ -336,7 +347,6 @@ in
           "-${contractRepo}/.git/"
           "-${indexRoot}/register-history.jsonl"
           "-${indexRoot}/HARTA.md"
-          # jev-ci appends forecasts and resolutions to the Jev calibration journal.
           "-${indexRoot}/council/jev-journal.jsonl"
         ];
 

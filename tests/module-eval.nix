@@ -759,6 +759,9 @@ let
               "-${configRepo}/.git/"
               "-${indexRoot}/register-history.jsonl"
               "-${indexRoot}/HARTA.md"
+              # 2026-09-26: the Jev calibration journal, argued in the module
+              # next to the grant (append-only writer, file-granular).
+              "-${indexRoot}/council/jev-journal.jsonl"
             ];
 
           # Network is REQUIRED, un-narrowed: the freshness handler curls the
