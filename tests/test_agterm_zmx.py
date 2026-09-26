@@ -773,6 +773,12 @@ else:
                 execute.assert_not_called()
 
     def test_terminal_recovery_real_process_holds_lock_and_preserves_exit_status(self):
+        self.check_terminal_recovery_process(kill_parent=False)
+
+    def test_surviving_agent_retains_lock_after_parent_crash(self):
+        self.check_terminal_recovery_process(kill_parent=True)
+
+    def check_terminal_recovery_process(self, kill_parent):
         identifier = "11111111-2222-3333-4444-555555555555"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -796,11 +802,14 @@ else:
                         self.fail("fixture agent exited before readiness")
                     time.sleep(.01)
                 self.assertTrue((root / "ready").exists())
+                if kill_parent:
+                    process.kill()  # Disposable launcher; fake agent keeps running.
+                    process.wait(timeout=5)
                 with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
                     with self.assertRaisesRegex(ValueError, "owns this conversation"):
                         host.resume_lock(identifier)
                 process.communicate(b"exit\n", timeout=5)
-                self.assertEqual(process.returncode, 23)
+                self.assertEqual(process.returncode, -9 if kill_parent else 23)
                 with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
                     host.resume_lock(identifier).close()
             finally:
