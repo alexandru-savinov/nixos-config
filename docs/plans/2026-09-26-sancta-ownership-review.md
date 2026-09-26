@@ -59,6 +59,12 @@ wrapper gate and scope VM passed at `08fae03` in run
 That review thread is resolved. The synthetic gate checks wrapper behavior;
 the separate private-source fixture run supplies evidence about the existing guard.
 
+The subsequent review identified that the stacked-branch workflow did not run
+lock-safety tests, despite successful local and native builds. The workflow now
+also builds the protocol suite, real-zmx reconnect integration, helper package
+and module assertions, and watches their source paths. Their CI result is pending;
+this delivery remains draft until that gate and review complete.
+
 Prefix matching follows the upstream
 [systemd unit documentation](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml).
 

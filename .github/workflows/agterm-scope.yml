@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - '.github/workflows/agterm-scope.yml'
+      - 'scripts/agterm-zmx/**'
+      - 'pkgs/agterm-zmx-*.nix'
+      - 'tests/test_agterm_zmx.py'
+      - 'tests/module-eval.nix'
       - 'tests/agterm-sancta-scope.nix'
       - 'tests/check_sancta_guard_wrapper.py'
       - 'tests/sancta-guard-wrapper.nix'
@@ -33,5 +37,13 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             system-features = nixos-test big-parallel kvm
-      - name: Verify backend scope policy and managed guard wrapper
-        run: nix build .#checks.x86_64-linux.agterm-sancta-scope .#checks.x86_64-linux.sancta-guard-wrapper --no-link --max-jobs 1 --cores 2
+      - name: Verify ownership, reconnect, scope policy and managed guard wrapper
+        run: |
+          nix build \
+            .#checks.x86_64-linux.agterm-zmx \
+            .#packages.x86_64-linux.agterm-zmx-tests \
+            .#packages.x86_64-linux.agterm-zmx-host \
+            .#checks.x86_64-linux.module-eval \
+            .#checks.x86_64-linux.agterm-sancta-scope \
+            .#checks.x86_64-linux.sancta-guard-wrapper \
+            --no-link --max-jobs 1 --cores 2
