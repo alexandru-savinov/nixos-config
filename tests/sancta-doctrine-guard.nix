@@ -8,6 +8,7 @@
 
 let
   guard = ../modules/services/sancta-doctrine-guard.sh;
+  stamp = ../modules/services/sancta-doctrine-guard-stamp.sh;
 in
 pkgs.runCommand "sancta-doctrine-guard-tests"
 {
@@ -289,6 +290,43 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
       echo "EXPECTED FAIL with no SANCTA_DOCTRINE_ROOT"; echo "$res"; exit 1
     fi
     echo "  ok: unset root fails loudly"
+
+    # ── The outcome stamp (ExecStopPost) that vigil's file `age` check reads ──
+    # vigil: mtime <= 0 or missing file -> NECITIT; mtime older than prag ->
+    # picat. So a failed run must leave the mtime at exactly 1s, and only a
+    # clean run may move it to "now".
+    echo "== outcome stamp =="
+    S="$TMPDIR/stamp"
+    run_stamp() { env -i PATH="$PATH" SANCTA_DOCTRINE_STAMP="$S" "$@" bash ${stamp}; }
+    mtime() { stat -c %Y "$S"; }
+
+    run_stamp SERVICE_RESULT=success EXIT_CODE=exited EXIT_STATUS=0
+    now=$(date +%s)
+    [ $((now - $(mtime))) -le 60 ] || { echo "clean run did not stamp now"; exit 1; }
+    echo "  ok: clean run stamps now"
+
+    expect_invalidated() {
+      run_stamp SERVICE_RESULT=success EXIT_CODE=exited EXIT_STATUS=0
+      run_stamp "$@"
+      [ "$(mtime)" = 1 ] || { echo "not invalidated for: $* (mtime $(mtime))"; exit 1; }
+      echo "  ok: invalidated to epoch+1s for: ''${*:-<no variables>}"
+    }
+    expect_invalidated SERVICE_RESULT=exit-code EXIT_CODE=exited EXIT_STATUS=1
+    expect_invalidated SERVICE_RESULT=timeout EXIT_CODE=killed EXIT_STATUS=TERM
+    expect_invalidated SERVICE_RESULT=signal EXIT_CODE=killed EXIT_STATUS=KILL
+    expect_invalidated SERVICE_RESULT=success EXIT_CODE=exited EXIT_STATUS=1
+    expect_invalidated SERVICE_RESULT=success EXIT_CODE=killed EXIT_STATUS=0
+    expect_invalidated
+
+    rm -f "$S"
+    run_stamp SERVICE_RESULT=exit-code EXIT_CODE=exited EXIT_STATUS=1
+    [ "$(mtime)" = 1 ] || { echo "a first-ever failed run must create the stamp at 1s"; exit 1; }
+    echo "  ok: a first-ever failed run creates the stamp already invalid"
+
+    if env -i PATH="$PATH" SERVICE_RESULT=success EXIT_CODE=exited EXIT_STATUS=0 bash ${stamp} 2>/dev/null; then
+      echo "EXPECTED FAIL with no SANCTA_DOCTRINE_STAMP"; exit 1
+    fi
+    echo "  ok: unset stamp path fails loudly"
 
     touch $out
   ''
