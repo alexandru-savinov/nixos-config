@@ -318,6 +318,18 @@
           # the 2026-07-21 silent loss with better paperwork.
           sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
 
+          # The absence guard's clock, driven in BOTH directions against the
+          # unit's REAL ExecStart: a quiet producer must turn the unit red, and
+          # an all-fresh house must leave it green. module-eval proves the unit
+          # is wired; only this proves the wiring translates a guard exit code
+          # into an alarm. Includes the cadence relation (a timer slower than
+          # the guard's own max_age would manufacture the very staleness it
+          # reports) — a relation across two repos that eval cannot see, since
+          # producers.json lives on a LUKS volume no build sandbox can read.
+          sancta-absent-guard = import ./tests/sancta-absent-guard.nix {
+            inherit pkgs self;
+          };
+
           # The gallery's tailnet bind probe, exercised against real sockets.
           # module-eval proves the unit is ordered after tailscaled; this proves
           # the probe tells "address not here yet" apart from every other
