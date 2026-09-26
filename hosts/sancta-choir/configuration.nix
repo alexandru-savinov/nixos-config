@@ -477,6 +477,8 @@
       # activation. Owned by the `sancta` worker user with agenix's 0400 mode.
       # This repo holds NO plaintext key — the .age is age-encrypted.
       anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
+      # Jev (typesafe/jev-1.13) — its own $1-capped key, read by the jev-ci wq handler.
+      jev-openrouter-key = ownedSecret "sancta" "jev-openrouter-key";
 
       # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
       # volume). LIVE: soul-volume-key.age exists (random 256-bit; recipients
@@ -619,7 +621,12 @@
   services.vigil = {
     enable = true;
     contractsDirs = [ ./vigil-contracts ];
-    expectedContracts = 9;
+    # doctrine-guard.toml is a plain file `age` check on the stamp that
+    # sancta-doctrine-guard's own ExecStopPost writes (its stampPath option):
+    # mtime = now after a clean run, epoch + 1s after any other outcome, so a
+    # failed run reads picat on the next tick and a guard that stops running
+    # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
+    expectedContracts = 10;
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };
