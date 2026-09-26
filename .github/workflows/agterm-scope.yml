@@ -1,0 +1,32 @@
+name: Agterm Sancta scope
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/agterm-scope.yml'
+      - 'tests/agterm-sancta-scope.nix'
+      - 'hosts/sancta-choir/configuration.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Enable KVM for disposable Nix builders
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            system-features = nixos-test big-parallel kvm
+      - name: Verify isolated backend scope policy
+        run: nix build .#checks.x86_64-linux.agterm-sancta-scope --no-link --max-jobs 1 --cores 2

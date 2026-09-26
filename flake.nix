@@ -270,6 +270,10 @@
         in
         {
           agterm-zmx = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix { };
+          agterm-sancta-scope = import ./tests/agterm-sancta-scope.nix {
+            inherit pkgs;
+            policy = self.nixosConfigurations.sancta-choir.config.environment.etc."systemd/user/agt-mvp-sancta-.scope.d/50-resource-policy.conf".text;
+          };
           # Module evaluation tests — verify all service modules evaluate
           # correctly with minimal config, and that assertions fire for
           # invalid inputs (e.g. secrets in /nix/store).
