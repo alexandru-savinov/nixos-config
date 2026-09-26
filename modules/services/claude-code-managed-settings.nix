@@ -364,10 +364,10 @@
 # THE WORKS-BY-LUCK TRAP (same class as sancta-statusline-refresh.nix)
 # ----------------------------------------------------------------------
 # Every command below except the clock points at a path on the LUKS SOUL
-# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — EIGHT distinct
-# scripts as of 2026-08-31 (statusline.sh, memory-index-hook, evidence-gate,
+# VOLUME (/var/lib/sancta/.claude/...), not a Nix store path — NINE distinct
+# scripts as of 2026-09-26 (statusline.sh, memory-index-hook, evidence-gate,
 # transcript-scan-guard, pipe-status-advisor, sancta-procstate,
-# goal-sau-guard, comanda-distructiva). That means:
+# goal-sau-guard, comanda-distructiva, garda-secret-hook). That means:
 #
 # This list is the CHECKLIST for the post-deploy verification named in the
 # second bullet below — the one thing that can close a gap eval cannot see
