@@ -576,6 +576,9 @@ ctx5%
                     with patch.object(host.subprocess, "check_output", return_value="agt-mvp-scoped\n"):
                         host.attach("scoped", directory, "shell", stage_route("scoped", 22223), user_scope=True)
                     self.assertEqual(execute.call_args[0][0], "zmx")
+                    # If the backend disappears after inventory, zmx can only
+                    # execute false, never the agent launch callback.
+                    self.assertEqual(execute.call_args[0][1], ["zmx", "attach", "agt-mvp-scoped", "false"])
             finally:
                 os.chdir(original)
 
@@ -618,18 +621,200 @@ ctx5%
                 with self.assertRaises(ValueError):
                     host.validate_resume(agent, value, root)
 
+    def test_fresh_claude_identity_is_locked_and_existing_transcript_cannot_restart(self):
+        original = Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            config = root / "claude"
+            try:
+                with patch.dict(os.environ, {"AGT_ZMX_STATE": str(state), "CLAUDE_CONFIG_DIR": str(config)}), \
+                        patch.object(host.shutil, "which", return_value="/bin/tool"), \
+                        patch.object(host.os, "execvpe"):
+                    host.attach("new", directory, "claude", stage_route("new", 22222))
+                    record = json.loads((state / "agt-mvp-new.json").read_text())
+                    identifier = record["conversation"]
+                    def inspect_launch(binary, argv):
+                        self.assertEqual(binary, "bash")
+                        self.assertIn("--session-id " + identifier, argv[-1])
+                        self.assertNotIn("exec bash", argv[-1])
+                        with self.assertRaisesRegex(ValueError, "owns this conversation"):
+                            host.resume_lock(identifier)
+                        raise RuntimeError("fixture exec boundary")
+                    with patch.object(host.os, "execvp", side_effect=inspect_launch):
+                        with self.assertRaisesRegex(RuntimeError, "fixture exec boundary"):
+                            host.launch("new")
+                    project = config / "projects" / "fixture"
+                    project.mkdir(parents=True)
+                    (project / (identifier + ".jsonl")).write_text("fixture")
+                    with patch.object(host.os, "execvp") as execute:
+                        with self.assertRaisesRegex(ValueError, "already exists"):
+                            host.launch("new")
+                        execute.assert_not_called()
+                    with patch.object(host.subprocess, "check_output", return_value="agt-mvp-new\n"):
+                        host.attach("new", directory, "claude", stage_route("new", 22223))
+                    self.assertEqual(json.loads((state / "agt-mvp-new.json").read_text()), record)
+            finally:
+                os.chdir(original)
+
     def test_resume_lock_survives_parent_handoff_and_releases_after_exit(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"AGT_ZMX_STATE": directory}):
-            lock = host.resume_lock("test")
+        identifier = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+            lock = host.resume_lock(identifier)
             child = subprocess.Popen(["bash", "-c", "read -r value"], stdin=subprocess.PIPE,
                                      pass_fds=(lock.fileno(),))
             lock.close()
             try:
                 with self.assertRaisesRegex(ValueError, "owns this conversation"):
-                    host.resume_lock("test")
+                    host.resume_lock(identifier)
             finally:
                 child.communicate(b"exit\n", timeout=5)
-            host.resume_lock("test").close()
+            host.resume_lock(identifier).close()
+
+    def test_resume_lock_is_shared_across_backend_namespaces(self):
+        identifier = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+            with patch.dict(os.environ, {"AGT_ZMX_STATE": directory + "/first"}):
+                lock = host.resume_lock(identifier)
+            try:
+                with patch.dict(os.environ, {"AGT_ZMX_STATE": directory + "/second"}):
+                    with self.assertRaisesRegex(ValueError, "owns this conversation"):
+                        host.resume_lock(identifier)
+            finally:
+                lock.close()
+            host.resume_lock(identifier).close()
+
+    def test_resume_lock_refuses_symlink_and_hardlink(self):
+        identifier = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+            root = Path(directory)
+            target = root / "owner-file"
+            target.write_text("untouched")
+            target.chmod(0o600)
+            locks = root / "agt-writer-locks"
+            locks.mkdir(mode=0o700)
+            path = locks / (identifier + ".lock")
+            path.symlink_to(target)
+            with self.assertRaises(OSError):
+                host.resume_lock(identifier)
+            path.unlink()
+            os.link(target, path)
+            with self.assertRaisesRegex(ValueError, "singly linked"):
+                host.resume_lock(identifier)
+            self.assertEqual(target.read_text(), "untouched")
+
+    def test_terminal_recovery_contends_with_zmx_lock_before_starting_agent(self):
+        identifier = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+            lock = host.resume_lock(identifier)
+            try:
+                with patch.object(host.os, "execvp") as execute:
+                    with self.assertRaisesRegex(ValueError, "owns this conversation"):
+                        host.resume_terminal("claude", identifier, directory)
+                    execute.assert_not_called()
+            finally:
+                lock.close()
+
+    def test_simultaneous_launchers_have_one_owner_and_crash_releases_stale_file(self):
+        identifier = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as directory:
+            environment = dict(os.environ, CLAUDE_CONFIG_DIR=directory)
+            code = '''import sys
+sys.path.insert(0, sys.argv[1])
+import host
+try:
+    lock = host.resume_lock(sys.argv[2])
+except ValueError:
+    print("busy", flush=True)
+except OSError:
+    import os
+    from pathlib import Path
+    root = Path(os.environ['CLAUDE_CONFIG_DIR'])
+    print('fixture directory exists: ' + str(root.exists()), file=sys.stderr)
+    print('lock directory exists: ' + str((root / 'agt-writer-locks').exists()), file=sys.stderr)
+    raise
+else:
+    print("owned", flush=True)
+    sys.stdin.readline()
+'''
+            children = [subprocess.Popen([sys.executable, "-c", code, str(SCRIPTS), identifier],
+                                         env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE) for _ in range(2)]
+            try:
+                verdicts = []
+                for child in children:
+                    readable, _, _ = select.select([child.stdout], [], [], 5)
+                    self.assertTrue(readable, "lock contender did not answer")
+                    verdict = child.stdout.readline().strip()
+                    if not verdict:
+                        self.fail("lock contender failed: " + child.communicate(timeout=5)[1].decode())
+                    verdicts.append(verdict)
+                self.assertCountEqual(verdicts, [b"owned", b"busy"])
+                winner = children[verdicts.index(b"owned")]
+                winner.kill()  # Only this disposable fixture process.
+                winner.wait(timeout=5)
+                path = Path(directory) / "agt-writer-locks" / (identifier + ".lock")
+                inode = path.stat().st_ino
+                with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+                    host.resume_lock(identifier).close()
+                self.assertEqual(path.stat().st_ino, inode, "recovery must not unlink lock files")
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        child.kill()
+                    child.communicate(timeout=5)
+
+    def test_terminal_recovery_rejects_picker_and_invalid_identity_without_launch(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+            with patch.object(host.os, "execvp") as execute:
+                for value in ["", "--continue", "friendly-name", "../../escape"]:
+                    with self.assertRaises(ValueError):
+                        host.resume_terminal("claude", value, directory)
+                execute.assert_not_called()
+
+    def test_terminal_recovery_real_process_holds_lock_and_preserves_exit_status(self):
+        self.check_terminal_recovery_process(kill_parent=False)
+
+    def test_surviving_agent_retains_lock_after_parent_crash(self):
+        self.check_terminal_recovery_process(kill_parent=True)
+
+    def check_terminal_recovery_process(self, kill_parent):
+        identifier = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "projects" / "fixture"
+            project.mkdir(parents=True)
+            (project / (identifier + ".jsonl")).write_text("fixture; must not be read")
+            (root / "sessions").mkdir()
+            binary = root / "claude"
+            binary.write_text('#!/bin/sh\nprintf ready > "$CLAUDE_CONFIG_DIR/ready"\nread -r answer\nexit 23\n')
+            binary.chmod(0o700)
+            environment = dict(os.environ, CLAUDE_CONFIG_DIR=directory,
+                               PATH=directory + os.pathsep + os.environ["PATH"])
+            code = "import sys; sys.path.insert(0, sys.argv[1]); import host; host.resume_terminal('claude', sys.argv[2], sys.argv[3])"
+            process = subprocess.Popen([sys.executable, "-c", code, str(SCRIPTS), identifier, directory],
+                                       env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 5
+                while not (root / "ready").exists() and time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        self.fail("fixture agent exited before readiness")
+                    time.sleep(.01)
+                self.assertTrue((root / "ready").exists())
+                if kill_parent:
+                    process.kill()  # Disposable launcher; fake agent keeps running.
+                    process.wait(timeout=5)
+                with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+                    with self.assertRaisesRegex(ValueError, "owns this conversation"):
+                        host.resume_lock(identifier)
+                process.communicate(b"exit\n", timeout=5)
+                self.assertEqual(process.returncode, -9 if kill_parent else 23)
+                with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+                    host.resume_lock(identifier).close()
+            finally:
+                if process.poll() is None:
+                    process.communicate(b"exit\n", timeout=5)
 
     def test_resume_identity_survives_restore_and_ssh_transport(self):
         from argparse import Namespace

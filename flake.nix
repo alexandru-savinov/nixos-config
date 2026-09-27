@@ -292,6 +292,9 @@
         in
         {
           agterm-zmx = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix { };
+          agterm-sancta-scope = import ./tests/agterm-sancta-scope.nix {
+            inherit pkgs self;
+          };
           # Module evaluation tests — verify all service modules evaluate
           # correctly with minimal config, and that assertions fire for
           # invalid inputs (e.g. secrets in /nix/store).

@@ -70,9 +70,11 @@ and credentials. Use a **new backend name** for recovery.
    inventory reports liveness; also inspect the relevant process and user scope.
    Do not restart SSH/Tailscale or remove sockets as a discovery step.
 2. For an agent conversation, identify the exact saved conversation. A backend
-   name is not an agent conversation UUID. Resumed helper records contain the UUID;
-   fresh conversations may require the agent's own resume picker. Do not select
-   “most recent” when several conversations exist.
+   name is not an agent conversation UUID. Resumed helper records contain `resume`;
+   new Claude helper records contain `conversation`. Inspect these privately as
+   metadata, never paste them into logs or PRs. Older records may require manual
+   transcript-metadata inspection. Do not launch a resume picker to discover an
+   identity: selecting a result can start another writer.
 3. Confirm the previous agent process has ended before starting another writer.
 4. Resume in the original working directory as the original account. A successful
    recovery has a new process PID, the same conversation identity, retained prior
@@ -80,9 +82,22 @@ and credentials. Use a **new backend name** for recovery.
 
 For Claude, the launcher supports explicit `--resume UUID --agent claude` with a
 new `--name` and `--user-scope`. It requires an existing transcript and refuses a
-matching live process from Claude's session metadata. Its lock serializes helper
-launches; independent manual Claude launches must also respect the single-writer
-rule. The helper never stops a source process or invokes `sancta-reconnect`.
+matching live process from Claude's session metadata. Locks are shared under the
+agent configuration directory, independently of backend names. An agent's exit
+ends its backend rather than leaving a shell for an unguarded manual resume.
+The helper never stops a source process or invokes the owner `sancta-reconnect`.
+
+For explicit recovery in an ordinary SSH terminal or retained tmux pane, use:
+
+```sh
+sessions resume claude EXACT-CONVERSATION-UUID --cwd /ORIGINAL/DIRECTORY
+```
+
+This shares the helper's lock and requires an existing, stopped conversation.
+There is no picker, `--continue`, ambiguous-name lookup or argument pass-through.
+For an already running Sancta backend, use `sessions attach sancta` instead.
+Direct `claude --resume` and conversation switching inside Claude bypass this
+cooperative lock; it is not a security boundary against the owning account.
 
 For Codex, use the same explicit launcher recovery path:
 
@@ -96,8 +111,8 @@ session transcript and probes the existing native thread writer lock read-only;
 a live writer is refused. It never creates, truncates or deletes Codex's native
 locks. Codex acquires its own writer lock at startup. Archived-only transcripts
 are not supported by this helper. Review the new profile's hooks through the
-normal trust UI before expecting lifecycle status. Use the agent's resume picker
-to identify an unknown UUID, without launching a second writer.
+normal trust UI before expecting lifecycle status. Identify unknown UUIDs through
+private metadata inspection, not a picker that might start a second writer.
 
 A shell's unsaved process state cannot be recovered after reboot. Start a new
 shell under a new backend name and inspect the existing files before rerunning
@@ -107,8 +122,10 @@ any command with side effects.
 
 Keep the original tmux pane and shell available throughout migration. If rollback
 is needed, exit the zmx agent and verify its PID has ended, then run
-`claude --resume UUID` from the original directory in that retained tmux shell.
-Use the same UUID, not a fresh conversation or `--continue`.
+`sessions resume claude UUID --cwd /ORIGINAL/DIRECTORY` in that retained tmux shell.
+Use the same UUID, not a fresh conversation or `--continue`. This plain-terminal
+recovery has no agterm lifecycle bridge; returning to zmx needs another explicit
+approved recovery after the terminal writer exits.
 
 Injected `/exit` and EOF did not reliably exit one reattached pilot. Check the
 actual process after any exit request. The disposable fallback test used a
