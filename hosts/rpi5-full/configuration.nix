@@ -126,9 +126,14 @@ in
     })
   ];
 
+  # User scopes keep remote backends alive when a Tailscale SSH session ends.
+  users.users.nixos.linger = true;
+
   # Locally-packaged tools available on this host. Ralphex orchestrates
   # Claude Code agents through multi-step plan files; lives in pkgs/ralphex.nix.
+
   environment.systemPackages = [
+    self.packages.${pkgs.system}.agterm-zmx-host
     self.packages.${pkgs.system}.ralphex
     # hass-cli — CLI agent-control level for Home Assistant
     pkgs.home-assistant-cli

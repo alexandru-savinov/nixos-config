@@ -214,3 +214,11 @@ jobs:
 
             - name: Evaluate rpi5-full (aarch64-linux)
               run: nix eval .#nixosConfigurations.rpi5-full.config.system.build.toplevel.drvPath
+
+            # rpi5-full installs agterm-zmx-host, so realise its aarch64 closure
+            # (zmx substitutes from cache.nixos.org; only the wrapper builds under
+            # QEMU) and run one wrapper, instead of trusting eval alone.
+            - name: Build agterm-zmx-host (aarch64-linux)
+              run: |
+                out=$(nix build --no-link --print-out-paths .#packages.aarch64-linux.agterm-zmx-host)
+                "$out/bin/sessions" --help

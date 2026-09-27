@@ -1492,6 +1492,15 @@ let
           ];
         };
 
+    sancta-zmx-backend-alias-prefix =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        aliases = builtins.fromJSON cfg.environment.etc."agt-zmx-aliases.json".text;
+      in
+      if nixpkgs.lib.hasPrefix "sancta-" aliases.sancta.sancta
+      then true
+      else builtins.throw "FAIL: Sancta backend alias lost its resource-policy prefix";
+
     # ── claude-code-managed-settings ────────────────────────────────
     # /etc/claude-code/managed-settings.json exists specifically because a
     # running Claude Code session rewrites ~/.claude/settings.json from its
@@ -1763,6 +1772,19 @@ let
       else
         builtins.throw "FAIL: spinnerTipsEnabled did not land in home-manager.users.sancta.programs.claude-code.extraSettings (got: ${builtins.toJSON extra})";
 
+    # The Sancta backend is a `systemd-run --user` scope; with linger unset
+    # (null) there is no user manager after a clean boot and the backend cannot
+    # be created. Only an explicit `true` counts: null means "unmanaged", which
+    # silently depends on an imperative marker the host does not have.
+    sancta-choir-sancta-user-lingers =
+      let
+        linger = self.nixosConfigurations.sancta-choir.config.users.users.sancta.linger;
+      in
+      if linger == true then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir users.users.sancta.linger must be true for the persistent user-scope backend (got: ${builtins.toJSON linger})";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
@@ -1772,15 +1794,29 @@ let
   testNames = builtins.attrNames tests;
   testCount = builtins.length testNames;
   allResults = builtins.attrValues tests;
+  # Inspect the generated symlink tree in the build phase. Reading it during
+  # pure evaluation loses access to the linked package output's context.
+  sanctaPolicy = "${self.nixosConfigurations.sancta-choir.config.environment.etc."systemd/user".source}/agt-mvp-sancta-.scope.d/50-resource-policy.conf";
+  sanctaPolicyLines = [
+    "[Scope]"
+    "MemoryHigh=4G"
+    "MemoryMax=5G"
+    "MemorySwapMax=2G"
+    "OOMPolicy=continue"
+    "TimeoutStopSec=45"
+  ];
 
 in
 pkgs.runCommand "module-eval-tests"
 {
+  nativeBuildInputs = [ pkgs.gnugrep ];
   passthru = { inherit tests; };
 }
   # deepSeq ensures all test thunks are forced before the builder runs.
   (
     builtins.deepSeq allResults ''
+      ${nixpkgs.lib.concatMapStringsSep "\n" (line: "grep -Fx -- ${nixpkgs.lib.escapeShellArg line} ${nixpkgs.lib.escapeShellArg sanctaPolicy} >/dev/null") sanctaPolicyLines}
+      echo "Sancta generated backend resource policy passed"
       echo "All ${toString testCount} module evaluation tests passed:"
       ${builtins.concatStringsSep "\n" (map (name: "echo '  ✓ ${name}'") testNames)}
       echo "${toString testNames}" > $out
