@@ -89,7 +89,7 @@ let
 
   tests = {
     vigil-module = import ./vigil-module.nix {
-      inherit evalConfig shouldFail;
+      inherit evalConfig shouldFail self;
       lib = nixpkgs.lib;
     };
 
@@ -1834,6 +1834,22 @@ let
             modelWall;
           unlistedVendorKeyRejected = fires
             (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.SOMENEWVENDOR_API_KEY = "placeholder"; }]))
+            modelWall;
+          # The credential word need not END the name: a suffix after it
+          # (_ID, _ARN, _V2) is still credential-shaped and still refused.
+          unlistedVendorKeyIdRejected = fires
+            (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.SOMENEWVENDOR_API_KEY_ID = "placeholder"; }]))
+            modelWall;
+          unlistedVendorSecretArnRejected = fires
+            (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.NEWVENDOR_SECRET_ARN = "placeholder"; }]))
+            modelWall;
+          unlistedVendorTokenV2Rejected = fires
+            (extend (on ++ [{ services.n8n.environment.VENDOR_TOKEN_V2 = "placeholder"; }]))
+            modelWall;
+          # Positive arm: the wall is not all-reject — an ordinary,
+          # non-credential n8n setting still evaluates with the wall holding.
+          plainEnvAccepted = holds
+            (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.GENERIC_TIMEZONE = "Europe/Chisinau"; }]))
             modelWall;
           unitEnvFileRejected = fires
             (extend (on ++ [{ systemd.services.n8n.serviceConfig.EnvironmentFile = lib.mkForce [ "-/run/n8n/env" "/run/agenix/openrouter-api-key" ]; }]))

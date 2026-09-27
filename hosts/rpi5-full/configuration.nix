@@ -21,6 +21,9 @@ let
   secret = name: config.age.secrets.${name}.path;
   openaiApiKeyPath = secret "openai-api-key";
   vigilDashboard = import ../../modules/services/vigil-gatus-endpoints.nix { inherit lib; };
+  # sancta-choir's studio-n8n gate (hosts/sancta-choir/n8n.nix), read from
+  # the choir configuration itself so the two hosts cannot disagree.
+  choirStudioN8n = self.nixosConfigurations.sancta-choir.config.sancta.studio.n8n.enable;
 
   # Gatus endpoint helpers — reduce boilerplate across monitored services
   httpEndpoint = group: name: url: {
@@ -362,6 +365,13 @@ in
       group = "choir";
       address = "100.94.191.54";
       directory = ../sancta-choir/vigil-contracts;
+    }) // lib.optionalAttrs choirStudioN8n (vigilDashboard {
+      # sq085: choir's vigil watches this contract only while the studio
+      # n8n exists there, so the dashboard reads it under the SAME flag —
+      # choir's own option, not a copy of it. Gate off = map unchanged.
+      group = "choir";
+      address = "100.94.191.54";
+      directory = ../sancta-choir/vigil-contracts-n8n;
     }) // {
       rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://${config.services.vigil.listenAddress}:${toString config.services.vigil.tickPort}/status") // {
         conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];

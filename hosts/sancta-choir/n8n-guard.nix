@@ -25,7 +25,9 @@ let
   # Fail closed for vendors not in the list: any credential-shaped name is
   # refused too. n8n's own secret (N8N_ENCRYPTION_KEY) never passes through
   # these attrsets; the wrapper writes it into /run/n8n/env from the file.
-  credentialShaped = ".*(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)";
+  # The credential word may sit anywhere in the name (FOO_API_KEY_ID,
+  # FOO_SECRET_ARN, FOO_TOKEN_V2 are all refused), not only at its end.
+  credentialShaped = ".*(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?).*";
   isModelKeyName = name:
     let upper = lib.toUpper name; in
     builtins.match "(.*_)?(${modelVendors})(_.*)?" upper != null

@@ -1,4 +1,4 @@
-{ lib, evalConfig, shouldFail }:
+{ lib, evalConfig, shouldFail, self }:
 let
   schema = import ../modules/services/vigil-schema.nix { inherit lib; };
   fixtures = builtins.fromJSON (builtins.readFile ../pkgs/vigil/schema-fixtures.json);
@@ -85,23 +85,48 @@ let
       && endpoints.choir-vigil-galeria.url == "http://100.94.191.54:8747/checks/galeria"
       && builtins.elem "[BODY].detail == ok" endpoints.choir-vigil-galeria.conditions
       && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints);
-    # sq085: the studio n8n contract lives in its own directory, watched only
-    # while sancta.studio.n8n.enable is on. Exactly one contract, availability
-    # only (loopback /healthz, status 200), never an alert of its own. Not yet
-    # on the rpi5 Gatus dashboard: that map lives in hosts/rpi5-full, which
-    # this slice does not touch (follow-up once the gate is on).
+    # sq085: the studio n8n contract lives in its own directory, watched on
+    # choir only while sancta.studio.n8n.enable is on, and shown on the rpi5
+    # Gatus dashboard under that SAME flag. Asserted on the REAL evaluated
+    # rpi5-full endpoint map, both ways: gate off (as merged) → map carries
+    # no n8n endpoint and exactly the 10 base choir endpoints; gate on (choir
+    # flipped, rpi5-full re-evaluated against that choir) → exactly one more
+    # endpoint, choir-vigil-n8n, read-only, never an alert of its own.
     studio-n8n-contract =
       let
-        endpoints = (import ../modules/services/vigil-gatus-endpoints.nix { inherit lib; }) {
-          group = "choir";
-          address = "100.94.191.54";
-          directory = ../hosts/sancta-choir/vigil-contracts-n8n;
+        choirBase = self.nixosConfigurations.sancta-choir;
+        rpi5Base = self.nixosConfigurations.rpi5-full;
+        choirOn = choirBase.extendModules {
+          modules = [{
+            sancta.studio.n8n.enable = lib.mkForce true;
+            # Stand-in for the future secrets/n8n-encryption-key-choir.age,
+            # as in module-eval's studio-n8n-choir; nothing is decrypted.
+            age.secrets.n8n-encryption-key-choir.file = lib.mkForce "${self}/secrets/n8n-encryption-key.age";
+          }];
         };
+        rpi5On = rpi5Base.extendModules {
+          specialArgs.self = self // {
+            nixosConfigurations = self.nixosConfigurations // { sancta-choir = choirOn; };
+          };
+        };
+        choirNames = endpoints: builtins.filter (lib.hasPrefix "choir-vigil-") (builtins.attrNames endpoints);
+        off = rpi5Base.config.services.gatus-tailscale.endpoints;
+        on = rpi5On.config.services.gatus-tailscale.endpoints;
+        added = lib.subtractLists (builtins.attrNames off) (builtins.attrNames on);
         contract = schema.parse ../hosts/sancta-choir/vigil-contracts-n8n/n8n.toml;
       in
-      builtins.length (builtins.attrNames endpoints) == 1
-      && endpoints.choir-vigil-n8n.url == "http://100.94.191.54:8747/checks/n8n"
-      && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints)
+      # gate off: the deployed map is unchanged
+      !choirBase.config.sancta.studio.n8n.enable
+      && !(off ? choir-vigil-n8n)
+      && builtins.length (choirNames off) == 10
+      # gate on: the real map gains exactly the n8n endpoint and nothing else
+      && choirOn.config.sancta.studio.n8n.enable
+      && added == [ "choir-vigil-n8n" ]
+      && lib.subtractLists (builtins.attrNames on) (builtins.attrNames off) == [ ]
+      && on.choir-vigil-n8n.url == "http://100.94.191.54:8747/checks/n8n"
+      && on.choir-vigil-n8n.group == "choir"
+      && builtins.elem "[BODY].stare == verde" on.choir-vigil-n8n.conditions
+      && !(on.choir-vigil-n8n ? alerts)
       && contract.verifica == "http" && contract.tinta == "http://127.0.0.1:5678/healthz"
       && contract.dimension == "availability";
     no-fabricated-success = lib.all (line: !(lib.hasInfix "last-channel-ok" line)) config.systemd.tmpfiles.rules;
