@@ -21,8 +21,15 @@ let
 
   # Environment variable names that carry a model-provider credential.
   # Matched on whole underscore-separated words, case-insensitively.
-  modelVendors = "OPENROUTER|OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_AI|GOOGLE_GENERATIVE_AI|VERTEX|MISTRAL|GROQ|COHERE|DEEPSEEK|XAI|GROK|PERPLEXITY|TOGETHER|FIREWORKS|HUGGINGFACE|HF|REPLICATE|OLLAMA|AZURE_OPENAI|BEDROCK|JEV";
-  isModelKeyName = name: builtins.match "(.*_)?(${modelVendors})(_.*)?" (lib.toUpper name) != null;
+  modelVendors = "OPENROUTER|OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE|VERTEX|MISTRAL|GROQ|COHERE|DEEPSEEK|XAI|GROK|PERPLEXITY|TOGETHER|FIREWORKS|HUGGINGFACE|HF|REPLICATE|OLLAMA|AZURE_OPENAI|BEDROCK|JEV";
+  # Fail closed for vendors not in the list: any credential-shaped name is
+  # refused too. n8n's own secret (N8N_ENCRYPTION_KEY) never passes through
+  # these attrsets; the wrapper writes it into /run/n8n/env from the file.
+  credentialShaped = ".*(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)";
+  isModelKeyName = name:
+    let upper = lib.toUpper name; in
+    builtins.match "(.*_)?(${modelVendors})(_.*)?" upper != null
+    || builtins.match credentialShaped upper != null;
 
   envNames = builtins.attrNames cfg.extraEnvironment ++ builtins.attrNames unitEnv;
   modelKeyEnvNames = builtins.filter isModelKeyName envNames;
@@ -71,7 +78,7 @@ in
           openrouterApiKeyFile = ${toString cfg.openrouterApiKeyFile}
           openaiApiKeyFile     = ${toString cfg.openaiApiKeyFile}
           credentialsFile      = ${toString cfg.credentialsFile}
-          model-key env names  = ${builtins.toJSON modelKeyEnvNames}
+          model-key or credential-shaped env names = ${builtins.toJSON modelKeyEnvNames}
           extra EnvironmentFile = ${builtins.toJSON extraEnvFiles}
           systemd credentials  = ${builtins.toJSON credentialKeys}
         n8n is the conductor, never a model caller; see hosts/sancta-choir/n8n-guard.nix.

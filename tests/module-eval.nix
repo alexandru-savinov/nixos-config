@@ -1820,6 +1820,12 @@ let
           anthropicEnvRejected = fires
             (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.ANTHROPIC_API_KEY = "placeholder"; }]))
             modelWall;
+          googleEnvRejected = fires
+            (extend (on ++ [{ services.n8n.environment.GOOGLE_API_KEY = "placeholder"; }]))
+            modelWall;
+          unlistedVendorKeyRejected = fires
+            (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.SOMENEWVENDOR_API_KEY = "placeholder"; }]))
+            modelWall;
           unitEnvFileRejected = fires
             (extend (on ++ [{ systemd.services.n8n.serviceConfig.EnvironmentFile = lib.mkForce [ "-/run/n8n/env" "/run/agenix/openrouter-api-key" ]; }]))
             modelWall;

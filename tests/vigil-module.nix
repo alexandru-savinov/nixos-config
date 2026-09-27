@@ -87,7 +87,9 @@ let
       && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints);
     # sq085: the studio n8n contract lives in its own directory, watched only
     # while sancta.studio.n8n.enable is on. Exactly one contract, availability
-    # only (loopback /healthz, status 200), never an alert of its own.
+    # only (loopback /healthz, status 200), never an alert of its own. Not yet
+    # on the rpi5 Gatus dashboard: that map lives in hosts/rpi5-full, which
+    # this slice does not touch (follow-up once the gate is on).
     studio-n8n-contract =
       let
         endpoints = (import ../modules/services/vigil-gatus-endpoints.nix { inherit lib; }) {
