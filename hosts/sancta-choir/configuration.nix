@@ -138,6 +138,15 @@
 
   # Agent tooling on the system PATH so herdr panes (which inherit the
   # herdr-server unit's PATH, not a login shell's) can find + launch them.
+  #
+  # The `sancta` alias is the ONLY pointer from `sancta-session` / `sessions
+  # attach sancta` to the live backend, and it is deliberately declarative
+  # (reviewed, not runtime state). Every approved Sancta recovery creates a NEW
+  # `sancta-`-prefixed backend (docs/plans/2026-09-26-sancta-activation.md
+  # step 6); that change MUST update this value in the same change as the Mac
+  # alias, then switch. A stale value fails closed: attach refuses and names the
+  # stale backend; it never starts a writer. The prefix is pinned by module-eval
+  # `sancta-zmx-backend-alias-prefix`.
   environment.etc."agt-zmx-aliases.json".text = builtins.toJSON {
     sancta.sancta = "sancta-main-20260924";
   };
@@ -155,6 +164,16 @@
 
     # Compatibility entry point: never reconcile, stop or relaunch a writer.
     # The existing backend owns its user scope; SSH is only an attachment.
+    #
+    # This deliberately drops the pre-ownership self-heal (stop the stale scope,
+    # start a fresh sancta-reconnect): that relaunch is what let two processes
+    # resume one conversation (split brain). Consequence for deploys: switching
+    # this host before the activation runbook
+    # (docs/plans/2026-09-26-sancta-activation.md, steps 2-6) has produced the
+    # aliased backend makes this command refuse — fail closed, with the stale
+    # target named and recovery pointed to — rather than start a second writer.
+    # Recovery is explicit: `sessions list`, then `sessions resume` with the
+    # conversation's UUID (docs/agterm-zmx-recovery.md).
     (pkgs.writeShellScriptBin "sancta-session" ''
       if [ "$EUID" -ne 0 ]; then
         echo "sancta-session: run as root, or use sessions attach sancta as sancta" >&2
@@ -168,6 +187,14 @@
         ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions attach sancta
     '')
   ];
+
+  # The persistent Sancta backend lives in a `systemd-run --user --scope`
+  # under user@<sancta-uid>.service. Neither `sudo -iu` nor `runuser` starts a
+  # user manager, so without lingering there is no user bus after a clean boot
+  # and the backend cannot be created. Declare it instead of relying on an
+  # imperative `loginctl enable-linger` marker (verified absent on this host).
+  # Pinned by module-eval `sancta-choir-sancta-user-lingers`.
+  users.users.sancta.linger = true;
 
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
   # which clobbers the claude agent-state hook that `herdr integration install`
@@ -217,6 +244,8 @@
       # activation. Owned by the `sancta` worker user with agenix's 0400 mode.
       # This repo holds NO plaintext key — the .age is age-encrypted.
       anthropic-api-key = ownedSecret "sancta" "anthropic-api-key";
+      # Jev (typesafe/jev-1.13) — its own $1-capped key, read by the jev-ci wq handler.
+      jev-openrouter-key = ownedSecret "sancta" "jev-openrouter-key";
 
       # Keyfile that unlocks the encrypted soul volume (services.sancta-soul-
       # volume). LIVE: soul-volume-key.age exists (random 256-bit; recipients
@@ -359,7 +388,12 @@
   services.vigil = {
     enable = true;
     contractsDirs = [ ./vigil-contracts ];
-    expectedContracts = 9;
+    # doctrine-guard.toml is a plain file `age` check on the stamp that
+    # sancta-doctrine-guard's own ExecStopPost writes (its stampPath option):
+    # mtime = now after a clean run, epoch + 1s after any other outcome, so a
+    # failed run reads picat on the next tick and a guard that stops running
+    # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
+    expectedContracts = 10;
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };

@@ -1,5 +1,10 @@
-{ pkgs }:
+{ pkgs, self }:
 
+let
+  # Take linger from the real host declaration instead of hard-coding it, so
+  # this VM cannot pass while sancta-choir leaves linger unmanaged (null).
+  hostLinger = self.nixosConfigurations.sancta-choir.config.users.users.sancta.linger;
+in
 pkgs.testers.runNixOSTest {
   name = "agterm-sancta-scope";
   nodes.machine = { ... }: {
@@ -8,7 +13,7 @@ pkgs.testers.runNixOSTest {
     users.users.fixture = {
       isNormalUser = true;
       uid = 1000;
-      linger = true;
+      linger = hostLinger;
     };
     system.stateVersion = "25.11";
   };
@@ -37,21 +42,25 @@ pkgs.testers.runNixOSTest {
     # The approved rollout creates the new backend before switching aliases.
     # Prove a manager reload applies the installed policy to a surviving scope.
     override = "/home/fixture/.config/systemd/user/agt-mvp-sancta-.scope.d"
-    machine.succeed("mkdir -p " + override)
+    machine.succeed(user + "mkdir -p " + override)
     initial = "\n".join([
         "[Scope]", "MemoryHigh=infinity", "MemoryMax=infinity",
         "MemorySwapMax=infinity", "OOMPolicy=stop", "TimeoutStopSec=90", "",
     ])
-    machine.succeed("printf %s " + shlex.quote(initial) + " > " + override + "/50-resource-policy.conf")
+    machine.succeed(user + "bash -c " + shlex.quote("printf %s " + shlex.quote(initial) + " > " + override + "/50-resource-policy.conf"))
     machine.succeed(user + "systemctl --user daemon-reload")
     scope = "agt-mvp-sancta-reload-fixture.scope"
     workload = shlex.quote("echo $$ > /tmp/reload.pid; exec sleep 300")
-    machine.succeed(user + "systemd-run --user --scope --unit=" + scope + " bash -c " + workload + " >/tmp/reload-scope.log 2>&1 &")
+    # systemd-run otherwise turns $$ into a literal $ before Bash sees it.
+    machine.succeed(user + "systemd-run --user --scope --expand-environment=no --unit=" + scope + " bash -c " + workload + " >/tmp/reload-scope.log 2>&1 &")
     machine.wait_until_succeeds(user + "systemctl --user is-active " + scope)
     machine.wait_for_file("/tmp/reload.pid")
     before = machine.succeed("cat /tmp/reload.pid").strip()
+    assert before.isdecimal() and int(before) > 1, ("invalid workload PID", before)
+    cgroup = machine.succeed(user + "systemctl --user show " + scope + " -p ControlGroup --value").strip()
+    assert before in machine.succeed("cat /sys/fs/cgroup" + cgroup + "/cgroup.procs").split(), ("workload outside scope before reload", before)
     assert machine.succeed(user + "systemctl --user show " + scope + " -p MemoryMax --value").strip() == "infinity"
-    machine.succeed("rm " + override + "/50-resource-policy.conf")
+    machine.succeed(user + "rm " + override + "/50-resource-policy.conf")
     machine.succeed(user + "systemctl --user daemon-reload")
     for key, value in expected.items():
         actual = machine.succeed(user + "systemctl --user show " + scope + " -p " + key + " --value").strip()
@@ -59,7 +68,7 @@ pkgs.testers.runNixOSTest {
     cgroup = machine.succeed(user + "systemctl --user show " + scope + " -p ControlGroup --value").strip()
     for filename, value in {"memory.high": "4294967296", "memory.max": "5368709120", "memory.swap.max": "2147483648"}.items():
         assert machine.succeed("cat /sys/fs/cgroup" + cgroup + "/" + filename).strip() == value
-    assert before in machine.succeed("cat /sys/fs/cgroup" + cgroup + "/cgroup.procs").split()
+    assert before in machine.succeed("cat /sys/fs/cgroup" + cgroup + "/cgroup.procs").split(), ("workload lost after reload", before)
     machine.succeed("test -d /proc/" + before)
     machine.succeed(user + "systemctl --user stop " + scope)
   '';

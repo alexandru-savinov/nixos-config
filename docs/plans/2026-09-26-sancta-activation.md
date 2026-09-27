@@ -42,7 +42,7 @@ only prepares code and disposable tests. Production is not declared repaired.
    refuses to sweep, and its ordinary mode attaches. Verify any caller that
    parses its output before replacing it; no timer changes are implicit here.
 5. Apply the reviewed Darwin PR #29 pin for helper
-   `/nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0`.
+   `/nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0`.
    Update the Mac remote profile's immutable `remote_bin` and the appropriate
    saved pane restoration commands to the built helper/client paths. Update the
    Darwin declarative pin as well. Existing profile pins from #28 refer to the old

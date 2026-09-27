@@ -1,7 +1,8 @@
 # Choir native interface rollout
 
 Scope: Sancta, Claude, Codex and shell sessions on choir. Preserve the accepted
-zmx persistence/recovery paths and tmux fallback. No rpi5 rollout.
+zmx persistence/recovery paths and tmux fallback. No rpi5 rollout in this plan;
+rpi5 is covered by `2026-09-24-agterm-two-hosts.md`.
 
 ## Implemented, pending deployment and native acceptance
 

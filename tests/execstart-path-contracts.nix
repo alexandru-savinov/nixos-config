@@ -269,15 +269,20 @@
       user = { };
     };
 
-    # No custom non-store-path units found on either aarch64 host at recon
-    # time (2026-08-21, nix eval on both, all 7 verbs, both scopes). Kept as
-    # explicit empty entries — not omitted — so a reviewer sees these hosts
-    # were considered, not skipped, and so classifyStale has a real attrset
-    # to compare against rather than `{}` defaulting silently.
     rpi5-full = {
-      system = { };
+      system.vigil = {
+        # The off-store ExecStart argument is /run/vigil-contracts, a data
+        # directory populated by agenix, not an executable. pkgs/vigil.nix
+        # wraps Node by its store path; modules/services/vigil.nix supplies
+        # store paths for VIGIL_BIN and VIGIL_SYSTEMCTL. cmdAllow is empty,
+        # so no contract can introduce a command resolved through PATH.
+        interpreter = null;
+        commands = [ ];
+      };
       user = { };
     };
+    # No custom off-store Exec references on the minimal rpi5 host. Keep
+    # its explicit entries so stale-contract detection covers it too.
     rpi5 = {
       system = { };
       user = { };

@@ -22,8 +22,12 @@ Review CI for the final revisions. PR #612 targets main because NixOS workflows
 filter on that base; it includes the prerequisite #609 changes until they merge.
 Darwin #28 depends on #27. Do not infer a merge or deployment from a green build.
 
+Merging declares rpi5 lingering (`users.users.nixos.linger`) and the helper
+package in `main`; neither host auto-upgrades, so nothing takes effect until an
+explicit `nixos-rebuild switch`. The approval below gates that switch, not the merge.
+
 Before activation, inspect current live sessions and installed pins again. Obtain
-approval for rpi5 lingering and helper installation, the additional choir helper
+approval to switch rpi5 lingering and helper installation, the additional choir helper
 and alias configuration, and the two-host Mac profile/client installation. Existing
 conditional approval covers only the separately reviewed choir client correction.
 Preserve old immutable packages, pins, process identities and conversation state.
