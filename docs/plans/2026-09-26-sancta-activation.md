@@ -1,5 +1,9 @@
 # Sancta ownership: activation and rollback review
 
+Historical design procedure. For current exact artifacts, completed steps and
+rollback guards, use [the current approval package](2026-09-27-sancta-approval-package.md).
+Do not use the historical helper pin below for a new deployment.
+
 This is an operator procedure, not permission to execute it. Autonomous work
 only prepares code and disposable tests. Production is not declared repaired.
 

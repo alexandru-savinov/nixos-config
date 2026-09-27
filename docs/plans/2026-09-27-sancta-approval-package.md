@@ -1,161 +1,148 @@
-# Sancta ownership rollout: approval package
+# Sancta ownership: remaining migration and approval package
 
-Prepared on 2026-09-27 (Europe/Chisinau). **None of the activation commands below
-has been executed.** This package prepares a coordinated migration, not an
-unattended deployment. Do not activate the new aliases before their backend exists. Normal configuration
-keeps the old alias. The new mappings are staged in
-`docs/plans/2026-09-27-sancta-owned-alias.patch` in each repository; these patches
-are already applied only in the isolated artifact candidates. Applying them to
-normal configuration is a separate, post-recovery change. This avoids making an
-ordinary rebuild point at a missing backend.
+Prepared 2026-09-27. This supersedes the earlier artifact and rollback commands
+in this file. It authorizes no production action. The autonomous readiness work
+has not activated profiles, interrupted the conversation, restarted agterm,
+replaced the owner launcher, or created/re-keyed secrets.
 
-## Current activation status (2026-09-27)
+## Verified starting point
 
-Choir now runs main `6248f534d4a29061fd01b178bb7fd3c35134d210`, generation 47,
-`/nix/store/dbh80v4j9cdq1likhdnhgv08hbdhg4h5-nixos-system-sancta-choir-25.11.20260318.fea3b36`.
-The active helper is `/nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0`.
-Darwin #29 was repinned at `8935abe` and merged into #28. All operational helper
-commands below use this active helper. The previous helper was retained only by
-a temporary GC root and must not be used as a deployment pin.
+Read-only inspection at approximately 17:10 UTC found:
 
-The artifact table and switch commands below describe the earlier isolated
-migration candidates, not the active generation. **Do not switch back to those
-candidates.** Rebuild any future alias-migration artifact from the active main
-revision and record its exact identity before activation. Until clean recovery is
-explicitly performed, both aliases must continue to name `sancta-main-20260924`.
-Step 6 has not been performed.
+- Choir generation 47, built from main `6248f534d4a29061fd01b178bb7fd3c35134d210`;
+  its exact running store identity is the host baseline below.
+- One live Claude writer matched the current backend's private conversation
+  metadata. Neither the writer nor its launcher ancestors held that conversation's
+  `agt-writer-locks` descriptor; the lock file did not exist. Installing a new
+  helper did not retrofit ownership into the old backend.
+- `sancta-main-20260924` is alive; `sancta-main-owned-20260927` does not exist.
+  Host/Mac aliases and the Mac pane restoration command still select the old
+  backend. The profile and restoration command already pin the current helper.
+- Sancta lingering is enabled. The live scope has MemoryHigh 4 GiB, MemoryMax
+  5 GiB, MemorySwapMax 2 GiB, OOMPolicy `continue`, and TimeoutStopSec 45 s.
+- Managed settings contain exactly one secret-guard registration. The existing
+  owner reconnect script already matches the attach-only template. Neither needs
+  replacement or repeated activation.
+- Owner checkouts contain existing edits. These remain untouched. The selected
+  Mac artifact preserves the owner's installed packages and wrappers, including
+  FortiClient, and the deployed no-update/no-upgrade Homebrew behavior.
 
-## Source and artifact identity
+These observations are snapshots. Recheck them before any approved transition.
+The remaining production change is a clean recovery through the locking helper,
+followed by coordinated alias activation and acceptance. Do not repeat completed
+helper, guard, resource-policy, or owner-script rollout steps.
 
-| Item | Exact identity |
+## Exact artifacts
+
+| Item | Immutable identity |
 | --- | --- |
-| Ownership PR | NixOS #618, owner head `da57de91a188002cebfc9538d931e8e43385c1db` |
-| Current parent | NixOS #612, `e7a70818b03d66be4c545e5422507680e0ae6a80` |
-| Guard | #619 is merged; the live managed registration is already present |
-| Alias proposal | NixOS #620 and Darwin #30 carry explicit migration patches; defaults remain unchanged |
-| Mac ownership pin | Darwin #29, `f968aaa828126ade3efacdb3891385fef3dab0a0`, on #28 |
-| Host build source | Isolated combined candidate `8856b74ac63f78e5d973c1bd71dd4c5fcddc3b4c` |
-| Mac build source | Isolated owner-preserving candidate `dfbd4eb` |
-| Host candidate | `/nix/store/fz034bfy8gz7nbgbxv8b5y24zhawyyyp-nixos-system-sancta-choir-25.11.20260318.fea3b36` |
-| Mac candidate | `/nix/store/yfrb6w4h43jvvy27nszifca5ywzw8yk6-darwin-system-26.05.06648f4` |
-| Host helper | `/nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0` |
-| Mac client | `/nix/store/9akwihdjl4qxnw03gwrg31fi27xpyvcl-agterm-remote-608f4a4b` |
-| Host baseline | `/nix/store/fmdz1y946jzmci6lplh89yb7k0ak6nb0-nixos-system-sancta-choir-25.11.20260318.fea3b36` |
-| Mac baseline | `/nix/store/ch6788zax71zmncc64c51vvfz926ihy2-darwin-system-26.05.06648f4` |
+| Host baseline | `/nix/store/dbh80v4j9cdq1likhdnhgv08hbdhg4h5-nixos-system-sancta-choir-25.11.20260318.fea3b36` |
+| Host candidate | `/nix/store/9ihnxc6bcs3pkpcxmb5hf9sss3swj8wh-nixos-system-sancta-choir-25.11.20260318.fea3b36` |
+| Host candidate source | `5a3c36307b94dfa7a489ec47d39cd001c042ddcc` |
+| Mac baseline | `/nix/store/3cwf50qj4dn0kyy08lhnp391zagl2j33-darwin-system-26.05.06648f4` |
+| Mac candidate | `/nix/store/imhdl5kfk18zrs9r713fidzr76v609jr-darwin-system-26.05.06648f4` |
+| Mac candidate source | `b2f58594db4f7fe41f1476126fbf8b09d23ee76e` |
+| Current/new helper | `/nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0` |
+| Current/new Mac client | `/nix/store/9akwihdjl4qxnw03gwrg31fi27xpyvcl-agterm-remote-608f4a4b` |
 
-The NixOS version suffix identifies the nixpkgs revision here, **not** the
-configuration checkout. Use the complete store paths and recorded candidate
-commits. The host candidate applies #618's net patch to the current #612 parent,
-retaining #619. No PR was merged by this preparation.
+Host source is current main plus the reviewed scope fixture/docs and the explicit
+alias patch. Mac source snapshots owner base `ad1bd592f2a7fd9901bc9cfd3d38830822d20260`
+plus the five existing agterm file changes, changes only the Sancta backend alias,
+and explicitly preserves the deployed Homebrew activation flags. A plain current
+main build is not a substitute for this owner-preserving artifact.
 
-The plain Mac PR-chain system built successfully but removed installed FortiClient
-work. It is **not** the selected artifact. The selected candidate applies the
-agterm changes to owner commit `ad1bd592f2a7fd9901bc9cfd3d38830822d20260`, preserving
-FortiClient and the owner's Claude/Codex wrapper changes. Do not replace it with a
-fresh main-only build without repeating the comparison.
+Build-only worktrees under `/Users/alexandru/.local/share/vigil-owner/`:
+`sancta-migration-artifacts`, `sancta-mac-current`. Source bundles are
+`/tmp/sancta-readiness-20260927/{host,mac}.bundle` on the Mac. The remote source
+and host build link are under `/tmp/sancta-readiness-20260927.auCeYq/`; the Mac
+candidate link is `/tmp/sancta-readiness-20260927/mac-candidate`.
+These links retain candidates while present; `/tmp` is not permanent retention.
+Before the approved window, retain both baselines, candidates and helper with
+explicit GC roots and confirm their availability. No GC is part of this plan.
 
-Task-only checkouts and evidence:
+Normal repository aliases remain unchanged. The proposed mapping lives in
+`2026-09-27-sancta-owned-alias.patch` in each repository and is applied only to
+the isolated artifact sources. Merge/review of this preparation does not select
+the proposed backend. Apply/commit the patch to normal configuration only after
+approved recovery verifies that backend alive; otherwise a later rebuild could
+revert routing. Keep the host and Mac source changes coordinated.
 
-- Mac: `/Users/alexandru/.local/share/vigil-owner/sancta-rollout-20260927` and
-  `/Users/alexandru/.local/share/vigil-owner/darwin-owner-rollout-20260927`.
-- Choir: `/tmp/sancta-rollout-20260927.IFKzfV/repo`.
-- Private local evidence: `/tmp/sancta-rollout-20260927` (directory mode 0700).
-- The private `private/restore-before.txt` and `private/restore-proposed.txt`
-  contain sensitive session metadata. Never print, commit or attach them to PRs.
-  The proposed command changes only the helper path and backend name.
+## Activation effects and validated limits
 
-Store artifacts are held by task build links. Recheck their presence before the
-approved window; `/tmp` is not permanent retention. Preserve old and new artifacts
-with explicit GC roots before activation. No garbage collection is part of this plan.
+Host comparison found one changed configuration file:
+`/etc/agt-zmx-aliases.json`. System/user unit trees, system packages, helper and
+managed guard settings have identical targets. Generated activation differences
+normalize to system/etc/source store identities; all referenced ciphertext bytes
+are identical. A full switch still runs normal NixOS activation, including agenix
+re-materialization and boot/profile bookkeeping. No service-unit change requires
+an agent restart; this is not permission to skip inspecting switch output.
 
-## Observed state and exact effects
+Mac home-file comparison has no additions or removals and changes only
+`.config/agterm/remote-hosts.json`; its JSON differs only in the Sancta backend.
+Other packages, launchers and the Home Manager activation actions are preserved.
+A full Darwin activation still runs the existing Homebrew bundle (auto-update
+and upgrade disabled), defaults, Dock/cfprefsd actions, and launchd/Home Manager
+activation. It is not merely copying the alias file. No agterm restart is planned.
+The profiles affected are `/nix/var/nix/profiles/system` on each machine and the
+Mac Home Manager generation. No owner script/settings replacement is needed.
 
-At inspection, one live Sancta Claude process occupied the
-`agt-mvp-sancta-main-20260924.scope` cgroup. Its private process metadata matched
-the old backend record. This is a snapshot, not a continuing singleton guarantee.
-The old records are never edited or deleted by this plan.
+Local regression: 61 tests, 60 passed, one optional native-zmx test skipped.
+The expanded scope/ownership CI at `cb728e008073a4f4e236f7428e1c564ae88aa17e`
+passed [run 36335596174](https://github.com/alexandru-savinov/nixos-config/actions/runs/36335596174).
+It builds the protocol suite, native-zmx integration, helper, module assertions
+and the VM scope fixture. The fixture checks fresh scope policy, all five
+properties after reload, actual cgroup memory limits, and membership/survival of
+the same PID. Its prior failure was `systemd-run` expanding `$$` into literal `$`;
+`--expand-environment=no` fixes the measured cause without removing assertions.
 
-The live managed settings contain exactly one secret-guard registration. Their
-bytes match the host candidate. The existing guard source hash is
-`4844e499f22f319304ebcaa664b8add3ac7ee2d51dd920d425330f8ecf639b96`.
-Do not repeat guard activation or change user settings. Wrapper fixtures passed
-all 13 cases against the current registration and source, without executing a
-commit. This does not prove live Claude hook loading.
+The 13 disposable secret-guard wrapper cases passed against current managed
+settings and the actual guard source: success/block/error mappings, absent,
+non-executable and hung guards, unrelated user exclusion, user-settings rewrite,
+harmless input and blocked unscanned-commit input. No commit command ran. These
+prove wrapper behavior, not that a real Claude session loads the hook.
 
-The live scope has unlimited memory settings, OOMPolicy `stop`, and stop timeout
-90 seconds. The candidate adds the prefix drop-in with MemoryHigh 4 GiB,
-MemoryMax 5 GiB, MemorySwapMax 2 GiB, OOMPolicy `continue`, timeout 45 seconds.
-The resource-policy VM test also exercises revealing the policy and reloading an
-already running fixture scope, checking the same process survives. Its latest CI
-result is a rollout prerequisite, not permission to reload the production manager.
+## Approval and preflight
 
-Host unit comparison found no added/removed system services. The only changed
-system/user service overrides are D-Bus restart-trigger paths; both use
-`X-ReloadIfChanged=true`. A full switch may reload D-Bus and user managers. It also
-changes the root Sancta launcher, system package path, alias file and user scope
-policy. It does not retroactively give an existing Claude process a writer lock.
+Separate approval must cover the clean agent/backend exit and Mac attachment
+interruption, host activation, full Mac activation effects, and live/human
+acceptance. Successful builds or PR merges authorize none of these actions.
 
-The selected Mac system preserves all unrelated installed packages and owner
-wrappers. Home-file comparison adds managed `.local/bin/agt-zmx` and
-`.config/agterm/remote-hosts.json`, and changes `.local/bin/sancta`. Their live
-counterparts already exist as manually installed files. No `.before-nix` backup
-collision was present at inspection; recheck before activation.
+Before requesting the transition, record a fresh read-only snapshot of:
 
-A **full Darwin activation is not just a file copy**: its existing script runs
-Homebrew bundle, writes defaults, kills cfprefsd and Dock, and may reload launchd
-jobs. The Brewfile itself is unchanged. Approval must cover these effects; no
-agterm restart is required or included.
+1. Both running system paths and system profile targets, compared with the exact
+   baselines above. Stop on drift; rebuild/review rather than overwriting it.
+2. Exactly one writer matched privately to the old backend record, its ancestor
+   chain, cwd `/home/nixos`, user `sancta`, helper and scope properties.
+3. Old backend alive, proposed backend absent with no existing record; both aliases
+   and saved Mac restoration command agree. Inventory alone does not prove ownership.
+4. Managed guard registration/source and attach-only owner launcher unchanged;
+   current owner edits remain preserved. Confirm no unrelated pane/split work
+   would be lost when ending only the old attachment.
+5. Exact final PR CI/review results and artifact availability. Before interruption,
+   make private mode-0700 backups of the old backend record, both alias profiles,
+   affected Mac symlinks and pane restoration metadata; never print their contents.
+   Preserve ownership/symlinks. No transcript backup or key operation is needed.
 
-The owner soul-volume reconnect script still contains raw `claude --resume`,
-`pgrep` and killing logic. Its hash at inspection was
-`a4ececb96d5721e67c25d8d126bc53b3b1f6ca133fdd824cedfdb52f5b09d544`.
-Replacing it with `scripts/sancta-reconnect-attach.sh` is a separate owner-file
-approval. Verify its callers, including kill-only/timer callers, before replacement.
-
-## Approval boundaries and preflight
-
-Obtain explicit approval for: PR merge decisions; clean agent/backend exit and
-Mac attachment interruption; host activation and manager reloads; full Darwin
-activation; owner-file replacement; and live/human acceptance. None is implied
-by this document or by successful builds. Coordinate one short migration window.
-
-Read-only preflight immediately before that window:
+For host identity (read-only):
 
 ```sh
-# Mac: SSH destination comes from the installed choir profile, not ~/.ssh/config.
 ssh -o BatchMode=yes -o ConnectTimeout=10 root@sancta-choir-1 \
-  'readlink -f /run/current-system; readlink /nix/var/nix/profiles/system'
+  'readlink -f /run/current-system; readlink -f /nix/var/nix/profiles/system'
 readlink /run/current-system
-
-# Choir, through SSH: inventory only, no agent launch.
-ssh root@sancta-choir-1 \
-  'sudo -iu sancta /nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0/bin/sessions list'
+readlink /nix/var/nix/profiles/system
 ```
 
-Reinspect writer process metadata, matching conversation identity privately,
-current cgroup, helper availability, live guard registration and the three Mac
-home files. Check both PR chains and CI. Stop if baseline identities, owner-file
-hashes or writer state changed. Do not repair drift by overwriting owner work.
+## Future approved transition
 
-Before interruption, back up the old backend record/route, `/etc/agt-zmx-aliases.json`,
-the owner reconnect script, the three Mac files, and the current pane restoration
-command into private mode-0700 directories. Preserve symlinks and ownership.
-Do not put these backups in the repository. No transcript copy is needed.
+First, with the owner present, cleanly exit the authoritative Claude and then
+its old backend shell, if one remains. Verify the matched writer and old backend
+are gone; preserve records. End only the reviewed Mac attachment. Do not use
+process sweeps, raw `claude --resume`, transcript edits or lock deletion.
 
-## Approved migration order
-
-1. With the owner present, cleanly exit the authoritative Claude process. If the
-   old helper leaves a shell, exit that shell too. Verify both the writer and old
-   backend are gone. Never use the legacy reconcile/kill script. Preserve records.
-   Close or stop only the old Mac attachment after checking it has no new split
-   or unrelated foreground work. Keep its private restoration backup.
-2. Recover into the new backend with the built helper **before activating aliases**.
-   The following is a future approved command, not an autonomous test. It reads
-   only the saved UUID and process metadata, suppresses shell tracing, and refuses
-   while the recorded conversation still has a live writer:
+After that explicit interruption approval and stopped-state verification, run on
+the Mac inside agterm. Do not enable shell tracing or print the private variable:
 
 ```sh
-# Run on Mac inside agterm, after the approved clean exit. Never echo this variable.
 set +x
 SANCTA_RECOVERY_ID="$(ssh -o BatchMode=yes root@sancta-choir-1 \
   'runuser -u sancta -- env HOME=/var/lib/sancta /nix/store/44rn0p64x92bnnh7cwn6x6ybvflybmvz-python3-3.13.12/bin/python3 -' <<'PY'
@@ -176,99 +163,117 @@ PY
 unset SANCTA_RECOVERY_ID
 ```
 
-3. Verify the new backend, one writer, shared ownership lock and correct private
-   conversation identity. Do not proceed just because old text is visible. The
-   new scope initially uses the old installed policy; do not start substantive
-   work before the approved switch and resource verification below.
-4. Activate the exact host artifact, after confirming the new backend exists and
-   the observed baseline has not changed. These commands change production:
+Verify one new writer, private identity match, an actually held shared writer
+lock, the new backend, and all five scope values before changing aliases. The
+policy is already installed and must apply when the new scope is created. Do
+not infer ownership from the mere existence of a lock file or visible old text.
+If creation fails, preserve the stopped record and diagnose; never launch the
+old unguarded writer as an automatic fallback.
+
+After separate host activation approval, on choir as root:
 
 ```sh
-# On choir as root, only after approval and new-backend verification.
-test "$(readlink -f /run/current-system)" = /nix/store/fmdz1y946jzmci6lplh89yb7k0ak6nb0-nixos-system-sancta-choir-25.11.20260318.fea3b36 || exit 1
-nix-env --profile /nix/var/nix/profiles/system --set \
-  /nix/store/fz034bfy8gz7nbgbxv8b5y24zhawyyyp-nixos-system-sancta-choir-25.11.20260318.fea3b36
-/nix/store/fz034bfy8gz7nbgbxv8b5y24zhawyyyp-nixos-system-sancta-choir-25.11.20260318.fea3b36/bin/switch-to-configuration switch
-systemctl --user --machine=sancta@.host show agt-mvp-sancta-main-owned-20260927.scope \
+set -eu
+HOST_BASE=/nix/store/dbh80v4j9cdq1likhdnhgv08hbdhg4h5-nixos-system-sancta-choir-25.11.20260318.fea3b36
+HOST_NEW=/nix/store/9ihnxc6bcs3pkpcxmb5hf9sss3swj8wh-nixos-system-sancta-choir-25.11.20260318.fea3b36
+test "$(readlink -f /run/current-system)" = "$HOST_BASE"
+test "$(readlink -f /nix/var/nix/profiles/system)" = "$HOST_BASE"
+# Refuse alias activation if the proposed backend is absent. The preceding
+# private writer/lock verification remains mandatory; inventory is not that proof.
+sudo -u sancta env HOME=/var/lib/sancta XDG_RUNTIME_DIR=/run/user/993 \
+  /nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0/bin/agt-zmx-host list | \
+  /nix/store/44rn0p64x92bnnh7cwn6x6ybvflybmvz-python3-3.13.12/bin/python3 -c \
+  'import json,sys; assert any(r["name"] == "sancta-main-owned-20260927" and r["alive"] for r in json.load(sys.stdin))'
+nix-env --profile /nix/var/nix/profiles/system --set "$HOST_NEW"
+"$HOST_NEW/bin/switch-to-configuration" switch
+sudo -u sancta env XDG_RUNTIME_DIR=/run/user/993 systemctl --user show \
+  agt-mvp-sancta-main-owned-20260927.scope \
   -p ActiveState -p MemoryHigh -p MemoryMax -p MemorySwapMax -p OOMPolicy -p TimeoutStopUSec
 ```
 
 Require `active`, `4294967296`, `5368709120`, `2147483648`, `continue`, `45s`.
-If the existing scope does not acquire these values, stop acceptance and preserve
-it; do not silently restart the agent or declare the resource gate passed.
+Verify the same writer survived. If activation fails, stop and inspect both the
+profile pointer and active system; a partially completed switch is not atomic.
 
-5. Activate the selected owner-preserving Mac artifact, under its separate approval:
+After separate full Mac activation approval:
 
 ```sh
-# On Mac; full activation has the effects listed above.
-test "$(readlink /run/current-system)" = /nix/store/ch6788zax71zmncc64c51vvfz926ihy2-darwin-system-26.05.06648f4 || exit 1
-sudo nix-env --profile /nix/var/nix/profiles/system --set \
-  /nix/store/yfrb6w4h43jvvy27nszifca5ywzw8yk6-darwin-system-26.05.06648f4
-sudo /nix/store/yfrb6w4h43jvvy27nszifca5ywzw8yk6-darwin-system-26.05.06648f4/activate
+set -eu
+MAC_BASE=/nix/store/3cwf50qj4dn0kyy08lhnp391zagl2j33-darwin-system-26.05.06648f4
+MAC_NEW=/nix/store/imhdl5kfk18zrs9r713fidzr76v609jr-darwin-system-26.05.06648f4
+test "$(readlink /run/current-system)" = "$MAC_BASE"
+test "$(realpath /nix/var/nix/profiles/system)" = "$MAC_BASE"
+sudo nix-env --profile /nix/var/nix/profiles/system --set "$MAC_NEW"
+sudo "$MAC_NEW/activate"
 ```
 
-6. If separately approved, install the reviewed attachment-only owner-script
-   template after verifying its saved hash and caller compatibility. Preserve
-   ownership and mode. Never run the old script as a migration step.
-7. Verify `sancta` focuses the new pane, a second call creates no duplicate, and
-   `ssh -t root@sancta-choir-1 'sudo -iu sancta sessions attach sancta'` attaches
-   the same backend. The new client pins its own restoration command; read it
-   back privately and verify its backend/helper identity. Do not restore the old
-   pane's command onto the new pane. No application restart is included.
+Verify both aliases select the new backend. The new client records its own
+restore command; read it back privately and verify backend/helper identity.
+Do not copy the old pane's restore command onto the new pane. Apply and commit
+the reviewed alias patches in isolated repository checkouts so future rebuilds
+retain the approved routing; preserve unrelated owner edits.
 
-## Rollback without a second writer
+## Rollback and recovery boundaries
 
-Before the old writer exits, rollback is attachment-only: preserve it and restore
-its recorded client/route. After the new writer starts, **keep the new backend**
-and repair attachment first. Do not launch the old conversation again.
-
-An independent terminal can attach explicitly even if an alias/profile is wrong:
+Before clean exit, rollback means keeping the existing writer and attachments.
+After new recovery, prefer repairing attachment to the surviving new backend:
 
 ```sh
 ssh -t root@sancta-choir-1 \
   'sudo -iu sancta /nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0/bin/sessions attach sancta-main-owned-20260927'
 ```
 
-Full profile rollback needs separate approval and the same activation-impact
-review. Verify old artifacts and private backups still exist, then use the same
-profile/set-and-activate commands above with these exact old targets:
+A full profile rollback requires separate approval. These commands deliberately
+refuse any state other than the exact successfully activated candidate. If
+activation partially failed or either identity differs, stop for an updated
+impact review; do not remove the guards or run an older historical rollback.
 
 ```sh
-# Choir, root. Do not execute as an automatic response to an attachment failure.
-nix-env --profile /nix/var/nix/profiles/system --set /nix/store/fmdz1y946jzmci6lplh89yb7k0ak6nb0-nixos-system-sancta-choir-25.11.20260318.fea3b36
-/nix/store/fmdz1y946jzmci6lplh89yb7k0ak6nb0-nixos-system-sancta-choir-25.11.20260318.fea3b36/bin/switch-to-configuration switch
-# Mac, separately approved.
-sudo nix-env --profile /nix/var/nix/profiles/system --set /nix/store/ch6788zax71zmncc64c51vvfz926ihy2-darwin-system-26.05.06648f4
-sudo /nix/store/ch6788zax71zmncc64c51vvfz926ihy2-darwin-system-26.05.06648f4/activate
+# Choir as root, separately approved.
+set -eu
+HOST_BASE=/nix/store/dbh80v4j9cdq1likhdnhgv08hbdhg4h5-nixos-system-sancta-choir-25.11.20260318.fea3b36
+HOST_NEW=/nix/store/9ihnxc6bcs3pkpcxmb5hf9sss3swj8wh-nixos-system-sancta-choir-25.11.20260318.fea3b36
+test "$(readlink -f /run/current-system)" = "$HOST_NEW"
+test "$(readlink -f /nix/var/nix/profiles/system)" = "$HOST_NEW"
+test -x "$HOST_BASE/bin/switch-to-configuration"
+nix-env --profile /nix/var/nix/profiles/system --set "$HOST_BASE"
+"$HOST_BASE/bin/switch-to-configuration" switch
 ```
 
-A full rollback removes the new scope policy and may remove newly managed aliases
-and home files; it does not necessarily restore their former manually installed
-versions. Restore only the reviewed individual backups if appropriate. Old aliases
-point at the ended backend after migration, so use explicit attachment to the new
-backend until routing is repaired. Retain the absolute helper artifact. Do not
-restore the old destructive owner launcher without a separate decision. If it was
-replaced, its `/run/current-system/sw/bin/sessions` dependency also needs review
-when rolling back to a generation without that package. Never unlink writer locks.
+```sh
+# Mac, separately approved.
+set -eu
+MAC_BASE=/nix/store/3cwf50qj4dn0kyy08lhnp391zagl2j33-darwin-system-26.05.06648f4
+MAC_NEW=/nix/store/imhdl5kfk18zrs9r713fidzr76v609jr-darwin-system-26.05.06648f4
+test "$(readlink /run/current-system)" = "$MAC_NEW"
+test "$(realpath /nix/var/nix/profiles/system)" = "$MAC_NEW"
+test -x "$MAC_BASE/activate"
+sudo nix-env --profile /nix/var/nix/profiles/system --set "$MAC_BASE"
+sudo "$MAC_BASE/activate"
+```
 
-## Acceptance and remaining limits
+These current baselines retain the helper, guard, limits and attach-only launchers,
+but restore aliases pointing to the ended old backend. Keep explicitly attaching
+the surviving new backend until routing is repaired. Never replace its live lock
+inode, restart an old writer, or restore the destructive legacy launcher. Any
+subsequent conversation recovery needs another clean-exit approval.
 
-- Repeated Mac/SSH attachment and disconnect/reconnect keep the same writer PID.
-- A competing **supported** recovery refuses before starting another agent.
-- Both aliases and the saved restoration command identify the new backend.
-- Scope properties match all five expected values, with the writer surviving reload.
-- Managed guard registration remains present and unchanged; a fresh real Claude
-  session must separately demonstrate hook loading using a harmless disposable
-  repository. Fixture success is not live acceptance.
-- Human picker, notification-click and interactive-question tests remain pending
-  until the owner can observe them. No synthetic assertion counts as that result.
+## Acceptance checklist for the later approved window
 
-Locks are cooperative. Direct binaries, in-session switching, changed config roots,
-owner-deleted lock files and old running launchers can bypass them. Fake-child
-inherited-FD tests do not prove real Claude descriptor retention after launcher
-SIGKILL. The secret guard is a command-pattern tripwire, not a containment boundary.
+- [ ] One privately matched writer, one running new backend and a held shared lock.
+- [ ] Supported competing recovery refuses before launching another agent.
+- [ ] Repeated Mac `sancta` and separate SSH attachments reach the same writer;
+      disconnect/reconnect preserves its PID and creates no duplicate pane.
+- [ ] Host/Mac aliases, declarative patches and new pane restoration agree.
+- [ ] All five scope values and actual cgroup limits match; writer survived activation.
+- [ ] Managed guard registration remains unchanged; a fresh disposable real Claude
+      session demonstrates hook loading without a secret or actual commit.
+- [ ] Owner observes picker focus, notification click and interactive questions.
+      Synthetic routing tests do not count as human acceptance.
 
-Both original and new PRs remain unmerged by this work. The alias patches must remain unapplied to the normal configuration until the
-new backend is verified alive and the transition is approved. The artifact package is
-ready only when its relevant CI/review gates pass; production resolution requires
-the separately approved transition and acceptance above.
+Locks are cooperative: direct binaries, in-session conversation switching, changed
+configuration roots, deleted lock files and old launchers can bypass them. Fake
+agent crash tests do not prove real Claude retains an inherited descriptor after
+its launcher dies. Do not kill the production launcher to test that. The guard
+is a command-pattern tripwire, not account containment. Production and human
+acceptance remain pending even after every preparation check is green.
