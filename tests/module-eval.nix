@@ -1747,6 +1747,117 @@ let
       else
         builtins.throw "FAIL: sancta-choir claude-code-managed-settings wiring — failed checks: ${builtins.toJSON failed}";
 
+    # ── sq085: studio n8n on sancta-choir ─────────────────────────
+    # Two walls (hosts/sancta-choir/n8n-guard.nix): no model key, loopback
+    # only. Each negative arm below asserts the SPECIFIC wall fires on the
+    # REAL choir config (not "evaluation failed somewhere"), and the walls
+    # are shown to hold while the gate is off too. The gate itself is pinned
+    # both ways: on without the encryption-key file fails, on with it
+    # evaluates down to toplevel with the expected wiring.
+    studio-n8n-choir =
+      let
+        lib = nixpkgs.lib;
+        base = self.nixosConfigurations.sancta-choir;
+        extend = modules: (base.extendModules { inherit modules; }).config;
+        off = base.config;
+
+        # Stand-in for Alexandru's future secrets/n8n-encryption-key-choir.age:
+        # any existing .age satisfies the presence assertion at eval time.
+        # Nothing is decrypted or built.
+        keyPresent = {
+          age.secrets.n8n-encryption-key-choir.file = lib.mkForce "${self}/secrets/n8n-encryption-key.age";
+        };
+        on = [{ sancta.studio.n8n.enable = lib.mkForce true; } keyPresent];
+        onCfg = extend on;
+
+        modelWall = "choir-n8n: n8n on sancta-choir may not hold any model key";
+        bindWall = "choir-n8n: n8n on sancta-choir must listen on 127.0.0.1 only";
+        keyGate = "sancta.studio.n8n.enable = true, but";
+        present = cfg: prefix: lib.any (a: lib.hasPrefix prefix a.message) cfg.assertions;
+        fires = cfg: prefix: lib.any (a: !a.assertion && lib.hasPrefix prefix a.message) cfg.assertions;
+        holds = cfg: prefix: present cfg prefix && !(fires cfg prefix);
+        toplevelFails = cfg: !(builtins.tryEval (forceEval cfg)).success;
+
+        n8nCfg = onCfg.services.n8n-tailscale;
+
+        checks = {
+          # Merged but inert: n8n is not on choir until the gate flips.
+          offByDefault =
+            !off.sancta.studio.n8n.enable
+            && !off.services.n8n-tailscale.enable
+            && !off.services.n8n.enable
+            && off.services.vigil.expectedContracts == 10
+            && !(builtins.elem "n8n" (builtins.fromJSON off.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES));
+          wallsPresentWhileOff = holds off modelWall && holds off bindWall;
+
+          # Gate on (with a key present) evaluates to a toplevel drvPath.
+          onEvaluates = builtins.seq onCfg.system.build.toplevel.drvPath true;
+          onWiring =
+            n8nCfg.enable
+            && n8nCfg.encryptionKeyFile == "/run/agenix/n8n-encryption-key-choir"
+            && n8nCfg.tailscaleServe.enable
+            && lib.hasSuffix "/n8n-workflows/choir" (toString n8nCfg.workflowsDir)
+            && n8nCfg.webhookHealthCheck == null
+            && n8nCfg.telegramBotTokenFile == null
+            && n8nCfg.adminPasswordFile == null
+            && n8nCfg.communityPackages == [ ]
+            && n8nCfg.allowBuiltinModules == [ ]
+            && n8nCfg.blockEnvAccessInCode
+            && onCfg.services.vigil.expectedContracts == 11
+            && builtins.elem "n8n" (builtins.fromJSON onCfg.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES)
+            && holds onCfg modelWall && holds onCfg bindWall && holds onCfg keyGate;
+
+          # Gate on WITHOUT the .age file: eval fails here, not activation.
+          keyMissingRejected = fires (extend [{ sancta.studio.n8n.enable = lib.mkForce true; }]) keyGate;
+
+          # ── negative arms: model key ──
+          openrouterKeyRejected =
+            let cfg = extend (on ++ [{ services.n8n-tailscale.openrouterApiKeyFile = "/run/agenix/openrouter-api-key"; }]);
+            in fires cfg modelWall && toplevelFails cfg;
+          openaiKeyRejected = fires
+            (extend (on ++ [{ services.n8n-tailscale.openaiApiKeyFile = "/run/agenix/openai-api-key"; }]))
+            modelWall;
+          anthropicEnvRejected = fires
+            (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.ANTHROPIC_API_KEY = "placeholder"; }]))
+            modelWall;
+          unitEnvFileRejected = fires
+            (extend (on ++ [{ systemd.services.n8n.serviceConfig.EnvironmentFile = lib.mkForce [ "-/run/n8n/env" "/run/agenix/openrouter-api-key" ]; }]))
+            modelWall;
+          modelKeyRejectedWhileOff = fires
+            (extend [{ services.n8n-tailscale.openrouterApiKeyFile = "/run/agenix/openrouter-api-key"; }])
+            modelWall;
+
+          # ── negative arms: tailnet-only binding ──
+          publicPortRejected =
+            let cfg = extend (on ++ [{ networking.firewall.allowedTCPPorts = [ 5678 ]; }]);
+            in fires cfg bindWall && toplevelFails cfg;
+          publicPortRangeRejected = fires
+            (extend (on ++ [{ networking.firewall.allowedTCPPortRanges = [{ from = 5000; to = 6000; }]; }]))
+            bindWall;
+          publicInterfacePortRejected = fires
+            (extend (on ++ [{ networking.firewall.interfaces.eth0.allowedTCPPorts = [ 5678 ]; }]))
+            bindWall;
+          wildcardListenRejected = fires
+            (extend (on ++ [{ services.n8n.environment.N8N_LISTEN_ADDRESS = "0.0.0.0"; }]))
+            bindWall;
+          extraEnvListenRejected = fires
+            (extend (on ++ [{ services.n8n-tailscale.extraEnvironment.N8N_LISTEN_ADDRESS = "0.0.0.0"; }]))
+            bindWall;
+          openFirewallRejected = fires
+            (extend (on ++ [{ services.n8n.openFirewall = lib.mkForce true; }]))
+            bindWall;
+          nativeWithoutWrapperRejected = fires
+            (extend [{ services.n8n.enable = true; }])
+            bindWall;
+        };
+
+        failed = builtins.attrNames (lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir studio n8n (sq085) — failed checks: ${builtins.toJSON failed}";
+
     # spinnerTipsEnabled's new, sancta-scoped home (2026-08-20, PR #569
     # finding P1) — moved out of the machine-wide managed file specifically
     # because it is a preference no single JSON literal there can scope to

@@ -1,0 +1,12 @@
+[contract]
+nume = "n8n"
+ce = "Service health"
+dimension = "availability"
+driver = "operational"
+verifica = "http"
+tinta = "http://127.0.0.1:5678/healthz"
+picat_dupa = 2
+astept = { status = 200 }
+
+[spune]
+nivel = "incident"

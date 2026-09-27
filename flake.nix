@@ -297,7 +297,7 @@
           vigil-public-contracts-choir = import ./pkgs/vigil-public-contracts.nix {
             inherit pkgs;
             vigil = self.packages.x86_64-linux.vigil;
-            directories = [ ./hosts/sancta-choir/vigil-contracts ];
+            directories = [ ./hosts/sancta-choir/vigil-contracts ./hosts/sancta-choir/vigil-contracts-n8n ];
           };
 
           # Agenix recipient-drift + fail-open corruption guard (#448):

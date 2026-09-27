@@ -85,6 +85,23 @@ let
       && endpoints.choir-vigil-galeria.url == "http://100.94.191.54:8747/checks/galeria"
       && builtins.elem "[BODY].detail == ok" endpoints.choir-vigil-galeria.conditions
       && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints);
+    # sq085: the studio n8n contract lives in its own directory, watched only
+    # while sancta.studio.n8n.enable is on. Exactly one contract, availability
+    # only (loopback /healthz, status 200), never an alert of its own.
+    studio-n8n-contract =
+      let
+        endpoints = (import ../modules/services/vigil-gatus-endpoints.nix { inherit lib; }) {
+          group = "choir";
+          address = "100.94.191.54";
+          directory = ../hosts/sancta-choir/vigil-contracts-n8n;
+        };
+        contract = schema.parse ../hosts/sancta-choir/vigil-contracts-n8n/n8n.toml;
+      in
+      builtins.length (builtins.attrNames endpoints) == 1
+      && endpoints.choir-vigil-n8n.url == "http://100.94.191.54:8747/checks/n8n"
+      && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints)
+      && contract.verifica == "http" && contract.tinta == "http://127.0.0.1:5678/healthz"
+      && contract.dimension == "availability";
     no-fabricated-success = lib.all (line: !(lib.hasInfix "last-channel-ok" line)) config.systemd.tmpfiles.rules;
     wrong-public-count = shouldFail "vigil-count" { modules = modules ++ [{ services.vigil.expectedContracts = lib.mkForce 6; }]; };
     wildcard-listener = shouldFail "vigil-listen" { modules = modules ++ [{ services.vigil.listenAddress = lib.mkForce "0.0.0.0"; }]; };
