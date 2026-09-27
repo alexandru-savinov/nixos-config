@@ -17,6 +17,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Needed to dispatch check.yml on the PR branch (see the last step).
+  actions: write
 
 jobs:
   update-flake:
@@ -101,9 +103,10 @@ jobs:
           nix eval .#nixosConfigurations.rpi5-full.config.system.build.toplevel.drvPath
 
       # Every mode (nightly, weekly, manual) opens or updates a PR. Nothing in
-      # this workflow pushes to main: main moves only by merging a PR whose CI
-      # is green. Nightly and manual nixpkgs-only share one branch, so a
-      # pending nixpkgs bump is updated in place instead of stacking PRs.
+      # this workflow pushes to main; main moves only by a merged PR. CI on
+      # these PRs is started explicitly by the last step (GITHUB_TOKEN-created
+      # PRs do not trigger it). Nightly and manual nixpkgs-only share one
+      # branch, so a pending nixpkgs bump is updated in place, not stacked.
       - name: Generate update summary
         if: steps.changes.outputs.changed == 'true'
         id: summary
@@ -127,6 +130,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.changes.outputs.changed == 'true'
+        id: cpr
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -142,3 +146,15 @@ jobs:
           labels: |
             dependencies
             automated
+
+      # A PR created or updated with GITHUB_TOKEN does not trigger
+      # pull_request workflows (GitHub blocks recursive runs), so check.yml
+      # would never report on this PR by itself. workflow_dispatch is exempt
+      # from that rule: dispatch check.yml on the PR branch so its required
+      # checks run on the PR's head commit.
+      - name: Run CI on the PR branch
+        if: steps.cpr.outputs.pull-request-operation == 'created' || steps.cpr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.scope.outputs.mode == 'full' && 'chore/update-flake-lock-weekly' || 'chore/update-flake-lock' }}
+        run: gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
