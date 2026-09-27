@@ -157,9 +157,8 @@ in
   # token above: editable from choir (users), decryptable on rpi5. Same
   # chicken-and-egg rule: the .age must exist BEFORE any host declares it.
   "ha-vigil-token.age".publicKeys = users ++ [ rpi5 ];
-  # Private Vigil contracts are prepared in vigil-contracts.pending.nix.
-  # Promote their rules here only in the commit adding the owner-created
-  # ciphertexts; the recipient guard rejects registered-but-missing files.
+  "vigil-rpi5-contract-1.age".publicKeys = users ++ [ rpi5 ];
+  "vigil-rpi5-contract-2.age".publicKeys = users ++ [ rpi5 ];
   # NOTE: home-assistant-secrets.age is intentionally NOT registered — HA's own
   # secrets.yaml is unused here, and registering a key without creating its .age
   # is a footgun (a future host config wiring age.secrets before `agenix -e`
@@ -181,6 +180,17 @@ in
   # The worker consuming it stays inert until he names a session. Auditable
   # owner confirmation: PR #534 issuecomment-5026053880.
   "anthropic-api-key.age".publicKeys = clawKeys ++ [ sancta-choir ];
+
+  # Dedicated OpenRouter key for Jev only, with a $1 credit limit set AT OPENROUTER
+  # (the provider refuses past the limit, before any upstream call). Choir only:
+  # no other host asks Jev. Separate from openrouter-api-key so a bug in the Jev
+  # sender can never spend the key n8n and open-webui share.
+  # rpi5 is deliberately NOT a recipient (unlike soul-volume-key and
+  # sancta-membrane-auth): nothing on rpi5 asks Jev, and least privilege wins
+  # over the edit-from-rpi5 convention for a key this narrow. Rotation is
+  # cheap and does not need rpi5: make a new $1 key at OpenRouter, then
+  # `agenix -e` from choir's editor key (users), exactly how it was created.
+  "jev-openrouter-key.age".publicKeys = users ++ [ sancta-choir ];
 
   # Keyfile that unlocks the encrypted soul volume on sancta-choir (LUKS-on-
   # loopback for ~/.claude). Root reads /run/agenix/soul-volume-key at boot for

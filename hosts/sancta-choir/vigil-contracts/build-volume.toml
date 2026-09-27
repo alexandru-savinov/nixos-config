@@ -1,6 +1,8 @@
 [contract]
 nume = "build-volume"
 ce = "Service health"
+dimension = "availability"
+driver = "operational"
 verifica = "mount"
 tinta = "/mnt/sancta-build-volume"
 picat_dupa = 2

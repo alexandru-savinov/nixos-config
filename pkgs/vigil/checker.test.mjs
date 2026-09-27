@@ -63,6 +63,18 @@ async function harness(fn) {
   }); } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
+test('borrowed vocabulary labels reach the run line only when declared', async () => harness(async h => {
+  await run([
+    { contract: { ...base, nume: 'labelled', dimension: 'availability', driver: 'family' } },
+    { contract: { ...base, nume: 'plain' } },
+  ], { ...h.options, inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }) });
+  assert.equal(h.lines.length, 2);
+  assert.equal(h.lines[0].dimension, 'availability');
+  assert.equal(h.lines[0].driver, 'family');
+  assert.equal(Object.hasOwn(h.lines[1], 'dimension'), false);
+  assert.equal(Object.hasOwn(h.lines[1], 'driver'), false);
+}));
+
 test('runtime accounts for symlinks and invalid files without exposing input', async () => harness(async h => {
   const directory = path.join(h.root, 'contracts');
   fs.mkdirSync(directory);

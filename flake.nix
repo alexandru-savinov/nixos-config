@@ -97,7 +97,29 @@
     in
     {
       # Formatter for `nix fmt`
-      formatter = forAllSystems (system: nixpkgsFor.${system}.nixpkgs-fmt);
+      #
+      # A bare `nix fmt` passes NO file arguments to the formatter binary.
+      # nixpkgs-fmt with no args formats stdin — and if stdin happens to be
+      # an open socket/pipe (e.g. a shell harness that leaves stdin open for
+      # commands containing a heredoc), it blocks forever waiting for EOF.
+      # This wrapper makes that mechanically impossible: with no args it
+      # explicitly formats the flake root instead of stdin — $PRJ_ROOT, which
+      # `nix fmt` sets to the closest parent flake, so a bare run from a
+      # subdirectory still covers the whole repo ("." only as fallback);
+      # with args (e.g. CI's `nix fmt -- --check .`) it passes them
+      # straight through unchanged.
+      formatter = forAllSystems (system:
+        nixpkgsFor.${system}.writeShellApplication {
+          name = "nixpkgs-fmt-wrapper";
+          runtimeInputs = [ nixpkgsFor.${system}.nixpkgs-fmt ];
+          text = ''
+            if [ "$#" -eq 0 ]; then
+              exec nixpkgs-fmt "''${PRJ_ROOT:-.}"
+            else
+              exec nixpkgs-fmt "$@"
+            fi
+          '';
+        });
 
       # Exportable NixOS modules for use in external flakes
       # Usage in external flake:
@@ -197,6 +219,7 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
+          unstable = if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64;
         in
         {
           # Default package (what runs with `nix run github:user/repo`)
@@ -248,6 +271,15 @@
             ];
             text = builtins.readFile ./scripts/bootstrap.sh;
           };
+          # Shared helper for choir (x86_64) and rpi5 (aarch64).
+          agterm-zmx-host = pkgs.callPackage ./pkgs/agterm-zmx-host.nix {
+            zmx = unstable.zmx;
+          };
+          # Explicit PTY acceptance; keep terminal timing out of general checks.
+          agterm-zmx-tests = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix {
+            integration = true;
+            zmx = unstable.zmx;
+          };
         });
 
       # Checks - run with `nix flake check`
@@ -259,6 +291,10 @@
           pkgs = nixpkgsFor.x86_64-linux;
         in
         {
+          agterm-zmx = pkgs.callPackage ./pkgs/agterm-zmx-tests.nix { };
+          agterm-sancta-scope = import ./tests/agterm-sancta-scope.nix {
+            inherit pkgs self;
+          };
           # Module evaluation tests — verify all service modules evaluate
           # correctly with minimal config, and that assertions fire for
           # invalid inputs (e.g. secrets in /nix/store).

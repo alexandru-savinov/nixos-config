@@ -131,7 +131,14 @@ hosts only. Schema validation does not resolve DNS; owners must mark remote
 hostname targets with `peer = true`. This annotation is not an SSRF boundary.
 Strings are single-line; `nume` and `verifica` use the closed values above.
 `picat_dupa` is 1–12. `tinta` is a nonempty string except for `cmd`'s argv array.
-`la` and `tinta_glob` are not contract keys. No implied defaults for expectations:
+`la` and `tinta_glob` are not contract keys. Two optional labels borrow the
+Open Data Contract Standard's vocabulary and never change a verdict:
+`dimension` (what kind of promise: ODCS's `accuracy`, `completeness`,
+`conformity`, `consistency`, `coverage`, `timeliness`, `uniqueness`, plus our
+plain `availability`) and `driver` (whom it serves: ODCS's `regulatory`,
+`analytics`, `operational`, plus our `family`). Both are closed sets in both
+validators; when declared they are echoed on the per-contract run line so a
+failed promise can be read by kind and by owner. No implied defaults for expectations:
 
 | verifica | target and required expectation | optional expectation |
 |---|---|---|

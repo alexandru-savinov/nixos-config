@@ -759,6 +759,9 @@ let
               "-${configRepo}/.git/"
               "-${indexRoot}/register-history.jsonl"
               "-${indexRoot}/HARTA.md"
+              # 2026-09-26: the Jev calibration journal, argued in the module
+              # next to the grant (append-only writer, file-granular).
+              "-${indexRoot}/council/jev-journal.jsonl"
             ];
 
           # Network is REQUIRED, un-narrowed: the freshness handler curls the
@@ -1108,6 +1111,64 @@ let
       else
         builtins.throw "FAIL: sancta-choir transcript-archive wiring — failed checks: ${builtins.toJSON failed}";
 
+    # vigil watches sancta-doctrine-guard through a stamp the guard writes
+    # itself, so that watching it grants vigil NO command execution. The
+    # design only holds as a RELATION between two files (the module's stamp
+    # path and the TOML contract's tinta) plus two absences (no cmdAllow, no
+    # pre-created stamp). Each is pinned here, because each can break while
+    # every unit still evaluates and vigil still reports something.
+    sancta-doctrine-guard-choir-vigil-stamp =
+      let
+        choir = self.nixosConfigurations.sancta-choir.config;
+        guard = choir.services.sancta-doctrine-guard;
+        svc = choir.systemd.services.sancta-doctrine-guard;
+        soulRoot = toString choir.services.sancta-soul-volume.mountPoint;
+        schema = import ../modules/services/vigil-schema.nix { lib = nixpkgs.lib; };
+        contract = schema.parse ../hosts/sancta-choir/vigil-contracts/doctrine-guard.toml;
+        env = svc.serviceConfig.Environment or [ ];
+
+        checks = {
+          # The contract reads exactly the file the guard writes. A rename on
+          # either side alone would leave vigil stat-ing a path nothing writes:
+          # NECITIT forever, never picat.
+          contractReadsStamp =
+            contract.verifica == "age" && contract.tinta == guard.stampPath
+            && contract.prag == "26h" && contract.nivel == "incident";
+
+          # The stamp is written by the guard unit after EVERY run, from the
+          # guard's own StateDirectory (the only path it may write), and the
+          # script is told where through the same option.
+          stopPostWritesStamp =
+            nixpkgs.lib.hasSuffix "sancta-doctrine-guard-stamp.sh" (svc.serviceConfig.ExecStopPost or "")
+            && builtins.elem "SANCTA_DOCTRINE_STAMP=${guard.stampPath}" env
+            && nixpkgs.lib.hasPrefix "/var/lib/${svc.serviceConfig.StateDirectory or "<none>"}/" guard.stampPath
+            && (svc.serviceConfig.StateDirectoryMode or null) == "0755";
+
+          # Writing the stamp did not buy the guard any write on the soul
+          # volume: it still asserts, never repairs.
+          soulStillReadOnly =
+            (svc.serviceConfig.ReadOnlyPaths or [ ]) == [ soulRoot ]
+            && !(svc.serviceConfig ? ReadWritePaths);
+
+          # The point of the design: vigil on choir executes nothing.
+          noCommandGrant =
+            choir.services.vigil.cmdAllow == [ ]
+            && choir.systemd.services.vigil.environment.VIGIL_CMD_ALLOW == "[]";
+
+          # A pre-created stamp would read verde before the guard ever ran,
+          # i.e. fabricated success (same rule as last-channel-ok in
+          # tests/vigil-module.nix). Only a clean run may create it.
+          noFabricatedStamp =
+            builtins.all (rule: !(nixpkgs.lib.hasInfix guard.stampPath rule)) (choir.systemd.tmpfiles.rules or [ ]);
+        };
+
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir doctrine-guard vigil stamp — failed checks: ${builtins.toJSON failed}";
+
     # Negative arm 1 — the length check the mirror's own assertion cannot make.
     # services.sancta-soul-mirror asserts only that every entry LOOKS like a key
     # (`builtins.all` over a prefix test), which passes on a one-entry list and
@@ -1431,6 +1492,15 @@ let
           ];
         };
 
+    sancta-zmx-backend-alias-prefix =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        aliases = builtins.fromJSON cfg.environment.etc."agt-zmx-aliases.json".text;
+      in
+      if nixpkgs.lib.hasPrefix "sancta-" aliases.sancta.sancta
+      then true
+      else builtins.throw "FAIL: Sancta backend alias lost its resource-policy prefix";
+
     # ── claude-code-managed-settings ────────────────────────────────
     # /etc/claude-code/managed-settings.json exists specifically because a
     # running Claude Code session rewrites ~/.claude/settings.json from its
@@ -1605,7 +1675,8 @@ let
             # guard, which is the same absence-is-not-a-pass hole the guards
             # themselves are written against.
             && carries "transcript-scan-guard.mjs"
-            && carries "comanda-distructiva.mjs";
+            && carries "comanda-distructiva.mjs"
+            && carries "garda-secret-hook.mjs";
 
           hasBlockedOnPermissionPrompt =
             (rendered.hooks.Notification or [ ])
@@ -1701,6 +1772,19 @@ let
       else
         builtins.throw "FAIL: spinnerTipsEnabled did not land in home-manager.users.sancta.programs.claude-code.extraSettings (got: ${builtins.toJSON extra})";
 
+    # The Sancta backend is a `systemd-run --user` scope; with linger unset
+    # (null) there is no user manager after a clean boot and the backend cannot
+    # be created. Only an explicit `true` counts: null means "unmanaged", which
+    # silently depends on an imperative marker the host does not have.
+    sancta-choir-sancta-user-lingers =
+      let
+        linger = self.nixosConfigurations.sancta-choir.config.users.users.sancta.linger;
+      in
+      if linger == true then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir users.users.sancta.linger must be true for the persistent user-scope backend (got: ${builtins.toJSON linger})";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
@@ -1710,15 +1794,29 @@ let
   testNames = builtins.attrNames tests;
   testCount = builtins.length testNames;
   allResults = builtins.attrValues tests;
+  # Inspect the generated symlink tree in the build phase. Reading it during
+  # pure evaluation loses access to the linked package output's context.
+  sanctaPolicy = "${self.nixosConfigurations.sancta-choir.config.environment.etc."systemd/user".source}/agt-mvp-sancta-.scope.d/50-resource-policy.conf";
+  sanctaPolicyLines = [
+    "[Scope]"
+    "MemoryHigh=4G"
+    "MemoryMax=5G"
+    "MemorySwapMax=2G"
+    "OOMPolicy=continue"
+    "TimeoutStopSec=45"
+  ];
 
 in
 pkgs.runCommand "module-eval-tests"
 {
+  nativeBuildInputs = [ pkgs.gnugrep ];
   passthru = { inherit tests; };
 }
   # deepSeq ensures all test thunks are forced before the builder runs.
   (
     builtins.deepSeq allResults ''
+      ${nixpkgs.lib.concatMapStringsSep "\n" (line: "grep -Fx -- ${nixpkgs.lib.escapeShellArg line} ${nixpkgs.lib.escapeShellArg sanctaPolicy} >/dev/null") sanctaPolicyLines}
+      echo "Sancta generated backend resource policy passed"
       echo "All ${toString testCount} module evaluation tests passed:"
       ${builtins.concatStringsSep "\n" (map (name: "echo '  ✓ ${name}'") testNames)}
       echo "${toString testNames}" > $out

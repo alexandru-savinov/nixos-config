@@ -1,6 +1,8 @@
 [contract]
 nume = "rpi5-host"
 ce = "Service health"
+dimension = "availability"
+driver = "operational"
 verifica = "tcp"
 tinta = "100.106.93.87:8747"
 picat_dupa = 2
