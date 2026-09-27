@@ -169,6 +169,14 @@
     '')
   ];
 
+  # The persistent Sancta backend lives in a `systemd-run --user --scope`
+  # under user@<sancta-uid>.service. Neither `sudo -iu` nor `runuser` starts a
+  # user manager, so without lingering there is no user bus after a clean boot
+  # and the backend cannot be created. Declare it instead of relying on an
+  # imperative `loginctl enable-linger` marker (verified absent on this host).
+  # Pinned by module-eval `sancta-choir-sancta-user-lingers`.
+  users.users.sancta.linger = true;
+
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
   # which clobbers the claude agent-state hook that `herdr integration install`
   # wires into it — and a no-change `nixos-rebuild switch` re-runs HM but does

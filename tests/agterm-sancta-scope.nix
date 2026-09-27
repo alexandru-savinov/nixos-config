@@ -1,5 +1,10 @@
-{ pkgs }:
+{ pkgs, self }:
 
+let
+  # Take linger from the real host declaration instead of hard-coding it, so
+  # this VM cannot pass while sancta-choir leaves linger unmanaged (null).
+  hostLinger = self.nixosConfigurations.sancta-choir.config.users.users.sancta.linger;
+in
 pkgs.testers.runNixOSTest {
   name = "agterm-sancta-scope";
   nodes.machine = { ... }: {
@@ -8,7 +13,7 @@ pkgs.testers.runNixOSTest {
     users.users.fixture = {
       isNormalUser = true;
       uid = 1000;
-      linger = true;
+      linger = hostLinger;
     };
     system.stateVersion = "25.11";
   };

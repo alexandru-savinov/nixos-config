@@ -1710,6 +1710,19 @@ let
       else
         builtins.throw "FAIL: spinnerTipsEnabled did not land in home-manager.users.sancta.programs.claude-code.extraSettings (got: ${builtins.toJSON extra})";
 
+    # The Sancta backend is a `systemd-run --user` scope; with linger unset
+    # (null) there is no user manager after a clean boot and the backend cannot
+    # be created. Only an explicit `true` counts: null means "unmanaged", which
+    # silently depends on an imperative marker the host does not have.
+    sancta-choir-sancta-user-lingers =
+      let
+        linger = self.nixosConfigurations.sancta-choir.config.users.users.sancta.linger;
+      in
+      if linger == true then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir users.users.sancta.linger must be true for the persistent user-scope backend (got: ${builtins.toJSON linger})";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
