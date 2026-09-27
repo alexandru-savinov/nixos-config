@@ -20,11 +20,18 @@ def resolve(name):
 
 
 def attach(name):
-    name = resolve(name)
+    requested, name = name, resolve(name)
     records = host.inventory()
     record = next((record for record in records if record['name'] == name), None)
     if record is None or not record['alive']:
-        raise ValueError('recorded session is not running; preserve its record and recover explicitly')
+        # Name the resolved backend so a stale /etc alias is visible, and point
+        # at explicit recovery: this command never starts a replacement writer.
+        target = name if requested == name else f'{requested} -> {name}'
+        raise ValueError(
+            f'{target}: recorded session is not running; preserve its record and '
+            'recover explicitly (`sessions list`, `sessions resume`; see '
+            'docs/agterm-zmx-recovery.md). If the backend was renamed, update '
+            '/etc/agt-zmx-aliases.json declaratively')
     directory = Path(os.environ.get('AGT_ZMX_STATE', Path.home() / '.local/state/agt-zmx'))
     environment = host.zmx_environment(directory)
     # If the daemon disappears between discovery and attach, run only false.

@@ -138,6 +138,15 @@
 
   # Agent tooling on the system PATH so herdr panes (which inherit the
   # herdr-server unit's PATH, not a login shell's) can find + launch them.
+  #
+  # The `sancta` alias is the ONLY pointer from `sancta-session` / `sessions
+  # attach sancta` to the live backend, and it is deliberately declarative
+  # (reviewed, not runtime state). Every approved Sancta recovery creates a NEW
+  # `sancta-`-prefixed backend (docs/plans/2026-09-26-sancta-activation.md
+  # step 6); that change MUST update this value in the same change as the Mac
+  # alias, then switch. A stale value fails closed: attach refuses and names the
+  # stale backend; it never starts a writer. The prefix is pinned by module-eval
+  # `sancta-zmx-backend-alias-prefix`.
   environment.etc."agt-zmx-aliases.json".text = builtins.toJSON {
     sancta.sancta = "sancta-main-20260924";
   };
@@ -155,6 +164,16 @@
 
     # Compatibility entry point: never reconcile, stop or relaunch a writer.
     # The existing backend owns its user scope; SSH is only an attachment.
+    #
+    # This deliberately drops the pre-ownership self-heal (stop the stale scope,
+    # start a fresh sancta-reconnect): that relaunch is what let two processes
+    # resume one conversation (split brain). Consequence for deploys: switching
+    # this host before the activation runbook
+    # (docs/plans/2026-09-26-sancta-activation.md, steps 2-6) has produced the
+    # aliased backend makes this command refuse — fail closed, with the stale
+    # target named and recovery pointed to — rather than start a second writer.
+    # Recovery is explicit: `sessions list`, then `sessions resume` with the
+    # conversation's UUID (docs/agterm-zmx-recovery.md).
     (pkgs.writeShellScriptBin "sancta-session" ''
       if [ "$EUID" -ne 0 ]; then
         echo "sancta-session: run as root, or use sessions attach sancta as sancta" >&2

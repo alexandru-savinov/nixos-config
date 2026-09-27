@@ -53,6 +53,15 @@ class ProtocolTests(unittest.TestCase):
                     sessions.attach("example")
                 execute.assert_not_called()
 
+    def test_terminal_attach_refusal_names_stale_alias_target(self):
+        # A stale alias must be diagnosable, not a bare "not running".
+        with patch.object(sessions, "resolve", return_value="sancta-old"), \
+             patch.object(host, "inventory", return_value=[{"name": "sancta-new", "alive": True}]), \
+             patch.object(sessions.os, "execvpe") as execute:
+            with self.assertRaisesRegex(ValueError, r"^sancta -> sancta-old: .*not running.*agt-zmx-aliases\.json"):
+                sessions.attach("sancta")
+            execute.assert_not_called()
+
     def test_terminal_attach_preserves_routes_and_never_starts_agent(self):
         with patch.object(sessions, "resolve", return_value="example"), \
              patch.object(host, "inventory", return_value=[{"name": "example", "alive": True}]), \
