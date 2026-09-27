@@ -87,36 +87,44 @@ let
       && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints);
     # sq085: the studio n8n contract lives in its own directory, watched on
     # choir only while sancta.studio.n8n.enable is on, and shown on the rpi5
-    # Gatus dashboard under that SAME flag. Asserted on the REAL evaluated
-    # rpi5-full endpoint map, both ways: gate off (as merged) → map carries
-    # no n8n endpoint and exactly the 10 base choir endpoints; gate on (choir
-    # flipped, rpi5-full re-evaluated against that choir) → exactly one more
-    # endpoint, choir-vigil-n8n, read-only, never an alert of its own.
+    # Gatus dashboard under that SAME flag: both hosts import the shared fact
+    # module hosts/sancta-choir/studio-n8n-gate.nix (sancta.studio.n8n.onChoir)
+    # instead of rpi5-full cross-evaluating choir. Asserted on the REAL
+    # evaluated rpi5-full endpoint map, both ways: gate off (as merged) → map
+    # carries no n8n endpoint and exactly the 10 base choir endpoints; gate
+    # on (the shared fact flipped on each host) → choir enables n8n and the
+    # rpi5 map gains exactly choir-vigil-n8n, never an alert of its own.
     studio-n8n-contract =
       let
         choirBase = self.nixosConfigurations.sancta-choir;
         rpi5Base = self.nixosConfigurations.rpi5-full;
+        flip = { sancta.studio.n8n.onChoir = lib.mkForce true; };
         choirOn = choirBase.extendModules {
-          modules = [{
-            sancta.studio.n8n.enable = lib.mkForce true;
-            # Stand-in for the future secrets/n8n-encryption-key-choir.age,
-            # as in module-eval's studio-n8n-choir; nothing is decrypted.
-            age.secrets.n8n-encryption-key-choir.file = lib.mkForce "${self}/secrets/n8n-encryption-key.age";
-          }];
+          modules = [
+            flip
+            {
+              # Stand-in for the future secrets/n8n-encryption-key-choir.age,
+              # as in module-eval's studio-n8n-choir; nothing is decrypted.
+              age.secrets.n8n-encryption-key-choir.file = lib.mkForce "${self}/secrets/n8n-encryption-key.age";
+            }
+          ];
         };
-        rpi5On = rpi5Base.extendModules {
-          specialArgs.self = self // {
-            nixosConfigurations = self.nixosConfigurations // { sancta-choir = choirOn; };
-          };
-        };
+        rpi5On = rpi5Base.extendModules { modules = [ flip ]; };
+        # rpi5-full must not reach into the sibling host's evaluated config
+        # (PR #622 review): the dashboard reads only the shared fact.
+        rpi5Source = builtins.readFile ../hosts/rpi5-full/configuration.nix;
         choirNames = endpoints: builtins.filter (lib.hasPrefix "choir-vigil-") (builtins.attrNames endpoints);
         off = rpi5Base.config.services.gatus-tailscale.endpoints;
         on = rpi5On.config.services.gatus-tailscale.endpoints;
         added = lib.subtractLists (builtins.attrNames off) (builtins.attrNames on);
         contract = schema.parse ../hosts/sancta-choir/vigil-contracts-n8n/n8n.toml;
       in
+      !(lib.hasInfix "nixosConfigurations.sancta-choir" rpi5Source)
+      # one fact, both hosts: off by default on each
+      && !choirBase.config.sancta.studio.n8n.onChoir
+      && !rpi5Base.config.sancta.studio.n8n.onChoir
       # gate off: the deployed map is unchanged
-      !choirBase.config.sancta.studio.n8n.enable
+      && !choirBase.config.sancta.studio.n8n.enable
       && !(off ? choir-vigil-n8n)
       && builtins.length (choirNames off) == 10
       # gate on: the real map gains exactly the n8n endpoint and nothing else

@@ -388,8 +388,9 @@
 
   # n8n as the studio conductor (sq085 slice 1). OFF until Alexandru creates
   # secrets/n8n-encryption-key-choir.age — the steps are in ./n8n.nix.
-  # Turning this on without that file fails evaluation.
-  sancta.studio.n8n.enable = false;
+  # Turning this on without that file fails evaluation. The switch itself is
+  # the shared fact in ./studio-n8n-gate.nix, which rpi5-full reads too.
+  sancta.studio.n8n.enable = config.sancta.studio.n8n.onChoir;
 
   services.vigil = {
     enable = true;

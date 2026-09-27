@@ -21,9 +21,12 @@ let
   secret = name: config.age.secrets.${name}.path;
   openaiApiKeyPath = secret "openai-api-key";
   vigilDashboard = import ../../modules/services/vigil-gatus-endpoints.nix { inherit lib; };
-  # sancta-choir's studio-n8n gate (hosts/sancta-choir/n8n.nix), read from
-  # the choir configuration itself so the two hosts cannot disagree.
-  choirStudioN8n = self.nixosConfigurations.sancta-choir.config.sancta.studio.n8n.enable;
+  # sancta-choir's studio-n8n gate: the shared fact module
+  # hosts/sancta-choir/studio-n8n-gate.nix (imported below), which choir's
+  # own enable reads too — one flip, both hosts. Never cross-evaluate the
+  # sibling nixosConfiguration here: every rpi5-full build would then depend
+  # on choir's whole module tree evaluating.
+  choirStudioN8n = config.sancta.studio.n8n.onChoir;
 
   # Gatus endpoint helpers — reduce boilerplate across monitored services
   httpEndpoint = group: name: url: {
@@ -54,6 +57,7 @@ in
 
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
+    ../sancta-choir/studio-n8n-gate.nix # shared fact: is choir's studio n8n on (sq085)
 
     # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
     # ../../modules/system/open-webui-arm-fix.nix

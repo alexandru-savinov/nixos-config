@@ -17,7 +17,8 @@
 #   1. secrets/secrets.nix: add
 #        "n8n-encryption-key-choir.age".publicKeys = users ++ [ sancta-choir ];
 #   2. openssl rand -hex 32 | agenix -e secrets/n8n-encryption-key-choir.age
-#   3. hosts/sancta-choir/configuration.nix: sancta.studio.n8n.enable = true;
+#   3. hosts/sancta-choir/studio-n8n-gate.nix: default = true; (the one
+#      shared fact — rpi5-full's Gatus dashboard follows the same flip)
 #
 # Step 3 without step 2 fails evaluation (assertion below) instead of
 # evaluating green and failing at activation: lib/secrets.nix builds the
@@ -37,6 +38,7 @@ in
   imports = [
     ../../modules/services/n8n.nix
     ./n8n-guard.nix
+    ./studio-n8n-gate.nix
   ];
 
   options.sancta.studio.n8n.enable = lib.mkEnableOption ''
