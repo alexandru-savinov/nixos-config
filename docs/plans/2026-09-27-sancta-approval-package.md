@@ -9,6 +9,22 @@ are already applied only in the isolated artifact candidates. Applying them to
 normal configuration is a separate, post-recovery change. This avoids making an
 ordinary rebuild point at a missing backend.
 
+## Current activation status (2026-09-27)
+
+Choir now runs main `6248f534d4a29061fd01b178bb7fd3c35134d210`, generation 47,
+`/nix/store/dbh80v4j9cdq1likhdnhgv08hbdhg4h5-nixos-system-sancta-choir-25.11.20260318.fea3b36`.
+The active helper is `/nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0`.
+Darwin #29 was repinned at `8935abe` and merged into #28. All operational helper
+commands below use this active helper. The previous helper was retained only by
+a temporary GC root and must not be used as a deployment pin.
+
+The artifact table and switch commands below describe the earlier isolated
+migration candidates, not the active generation. **Do not switch back to those
+candidates.** Rebuild any future alias-migration artifact from the active main
+revision and record its exact identity before activation. Until clean recovery is
+explicitly performed, both aliases must continue to name `sancta-main-20260924`.
+Step 6 has not been performed.
+
 ## Source and artifact identity
 
 | Item | Exact identity |
@@ -22,7 +38,7 @@ ordinary rebuild point at a missing backend.
 | Mac build source | Isolated owner-preserving candidate `dfbd4eb` |
 | Host candidate | `/nix/store/fz034bfy8gz7nbgbxv8b5y24zhawyyyp-nixos-system-sancta-choir-25.11.20260318.fea3b36` |
 | Mac candidate | `/nix/store/yfrb6w4h43jvvy27nszifca5ywzw8yk6-darwin-system-26.05.06648f4` |
-| Host helper | `/nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0` |
+| Host helper | `/nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0` |
 | Mac client | `/nix/store/9akwihdjl4qxnw03gwrg31fi27xpyvcl-agterm-remote-608f4a4b` |
 | Host baseline | `/nix/store/fmdz1y946jzmci6lplh89yb7k0ak6nb0-nixos-system-sancta-choir-25.11.20260318.fea3b36` |
 | Mac baseline | `/nix/store/ch6788zax71zmncc64c51vvfz926ihy2-darwin-system-26.05.06648f4` |
@@ -113,7 +129,7 @@ readlink /run/current-system
 
 # Choir, through SSH: inventory only, no agent launch.
 ssh root@sancta-choir-1 \
-  'sudo -iu sancta /nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0/bin/sessions list'
+  'sudo -iu sancta /nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0/bin/sessions list'
 ```
 
 Reinspect writer process metadata, matching conversation identity privately,
@@ -144,7 +160,7 @@ set +x
 SANCTA_RECOVERY_ID="$(ssh -o BatchMode=yes root@sancta-choir-1 \
   'runuser -u sancta -- env HOME=/var/lib/sancta /nix/store/44rn0p64x92bnnh7cwn6x6ybvflybmvz-python3-3.13.12/bin/python3 -' <<'PY'
 import json, pathlib, sys
-sys.path.insert(0, '/nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0/libexec/agterm-zmx')
+sys.path.insert(0, '/nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0/libexec/agterm-zmx')
 import host
 record = json.loads(pathlib.Path('/var/lib/sancta/.local/state/agt-zmx/agt-mvp-sancta-main-20260924.json').read_text())
 assert record['agent'] == 'claude' and record['cwd'] == '/home/nixos'
@@ -156,7 +172,7 @@ PY
 /nix/store/9akwihdjl4qxnw03gwrg31fi27xpyvcl-agterm-remote-608f4a4b/bin/agt-zmx \
   --profile choir --open --name sancta-main-owned-20260927 --title sancta \
   --agent claude --cwd /home/nixos --resume "$SANCTA_RECOVERY_ID" --user-scope \
-  --remote-bin /nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0/bin/agt-zmx-host
+  --remote-bin /nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0/bin/agt-zmx-host
 unset SANCTA_RECOVERY_ID
 ```
 
@@ -210,7 +226,7 @@ An independent terminal can attach explicitly even if an alias/profile is wrong:
 
 ```sh
 ssh -t root@sancta-choir-1 \
-  'sudo -iu sancta /nix/store/s1ha72iq6fkphqxalxk7pm92lr0gxhz8-agterm-zmx-host-0.1.0/bin/sessions attach sancta-main-owned-20260927'
+  'sudo -iu sancta /nix/store/fqf7pygmfl9rrjhn2s1b1wng54n0j0pa-agterm-zmx-host-0.1.0/bin/sessions attach sancta-main-owned-20260927'
 ```
 
 Full profile rollback needs separate approval and the same activation-impact
