@@ -2,7 +2,12 @@
 
 Prepared on 2026-09-27 (Europe/Chisinau). **None of the activation commands below
 has been executed.** This package prepares a coordinated migration, not an
-unattended deployment. Do not activate the new aliases before their backend exists.
+unattended deployment. Do not activate the new aliases before their backend exists. Normal configuration
+keeps the old alias. The new mappings are staged in
+`docs/plans/2026-09-27-sancta-owned-alias.patch` in each repository; these patches
+are already applied only in the isolated artifact candidates. Applying them to
+normal configuration is a separate, post-recovery change. This avoids making an
+ordinary rebuild point at a missing backend.
 
 ## Source and artifact identity
 
@@ -11,7 +16,7 @@ unattended deployment. Do not activate the new aliases before their backend exis
 | Ownership PR | NixOS #618, owner head `da57de91a188002cebfc9538d931e8e43385c1db` |
 | Current parent | NixOS #612, `e7a70818b03d66be4c545e5422507680e0ae6a80` |
 | Guard | #619 is merged; the live managed registration is already present |
-| Alias proposal | NixOS #620 and Darwin #30; both remain undeployed |
+| Alias proposal | NixOS #620 and Darwin #30 carry explicit migration patches; defaults remain unchanged |
 | Mac ownership pin | Darwin #29, `f968aaa828126ade3efacdb3891385fef3dab0a0`, on #28 |
 | Host build source | Isolated combined candidate `8856b74ac63f78e5d973c1bd71dd4c5fcddc3b4c` |
 | Mac build source | Isolated owner-preserving candidate `dfbd4eb` |
@@ -247,6 +252,7 @@ owner-deleted lock files and old running launchers can bypass them. Fake-child
 inherited-FD tests do not prove real Claude descriptor retention after launcher
 SIGKILL. The secret guard is a command-pattern tripwire, not a containment boundary.
 
-Both original and new PRs remain unmerged by this work. The artifact package is
+Both original and new PRs remain unmerged by this work. The alias patches must remain unapplied to the normal configuration until the
+new backend is verified alive and the transition is approved. The artifact package is
 ready only when its relevant CI/review gates pass; production resolution requires
 the separately approved transition and acceptance above.

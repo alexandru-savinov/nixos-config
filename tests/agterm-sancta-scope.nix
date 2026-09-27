@@ -45,9 +45,11 @@ pkgs.testers.runNixOSTest {
     machine.succeed("printf %s " + shlex.quote(initial) + " > " + override + "/50-resource-policy.conf")
     machine.succeed(user + "systemctl --user daemon-reload")
     scope = "agt-mvp-sancta-reload-fixture.scope"
-    machine.succeed(user + "systemd-run --user --scope --unit=" + scope + " sleep 300 >/tmp/reload-scope.log 2>&1 &")
+    workload = shlex.quote("echo $$ > /tmp/reload.pid; exec sleep 300")
+    machine.succeed(user + "systemd-run --user --scope --unit=" + scope + " bash -c " + workload + " >/tmp/reload-scope.log 2>&1 &")
     machine.wait_until_succeeds(user + "systemctl --user is-active " + scope)
-    before = machine.succeed("pgrep -u fixture -x sleep").strip()
+    machine.wait_for_file("/tmp/reload.pid")
+    before = machine.succeed("cat /tmp/reload.pid").strip()
     assert machine.succeed(user + "systemctl --user show " + scope + " -p MemoryMax --value").strip() == "infinity"
     machine.succeed("rm " + override + "/50-resource-policy.conf")
     machine.succeed(user + "systemctl --user daemon-reload")
@@ -57,7 +59,8 @@ pkgs.testers.runNixOSTest {
     cgroup = machine.succeed(user + "systemctl --user show " + scope + " -p ControlGroup --value").strip()
     for filename, value in {"memory.high": "4294967296", "memory.max": "5368709120", "memory.swap.max": "2147483648"}.items():
         assert machine.succeed("cat /sys/fs/cgroup" + cgroup + "/" + filename).strip() == value
-    assert machine.succeed("pgrep -u fixture -x sleep").strip() == before
+    assert before in machine.succeed("cat /sys/fs/cgroup" + cgroup + "/cgroup.procs").split()
+    machine.succeed("test -d /proc/" + before)
     machine.succeed(user + "systemctl --user stop " + scope)
   '';
 }
