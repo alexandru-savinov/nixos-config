@@ -159,13 +159,15 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Resolve the pi-cache-miss label BEFORE the PR step, so a missing label
-      # can never break PR creation for the whole pipeline:
-      #   exists (created once on the repo; a read) -> use it
-      #   missing -> try to create it; on failure warn and omit the label
-      #   (the PR body still carries the cache-miss section).
-      # Adding/removing labels on its own PR works with pull-requests: write:
+      # can never break PR creation for the whole pipeline. The repo label is
+      # created once, by a maintainer (gh label create pi-cache-miss --force
+      # --color B60205); this job never creates repository labels, so it needs
+      # no issues: permission. It only reads the label list and adds/removes
+      # labels on its own PR, which pull-requests: write covers:
       # dependencies/automated have been attached this way since this workflow
       # existed, and it has never had an issues: permission.
+      #   exists  -> use it
+      #   missing -> warn and omit it (the PR body still carries the section)
       - name: Resolve pi-cache-miss label
         id: pilabel
         if: steps.changes.outputs.changed == 'true' && steps.picache.outputs.miss == 'true'
@@ -174,14 +176,11 @@ jobs:
         run: |
           if gh label list --repo "$GITHUB_REPOSITORY" --search pi-cache-miss --json name --jq '.[].name' | grep -qx pi-cache-miss; then
             echo "name=pi-cache-miss" >> "$GITHUB_OUTPUT"
-          elif gh label create pi-cache-miss --repo "$GITHUB_REPOSITORY" \
-              --color B60205 \
-              --description "Flake update would build the Raspberry Pi kernel/firmware from source (vendor cache miss)"; then
-            echo "name=pi-cache-miss" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::pi-cache-miss label missing and could not be created; opening the PR without it (the PR body still flags the miss)"
+            echo "::warning::repo label pi-cache-miss is missing (a maintainer creates it once); opening the PR without it, the PR body still flags the miss"
             echo "name=" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Create Pull Request
         if: steps.changes.outputs.changed == 'true'
         id: cpr
