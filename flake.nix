@@ -73,14 +73,38 @@
       # allowUnfree needed for open-webui (changed to "Open WebUI License" in 25.11)
       nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; config.allowUnfree = true; });
 
-      # Import unstable nixpkgs per architecture (shared across host configs)
-      pkgs-unstable-x86 = import nixpkgs-unstable {
-        system = "x86_64-linux";
+      # Import unstable nixpkgs for a system. The config is explicit rather
+      # than the host's `prev.config`: it must stay exactly what the hosts
+      # built with before pkgs.unstable existed, so the move to the overlay
+      # changed no derivation (toplevel drvPaths identical across the move).
+      importUnstable = system: import nixpkgs-unstable {
+        inherit system;
         config.allowUnfree = true;
       };
-      pkgs-unstable-aarch64 = import nixpkgs-unstable {
-        system = "aarch64-linux";
-        config.allowUnfree = true;
+
+      # One memoized import per architecture, `let`-bound here and shared by
+      # reference (host `specialArgs`-equivalent overlay + the `packages`
+      # output) — never called fresh per use site. Nix does not memoize
+      # across separate function-call sites, so without this, each host's
+      # overlay and the `packages` output would each force their own
+      # from-scratch nixpkgs-unstable evaluation (up to 3x on aarch64 alone),
+      # which is what drove evaluation memory to 98% pressure before.
+      unstablePkgsFor = forAllSystems importUnstable;
+
+      # Exposes nixos-unstable as `pkgs.unstable` in every host, so modules
+      # write `pkgs.unstable.foo` instead of taking a `pkgs-unstable`
+      # specialArg (NixCon 2026, Yifei Sun: "modules without specialArgs").
+      # An overlay and never `nixpkgs.pkgs`: setting `nixpkgs.pkgs` makes
+      # NixOS ignore `nixpkgs.overlays`, which nixos-raspberrypi relies on.
+      # Takes the pre-imported set (from `unstablePkgsFor` above) rather than
+      # importing itself, so every host sharing an architecture shares the
+      # same evaluation instead of paying for its own.
+      mkUnstableOverlay = u: {
+        nixpkgs.overlays = [
+          (final: prev: {
+            unstable = u;
+          })
+        ];
       };
 
       # Agenix CLI package module (shared across all hosts)
@@ -139,9 +163,11 @@
         nix-ld = ./modules/system/nix-ld.nix;
 
         # Development tools package set (editors, dev tools, nix tooling)
-        # Optional: Pass pkgs-unstable via specialArgs for latest github-copilot-cli
-        # Example:
-        #   specialArgs = { pkgs-unstable = import nixpkgs-unstable { system = "..."; }; };
+        # Optional: provide `pkgs.unstable` for the latest github-copilot-cli
+        # (without it the stable package is used). Example module:
+        #   { nixpkgs.overlays = [ (final: prev: {
+        #       unstable = import nixpkgs-unstable { inherit (prev.stdenv.hostPlatform) system; };
+        #     }) ]; }
         # Enable with: customModules.dev-tools.enable = true;
         dev-tools = ./modules/system/dev-tools.nix;
       };
@@ -152,7 +178,6 @@
         sancta-choir = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           specialArgs = {
-            pkgs-unstable = pkgs-unstable-x86;
             inherit self claude-code claude-shared owui-openrouter-stats;
           };
           modules = [
@@ -161,6 +186,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
+            (mkUnstableOverlay unstablePkgsFor.x86_64-linux)
           ];
         };
 
@@ -175,7 +201,6 @@
         rpi5 = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
             inherit nixos-raspberrypi self claude-code claude-shared;
-            pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [
             nixos-raspberrypi.nixosModules.raspberry-pi-5.base
@@ -184,6 +209,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
+            (mkUnstableOverlay unstablePkgsFor.aarch64-linux)
           ];
         };
 
@@ -196,7 +222,6 @@
         rpi5-full = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
             inherit nixos-raspberrypi self claude-code claude-shared;
-            pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [
             nixos-raspberrypi.nixosModules.raspberry-pi-5.base
@@ -205,6 +230,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
+            (mkUnstableOverlay unstablePkgsFor.aarch64-linux)
           ];
         };
       };
@@ -219,7 +245,7 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
-          unstable = if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64;
+          unstable = unstablePkgsFor.${system};
         in
         {
           # Default package (what runs with `nix run github:user/repo`)
@@ -300,6 +326,17 @@
           # invalid inputs (e.g. secrets in /nix/store).
           module-eval = import ./tests/module-eval.nix {
             inherit pkgs nixpkgs self;
+          };
+
+          # Installed-binary fixtures use actual evaluated assertions, loopback only.
+          gatus-native = import ./tests/gatus-native.nix {
+            inherit pkgs;
+            settings = self.nixosConfigurations.rpi5-full.config.services.gatus.settings;
+          };
+
+          gatus-gallery = import ./tests/gatus-gallery.nix {
+            inherit pkgs;
+            settings = self.nixosConfigurations.rpi5-full.config.services.gatus.settings;
           };
 
           vigil-public-contracts-rpi5 = import ./pkgs/vigil-public-contracts.nix {

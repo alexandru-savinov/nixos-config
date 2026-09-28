@@ -1,6 +1,5 @@
 { config
 , pkgs
-, pkgs-unstable
 , lib
 , self
 , ...
@@ -65,7 +64,7 @@
 
   # Enable development tools and agent CLIs.
   customModules.dev-tools.enable = true;
-  # Codex ships from `pkgs-unstable` (nixpkgs-unstable input), NOT the stable
+  # Codex ships from `pkgs.unstable` (nixpkgs-unstable input), NOT the stable
   # `pkgs` (nixos-25.11) -- the 25.11 branch caps Codex behind upstream.
   customModules.codex.enable = true;
   customModules.claudeShared = {
@@ -150,7 +149,7 @@
   # stale backend; it never starts a writer. The prefix is pinned by module-eval
   # `sancta-zmx-backend-alias-prefix`.
   environment.etc."agt-zmx-aliases.json".text = builtins.toJSON {
-    sancta.sancta = "sancta-main-owned-20260927";
+    sancta.sancta = "sancta-main-owned-20260928";
   };
 
   environment.systemPackages = [
