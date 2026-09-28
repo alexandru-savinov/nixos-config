@@ -1,6 +1,8 @@
 [contract]
 nume = "tailscaled"
 ce = "Service health"
+dimension = "availability"
+driver = "operational"
 verifica = "unit"
 tinta = "tailscaled.service"
 picat_dupa = 2

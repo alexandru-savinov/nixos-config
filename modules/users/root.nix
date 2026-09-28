@@ -1,4 +1,4 @@
-{ pkgs-unstable, ... }:
+{ pkgs, ... }:
 
 {
   # Home Manager configuration for root user
@@ -16,7 +16,7 @@
       # Use NixOS-managed copilot instead of VS Code's older bundled version
       # VS Code adds its shim to PATH first, so we override with an alias
       shellAliases = {
-        copilot = "${pkgs-unstable.github-copilot-cli}/bin/copilot";
+        copilot = "${pkgs.unstable.github-copilot-cli}/bin/copilot";
       };
     };
   };

@@ -1,6 +1,8 @@
 [contract]
 nume = "ha-alive"
 ce = "Service health"
+dimension = "availability"
+driver = "operational"
 verifica = "http"
 tinta = "http://127.0.0.1:8123/manifest.json"
 picat_dupa = 2

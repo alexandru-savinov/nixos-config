@@ -1,6 +1,8 @@
 [contract]
 nume = "choir-tick"
 ce = "Service health"
+dimension = "timeliness"
+driver = "operational"
 verifica = "http"
 tinta = "http://100.94.191.54:8747/"
 picat_dupa = 2
