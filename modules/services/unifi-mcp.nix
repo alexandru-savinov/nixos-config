@@ -104,6 +104,10 @@ let
 
   dockerImage = "ghcr.io/sirkirby/unifi-network-mcp:latest";
 
+  # The docker CLI must match the daemon the host actually runs, so take it
+  # from virtualisation.docker.package rather than hardcoding pkgs.docker.
+  dockerBin = "${config.virtualisation.docker.package}/bin/docker";
+
   portStr = toString cfg.port;
   ssePortStr = toString cfg.service.ssePort;
   httpsPortStr = toString cfg.tailscaleServe.httpsPort;
@@ -118,7 +122,7 @@ let
   # command/env/args mirror the existing `unifi-mcp-config` print command.
   mkMcpConfigBase =
     if cfg.useDocker then {
-      command = "${pkgs.docker}/bin/docker";
+      command = dockerBin;
       args = [
         "run"
         "--rm"
@@ -454,6 +458,13 @@ in
     # stdio mode uses the binary directly and never needs Docker
     virtualisation.docker.enable = mkIf (cfg.useDocker && (cfg.enable || cfg.service.enable)) true;
 
+    # nixos-25.11's final `pkgs.docker` is docker_28, which nixpkgs marks
+    # insecure (unmaintained since 2025-11) and refuses to evaluate. Default
+    # to docker_29 when this module turns Docker on; a host can still override.
+    virtualisation.docker.package = mkIf (cfg.useDocker && (cfg.enable || cfg.service.enable)) (
+      lib.mkDefault pkgs.docker_29
+    );
+
     # Generate environment file for both modes
     environment.etc."unifi-mcp/env.template".text = ''
       UNIFI_HOST=${cfg.host}
@@ -528,11 +539,11 @@ in
 
             ExecStart =
               if cfg.useDocker then
-                "${pkgs.docker}/bin/docker run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${ssePortStr}:${ssePortStr} ${dockerImage}"
+                "${dockerBin} run --rm --name unifi-mcp --env-file /run/unifi-mcp/env -p 127.0.0.1:${ssePortStr}:${ssePortStr} ${dockerImage}"
               else
                 "${cfg.package}/bin/unifi-network-mcp";
 
-            ExecStop = mkIf cfg.useDocker "${pkgs.docker}/bin/docker stop unifi-mcp";
+            ExecStop = mkIf cfg.useDocker "${dockerBin} stop unifi-mcp";
           };
         };
 
@@ -642,7 +653,7 @@ in
           {
             "mcpServers": {
               "unifi": {
-                "command": "${if cfg.useDocker then "${pkgs.docker}/bin/docker" else "unifi-network-mcp"}",
+                "command": "${if cfg.useDocker then "${dockerBin}" else "unifi-network-mcp"}",
                 ${if cfg.useDocker then ''
                 "args": [
                   "run", "--rm", "-i",

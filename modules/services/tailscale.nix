@@ -65,7 +65,9 @@ in
       # increment memory.events' oom_kill, so it never trips this OOMPolicy.
       # Note this is NOT a claim that OOMPolicy can never fire: a kernel or
       # cgroup-local OOM kill still increments the counter, which is exactly
-      # why the per-session scope carries its own OOMPolicy=continue.
+      # why choir's Sancta zmx backend user scopes have OOMPolicy=continue
+      # and memory ceilings in the host's agt-mvp-sancta-.scope.d drop-in.
+      # SSH attachments are clients, not the persistent agent process tree.
       services.tailscaled.serviceConfig = {
         OOMPolicy = "continue";
         Restart = "always";

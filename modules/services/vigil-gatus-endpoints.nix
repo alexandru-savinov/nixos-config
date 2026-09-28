@@ -12,6 +12,7 @@ let
     choir-host = "Choir reachable";
     choir-tick = "Choir monitoring freshness";
     disk-root = "Root disk capacity";
+    doctrine-guard = "Doctrine guard last run";
     galeria = "Gallery HTTP";
     ha-alive = "Home Assistant local HTTP";
     ha-served = "Home Assistant tailnet HTTP";

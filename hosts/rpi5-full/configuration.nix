@@ -21,6 +21,12 @@ let
   secret = name: config.age.secrets.${name}.path;
   openaiApiKeyPath = secret "openai-api-key";
   vigilDashboard = import ../../modules/services/vigil-gatus-endpoints.nix { inherit lib; };
+  # sancta-choir's studio-n8n gate: the shared fact module
+  # hosts/sancta-choir/studio-n8n-gate.nix (imported below), which choir's
+  # own enable reads too — one flip, both hosts. Never cross-evaluate the
+  # sibling nixosConfiguration here: every rpi5-full build would then depend
+  # on choir's whole module tree evaluating.
+  choirStudioN8n = config.sancta.studio.n8n.onChoir;
 
   # Gatus endpoint helpers — reduce boilerplate across monitored services
   httpEndpoint = group: name: url: {
@@ -51,6 +57,7 @@ in
 
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
+    ../sancta-choir/studio-n8n-gate.nix # shared fact: is choir's studio n8n on (sq085)
 
     # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
     # ../../modules/system/open-webui-arm-fix.nix
@@ -126,9 +133,14 @@ in
     })
   ];
 
+  # User scopes keep remote backends alive when a Tailscale SSH session ends.
+  users.users.nixos.linger = true;
+
   # Locally-packaged tools available on this host. Ralphex orchestrates
   # Claude Code agents through multi-step plan files; lives in pkgs/ralphex.nix.
+
   environment.systemPackages = [
+    self.packages.${pkgs.system}.agterm-zmx-host
     self.packages.${pkgs.system}.ralphex
     # hass-cli — CLI agent-control level for Home Assistant
     pkgs.home-assistant-cli
@@ -357,6 +369,13 @@ in
       group = "choir";
       address = "100.94.191.54";
       directory = ../sancta-choir/vigil-contracts;
+    }) // lib.optionalAttrs choirStudioN8n (vigilDashboard {
+      # sq085: choir's vigil watches this contract only while the studio
+      # n8n exists there, so the dashboard reads it under the SAME flag —
+      # choir's own option, not a copy of it. Gate off = map unchanged.
+      group = "choir";
+      address = "100.94.191.54";
+      directory = ../sancta-choir/vigil-contracts-n8n;
     }) // {
       rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://${config.services.vigil.listenAddress}:${toString config.services.vigil.tickPort}/status") // {
         conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];
