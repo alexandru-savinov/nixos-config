@@ -26,6 +26,10 @@
 #      404 from every vendor substituter counts as a miss; any other answer
 #      (timeout, 5xx) marks the check incomplete, never a miss.
 #   4. Flags the candidates that are confirmed misses.
+#   5. Name-drift guard: the toplevel's derivation closure (nix-store -qR on
+#      the nixos-system-*.drv; independent of what the local store holds)
+#      must contain a kernel and a raspberrypi-firmware derivation matching
+#      the sentinels, else the result is "incomplete", never ✓.
 #
 # Usage:
 #   scripts/pi-cache-miss.sh [--flake REF] [--markdown FILE] [--github-output FILE]
@@ -84,7 +88,15 @@ FLAG_RE='^(linux[_-]rpi[^ ]*|linux-config-[0-9][^ ]*|raspberrypi(-wireless)?-fir
 # in any cache — matching the patterns above but not worth a flag.
 SKIP_RE='(-modules|-modules-shrunk|-zstd|\.sh|\.conf)$|^initrd-'
 
+# Name-drift sentinels. Every Pi system closure contains a kernel and the boot
+# firmware. If the toplevel's derivation closure has no derivation matching
+# these, upstream renamed them and FLAG_RE can no longer see a miss: the
+# result is "incomplete", never a clean ✓.
+KERNEL_SENTINEL_RE='^linux[_-]rpi[^ ]*-[0-9][^ ]*$'
+FIRMWARE_SENTINEL_RE='^raspberrypi-firmware-[0-9][^ ]*$'
+
 drv_name() { basename "$1" .drv | cut -d- -f2-; }
+nixstorew() { "${WRAP[@]}" nix-store "$@"; }
 
 any_flagged=false
 check_failed=false
@@ -142,6 +154,32 @@ for host in "${HOSTS[@]}"; do
   fi
 
   count=$nix_count
+  incomplete=""
+
+  # Name-drift guard. Checked on the toplevel's DERIVATION closure, not on the
+  # will-be-built / will-be-fetched lists: a kernel already valid in the local
+  # store appears in neither list, but its .drv is always in the closure, so
+  # this does not depend on what the local store holds.
+  #  - nothing to build        -> nothing can be built from source: a true ✓
+  #  - otherwise the toplevel nixos-system-*.drv is in the built list; its
+  #    closure must contain a kernel and a firmware derivation matching the
+  #    sentinels, else the result is incomplete.
+  if [ "$nix_count" -gt 0 ]; then
+    top=$(grep -E '^/nix/store/[a-z0-9]{32}-nixos-system-[^/]*\.drv$' "$WORK/$host.built.raw" | head -n 1 || true)
+    if [ -z "$top" ]; then
+      incomplete="no nixos-system-*.drv in the will-be-built list, so the kernel/firmware name check could not run"
+    elif ! nixstorew --query --requisites "$top" >"$WORK/$host.closure" 2>"$WORK/$host.closure.err"; then
+      tail -n 20 "$WORK/$host.closure.err" >&2
+      incomplete="could not read the derivation closure of $(basename "$top")"
+    else
+      closure_names=$(grep '\.drv$' "$WORK/$host.closure" | while read -r p; do drv_name "$p"; done)
+      if ! grep -Eq "$KERNEL_SENTINEL_RE" <<<"$closure_names"; then
+        incomplete="no kernel derivation matching \`$KERNEL_SENTINEL_RE\` in the system closure (renamed upstream? update FLAG_RE)"
+      elif ! grep -Eq "$FIRMWARE_SENTINEL_RE" <<<"$closure_names"; then
+        incomplete="no firmware derivation matching \`$FIRMWARE_SENTINEL_RE\` in the system closure (renamed upstream? update FLAG_RE)"
+      fi
+    fi
+  fi
 
   # Kernel/firmware candidates: only these are probed (a handful of paths,
   # not the whole will-be-built closure).
@@ -216,6 +254,10 @@ for host in "${HOSTS[@]}"; do
 
   if [ "$probe_unknown" -gt 0 ]; then
     echo "::warning::pi-cache-miss: $probe_unknown candidate(s) for $host got no definitive answer from the vendor cache" >&2
+    incomplete="${incomplete:+$incomplete; }vendor cache did not answer definitively for $probe_unknown candidate(s)"
+  fi
+  if [ -n "$incomplete" ]; then
+    echo "::warning::pi-cache-miss: $host check incomplete: $incomplete" >&2
     check_failed=true
   fi
 
@@ -223,8 +265,8 @@ for host in "${HOSTS[@]}"; do
   if [ "$probed_hits" -gt 0 ]; then
     note=" (upper bound: $probed_hits kernel/firmware derivation(s) Nix counted were found on the vendor cache by direct probe; the nix-daemon did not consult it)"
   fi
-  if [ "$probe_unknown" -gt 0 ]; then
-    note+=" — ⚠ $probe_unknown kernel/firmware candidate(s) could not be probed: check incomplete"
+  if [ -n "$incomplete" ]; then
+    note+=" — ⚠ check incomplete: $incomplete"
   fi
   echo "$host: will-be-built=$count flagged=$nflag$note" >&2
   summary_lines+="$host: will-be-built=$count flagged=$nflag"$'\n'
@@ -236,8 +278,8 @@ for host in "${HOSTS[@]}"; do
     md_body+='```'$'\n'
     while read -r d; do md_body+="$(basename "$d")"$'\n'; done <"$WORK/$host.flagged"
     md_body+='```'$'\n'
-  elif [ "$probe_unknown" -gt 0 ]; then
-    md_body+=$'\n'"#### \`$host\` — ⚠ check incomplete (vendor cache did not answer definitively)"$'\n\n'
+  elif [ -n "$incomplete" ]; then
+    md_body+=$'\n'"#### \`$host\` — ⚠ check incomplete"$'\n\n'
     md_body+="Total will-be-built: **$count**$note"$'\n'
   else
     md_body+=$'\n'"#### \`$host\` — ✓ Pi kernel/firmware substitutable"$'\n\n'
