@@ -1,9 +1,9 @@
-{ config, pkgs, pkgs-unstable ? pkgs, lib, ... }:
+{ config, pkgs, lib, ... }:
 
 {
   # Development tools package set
-  # IMPORTANT: For latest github-copilot-cli, pass pkgs-unstable via specialArgs:
-  #   pkgs-unstable = import nixpkgs-unstable { system = "..."; };
+  # IMPORTANT: For latest github-copilot-cli, provide `pkgs.unstable` through
+  # an overlay (this flake's hosts get it from unstableOverlayModule).
   # Otherwise, the stable version will be used.
 
   options.customModules.dev-tools = {
@@ -34,7 +34,7 @@
       # Development tools
       nodejs_22
       gh
-      pkgs-unstable.github-copilot-cli # Use unstable for latest features
+      (pkgs.unstable or pkgs).github-copilot-cli # Use unstable for latest features
 
       # Nix development tools
       nixpkgs-fmt
