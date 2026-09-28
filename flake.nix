@@ -82,15 +82,27 @@
         config.allowUnfree = true;
       };
 
+      # One memoized import per architecture, `let`-bound here and shared by
+      # reference (host `specialArgs`-equivalent overlay + the `packages`
+      # output) — never called fresh per use site. Nix does not memoize
+      # across separate function-call sites, so without this, each host's
+      # overlay and the `packages` output would each force their own
+      # from-scratch nixpkgs-unstable evaluation (up to 3x on aarch64 alone),
+      # which is what drove evaluation memory to 98% pressure before.
+      unstablePkgsFor = forAllSystems importUnstable;
+
       # Exposes nixos-unstable as `pkgs.unstable` in every host, so modules
       # write `pkgs.unstable.foo` instead of taking a `pkgs-unstable`
       # specialArg (NixCon 2026, Yifei Sun: "modules without specialArgs").
       # An overlay and never `nixpkgs.pkgs`: setting `nixpkgs.pkgs` makes
       # NixOS ignore `nixpkgs.overlays`, which nixos-raspberrypi relies on.
-      unstableOverlayModule = {
+      # Takes the pre-imported set (from `unstablePkgsFor` above) rather than
+      # importing itself, so every host sharing an architecture shares the
+      # same evaluation instead of paying for its own.
+      mkUnstableOverlay = u: {
         nixpkgs.overlays = [
           (final: prev: {
-            unstable = importUnstable prev.stdenv.hostPlatform.system;
+            unstable = u;
           })
         ];
       };
@@ -174,7 +186,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
-            unstableOverlayModule
+            (mkUnstableOverlay unstablePkgsFor.x86_64-linux)
           ];
         };
 
@@ -197,7 +209,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
-            unstableOverlayModule
+            (mkUnstableOverlay unstablePkgsFor.aarch64-linux)
           ];
         };
 
@@ -218,7 +230,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
-            unstableOverlayModule
+            (mkUnstableOverlay unstablePkgsFor.aarch64-linux)
           ];
         };
       };
@@ -233,7 +245,7 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
-          unstable = importUnstable system;
+          unstable = unstablePkgsFor.${system};
         in
         {
           # Default package (what runs with `nix run github:user/repo`)
