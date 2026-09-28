@@ -59,6 +59,7 @@
     ../../modules/services/sancta-transcript-archive.nix # closed transcripts → encrypted objects rpi5 already pulls
     ../../modules/services/sancta-archive-deadman.nix # the one archive watcher that does NOT need the soul mount
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
+    ./n8n.nix # studio conductor (sq085); the walls in ./n8n-guard.nix hold even while it is off
   ];
 
   # Enable development tools and agent CLIs.
@@ -148,7 +149,7 @@
   # stale backend; it never starts a writer. The prefix is pinned by module-eval
   # `sancta-zmx-backend-alias-prefix`.
   environment.etc."agt-zmx-aliases.json".text = builtins.toJSON {
-    sancta.sancta = "sancta-main-20260924";
+    sancta.sancta = "sancta-main-owned-20260927";
   };
 
   environment.systemPackages = [
@@ -385,6 +386,12 @@
   # heartbeat's embedded ts goes stale. The red unit IS the alarm.
   services.sancta-archive-deadman.enable = true;
 
+  # n8n as the studio conductor (sq085 slice 1). OFF until Alexandru creates
+  # secrets/n8n-encryption-key-choir.age — the steps are in ./n8n.nix.
+  # Turning this on without that file fails evaluation. The switch itself is
+  # the shared fact in ./studio-n8n-gate.nix, which rpi5-full reads too.
+  sancta.studio.n8n.enable = config.sancta.studio.n8n.onChoir;
+
   services.vigil = {
     enable = true;
     contractsDirs = [ ./vigil-contracts ];
@@ -393,7 +400,9 @@
     # mtime = now after a clean run, epoch + 1s after any other outcome, so a
     # failed run reads picat on the next tick and a guard that stops running
     # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
-    expectedContracts = 10;
+    # +1 for vigil-contracts-n8n/n8n.toml, which ./n8n.nix adds to
+    # contractsDirs only while the studio n8n exists.
+    expectedContracts = 10 + (if config.sancta.studio.n8n.enable then 1 else 0);
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };
