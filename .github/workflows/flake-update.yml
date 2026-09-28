@@ -19,6 +19,11 @@ permissions:
   pull-requests: write
   # Needed to dispatch check.yml on the PR branch (see the last step).
   actions: write
+  # List labels for a repository (GET /repos/{owner}/{repo}/labels) sits under
+  # the Issues API and needs issues: read even for a read-only, repo-wide
+  # lookup; pull-requests: write only covers labels already attached to a
+  # PR/issue. Read-only — this job still never creates or deletes labels.
+  issues: read
 
 jobs:
   update-flake:
@@ -161,11 +166,10 @@ jobs:
       # Resolve the pi-cache-miss label BEFORE the PR step, so a missing label
       # can never break PR creation for the whole pipeline. The repo label is
       # created once, by a maintainer (gh label create pi-cache-miss --force
-      # --color B60205); this job never creates repository labels, so it needs
-      # no issues: permission. It only reads the label list and adds/removes
-      # labels on its own PR, which pull-requests: write covers:
-      # dependencies/automated have been attached this way since this workflow
-      # existed, and it has never had an issues: permission.
+      # --color B60205); this job never creates or deletes repository labels,
+      # so it needs only issues: read (for the repo-wide label list below) —
+      # never issues: write. Adding a label to its own PR is still covered by
+      # pull-requests: write, same as dependencies/automated always have been.
       #   exists  -> use it
       #   missing -> warn and omit it (the PR body still carries the section)
       - name: Resolve pi-cache-miss label
