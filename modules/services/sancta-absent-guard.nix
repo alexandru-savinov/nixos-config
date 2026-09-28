@@ -92,6 +92,14 @@ let
   soulRoot = toString config.services.sancta-soul-volume.mountPoint;
   indexRoot = "${soulRoot}/index";
 
+  # `lib.hasPrefix "${soulRoot}/"` alone is a string test, not a containment
+  # proof: "${soulRoot}/../../usr/bin/anything" starts with that prefix too,
+  # while the path it actually names walks straight back out of the mount
+  # (PR #614 review). No `..` path SEGMENT anywhere in the value closes that
+  # — checked on splitString "/" rather than hasInfix "/../", so it also
+  # catches a leading "../" and a bare trailing "/..".
+  noTraversal = s: !(builtins.elem ".." (lib.splitString "/" s));
+
   cu = "${pkgs.coreutils}/bin";
 
   # THE SCHEDULING SLACK, single-sourced (PR #614 review, 2026-09-28). A beat
@@ -284,8 +292,10 @@ in
         # the exact silence this module exists to end.
         assertion =
           lib.hasPrefix "${soulRoot}/" cfg.guardScript
-          && lib.hasPrefix "${soulRoot}/" cfg.producersTable;
-        message = "services.sancta-absent-guard.guardScript (${cfg.guardScript}) and .producersTable (${cfg.producersTable}) must live under the soul mount (${soulRoot}) — this unit is gated on that mount, so inputs outside it would never be read and the unit would be skipped in silence.";
+          && lib.hasPrefix "${soulRoot}/" cfg.producersTable
+          && noTraversal cfg.guardScript
+          && noTraversal cfg.producersTable;
+        message = "services.sancta-absent-guard.guardScript (${cfg.guardScript}) and .producersTable (${cfg.producersTable}) must live under the soul mount (${soulRoot}), with no '..' path segment — this unit is gated on that mount, so inputs outside it would never be read and the unit would be skipped in silence; a '..' segment would pass the prefix test while resolving straight back out.";
       }
     ];
 

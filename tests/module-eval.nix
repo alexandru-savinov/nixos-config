@@ -1519,6 +1519,23 @@ let
         env = svc.serviceConfig.Environment or [ ];
         execStart = toString (svc.serviceConfig.ExecStart or "");
 
+        # The scheduling slack, read back off THIS unit's rendered timer/service
+        # (mirrors the archive-deadman block above, but against sancta-absent-
+        # guard's own svc/timer — "<n>s" is the only form the module writes;
+        # anything else parses to null and fails slackSingleSourced below
+        # rather than being guessed at).
+        spanSec =
+          v:
+          let
+            m = builtins.match "([0-9]+)s" (toString v);
+          in
+          if m == null then null else nixpkgs.lib.toInt (builtins.head m);
+        rdSec = spanSec (timer.timerConfig.RandomizedDelaySec or "");
+        accSec = spanSec (timer.timerConfig.AccuracySec or "");
+        toSec = spanSec (svc.serviceConfig.TimeoutStartSec or "");
+        slackKnown = rdSec != null && accSec != null && toSec != null;
+        slack = if slackKnown then rdSec + accSec + toSec else 0;
+
         # NOTE: unlike the archive-deadman block above, this one does NOT
         # readFile the ExecStart script. That one can, because its ExecStart is
         # a bare store path; here it is "<store script> <off-store guard>", and
@@ -1641,6 +1658,35 @@ let
               services.sancta-absent-guard = {
                 enable = true;
                 guardScript = "/var/lib/sancta/elsewhere/bin/absent-guard";
+              };
+              users.users.sancta = {
+                isSystemUser = true;
+                group = "sancta";
+              };
+              users.groups.sancta = { };
+            }
+          ];
+        };
+
+    # A string-prefix test alone passes this: "${soulMount}/../../usr/bin/x"
+    # starts with the required prefix even though it resolves straight back
+    # out of the mount (PR #614 review). The assertion's noTraversal check is
+    # what this pins — remove it and this arm goes from shouldFail to
+    # shouldEval.
+    sancta-absent-guard-traversal-rejected =
+      shouldFail "absent-guard: rejects a '..' path segment even under the prefix"
+        {
+          modules = [
+            ../hosts/sancta-choir/soul-volume.nix
+            ../modules/services/sancta-absent-guard.nix
+            {
+              services.sancta-soul-volume = {
+                enable = true;
+                keyFile = "/run/agenix/soul-volume-key";
+              };
+              services.sancta-absent-guard = {
+                enable = true;
+                guardScript = "/var/lib/sancta/.claude/../../usr/bin/absent-guard";
               };
               users.users.sancta = {
                 isSystemUser = true;
