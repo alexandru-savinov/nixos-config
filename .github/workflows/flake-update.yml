@@ -2,7 +2,7 @@ name: Flake Update
 
 on:
   schedule:
-    # Nightly at 02:00 UTC — nixpkgs only (security patches)
+    # Nightly at 02:00 UTC — nixpkgs only (security patches), via PR
     - cron: "0 2 * * *"
     # Weekly on Monday at 09:00 UTC
     - cron: "0 9 * * 1"
@@ -17,6 +17,13 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Needed to dispatch check.yml on the PR branch (see the last step).
+  actions: write
+  # List labels for a repository (GET /repos/{owner}/{repo}/labels) sits under
+  # the Issues API and needs issues: read even for a read-only, repo-wide
+  # lookup; pull-requests: write only covers labels already attached to a
+  # PR/issue. Read-only — this job still never creates or deletes labels.
+  issues: read
 
 jobs:
   update-flake:
@@ -47,7 +54,7 @@ jobs:
 
       - name: Get current flake.lock hash
         id: before
-        run: echo "hash=$(sha256sum flake.lock | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+        run: echo "hash=$(sha256sum flake.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Determine update scope
         id: scope
@@ -56,14 +63,12 @@ jobs:
           UPDATE_ALL: ${{ inputs.update_all }}
         run: |
           if [ "$EVENT_SCHEDULE" = "0 2 * * *" ]; then
-            echo "nightly=true" >> $GITHUB_OUTPUT
-            echo "mode=nightly" >> $GITHUB_OUTPUT
+            echo "mode=nightly" >> "$GITHUB_OUTPUT"
           else
-            echo "nightly=false" >> $GITHUB_OUTPUT
             if [ "$UPDATE_ALL" = "false" ]; then
-              echo "mode=nixpkgs-only" >> $GITHUB_OUTPUT
+              echo "mode=nixpkgs-only" >> "$GITHUB_OUTPUT"
             else
-              echo "mode=full" >> $GITHUB_OUTPUT
+              echo "mode=full" >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -81,15 +86,15 @@ jobs:
 
       - name: Get updated flake.lock hash
         id: after
-        run: echo "hash=$(sha256sum flake.lock | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+        run: echo "hash=$(sha256sum flake.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Check for changes
         id: changes
         run: |
           if [ "${{ steps.before.outputs.hash }}" != "${{ steps.after.outputs.hash }}" ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Verify configurations still evaluate
@@ -102,19 +107,35 @@ jobs:
           nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel.drvPath
           nix eval .#nixosConfigurations.rpi5-full.config.system.build.toplevel.drvPath
 
-      # Nightly: commit directly to main (security patches, already validated above)
-      - name: Push directly to main
-        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'true'
+      # Raspberry Pi cache-miss check. FLAGS, never fails, when the updated
+      # lock would make the Pi build its kernel/firmware from source because
+      # the vendor cache (nixos-raspberrypi.cachix.org) does not hold them.
+      # Dry-run only: nothing is built or downloaded. Runs in every mode: a
+      # nixpkgs-only bump does not change the Pi kernel hash (#182), but the
+      # vendor cache can evict the pinned kernel at any time, and every mode
+      # now opens a PR where the flag is visible.
+      - name: Pi cache-miss check (kernel/firmware substitutable?)
+        if: steps.changes.outputs.changed == 'true'
+        id: picache
+        continue-on-error: true
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add flake.lock
-          git commit -m "chore(deps): nightly nixpkgs security update"
-          git push origin main
+          set +e
+          md="$RUNNER_TEMP/pi-cache.md"
+          bash scripts/pi-cache-miss.sh --markdown "$md" --github-output "$GITHUB_OUTPUT" rpi5 rpi5-full
+          rc=$?
+          if [ ! -s "$md" ]; then
+            printf '### Raspberry Pi cache check\n\n⚠ **Pi cache check did not run** (exit %s). See the workflow log. Absence of a flag here is NOT a green.\n' "$rc" > "$md"
+          fi
+          cat "$md" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
 
-      # Weekly/manual: create a PR for manual review
+      # Every mode (nightly, weekly, manual) opens or updates a PR. Nothing in
+      # this workflow pushes to main; main moves only by a merged PR. CI on
+      # these PRs is started explicitly by the last step (GITHUB_TOKEN-created
+      # PRs do not trigger it). Nightly and manual nixpkgs-only share one
+      # branch, so a pending nixpkgs bump is updated in place, not stacked.
       - name: Generate update summary
-        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'false'
+        if: steps.changes.outputs.changed == 'true'
         id: summary
         run: |
           {
@@ -131,16 +152,47 @@ jobs:
             echo "- [ ] CI builds pass"
             echo "- [ ] No breaking changes in upstream changelogs"
             echo "- [ ] Test deployment if concerned"
+            echo ""
+            if [ -s "$RUNNER_TEMP/pi-cache.md" ]; then
+              cat "$RUNNER_TEMP/pi-cache.md"
+            else
+              echo "### Raspberry Pi cache check"
+              echo ""
+              echo "⚠ **Pi cache check did not run**. See the workflow log."
+            fi
             echo EOF
-          } >> $GITHUB_OUTPUT
+          } >> "$GITHUB_OUTPUT"
+
+      # Resolve the pi-cache-miss label BEFORE the PR step, so a missing label
+      # can never break PR creation for the whole pipeline. The repo label is
+      # created once, by a maintainer (gh label create pi-cache-miss --force
+      # --color B60205); this job never creates or deletes repository labels,
+      # so it needs only issues: read (for the repo-wide label list below) —
+      # never issues: write. Adding a label to its own PR is still covered by
+      # pull-requests: write, same as dependencies/automated always have been.
+      #   exists  -> use it
+      #   missing -> warn and omit it (the PR body still carries the section)
+      - name: Resolve pi-cache-miss label
+        id: pilabel
+        if: steps.changes.outputs.changed == 'true' && steps.picache.outputs.miss == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh label list --repo "$GITHUB_REPOSITORY" --search pi-cache-miss --json name --jq '.[].name' | grep -qx pi-cache-miss; then
+            echo "name=pi-cache-miss" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::repo label pi-cache-miss is missing (a maintainer creates it once); opening the PR without it, the PR body still flags the miss"
+            echo "name=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create Pull Request
-        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'false'
+        if: steps.changes.outputs.changed == 'true'
+        id: cpr
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore(deps): update flake inputs"
-          title: "chore(deps): Update Nix flake inputs"
+          commit-message: "${{ steps.scope.outputs.mode == 'full' && 'chore(deps): update flake inputs' || 'chore(deps): update nixpkgs inputs' }}"
+          title: "${{ steps.scope.outputs.mode == 'full' && 'chore(deps): Update Nix flake inputs' || 'chore(deps): Update nixpkgs inputs' }}"
           body: |
             ${{ steps.summary.outputs.summary }}
 
@@ -151,3 +203,30 @@ jobs:
           labels: |
             dependencies
             automated
+            ${{ steps.pilabel.outputs.name }}
+
+      # PR branches are reused: drop a stale flag once the miss is gone. Only on
+      # a COMPLETE clean result: an incomplete check (failed=true) keeps a
+      # previously confirmed miss visible.
+      - name: Clear stale pi-cache-miss label
+        if: steps.cpr.outputs.pull-request-number != '' && steps.picache.outputs.miss == 'false' && steps.picache.outputs.failed == 'false'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        run: |
+          if gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx pi-cache-miss; then
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label pi-cache-miss
+          fi
+
+      # A PR created or updated with GITHUB_TOKEN does not trigger
+      # pull_request workflows (GitHub blocks recursive runs), so check.yml
+      # would never report on this PR by itself. workflow_dispatch is exempt
+      # from that rule: dispatch check.yml on the PR branch so its required
+      # checks run on the PR's head commit.
+      - name: Run CI on the PR branch
+        if: steps.cpr.outputs.pull-request-operation == 'created' || steps.cpr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.scope.outputs.mode == 'full' && 'chore/update-flake-lock-weekly' || 'chore/update-flake-lock' }}
+        run: gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"

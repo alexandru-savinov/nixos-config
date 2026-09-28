@@ -148,7 +148,7 @@
   # stale backend; it never starts a writer. The prefix is pinned by module-eval
   # `sancta-zmx-backend-alias-prefix`.
   environment.etc."agt-zmx-aliases.json".text = builtins.toJSON {
-    sancta.sancta = "sancta-main-20260924";
+    sancta.sancta = "sancta-main-owned-20260928";
   };
 
   environment.systemPackages = [
