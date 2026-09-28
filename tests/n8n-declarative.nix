@@ -11,6 +11,10 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, ... }: {
     imports = [ ../modules/services/n8n.nix ];
 
+    # The server and workflow-import CLI run together. The default 1 GiB
+    # guest exhausts memory during import and panics before assertions run.
+    virtualisation.memorySize = 4096;
+
     # The n8n module takes `self` as a module argument (this nixpkgs'
     # makeTest has no node.specialArgs, so inject via _module.args).
     _module.args.self = self;

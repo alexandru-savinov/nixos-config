@@ -21,6 +21,12 @@ let
   secret = name: config.age.secrets.${name}.path;
   openaiApiKeyPath = secret "openai-api-key";
   vigilDashboard = import ../../modules/services/vigil-gatus-endpoints.nix { inherit lib; };
+  # sancta-choir's studio-n8n gate: the shared fact module
+  # hosts/sancta-choir/studio-n8n-gate.nix (imported below), which choir's
+  # own enable reads too — one flip, both hosts. Never cross-evaluate the
+  # sibling nixosConfiguration here: every rpi5-full build would then depend
+  # on choir's whole module tree evaluating.
+  choirStudioN8n = config.sancta.studio.n8n.onChoir;
 
   # Gatus endpoint helpers — reduce boilerplate across monitored services
   httpEndpoint = group: name: url: {
@@ -28,6 +34,14 @@ let
     interval = "1m";
     conditions = [ "[STATUS] == 200" ];
   };
+
+  # Native body checks keep failure values out of Gatus history. Vigil's
+  # allowlisted diagnostic rows continue to resolve their safe fixed text.
+  nativeHttpEndpoint = group: name: url: conditions:
+    (httpEndpoint group name url) // {
+      conditions = [ "[STATUS] == 200" ] ++ conditions;
+      ui.dont-resolve-failed-conditions = true;
+    };
 
   remoteHttpEndpoint = group: name: url: {
     inherit name group url;
@@ -51,6 +65,7 @@ in
 
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
+    ../sancta-choir/studio-n8n-gate.nix # shared fact: is choir's studio n8n on (sq085)
 
     # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
     # ../../modules/system/open-webui-arm-fix.nix
@@ -126,9 +141,14 @@ in
     })
   ];
 
+  # User scopes keep remote backends alive when a Tailscale SSH session ends.
+  users.users.nixos.linger = true;
+
   # Locally-packaged tools available on this host. Ralphex orchestrates
   # Claude Code agents through multi-step plan files; lives in pkgs/ralphex.nix.
+
   environment.systemPackages = [
+    self.packages.${pkgs.system}.agterm-zmx-host
     self.packages.${pkgs.system}.ralphex
     # hass-cli — CLI agent-control level for Home Assistant
     pkgs.home-assistant-cli
@@ -172,6 +192,20 @@ in
       # run as root.
       home-assistant-token = secret "home-assistant-token";
       ha-vigil-token = ownedSecret "vigil" "ha-vigil-token";
+      vigil-rpi5-contract-1 = {
+        file = "${self}/secrets/vigil-rpi5-contract-1.age";
+        owner = "vigil";
+        group = "vigil";
+        path = "/run/vigil-contracts/contract-1.toml";
+        symlink = false;
+      };
+      vigil-rpi5-contract-2 = {
+        file = "${self}/secrets/vigil-rpi5-contract-2.age";
+        owner = "vigil";
+        group = "vigil";
+        path = "/run/vigil-contracts/contract-2.toml";
+        symlink = false;
+      };
 
       # Backup pull secrets
       rpi5-backup-ssh-key = {
@@ -207,8 +241,9 @@ in
 
   services.vigil = {
     enable = true;
-    contractsDirs = [ ./vigil-contracts ];
+    contractsDirs = [ ./vigil-contracts "/run/vigil-contracts" ];
     expectedContracts = 7;
+    expectedRuntimeContracts = 2;
     telegramEnvFile = secret "backup-telegram-env";
     hassTokenFile = secret "ha-vigil-token";
     hassUrl = "http://127.0.0.1:8123";
@@ -342,6 +377,13 @@ in
       group = "choir";
       address = "100.94.191.54";
       directory = ../sancta-choir/vigil-contracts;
+    }) // lib.optionalAttrs choirStudioN8n (vigilDashboard {
+      # sq085: choir's vigil watches this contract only while the studio
+      # n8n exists there, so the dashboard reads it under the SAME flag —
+      # choir's own option, not a copy of it. Gate off = map unchanged.
+      group = "choir";
+      address = "100.94.191.54";
+      directory = ../sancta-choir/vigil-contracts-n8n;
     }) // {
       rpi5-vigil = (httpEndpoint "rpi5" "Vigil" "http://${config.services.vigil.listenAddress}:${toString config.services.vigil.tickPort}/status") // {
         conditions = [ "[STATUS] == 200" "[BODY].stare == verde" ];
@@ -351,14 +393,25 @@ in
       };
       # rpi5 local services (this host)
       # rpi5-open-webui = httpEndpoint "rpi5" "Open-WebUI" "http://127.0.0.1:8080/health";
-      rpi5-n8n = httpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz";
-      rpi5-anki-workflow = httpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui";
-      rpi5-nixframe = httpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui";
+      rpi5-n8n = nativeHttpEndpoint "rpi5" "n8n" "http://127.0.0.1:5678/healthz" [ "[BODY].status == ok" ];
+      rpi5-n8n-readiness = nativeHttpEndpoint "rpi5" "n8n readiness" "http://127.0.0.1:5678/healthz/readiness" [ "[BODY].status == ok" ];
+      # UI availability only: these GETs do not execute an upload or generation.
+      rpi5-anki-workflow = nativeHttpEndpoint "rpi5" "Anki Workflow" "http://127.0.0.1:5678/webhook/image-to-anki-ui" [
+        "[BODY] == pat(*<title>Image to Anki Deck</title>*)"
+        ''[BODY] == pat(*<input type="file" id="fileInput"*)''
+      ];
+      rpi5-nixframe = nativeHttpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui" [
+        "[BODY] == pat(*<title>NixFrame Upload</title>*)"
+        ''[BODY] == pat(*<input type="file" id="fileInput"*)''
+      ];
       # Authenticated HA health check — Bearer token is the LLAT, expanded by
       # Gatus from GATUS_API_KEY at runtime (never rendered into the nix store).
-      rpi5-home-assistant = (httpEndpoint "rpi5" "Home Assistant" "http://127.0.0.1:8123/api/") // {
+      rpi5-home-assistant = (nativeHttpEndpoint "rpi5" "Home Assistant" "http://127.0.0.1:8123/api/" [ "[BODY].message == API running." ]) // {
         headers = { Authorization = "Bearer \${GATUS_API_KEY}"; };
       };
+      rpi5-home-assistant-https = nativeHttpEndpoint "rpi5" "Home Assistant HTTPS" "https://rpi5.tail4249a9.ts.net:8123/manifest.json" [
+        "[BODY].name == Home Assistant"
+      ];
       # rpi5-qdrant = httpEndpoint "rpi5" "Qdrant" "http://127.0.0.1:6333/readyz";
       rpi5-tailscale = icmpEndpoint "rpi5" "Tailscale" "icmp://rpi5.tail4249a9.ts.net";
 
@@ -371,12 +424,51 @@ in
         conditions = [
           "[STATUS] == 200"
           "[RESPONSE_TIME] < 3000"
+          "len([BODY].data) > 0"
+          "has([BODY].data[0].id) == true"
         ];
+        ui.dont-resolve-failed-conditions = true;
       };
     };
 
-    # Functional test suites disabled with Open-WebUI
-    # suites = { chat-chain-test = { ... }; };
+    # Read-only pilot: page + publication metadata, never private artifact URLs.
+    # The owner requires at least one published image. This does not test rendering.
+    suites.gallery-publication = {
+      name = "Gallery publication";
+      group = "choir";
+      interval = "5m";
+      timeout = "30s";
+      endpoints = [
+        {
+          name = "Gallery page";
+          url = "http://100.94.191.54:8739/";
+          client.timeout = "10s";
+          ui.dont-resolve-failed-conditions = true;
+          conditions = [
+            "[STATUS] == 200"
+            "[BODY] == pat(*<img*)"
+            "[BODY] == pat(*/api/latest*)"
+          ];
+        }
+        {
+          name = "Published image metadata";
+          url = "http://100.94.191.54:8739/api/latest";
+          client.timeout = "10s";
+          ui.dont-resolve-failed-conditions = true;
+          conditions = [
+            "[STATUS] == 200"
+            "[BODY].gate == true"
+            "has([BODY].file) == true"
+            "[BODY].file != null"
+            "len([BODY].file) > 0"
+            "has([BODY].mtime) == true"
+            "[BODY].mtime != null"
+            "has([BODY].server_ts) == true"
+          ];
+        }
+      ];
+    };
+    # Paid/state-changing Open-WebUI and upload suites remain disabled.
   };
 
   # Gatus resource limits for RPi5

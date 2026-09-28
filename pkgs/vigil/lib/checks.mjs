@@ -196,6 +196,7 @@ export async function check(c, options = {}) {
         try { body = JSON.parse(response.body); } catch { return unreadable('hass-response'); }
         if (!body || typeof body.state !== 'string' || !body.state) return unreadable('hass-state');
         if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');
+        if (c.astept.disponibil === true) return green();
         return body.state === c.astept.valoare ? green() : failed('hass-value');
       }
       default: return unreadable('contract-invalid');

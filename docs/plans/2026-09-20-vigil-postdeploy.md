@@ -1,5 +1,43 @@
 # Vigil post-deployment evidence
 
+## 2026-09-22 detailed Gatus dashboard activation
+
+PR #602 merged as `aa57a0b330d457a879268bdaf7112c885da85934`. The owner
+approved switching choir first and then rpi5 after all CI passed. Every PR
+check was successful before activation, including the previously pending n8n
+VM test. Both systems were built in isolated detached worktrees with one job
+and one core before switching. The native ARM Vigil build passed all 125 tests;
+the Linux package and module checks had also passed during PR preparation.
+
+Choir switched successfully to
+`/nix/store/1gwl6w0g0mx5xjpzg0a5gjin4g89d0df-nixos-system-sancta-choir-25.11.20260318.fea3b36`.
+Only its three Vigil unit files changed. A post-switch complete run
+`bb8a852e2f6740db91d6e60f13347385` published `2026-09-22T10:35:55.108Z`:
+**9 verde, 0 picat, 0 NECITIT**, exit 0. All nine `/checks/<public-name>`
+responses returned fresh green evidence with that timestamp before rpi5's switch.
+Gallery, the Vigil timer, and its socket remained active.
+
+rpi5 activated
+`/nix/store/i1izzrvq4mkm6djq2pxwyigylhff7rl6-nixos-system-rpi5-25.11.20260313.3e20095`.
+The switch restarted Gatus and polkit, reloaded D-Bus, and ran the existing
+n8n workflow-sync job. The sync script differed only in its source store path;
+workflow and module sources were unchanged. Complete post-switch run
+`30e09acd946440759c4bbbf8caee0dbc` published `2026-09-22T10:38:02.736Z`:
+**7 verde, 0 picat, 0 NECITIT**, exit 0. All seven public detail responses
+returned fresh green evidence. Gatus, n8n, and the Vigil timer/socket were active.
+The switch exited 0, and workflow sync completed with `Result=success` and
+`ExecMainStatus=0`. Both hosts had zero open incidents, notas, or queued events.
+
+Gatus initially polled Pi detail routes before the first new snapshot existed;
+those seven rows briefly failed closed. Following publication, all **16 detail
+rows plus the two original host summaries** passed their normal polls; final
+verification found all 18 green with polls at or after `10:40:05Z`. No
+production fault was induced to demonstrate diagnostic text; the installed
+Gatus version had already been tested with an isolated failure/recovery fixture.
+No private contracts were exposed, monitoring thresholds changed, incident state
+cleared, or health markers fabricated. Private Home Assistant conditions remain
+deferred and production acknowledgement still awaits a natural NECITIT nota.
+
 ## 2026-09-22 controlled gallery delivery acceptance
 
 The owner approved stopping only `sancta-gallery.service` for two scheduled
@@ -38,9 +76,11 @@ at `06:58:50.538Z`. Both existing Gatus Vigil summaries were green on their
 07:00 UTC polls. PR #600 CI was subsequently verified fully green.
 
 This confirms the controlled production open/recovery/close flow and Telegram
-API success for both transitions. Owner confirmation of exactly one visible
-open and one visible close in Telegram is still pending; API success is not a
-read receipt. Production acknowledgement acceptance still awaits a natural
+API success for both transitions. The owner confirmed exactly one open in
+Telegram and supplied both received messages, matching the recorded open
+`2026-09-22T06:24:48.997Z` and close `2026-09-22T07:00:13.323Z`. This
+confirms receipt of both transitions; the close-message duplicate count was
+not separately stated. Production acknowledgement acceptance still awaits a natural
 NECITIT nota. This deliberate test does not establish the first real incident
 date. Private Home Assistant conditions remain deferred.
 

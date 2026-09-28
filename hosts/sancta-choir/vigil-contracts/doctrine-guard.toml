@@ -1,0 +1,12 @@
+[contract]
+nume = "doctrine-guard"
+ce = "Service health"
+dimension = "completeness"
+driver = "operational"
+verifica = "age"
+tinta = "/var/lib/sancta-doctrine-guard/last-success"
+picat_dupa = 2
+prag = "26h"
+
+[spune]
+nivel = "incident"
