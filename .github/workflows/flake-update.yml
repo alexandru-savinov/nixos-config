@@ -158,11 +158,30 @@ jobs:
             echo EOF
           } >> "$GITHUB_OUTPUT"
 
-      # Labels: the repo label `pi-cache-miss` exists already (created once,
-      # outside this workflow), so this job never creates repository labels.
-      # It only adds/removes labels on its own PR, which works with the
-      # pull-requests: write it has: the dependencies/automated labels have been
-      # attached this way since the workflow existed, with no issues: permission.
+      # Resolve the pi-cache-miss label BEFORE the PR step, so a missing label
+      # can never break PR creation for the whole pipeline:
+      #   exists (created once on the repo; a read) -> use it
+      #   missing -> try to create it; on failure warn and omit the label
+      #   (the PR body still carries the cache-miss section).
+      # Adding/removing labels on its own PR works with pull-requests: write:
+      # dependencies/automated have been attached this way since this workflow
+      # existed, and it has never had an issues: permission.
+      - name: Resolve pi-cache-miss label
+        id: pilabel
+        if: steps.changes.outputs.changed == 'true' && steps.picache.outputs.miss == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh label list --repo "$GITHUB_REPOSITORY" --search pi-cache-miss --json name --jq '.[].name' | grep -qx pi-cache-miss; then
+            echo "name=pi-cache-miss" >> "$GITHUB_OUTPUT"
+          elif gh label create pi-cache-miss --repo "$GITHUB_REPOSITORY" \
+              --color B60205 \
+              --description "Flake update would build the Raspberry Pi kernel/firmware from source (vendor cache miss)"; then
+            echo "name=pi-cache-miss" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::pi-cache-miss label missing and could not be created; opening the PR without it (the PR body still flags the miss)"
+            echo "name=" >> "$GITHUB_OUTPUT"
+          fi
       - name: Create Pull Request
         if: steps.changes.outputs.changed == 'true'
         id: cpr
@@ -181,7 +200,7 @@ jobs:
           labels: |
             dependencies
             automated
-            ${{ steps.picache.outputs.miss == 'true' && 'pi-cache-miss' || '' }}
+            ${{ steps.pilabel.outputs.name }}
 
       # PR branches are reused: drop a stale flag once the miss is gone. Only on
       # a COMPLETE clean result: an incomplete check (failed=true) keeps a
