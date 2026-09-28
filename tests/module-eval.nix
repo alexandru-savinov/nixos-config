@@ -1979,6 +1979,36 @@ let
       ];
     };
 
+    # 2026-09-28 review (PR #628): nix.extraOptions is raw nix.conf text,
+    # appended verbatim — a second, separate path to trusted-public-keys
+    # that the nix.settings check above cannot see. Same two arms again,
+    # this time over that door instead of the nix.settings one.
+    cache-trust-real-hosts-no-extra-options-bypass =
+      let
+        hosts = [ "sancta-choir" "rpi5" "rpi5-full" ];
+        bypassing = builtins.filter
+          (h: nixpkgs.lib.hasInfix "trusted-public-keys" (self.nixosConfigurations.${h}.config.nix.extraOptions or ""))
+          hosts;
+      in
+      if bypassing == [ ] then
+        true
+      else
+        builtins.throw "FAIL: hosts set trusted-public-keys via nix.extraOptions, bypassing the cache-trust allow-list: ${builtins.toJSON bypassing}";
+
+    cache-trust-extra-options-bypass-rejected = shouldFail "cache-trust: nix.extraOptions bypass rejected" {
+      modules = [
+        ../modules/system/cache-trust.nix
+        {
+          nix.settings.trusted-public-keys = [
+            "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+          ];
+          nix.extraOptions = ''
+            trusted-public-keys = evil-mirror.example.com-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          '';
+        }
+      ];
+    };
+
   };
 
   # ── Build the check derivation ──────────────────────────────────

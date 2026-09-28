@@ -24,11 +24,22 @@
 #     cannot drift from what this module actually enforces);
 #   - negative: a synthetic host that imports this module and adds one
 #     foreign key fails evaluation, and the failure message names that key.
+#
+# nix.extraOptions (2026-09-28 review, PR #628): NixOS appends that string
+# VERBATIM to the generated nix.conf — it is a second, entirely separate
+# path to the same `trusted-public-keys` setting, invisible to the
+# nix.settings.trusted-public-keys check above. A host (or a future cache
+# module) that sets trusted-public-keys through nix.extraOptions instead of
+# nix.settings would reach real Nix while this guard stayed green — exactly
+# the silent-bypass this module exists to close, just through the other
+# door. So this module also asserts nix.extraOptions never mentions
+# trusted-public-keys at all; that setting must go through nix.settings,
+# where this module can see it.
 
 { config, lib, ... }:
 
 let
-  inherit (lib) mkOption types;
+  inherit (lib) mkOption types hasInfix;
 
   allowedTrustedPublicKeys = [
     # cache.nixos.org — the official NixOS binary cache. Used by every host.
@@ -53,6 +64,9 @@ let
 
   thisHostKeys = config.nix.settings.trusted-public-keys or [ ];
   foreignKeys = builtins.filter (k: !(builtins.elem k allowedTrustedPublicKeys)) thisHostKeys;
+
+  extraOptionsText = config.nix.extraOptions or "";
+  extraOptionsBypassesGuard = hasInfix "trusted-public-keys" extraOptionsText;
 in
 {
   options.sancta.cacheTrust.allowedTrustedPublicKeys = mkOption {
@@ -73,6 +87,12 @@ in
         assertion = foreignKeys == [ ];
         message = ''
           nix.settings.trusted-public-keys has a key not on the modules/system/cache-trust.nix allow-list: ${builtins.concatStringsSep ", " foreignKeys}. A mirror or caching proxy must not be able to add its own signing key silently — if this key should be trusted, add it to that allow-list first, with a comment naming whose cache it is.
+        '';
+      }
+      {
+        assertion = !extraOptionsBypassesGuard;
+        message = ''
+          nix.extraOptions sets trusted-public-keys directly — that bypasses the modules/system/cache-trust.nix allow-list entirely, since nix.extraOptions is raw nix.conf text appended verbatim and this module only inspects nix.settings.trusted-public-keys. Set trusted keys through nix.settings.trusted-public-keys instead, after adding them to the allow-list.
         '';
       }
     ];
