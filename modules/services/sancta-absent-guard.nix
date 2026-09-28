@@ -94,6 +94,20 @@ let
 
   cu = "${pkgs.coreutils}/bin";
 
+  # THE SCHEDULING SLACK, single-sourced (PR #614 review, 2026-09-28). A beat
+  # does not land exactly intervalSeconds after the previous one: systemd adds
+  # up to RandomizedDelaySec, may coalesce by up to AccuracySec, and the run
+  # that writes the marker can itself take up to TimeoutStartSec. The guard's
+  # self-watch sees the SUM, so the cadence relation must include it — an
+  # interval sitting exactly on the guard's max_age would otherwise pass the
+  # check and still let the guard report itself stale on a late beat. Each
+  # number below is rendered into the unit from here and nowhere else, and
+  # the wrapper receives their sum, so the relation cannot drift from what
+  # systemd is actually told.
+  accuracySec = 60;
+  timeoutStartSec = 120;
+  slackSeconds = cfg.randomizedDelaySec + accuracySec + timeoutStartSec;
+
   # The env contract (SANCTA_ABSENT_*) exists so the SAME store script can be
   # driven against fixtures — a stub guard and a hand-written producer table,
   # both directions, red and green — before it ever judges the real one. The
@@ -112,6 +126,7 @@ let
     GUARD="''${1:?usage: sancta-absent-guard-check <absolute path to bin/absent-guard>}"
     TABLE="''${SANCTA_ABSENT_PRODUCERS:?SANCTA_ABSENT_PRODUCERS unset}"
     INTERVAL="''${SANCTA_ABSENT_INTERVAL_SEC:?SANCTA_ABSENT_INTERVAL_SEC unset}"
+    SLACK="''${SANCTA_ABSENT_SLACK_SEC:?SANCTA_ABSENT_SLACK_SEC unset}"
 
     reasons=""
     flag() { reasons="''${reasons:+$reasons; }$1"; }
@@ -119,18 +134,35 @@ let
     # age word (12h, 2d, 90s…) → seconds, in pure bash. Deliberately a copy of
     # the guard's own grammar rather than a call into it: this must still be
     # able to say "your table is unreadable" when the guard cannot run.
+    #
+    # Always prints a plain base-10 integer or returns 1 — never anything in
+    # between. The bare-seconds branch is anchored to the WHOLE string (no
+    # non-digit anywhere), not just to "ends in a digit": the earlier
+    # `*[0-9]` glob let "1h2" through verbatim, and the `[ -gt ]` below then
+    # errored inside an elif, which reads as false, which silently skipped
+    # TIMER TOO SLOW (PR #614 review). `10#` stops a leading zero ("08h")
+    # from being parsed as octal and aborting the arithmetic.
     secs() {
       local v="$1" n="''${1%[smhd]}" u="''${1: -1}"
-      case "$v" in *[0-9]) printf '%s' "$v"; return 0;; esac
+      case "$v" in
+        "") return 1 ;;
+        *[!0-9]*) ;;
+        *) printf '%s' "$(( 10#$v ))"; return 0 ;;
+      esac
       case "$n" in ""|*[!0-9]*) return 1;; esac
       case "$u" in
-        s) printf '%s' "$n" ;;
-        m) printf '%s' "$(( n * 60 ))" ;;
-        h) printf '%s' "$(( n * 3600 ))" ;;
-        d) printf '%s' "$(( n * 86400 ))" ;;
+        s) printf '%s' "$(( 10#$n ))" ;;
+        m) printf '%s' "$(( 10#$n * 60 ))" ;;
+        h) printf '%s' "$(( 10#$n * 3600 ))" ;;
+        d) printf '%s' "$(( 10#$n * 86400 ))" ;;
         *) return 1 ;;
       esac
     }
+
+    # The two numbers this unit hands itself must be plain integers too, or
+    # the comparison below could error into "false" the same way.
+    case "$INTERVAL" in ""|*[!0-9]*) flag "SANCTA_ABSENT_INTERVAL_SEC '$INTERVAL' is not a whole number of seconds — cannot check the cadence"; INTERVAL="" ;; esac
+    case "$SLACK" in ""|*[!0-9]*) flag "SANCTA_ABSENT_SLACK_SEC '$SLACK' is not a whole number of seconds — cannot check the cadence"; SLACK="" ;; esac
 
     # (a) THE GUARD ITSELF. ExecStartPre already tests -x, but this branch is
     # what the fixture tests drive, and "could not ask" must never read as
@@ -152,8 +184,10 @@ let
       flag "producer table $TABLE has no readable absent-guard row — the guard's SELF-watch is gone, so a completed run no longer proves anything ran"
     elif ! selfSec="$(secs "$selfMax")"; then
       flag "absent-guard's own max_age '$selfMax' in $TABLE is not an age this checker can read — refusing to guess"
-    elif [ "$INTERVAL" -gt "$selfSec" ]; then
-      flag "TIMER TOO SLOW: this unit beats every ''${INTERVAL}s but absent-guard's own max_age is $selfMax (''${selfSec}s) — the guard would report itself stale between beats and the clock would be manufacturing the alarm"
+    elif [ -z "$INTERVAL" ] || [ -z "$SLACK" ]; then
+      : # already flagged above; do not compare against a number we rejected
+    elif (( 10#$INTERVAL + 10#$SLACK > 10#$selfSec )); then
+      flag "TIMER TOO SLOW: this unit beats every ''${INTERVAL}s plus up to ''${SLACK}s of scheduling slack (randomized delay + accuracy + run timeout), but absent-guard's own max_age is $selfMax (''${selfSec}s) — the guard could report itself stale between beats and the clock would be manufacturing the alarm"
     fi
 
     # (c) RUN IT. Exit codes per bin/absent-guard's own header and tail:
@@ -181,7 +215,7 @@ let
     fi
 
     printf '%s\n' "$report"
-    echo "absent-guard OK: every producer inside its max_age; beat ''${INTERVAL}s <= self max_age $selfMax"
+    echo "absent-guard OK: every producer inside its max_age; beat ''${INTERVAL}s + slack ''${SLACK}s <= self max_age $selfMax"
   '';
 in
 {
@@ -220,16 +254,17 @@ in
         timer is built from this number and the runtime relation check is made
         against this same number, so the two cannot drift apart. 2h against the
         guard's 6h self-window leaves room for two missed beats plus the
-        randomized delay before the guard would report itself stale. Raising it
-        above the `absent-guard` row's max_age in producers.json makes the unit
-        fail on its next beat, by design.
+        scheduling slack before the guard would report itself stale. Raising
+        it so that intervalSeconds + the slack (randomizedDelaySec + AccuracySec
+        + TimeoutStartSec) exceeds the `absent-guard` row's max_age in
+        producers.json makes the unit fail on its next beat, by design.
       '';
     };
 
     randomizedDelaySec = mkOption {
-      type = types.str;
-      default = "5min";
-      description = "systemd RandomizedDelaySec, so this does not start on the same second as the other sancta timers. Kept far below the headroom between intervalSeconds and the guard's self max_age.";
+      type = types.ints.unsigned;
+      default = 300;
+      description = "systemd RandomizedDelaySec, in whole seconds, so this does not start on the same second as the other sancta timers. An integer rather than a systemd time span so it can be added into the cadence relation: the wrapper checks intervalSeconds + this + AccuracySec + TimeoutStartSec against the guard's self max_age.";
     };
 
     user = mkOption {
@@ -301,6 +336,7 @@ in
         Environment = [
           "SANCTA_ABSENT_PRODUCERS=${cfg.producersTable}"
           "SANCTA_ABSENT_INTERVAL_SEC=${toString cfg.intervalSeconds}"
+          "SANCTA_ABSENT_SLACK_SEC=${toString slackSeconds}"
           # The guard derives its root from its own BASH_SOURCE, so it finds
           # the table and the marker without HOME — but it is a bash script in
           # a systemd unit and HOME-less shells have bitten this house before
@@ -308,7 +344,7 @@ in
           "HOME=${builtins.dirOf soulRoot}"
         ];
 
-        TimeoutStartSec = "2min";
+        TimeoutStartSec = "${toString timeoutStartSec}s";
         Nice = 15;
         IOSchedulingClass = "idle";
 
@@ -363,8 +399,8 @@ in
         # a host that was off is exactly when producers went quiet unnoticed.
         OnBootSec = "10min";
         OnUnitActiveSec = "${toString cfg.intervalSeconds}s";
-        RandomizedDelaySec = cfg.randomizedDelaySec;
-        AccuracySec = "1min";
+        RandomizedDelaySec = "${toString cfg.randomizedDelaySec}s";
+        AccuracySec = "${toString accuracySec}s";
       };
     };
   };

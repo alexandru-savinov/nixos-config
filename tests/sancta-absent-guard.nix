@@ -39,6 +39,14 @@
 
 let
   svc = self.nixosConfigurations.sancta-choir.config.systemd.services.sancta-absent-guard;
+  inherit (pkgs) lib;
+  # The scheduling slack the REAL unit hands its wrapper, so the cadence arms
+  # below sit on the boundary the host will actually enforce rather than on a
+  # number typed here.
+  slackPrefix = "SANCTA_ABSENT_SLACK_SEC=";
+  realSlack = lib.removePrefix slackPrefix (
+    lib.findFirst (lib.hasPrefix slackPrefix) "" (svc.serviceConfig.Environment or [ ])
+  );
 in
 pkgs.runCommand "sancta-absent-guard-arms"
 {
@@ -46,6 +54,7 @@ pkgs.runCommand "sancta-absent-guard-arms"
   # the sandbox. Keep the FULL string — never split it in Nix.
   execStart = toString svc.serviceConfig.ExecStart;
   bash = "${pkgs.bash}/bin/bash";
+  inherit realSlack;
 } ''
     set -u
 
@@ -55,6 +64,12 @@ pkgs.runCommand "sancta-absent-guard-arms"
       exit 1
     fi
     echo "driving the real ExecStart: $CHECK"
+    case "$realSlack" in
+      ""|*[!0-9]*)
+        echo "SELF-TEST FAILED: the unit renders no numeric SANCTA_ABSENT_SLACK_SEC ('$realSlack') — the cadence arms would test a boundary the host does not use." >&2
+        exit 1 ;;
+    esac
+    echo "real scheduling slack: $realSlack s"
 
     mkdir -p fixtures
     cd fixtures
@@ -69,6 +84,20 @@ pkgs.runCommand "sancta-absent-guard-arms"
           "means": "The night consolidation loop is not running." }
     ] }
   JSON
+
+    # The self row's max_age in three shapes the checker must NOT get wrong:
+    # "1h2" is malformed but ends in a digit (the old fast path returned it
+    # verbatim and the comparison errored into a silent pass); "21600" is bare
+    # seconds and must still be accepted; "08h" has a leading zero that bash
+    # arithmetic would otherwise read as octal.
+    for age in 1h2 21600 08h; do
+      cat > "producers-age-$age.json" <<JSON
+    { "producers": [
+        { "name": "absent-guard", "path": "absent-last.json", "max_age": "$age",
+          "means": "THIS GUARD ITSELF has not completed a run." }
+    ] }
+  JSON
+    done
 
     cat > producers-no-self-row.json <<'JSON'
     { "producers": [
@@ -99,9 +128,11 @@ pkgs.runCommand "sancta-absent-guard-arms"
     fail=0
     ran=0
 
-    # run <name> <expected exit> <expected substring> <guard> <table> <interval>
+    # run <name> <expected exit> <expected substring> <guard> <table> <interval> [slack]
     run() {
       local name="$1" want="$2" needle="$3" guard="$4" table="$5" interval="$6"
+      local slack="$realSlack"
+      if [ "$#" -ge 7 ]; then slack="$7"; fi
       local out rc
       ran=$((ran + 1))
       # genericBuild's setup.sh has already run `set -e` by the time this
@@ -114,7 +145,7 @@ pkgs.runCommand "sancta-absent-guard-arms"
       # exemption tests/sancta-doctrine-guard.nix's expect_pass/expect_fail
       # already rely on for the same reason.
       if out=$(SANCTA_ABSENT_PRODUCERS="$table" SANCTA_ABSENT_INTERVAL_SEC="$interval" \
-               "$CHECK" "$guard" 2>&1); then
+               SANCTA_ABSENT_SLACK_SEC="$slack" "$CHECK" "$guard" 2>&1); then
         rc=0
       else
         rc=$?
@@ -160,8 +191,28 @@ pkgs.runCommand "sancta-absent-guard-arms"
     # a producer problem, because the clock would be causing it.
     run "timer slower than the guard's own max_age → unit RED" \
         1 "TIMER TOO SLOW" "$PWD/guard-ok" "$PWD/producers-ok.json" 25200
-    run "timer exactly at the guard's max_age → still GREEN (boundary)" \
-        0 "absent-guard OK" "$PWD/guard-ok" "$PWD/producers-ok.json" 21600
+    # The jitter arms (PR #614 review). An interval sitting exactly on the
+    # guard's max_age used to pass; a beat late by the randomized delay, the
+    # accuracy window and a full run would then find the marker too old. The
+    # relation is interval + slack <= max_age, pinned on both sides of the edge.
+    run "timer exactly at the guard's max_age → RED once the slack is counted" \
+        1 "TIMER TOO SLOW" "$PWD/guard-ok" "$PWD/producers-ok.json" 21600
+    run "interval + slack exactly at the guard's max_age → GREEN (boundary)" \
+        0 "absent-guard OK" "$PWD/guard-ok" "$PWD/producers-ok.json" $((21600 - realSlack))
+    run "interval + slack one second over the guard's max_age → RED" \
+        1 "TIMER TOO SLOW" "$PWD/guard-ok" "$PWD/producers-ok.json" $((21600 - realSlack + 1))
+    run "a non-numeric slack → unit RED, never a skipped comparison" \
+        1 "SANCTA_ABSENT_SLACK_SEC 'soon' is not a whole number" \
+        "$PWD/guard-ok" "$PWD/producers-ok.json" 7200 soon
+
+    # The age grammar (PR #614 review). A malformed max_age must be refused
+    # loudly, not waved through by an errored comparison.
+    run "malformed self max_age '1h2' → unit RED" \
+        1 "is not an age this checker can read" "$PWD/guard-ok" "$PWD/producers-age-1h2.json" 7200
+    run "bare-seconds self max_age '21600' → still GREEN" \
+        0 "absent-guard OK" "$PWD/guard-ok" "$PWD/producers-age-21600.json" 7200
+    run "leading-zero self max_age '08h' → GREEN, not an octal abort" \
+        0 "absent-guard OK" "$PWD/guard-ok" "$PWD/producers-age-08h.json" 7200
 
     # The self-watch row deleted from the table: a completed run would stop
     # proving anything ran, and that must be loud rather than convenient.
@@ -171,7 +222,7 @@ pkgs.runCommand "sancta-absent-guard-arms"
         1 "SELF-watch is gone" "$PWD/guard-ok" "$PWD/nope.json" 7200
 
     echo "────────────────────────────────────────────────────────────"
-    if [ "$ran" -lt 10 ]; then
+    if [ "$ran" -lt 16 ]; then
       echo "SELF-TEST FAILED: only $ran arms ran — the harness is not exercising what it claims." >&2
       exit 1
     fi

@@ -1381,6 +1381,21 @@ let
         heartbeat = "/var/lib/sancta/transcript-archive/last-run.json";
         env = svc.serviceConfig.Environment or [ ];
         execStart = toString (svc.serviceConfig.ExecStart or "");
+
+        # The scheduling slack, read back off the RENDERED unit ("<n>s" is the
+        # only form the module writes; anything else parses to null and fails
+        # slackSingleSourced below rather than being guessed at).
+        spanSec =
+          v:
+          let
+            m = builtins.match "([0-9]+)s" (toString v);
+          in
+          if m == null then null else nixpkgs.lib.toInt (builtins.head m);
+        rdSec = spanSec (timer.timerConfig.RandomizedDelaySec or "");
+        accSec = spanSec (timer.timerConfig.AccuracySec or "");
+        toSec = spanSec (svc.serviceConfig.TimeoutStartSec or "");
+        slackKnown = rdSec != null && accSec != null && toSec != null;
+        slack = if slackKnown then rdSec + accSec + toSec else 0;
         script = builtins.readFile execStart;
 
         checks = {
@@ -1564,11 +1579,22 @@ let
             (timer.timerConfig.OnUnitActiveSec or "") == "${toString cfg.intervalSeconds}s"
             && builtins.elem "SANCTA_ABSENT_INTERVAL_SEC=${toString cfg.intervalSeconds}" env;
 
-          # …and it must be under the guard's own 6h self-window with room for
-          # the randomized delay. 6h is read off the live producers.json row,
-          # which no build can see, so the literal is pinned here and the
-          # relation itself is re-checked at RUNTIME on every beat.
-          cadenceUnderSelfWindow = cfg.intervalSeconds <= 21600;
+          # The slack the wrapper adds to the interval is the SUM of the three
+          # values systemd is actually given — derived here from the rendered
+          # timer and service, not typed, so a change to any one of them that
+          # is not carried into the wrapper fails the build.
+          slackSingleSourced =
+            slackKnown && builtins.elem "SANCTA_ABSENT_SLACK_SEC=${toString slack}" env;
+
+          # …and interval + slack must fit the guard's own 6h self-window: a
+          # beat that lands late by the randomized delay, the accuracy window
+          # and a full run must still find the marker inside max_age (PR #614
+          # review: the old `interval <= 21600` let an interval of exactly 6h
+          # through, and the jitter then manufactured the alarm). 6h is read
+          # off the live producers.json row, which no build can see, so the
+          # literal is pinned here and the relation itself is re-checked at
+          # RUNTIME on every beat.
+          cadenceUnderSelfWindow = slackKnown && cfg.intervalSeconds + slack <= 21600;
 
           # A host that was off is exactly when producers went quiet unnoticed.
           beatsAfterBoot = (timer.timerConfig.OnBootSec or "") != "";
