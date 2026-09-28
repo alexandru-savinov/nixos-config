@@ -1,6 +1,8 @@
 // Exercise evaluated production assertions with the installed Gatus binary.
 // Usage: GATUS_BIN=/path/to/gatus node tests/gatus-native.test.mjs evaluated-gatus.json
 // Only loopback fixtures are contacted. No production credentials are loaded.
+// The n8n UI fixtures are the workflows' own Build HTML source (ANKI_UI_WORKFLOW,
+// NIXFRAME_UI_WORKFLOW; default ../n8n-workflows/), so markup drift fails here.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,16 +10,31 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const sentinel = 'PRIVATE_FIXTURE_MUST_NOT_APPEAR';
+const workflowDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'n8n-workflows');
+// Serve the page source the workflow actually ships, never a hand-copied
+// snippet: renaming the title or the file input without updating the Gatus
+// condition turns the healthy case red in CI instead of paging at runtime.
+const workflowPage = (variable, file) => {
+  const workflow = JSON.parse(fs.readFileSync(process.env[variable] || path.join(workflowDirectory, file), 'utf8'));
+  const webhook = workflow.nodes.find(n => n.type === 'n8n-nodes-base.webhook');
+  const html = workflow.nodes.find(n => n.name === 'Build HTML')?.parameters?.jsCode;
+  assert.ok(webhook?.parameters?.path, `${file}: no webhook path`);
+  assert.equal(typeof html, 'string', `${file}: no Build HTML code node`);
+  return { path: `/webhook/${webhook.parameters.path}`, html };
+};
+const ankiPage = workflowPage('ANKI_UI_WORKFLOW', 'image-to-anki-ui.json');
+const nixframePage = workflowPage('NIXFRAME_UI_WORKFLOW', 'nixframe-ui.json');
 const profiles = {
   'n8n': { good: '{"status":"ok"}', bad: `{"status":"${sentinel}"}` },
   'n8n readiness': { good: '{"status":"ok"}', bad: `{"status":"${sentinel}"}` },
   'Home Assistant': { good: '{"message":"API running."}', bad: `{"message":"${sentinel}"}` },
   'Home Assistant HTTPS': { good: '{"name":"Home Assistant"}', bad: `{"name":"${sentinel}"}` },
-  'Anki Workflow': { good: '<html><title>Image to Anki Deck</title><input type="file" id="fileInput"></html>', bad: `<html>${sentinel}<title>Login</title></html>` },
-  'NixFrame Upload': { good: '<html><title>NixFrame Upload</title><input type="file" id="fileInput"></html>', bad: `<html>${sentinel}<title>Login</title></html>` },
+  'Anki Workflow': { good: ankiPage.html, path: ankiPage.path, bad: `<html>${sentinel}<title>Login</title></html>` },
+  'NixFrame Upload': { good: nixframePage.html, path: nixframePage.path, bad: `<html>${sentinel}<title>Login</title></html>` },
   'OpenRouter API': { good: '{"data":[{"id":"fixture-model"}]}', bad: `{"error":"${sentinel}"}` },
 };
 const cases = [];
@@ -26,6 +43,7 @@ for (const [name, profile] of Object.entries(profiles)) {
   assert.ok(endpoint, `missing endpoint: ${name}`);
   assert.equal(endpoint.ui?.['dont-resolve-failed-conditions'], true);
   assert.equal(endpoint.alerts, undefined, 'native coverage must not add alerts');
+  if (profile.path) assert.equal(new URL(endpoint.url).pathname, profile.path, `${name}: URL is not the workflow's webhook`);
   for (const variant of ['good', 'bad', 'missing', 'malformed', 'http-error', 'timeout']) {
     cases.push({ endpoint, name: `fixture-${cases.length}`, variant,
       status: variant === 'http-error' ? 503 : 200,
