@@ -1905,6 +1905,80 @@ let
       else
         builtins.throw "FAIL: sancta-choir users.users.sancta.linger must be true for the persistent user-scope backend (got: ${builtins.toJSON linger})";
 
+    # ── cache-trust (sq099) ──────────────────────────────────────────
+    # NixCon 2026, "NixOS in the Corporate Trenches": a mirror or caching
+    # proxy put in front of a binary cache could add its own signing key to
+    # a host's nix.settings.trusted-public-keys without anyone noticing.
+    # modules/system/cache-trust.nix asserts every key against a committed
+    # allow-list. Both arms below prove it actually gates, not just exists:
+    #   - positive: each REAL host's trusted-public-keys is checked against
+    #     the allow-list the module itself exposes (cfg.sancta.cacheTrust.
+    #     allowedTrustedPublicKeys), so this test cannot drift from what the
+    #     module enforces by silently keeping its own second copy;
+    #   - negative: a synthetic host that imports the module and adds one
+    #     foreign key alongside a real one fails evaluation — proving the
+    #     assertion fires — while the SAME synthetic host with only the
+    #     allow-listed key evaluates cleanly, proving the failure above is
+    #     caused by the foreign key and not by the module being broken.
+    cache-trust-choir-keys-allowed =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        allowed = cfg.sancta.cacheTrust.allowedTrustedPublicKeys;
+        actual = cfg.nix.settings.trusted-public-keys;
+        foreign = builtins.filter (k: !(builtins.elem k allowed)) actual;
+      in
+      if foreign == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir trusted-public-keys has keys outside modules/system/cache-trust.nix's allow-list: ${builtins.toJSON foreign}";
+
+    cache-trust-rpi5-keys-allowed =
+      let
+        cfg = self.nixosConfigurations.rpi5.config;
+        allowed = cfg.sancta.cacheTrust.allowedTrustedPublicKeys;
+        actual = cfg.nix.settings.trusted-public-keys;
+        foreign = builtins.filter (k: !(builtins.elem k allowed)) actual;
+      in
+      if foreign == [ ] then
+        true
+      else
+        builtins.throw "FAIL: rpi5 trusted-public-keys has keys outside modules/system/cache-trust.nix's allow-list: ${builtins.toJSON foreign}";
+
+    cache-trust-rpi5-full-keys-allowed =
+      let
+        cfg = self.nixosConfigurations.rpi5-full.config;
+        allowed = cfg.sancta.cacheTrust.allowedTrustedPublicKeys;
+        actual = cfg.nix.settings.trusted-public-keys;
+        foreign = builtins.filter (k: !(builtins.elem k allowed)) actual;
+      in
+      if foreign == [ ] then
+        true
+      else
+        builtins.throw "FAIL: rpi5-full trusted-public-keys has keys outside modules/system/cache-trust.nix's allow-list: ${builtins.toJSON foreign}";
+
+    cache-trust-foreign-key-rejected = shouldFail "cache-trust: foreign key rejected" {
+      modules = [
+        ../modules/system/cache-trust.nix
+        {
+          nix.settings.trusted-public-keys = [
+            "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+            "evil-mirror.example.com-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          ];
+        }
+      ];
+    };
+
+    cache-trust-allowed-key-accepted = shouldEval "cache-trust: allow-listed key accepted" {
+      modules = [
+        ../modules/system/cache-trust.nix
+        {
+          nix.settings.trusted-public-keys = [
+            "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+          ];
+        }
+      ];
+    };
+
   };
 
   # ── Build the check derivation ──────────────────────────────────

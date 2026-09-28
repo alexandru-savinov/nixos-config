@@ -28,6 +28,7 @@
     ./hardware-configuration.nix
     ../common.nix
     ../../modules/system/dev-tools.nix
+    ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
     ../../modules/users/root.nix
     ../../modules/services/copilot.nix
     ../../modules/services/claude-shared.nix
