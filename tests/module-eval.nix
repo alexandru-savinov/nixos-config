@@ -52,6 +52,11 @@ let
             };
             system.stateVersion = lib.mkDefault "25.11";
             nixpkgs.hostPlatform = lib.mkDefault system;
+            # The hosts get `pkgs.unstable` from flake.nix's
+            # unstableOverlayModule. Tests alias it to stable pkgs: they
+            # check option merging, and importing nixos-unstable per test
+            # would only add eval cost.
+            nixpkgs.overlays = [ (final: prev: { unstable = prev; }) ];
             nixpkgs.config.allowUnfree = true;
           }
         )
@@ -327,9 +332,6 @@ let
           };
         }
       ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
     };
 
     open-webui-missing-secret-key-rejected = shouldFail "open-webui: missing secret key rejected" {
@@ -343,9 +345,6 @@ let
           };
         }
       ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
     };
 
     open-webui-with-testing = shouldEval "open-webui: with testing enabled" {
@@ -361,9 +360,6 @@ let
           };
         }
       ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
     };
 
     open-webui-testing-requires-secret-key = shouldFail "open-webui: testing without secretKeyFile" {
@@ -379,9 +375,6 @@ let
           };
         }
       ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
     };
 
     open-webui-auto-memory-requires-memory = shouldFail "open-webui: autoMemory without memory" {
@@ -396,9 +389,6 @@ let
           };
         }
       ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
     };
 
     open-webui-disabled = shouldEval "open-webui: disabled" {
@@ -406,9 +396,6 @@ let
         ../modules/services/open-webui.nix
         { services.open-webui-tailscale.enable = false; }
       ];
-      specialArgs = {
-        pkgs-unstable = pkgs;
-      };
     };
 
     # ── UniFi MCP ─────────────────────────────────────────────────

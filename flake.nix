@@ -73,14 +73,26 @@
       # allowUnfree needed for open-webui (changed to "Open WebUI License" in 25.11)
       nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; config.allowUnfree = true; });
 
-      # Import unstable nixpkgs per architecture (shared across host configs)
-      pkgs-unstable-x86 = import nixpkgs-unstable {
-        system = "x86_64-linux";
+      # Import unstable nixpkgs for a system. The config is explicit rather
+      # than the host's `prev.config`: it must stay exactly what the hosts
+      # built with before pkgs.unstable existed, so the move to the overlay
+      # changed no derivation (toplevel drvPaths identical across the move).
+      importUnstable = system: import nixpkgs-unstable {
+        inherit system;
         config.allowUnfree = true;
       };
-      pkgs-unstable-aarch64 = import nixpkgs-unstable {
-        system = "aarch64-linux";
-        config.allowUnfree = true;
+
+      # Exposes nixos-unstable as `pkgs.unstable` in every host, so modules
+      # write `pkgs.unstable.foo` instead of taking a `pkgs-unstable`
+      # specialArg (NixCon 2026, Yifei Sun: "modules without specialArgs").
+      # An overlay and never `nixpkgs.pkgs`: setting `nixpkgs.pkgs` makes
+      # NixOS ignore `nixpkgs.overlays`, which nixos-raspberrypi relies on.
+      unstableOverlayModule = {
+        nixpkgs.overlays = [
+          (final: prev: {
+            unstable = importUnstable prev.stdenv.hostPlatform.system;
+          })
+        ];
       };
 
       # Agenix CLI package module (shared across all hosts)
@@ -139,9 +151,11 @@
         nix-ld = ./modules/system/nix-ld.nix;
 
         # Development tools package set (editors, dev tools, nix tooling)
-        # Optional: Pass pkgs-unstable via specialArgs for latest github-copilot-cli
-        # Example:
-        #   specialArgs = { pkgs-unstable = import nixpkgs-unstable { system = "..."; }; };
+        # Optional: provide `pkgs.unstable` for the latest github-copilot-cli
+        # (without it the stable package is used). Example module:
+        #   { nixpkgs.overlays = [ (final: prev: {
+        #       unstable = import nixpkgs-unstable { inherit (prev.stdenv.hostPlatform) system; };
+        #     }) ]; }
         # Enable with: customModules.dev-tools.enable = true;
         dev-tools = ./modules/system/dev-tools.nix;
       };
@@ -152,7 +166,6 @@
         sancta-choir = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           specialArgs = {
-            pkgs-unstable = pkgs-unstable-x86;
             inherit self claude-code claude-shared owui-openrouter-stats;
           };
           modules = [
@@ -161,6 +174,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
+            unstableOverlayModule
           ];
         };
 
@@ -175,7 +189,6 @@
         rpi5 = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
             inherit nixos-raspberrypi self claude-code claude-shared;
-            pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [
             nixos-raspberrypi.nixosModules.raspberry-pi-5.base
@@ -184,6 +197,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
+            unstableOverlayModule
           ];
         };
 
@@ -196,7 +210,6 @@
         rpi5-full = nixos-raspberrypi.lib.nixosSystem {
           specialArgs = {
             inherit nixos-raspberrypi self claude-code claude-shared;
-            pkgs-unstable = pkgs-unstable-aarch64;
           };
           modules = [
             nixos-raspberrypi.nixosModules.raspberry-pi-5.base
@@ -205,6 +218,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
+            unstableOverlayModule
           ];
         };
       };
@@ -219,7 +233,7 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
-          unstable = if system == "x86_64-linux" then pkgs-unstable-x86 else pkgs-unstable-aarch64;
+          unstable = importUnstable system;
         in
         {
           # Default package (what runs with `nix run github:user/repo`)
