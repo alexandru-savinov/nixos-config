@@ -158,15 +158,22 @@ jobs:
             echo EOF
           } >> "$GITHUB_OUTPUT"
 
+      # POST /repos/{owner}/{repo}/labels is allowed by "Pull requests: write"
+      # (or "Issues: write") per GitHub's fine-grained permission table, so the
+      # existing pull-requests: write is enough; no issues: write needed. A
+      # failure is surfaced as a warning annotation, not masked: the label is
+      # still attached by the Create Pull Request step (adding a missing label
+      # to an issue creates it), only without this colour/description.
       - name: Ensure pi-cache-miss label exists
         if: steps.changes.outputs.changed == 'true' && steps.picache.outputs.miss == 'true'
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh label create pi-cache-miss --force --repo "$GITHUB_REPOSITORY" \
+          if ! gh label create pi-cache-miss --force --repo "$GITHUB_REPOSITORY" \
             --color B60205 \
-            --description "Flake update would build the Raspberry Pi kernel/firmware from source (vendor cache miss)"
+            --description "Flake update would build the Raspberry Pi kernel/firmware from source (vendor cache miss)"; then
+            echo "::warning::could not create/update the pi-cache-miss label (see above); the PR still gets the label, without colour/description"
+          fi
 
       - name: Create Pull Request
         if: steps.changes.outputs.changed == 'true'
@@ -188,9 +195,11 @@ jobs:
             automated
             ${{ steps.picache.outputs.miss == 'true' && 'pi-cache-miss' || '' }}
 
-      # PR branches are reused: drop a stale flag once the miss is gone.
+      # PR branches are reused: drop a stale flag once the miss is gone. Only on
+      # a COMPLETE clean result: an incomplete check (failed=true) keeps a
+      # previously confirmed miss visible.
       - name: Clear stale pi-cache-miss label
-        if: steps.cpr.outputs.pull-request-number != '' && steps.picache.outputs.miss == 'false'
+        if: steps.cpr.outputs.pull-request-number != '' && steps.picache.outputs.miss == 'false' && steps.picache.outputs.failed == 'false'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

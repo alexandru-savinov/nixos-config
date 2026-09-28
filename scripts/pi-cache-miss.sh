@@ -19,11 +19,13 @@
 #      (single source of truth: hosts/rpi5*/configuration.nix) and passes them
 #      as --option extra-substituters. A trusted user (CI runner) gets an exact
 #      answer from Nix itself.
-#   3. Probes every remaining will-be-built output directly on those
-#      substituters over HTTP (<hash>.narinfo). This makes the result correct
-#      even when the local nix-daemon ignores the extra substituters (untrusted
-#      user), and says so when it happens.
-#   4. Flags kernel / firmware / dtb derivations that remain to-be-built.
+#   3. Selects the kernel / firmware / dtb candidates from that list and
+#      probes only their outputs directly on those substituters over HTTP
+#      (<hash>.narinfo). This keeps the answer right when the local nix-daemon
+#      ignores the extra substituters (untrusted user), and says so. Only a
+#      404 from every vendor substituter counts as a miss; any other answer
+#      (timeout, 5xx) marks the check incomplete, never a miss.
+#   4. Flags the candidates that are confirmed misses.
 #
 # Usage:
 #   scripts/pi-cache-miss.sh [--flake REF] [--markdown FILE] [--github-output FILE]
@@ -58,7 +60,19 @@ WRAP=(${PI_CACHE_NIX_WRAP:-})
 nixw() { "${WRAP[@]}" nix "$@"; }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# If anything aborts the script unexpectedly (set -e), still tell the workflow
+# the check is incomplete: failed=true keeps any existing pi-cache-miss label.
+outputs_written=false
+# shellcheck disable=SC2329  # invoked via trap
+on_exit() {
+  rc=$?
+  if ! $outputs_written && [ -n "$GH_OUT" ]; then
+    echo "::warning::pi-cache-miss: aborted unexpectedly (exit $rc)" >&2
+    { echo "miss=false"; echo "failed=true"; } >>"$GH_OUT"
+  fi
+  rm -rf "$WORK"
+}
+trap on_exit EXIT
 
 # Heavy Pi derivations, matched on the real names nixos-raspberrypi produces
 # (observed 2026-09-28): linux_rpi-bcm2712-<ver>, linux-config-<ver>,
@@ -127,51 +141,90 @@ for host in "${HOSTS[@]}"; do
     continue
   fi
 
-  # Direct probe: drop every derivation whose outputs ALL exist on a vendor
-  # substituter. Conservative: a partially cached derivation still counts.
-  : >"$WORK/$host.built"
-  probed_hits=0
-  if [ "$nix_count" -gt 0 ] && [ ${#extra_subs[@]} -gt 0 ]; then
-    # shellcheck disable=SC2046
-    nixw derivation show $(cat "$WORK/$host.built.raw") 2>/dev/null \
-      | jq -r 'to_entries[] | .key as $d | [.value.outputs[] | .path // empty] | "\(if ($d|startswith("/nix/store/")) then $d else "/nix/store/"+$d end) \(join(" "))"' \
-      >"$WORK/$host.outs"
-    # one line per output path -> hash, probed in parallel against each sub
-    awk '{for (i=2;i<=NF;i++) print $i}' "$WORK/$host.outs" | sort -u >"$WORK/$host.outpaths"
-    : >"$WORK/$host.cached"
-    for sub in "${extra_subs[@]}"; do
-      # shellcheck disable=SC2016
-      xargs -r -P 16 -I{} sh -c '
-        h=$(basename "$1" | cut -d- -f1)
-        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$2/$h.narinfo" || echo 000)
-        [ "$code" = 200 ] && echo "$1"
-        true' _ {} "$sub" <"$WORK/$host.outpaths" >>"$WORK/$host.cached"
-    done
-    sort -u -o "$WORK/$host.cached" "$WORK/$host.cached"
-    while read -r drv outs; do
-      all=true
-      for o in $outs; do grep -qxF "$o" "$WORK/$host.cached" || { all=false; break; }; done
-      if [ -n "$outs" ] && $all; then probed_hits=$((probed_hits + 1)); else echo "$drv" >>"$WORK/$host.built"; fi
-    done <"$WORK/$host.outs"
-    # Any drv that derivation-show did not return stays in the list.
-    comm -23 <(sort -u "$WORK/$host.built.raw") <(awk '{print $1}' "$WORK/$host.outs" | sort -u) >>"$WORK/$host.built"
-  else
-    cp "$WORK/$host.built.raw" "$WORK/$host.built"
-  fi
-  sort -u -o "$WORK/$host.built" "$WORK/$host.built"
-  count=$(wc -l <"$WORK/$host.built")
+  count=$nix_count
 
-  : >"$WORK/$host.flagged"
+  # Kernel/firmware candidates: only these are probed (a handful of paths,
+  # not the whole will-be-built closure).
+  : >"$WORK/$host.cand"
   while read -r drv; do
     [ -n "$drv" ] || continue
     n=$(drv_name "$drv")
-    if [[ "$n" =~ $FLAG_RE ]] && ! [[ "$n" =~ $SKIP_RE ]]; then echo "$drv" >>"$WORK/$host.flagged"; fi
-  done <"$WORK/$host.built"
+    if [[ "$n" =~ $FLAG_RE ]] && ! [[ "$n" =~ $SKIP_RE ]]; then echo "$drv" >>"$WORK/$host.cand"; fi
+  done <"$WORK/$host.built.raw"
+  ncand=$(wc -l <"$WORK/$host.cand")
+
+  # Direct probe of the candidates on the vendor substituter(s). This keeps
+  # the answer right when the nix-daemon ignored the extra substituter
+  # (untrusted user). A candidate is:
+  #   substitutable - every output answered 200 on some vendor substituter
+  #   flagged       - an output answered 404 on all of them (confirmed miss)
+  #   unknown       - any other answer (timeout, 5xx, ...) -> check incomplete,
+  #                   never reported as a miss.
+  : >"$WORK/$host.flagged"
+  probed_hits=0
+  probe_unknown=0
+  if [ "$ncand" -gt 0 ] && [ ${#extra_subs[@]} -eq 0 ]; then
+    # No vendor substituter configured: Nix's own verdict stands.
+    cp "$WORK/$host.cand" "$WORK/$host.flagged"
+  elif [ "$ncand" -gt 0 ]; then
+    # shellcheck disable=SC2046
+    if ! nixw derivation show $(cat "$WORK/$host.cand") >"$WORK/$host.show.json" 2>"$WORK/$host.show.err" \
+      || ! jq -r 'to_entries[] | .key as $d | [.value.outputs[] | .path // empty] | "\(if ($d|startswith("/nix/store/")) then $d else "/nix/store/"+$d end) \(join(" "))"' \
+        "$WORK/$host.show.json" >"$WORK/$host.outs"; then
+      echo "::warning::pi-cache-miss: could not read candidate outputs for $host" >&2
+      tail -n 20 "$WORK/$host.show.err" >&2
+      check_failed=true
+      md_body+=$'\n'"#### \`$host\` — ⚠ check could not run (derivation show failed)"$'\n'
+      continue
+    fi
+    awk '{for (i=2;i<=NF;i++) print $i}' "$WORK/$host.outs" | sort -u >"$WORK/$host.outpaths"
+    # "<code> <sub> <path>" per probe; curl retries transient errors itself.
+    : >"$WORK/$host.codes"
+    for sub in "${extra_subs[@]}"; do
+      # shellcheck disable=SC2016
+      xargs -r -P 8 -I{} sh -c '
+        h=$(basename "$1" | cut -d- -f1)
+        code=$(curl -s -o /dev/null -w "%{http_code}" --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 30 "$2/$h.narinfo") || code=000
+        echo "$code $2 $1"' _ {} "$sub" <"$WORK/$host.outpaths" >>"$WORK/$host.codes"
+    done
+    while read -r drv outs; do
+      state=hit
+      [ -n "$outs" ] || state=unknown
+      for o in $outs; do
+        # hit: some sub answered 200 · miss: every sub answered 404 · else unknown
+        verdict=$(awk -v p="$o" '
+          $3 == p { n++; if ($1 == "200") hit=1; else if ($1 == "404") nf++ }
+          END { if (hit) print "hit"; else if (n > 0 && nf == n) print "miss"; else print "unknown" }
+        ' "$WORK/$host.codes")
+        case "$verdict" in
+          hit) ;;
+          miss) [ "$state" = unknown ] || state=miss ;;
+          *) state=unknown ;;
+        esac
+      done
+      case "$state" in
+        hit) probed_hits=$((probed_hits + 1)) ;;
+        miss) echo "$drv" >>"$WORK/$host.flagged" ;;
+        *) probe_unknown=$((probe_unknown + 1)); echo "  probe inconclusive: $drv" >&2 ;;
+      esac
+    done <"$WORK/$host.outs"
+    # A candidate that derivation show did not return is unknown, not a hit.
+    missing_show=$(comm -23 <(sort -u "$WORK/$host.cand") <(awk '{print $1}' "$WORK/$host.outs" | sort -u) | wc -l)
+    probe_unknown=$((probe_unknown + missing_show))
+  fi
   nflag=$(wc -l <"$WORK/$host.flagged")
+
+  if [ "$probe_unknown" -gt 0 ]; then
+    echo "::warning::pi-cache-miss: $probe_unknown candidate(s) for $host got no definitive answer from the vendor cache" >&2
+    check_failed=true
+  fi
 
   note=""
   if [ "$probed_hits" -gt 0 ]; then
-    note=" (nix listed $nix_count; $probed_hits found on the vendor cache by direct probe — the local nix-daemon did not consult it)"
+    note=" (upper bound: $probed_hits kernel/firmware derivation(s) Nix counted were found on the vendor cache by direct probe; the nix-daemon did not consult it)"
+  fi
+  if [ "$probe_unknown" -gt 0 ]; then
+    note+=" — ⚠ $probe_unknown kernel/firmware candidate(s) could not be probed: check incomplete"
   fi
   echo "$host: will-be-built=$count flagged=$nflag$note" >&2
   summary_lines+="$host: will-be-built=$count flagged=$nflag"$'\n'
@@ -183,6 +236,9 @@ for host in "${HOSTS[@]}"; do
     md_body+='```'$'\n'
     while read -r d; do md_body+="$(basename "$d")"$'\n'; done <"$WORK/$host.flagged"
     md_body+='```'$'\n'
+  elif [ "$probe_unknown" -gt 0 ]; then
+    md_body+=$'\n'"#### \`$host\` — ⚠ check incomplete (vendor cache did not answer definitively)"$'\n\n'
+    md_body+="Total will-be-built: **$count**$note"$'\n'
   else
     md_body+=$'\n'"#### \`$host\` — ✓ Pi kernel/firmware substitutable"$'\n\n'
     md_body+="Total will-be-built: **$count**$note"$'\n'
@@ -207,6 +263,7 @@ if [ -n "$GH_OUT" ]; then
     echo "miss=$any_flagged"
     echo "failed=$check_failed"
   } >>"$GH_OUT"
+  outputs_written=true
 fi
 
 $check_failed && exit 2
