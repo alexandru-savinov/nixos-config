@@ -2,7 +2,7 @@ name: Flake Update
 
 on:
   schedule:
-    # Nightly at 02:00 UTC — nixpkgs only (security patches)
+    # Nightly at 02:00 UTC — nixpkgs only (security patches), via PR
     - cron: "0 2 * * *"
     # Weekly on Monday at 09:00 UTC
     - cron: "0 9 * * 1"
@@ -17,6 +17,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Needed to dispatch check.yml on the PR branch (see the last step).
+  actions: write
 
 jobs:
   update-flake:
@@ -56,10 +58,8 @@ jobs:
           UPDATE_ALL: ${{ inputs.update_all }}
         run: |
           if [ "$EVENT_SCHEDULE" = "0 2 * * *" ]; then
-            echo "nightly=true" >> $GITHUB_OUTPUT
             echo "mode=nightly" >> $GITHUB_OUTPUT
           else
-            echo "nightly=false" >> $GITHUB_OUTPUT
             if [ "$UPDATE_ALL" = "false" ]; then
               echo "mode=nixpkgs-only" >> $GITHUB_OUTPUT
             else
@@ -102,19 +102,13 @@ jobs:
           nix eval .#nixosConfigurations.sancta-choir.config.system.build.toplevel.drvPath
           nix eval .#nixosConfigurations.rpi5-full.config.system.build.toplevel.drvPath
 
-      # Nightly: commit directly to main (security patches, already validated above)
-      - name: Push directly to main
-        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add flake.lock
-          git commit -m "chore(deps): nightly nixpkgs security update"
-          git push origin main
-
-      # Weekly/manual: create a PR for manual review
+      # Every mode (nightly, weekly, manual) opens or updates a PR. Nothing in
+      # this workflow pushes to main; main moves only by a merged PR. CI on
+      # these PRs is started explicitly by the last step (GITHUB_TOKEN-created
+      # PRs do not trigger it). Nightly and manual nixpkgs-only share one
+      # branch, so a pending nixpkgs bump is updated in place, not stacked.
       - name: Generate update summary
-        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'false'
+        if: steps.changes.outputs.changed == 'true'
         id: summary
         run: |
           {
@@ -135,12 +129,13 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Create Pull Request
-        if: steps.changes.outputs.changed == 'true' && steps.scope.outputs.nightly == 'false'
+        if: steps.changes.outputs.changed == 'true'
+        id: cpr
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore(deps): update flake inputs"
-          title: "chore(deps): Update Nix flake inputs"
+          commit-message: "${{ steps.scope.outputs.mode == 'full' && 'chore(deps): update flake inputs' || 'chore(deps): update nixpkgs inputs' }}"
+          title: "${{ steps.scope.outputs.mode == 'full' && 'chore(deps): Update Nix flake inputs' || 'chore(deps): Update nixpkgs inputs' }}"
           body: |
             ${{ steps.summary.outputs.summary }}
 
@@ -151,3 +146,15 @@ jobs:
           labels: |
             dependencies
             automated
+
+      # A PR created or updated with GITHUB_TOKEN does not trigger
+      # pull_request workflows (GitHub blocks recursive runs), so check.yml
+      # would never report on this PR by itself. workflow_dispatch is exempt
+      # from that rule: dispatch check.yml on the PR branch so its required
+      # checks run on the PR's head commit.
+      - name: Run CI on the PR branch
+        if: steps.cpr.outputs.pull-request-operation == 'created' || steps.cpr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.scope.outputs.mode == 'full' && 'chore/update-flake-lock-weekly' || 'chore/update-flake-lock' }}
+        run: gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
