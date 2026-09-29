@@ -49,9 +49,12 @@ Open-WebUI and Qdrant endpoint definitions are commented out; do not enable
 monitoring for services merely because old definitions exist.
 
 The wrapper exposes global alert-provider configuration but currently does not
-serialize per-endpoint alerts. It also does not expose endpoint UI settings,
-client timeouts, or suite timeout. Verify each missing field against the installed
-Gatus 5.31.0 before proposing a minimal wrapper extension. The module's certificate
+serialize per-endpoint alerts. When this plan was written (2026-09-22) it also did
+not expose endpoint UI settings, client timeouts, or suite timeout; #605 has since
+added `ui.dont-resolve-failed-conditions` and `client.timeout` on endpoints and
+suite endpoints, plus the suite `timeout`, in `modules/services/gatus.nix`. Verify
+any remaining missing field against the installed Gatus 5.31.0 before proposing a
+further wrapper extension. The module's certificate
 and domain comments say days; upstream conditions use duration values. Correct
 that wording if those conditions are introduced, with a pinned-version fixture.
 
