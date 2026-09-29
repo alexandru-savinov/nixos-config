@@ -56,7 +56,7 @@ const server = http.createServer((req, res) => {
   const item = cases[Number(req.url.slice(1))];
   if (!item) { res.writeHead(404); res.end(); return; }
   const reply = () => { res.writeHead(item.status, { 'content-type': 'text/plain' }); res.end(item.body); };
-  if (item.variant === 'timeout') setTimeout(reply, 400); else reply();
+  if (item.variant === 'timeout') setTimeout(reply, 6000); else reply();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const reservation = http.createServer();
@@ -65,7 +65,7 @@ const port = reservation.address().port;
 await new Promise(resolve => reservation.close(resolve));
 const endpoints = cases.map((item, i) => ({ ...item.endpoint, name: item.name, group: 'fixture',
   url: `http://127.0.0.1:${server.address().port}/${i}`, interval: '1h',
-  headers: { Authorization: `Bearer ${sentinel}` }, client: { timeout: '100ms' },
+  headers: { Authorization: `Bearer ${sentinel}` }, client: { timeout: '2s' },
 }));
 fs.writeFileSync(path.join(directory, 'config.json'), JSON.stringify({
   web: { address: '127.0.0.1', port }, storage: { type: 'memory' }, endpoints,
