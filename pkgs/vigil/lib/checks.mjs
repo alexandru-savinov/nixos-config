@@ -92,7 +92,10 @@ export function matches(pattern, body) {
       void worker.terminate();
       resolve(result);
     };
-    const timer = setTimeout(() => finish(null), 500);
+    // The 500ms budget measures the expression, not worker startup: a loaded host
+    // can take longer than that just to boot a worker, which read as NECITIT.
+    let timer = setTimeout(() => finish(null), 5000);
+    worker.once('online', () => { clearTimeout(timer); timer = setTimeout(() => finish(null), 500); });
     worker.once('message', finish);
     worker.once('error', () => finish(null));
     worker.once('exit', () => finish(null));
