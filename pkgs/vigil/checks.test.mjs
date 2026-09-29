@@ -215,11 +215,17 @@ test('Home Assistant authentication and malformed states never expose private da
 });
 
 test('command deadline does not wait for inherited descendant output pipes', async () => {
-  const script = 'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},1500)"],{stdio:"inherit"}); setInterval(()=>{},1000);';
+  // The grandchild holds the inherited stdout pipe open for 10s, far longer than the
+  // 80ms command() deadline. A correct implementation resolves shortly after the
+  // deadline regardless; a broken one (waiting for the pipe to close) would take
+  // ~10s. The 5s bound is a wide margin below that 10s ceiling, not a tight
+  // wall-clock estimate of the fast path, so it stays stable on loaded CI runners.
+  const script = 'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},10000)"],{stdio:"inherit"}); setInterval(()=>{},1000);';
   const started = Date.now();
   const result = await command([process.execPath, '-e', script], 80);
+  const elapsed = Date.now() - started;
   assert.equal(result.verdict, 'NECITIT');
-  assert.ok(Date.now() - started < 800, 'the subprocess deadline must not wait for a descendant pipe');
+  assert.ok(elapsed < 5000, `the subprocess deadline must not wait for a descendant pipe (took ${elapsed}ms)`);
 });
 
 test('real TCP/HTTP probes use bounded responses, no redirects, and refused connections fail', async () => {
