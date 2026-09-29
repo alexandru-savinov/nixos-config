@@ -19,6 +19,9 @@ export function autoproba(args = []) {
   const report = `${result.stdout || ''}\n${result.stderr || ''}`;
   const count = /^# tests ([1-9][0-9]*)$/m.exec(report);
   if (result.status !== 0 || !count || !/^# fail 0$/m.test(report) || !/^# skipped 0$/m.test(report)) {
+    // Name what failed on stdout (the build log shows it); stderr stays the one-word verdict
+    // that mutations.mjs matches exactly.
+    for (const line of report.split('\n').filter((l) => /^\s*not ok \d+ - /.test(l))) process.stdout.write(`PICAT: ${line.trim()}\n`);
     process.stderr.write(`EȘEC: ${report.includes('ERR_ASSERTION') ? 'assertion' : 'test-runtime'}\n`);
     return 2;
   }
