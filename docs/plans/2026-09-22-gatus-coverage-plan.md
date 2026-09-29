@@ -30,8 +30,11 @@ not enabling every available Gatus feature.
 
 Repository baseline: PR #602, `aa57a0b330d457a879268bdaf7112c885da85934`.
 Read-only live Gatus inventory confirms **24 endpoints**: six direct checks,
-16 public Vigil detail rows, and two Vigil summaries. Deployment evidence is
-tracked separately in PR #603; this plan does not replace that evidence.
+16 public Vigil detail rows, and two Vigil summaries, counted at that baseline.
+[PR #615](https://github.com/alexandru-savinov/nixos-config/pull/615) (2026-09-26)
+later added the `doctrine-guard` contract on sancta-choir, so recount live before
+relying on these numbers. Deployment evidence is tracked separately in PR #603;
+this plan does not replace that evidence.
 
 | Direct Gatus check | Current assertion | What it does not establish |
 | --- | --- | --- |
