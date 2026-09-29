@@ -21,7 +21,17 @@ export function autoproba(args = []) {
   if (result.status !== 0 || !count || !/^# fail 0$/m.test(report) || !/^# skipped 0$/m.test(report)) {
     // Name what failed on stdout (the build log shows it); stderr stays the one-word verdict
     // that mutations.mjs matches exactly.
-    for (const line of report.split('\n').filter((l) => /^\s*not ok \d+ - /.test(l))) process.stdout.write(`PICAT: ${line.trim()}\n`);
+    // …plus the failure's own detail (error, expected, actual, location), so a flaky run in CI
+    // tells us WHICH assertion broke, not just which test.
+    const lines = report.split('\n');
+    lines.forEach((l, i) => {
+      if (!/^\s*not ok \d+ - /.test(l)) return;
+      process.stdout.write(`PICAT: ${l.trim()}\n`);
+      for (const d of lines.slice(i + 1, i + 30)) {
+        if (/^\s*(ok|not ok) \d+ - |^\s*\.\.\.\s*$/.test(d)) break;
+        if (/^\s*(error|expected|actual|operator|location|failureType|code):|^\s{4,}\S/.test(d)) process.stdout.write(`PICAT:   ${d.trim().slice(0, 200)}\n`);
+      }
+    });
     process.stderr.write(`EȘEC: ${report.includes('ERR_ASSERTION') ? 'assertion' : 'test-runtime'}\n`);
     return 2;
   }
