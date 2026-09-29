@@ -1,6 +1,5 @@
 { config
 , pkgs
-, pkgs-unstable ? pkgs
 , lib
 , ...
 }:
@@ -14,8 +13,8 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs-unstable.codex;
-      defaultText = lib.literalExpression "pkgs-unstable.codex";
+      default = (pkgs.unstable or pkgs).codex;
+      defaultText = lib.literalExpression "(pkgs.unstable or pkgs).codex";
       description = ''
         Codex CLI package to install. Defaults to nixpkgs-unstable because
         Codex moves faster than stable nixpkgs branches.
