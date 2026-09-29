@@ -63,6 +63,12 @@ in
     # Import the base rpi5 configuration
     ../rpi5/configuration.nix
 
+    # Already inherited via ../rpi5/configuration.nix above — named
+    # explicitly too (NixOS dedups modules by file path, so this is not a
+    # double-import) so this host's cache-trust guard doesn't depend on
+    # staying wired only through rpi5's import list.
+    ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
+
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
     ../sancta-choir/studio-n8n-gate.nix # shared fact: is choir's studio n8n on (sq085)
