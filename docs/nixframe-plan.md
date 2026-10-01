@@ -227,7 +227,7 @@ POST /webhook/nixframe-upload → Validate → If valid → Save Photo → Succe
 ```
 
 Processing:
-1. Validate uploaded file (check MIME: jpeg/png/webp/heic, size <20MB)
+1. Validate uploaded file (check MIME: jpeg/png/webp/heic, size <12MB; n8n's 16 MiB request cap (N8N_PAYLOAD_SIZE_MAX default) holds about 12 MB of file once base64 adds a third)
 2. Convert HEIC→JPEG if needed (ImageMagick — nixpkgs includes libheif by default, no override needed)
 3. Auto-orient using EXIF data (handles rotated phone photos)
 4. Generate unique filename: `YYYY-MM-DDTHH-MM-SS_hash8.ext`

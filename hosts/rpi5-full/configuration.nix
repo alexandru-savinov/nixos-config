@@ -407,7 +407,7 @@ in
         ''[BODY] == pat(*<input type="file" id="fileInput"*)''
       ];
       rpi5-nixframe = nativeHttpEndpoint "rpi5" "NixFrame Upload" "http://127.0.0.1:5678/webhook/nixframe-ui" [
-        "[BODY] == pat(*<title>NixFrame Upload</title>*)"
+        "[BODY] == pat(*<title>Poze pentru ramă</title>*)"
         ''[BODY] == pat(*<input type="file" id="fileInput"*)''
       ];
       # Authenticated HA health check — Bearer token is the LLAT, expanded by
