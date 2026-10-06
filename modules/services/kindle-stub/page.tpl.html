@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%%DOCTITLE%%</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; }
+  body { background: #000; color: #fff; font-family: Georgia, serif; }
+  body.day { background: #fff; color: #000; }
+  #bar { height: 52px; border-bottom: 2px solid #fff; font: bold 22px sans-serif; white-space: nowrap; }
+  body.day #bar { border-bottom-color: #000; }
+  #bar a { display: inline-block; height: 40px; line-height: 40px; min-width: 60px; margin: 5px 4px 0 4px;
+           border: 2px solid #fff; text-align: center; color: #fff; text-decoration: none; }
+  body.day #bar a { border-color: #000; color: #000; }
+  #pg { display: inline-block; margin-left: 10px; font-weight: normal; }
+  #vp { position: relative; overflow: hidden; }
+  #col { position: absolute; top: 0; left: 0; line-height: 1.45; }
+  #col h2 { font-size: 1.05em; margin: 0.4em 0 0.8em 0; text-align: center; }
+  #col h3 { font-size: 0.8em; margin: 0.8em 0 0 0; text-align: center; font-weight: normal; }
+  #col p { margin: 0 0 0.45em 0; text-indent: 1.4em; }
+  #col p.r { text-align: right; text-indent: 0; }
+  #col ul { list-style: none; margin: 0; padding: 0; }
+  #col li { margin: 0 0 0.5em 0; }
+  #col li.part { font-weight: bold; margin-top: 0.6em; }
+  #col li a { color: #fff; }
+  body.day #col li a { color: #000; }
+  #col li.cur a { font-weight: bold; }
+  #col li .at { font-style: italic; white-space: nowrap; }
+</style></head>
+<body>
+<div id="bar"><a href="/r/index" id="toc">&#8801;</a><a href="#" id="minus">A&minus;</a><a href="#" id="plus">A+</a><a href="#" id="mode">&#9728;</a><span id="pg"></span></div>
+<div id="vp"><div id="col">
+%%BODY%%
+</div></div>
+<script>
+(function () {
+  var ID = "%%ID%%", PREV = "%%PREV%%", NEXT = "%%NEXT%%", IS_CH = %%ISCH%%;
+  // The server swaps the comment+null below for its saved {ch, f}: the copy that survives a wiped localStorage.
+  var SRV = /*SRVPOS*/null;
+  var d = document, de = d.documentElement, b = d.body, vp = d.getElementById("vp"), col = d.getElementById("col");
+  var bar = d.getElementById("bar");
+  var P = 22, W = 0, H = 0, page = 0, pages = 1, fs = 28, night = true;
+  function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, String(v)); } catch (e) {} return null; }
+  var s = ls("k_fs"); if (s) fs = parseInt(s, 10) || 28;
+  if (ls("k_night") === "0") night = false;
+  // Read the saved position before the first layout, which would otherwise overwrite it.
+  var savedCh = ls("k_ch"), savedF = parseFloat(ls("k_frac") || ""), sent = "";
+  function okF(f) { return typeof f === "number" && f >= 0 && f <= 1; }
+  function hashF() { var m = /^#f=([01](\.[0-9]{1,4})?)$/.exec(location.hash || ""); return m ? parseFloat(m[1]) : NaN; }
+
+  function frac() { return pages > 1 ? page / (pages - 1) : 0; }
+  function layout(keep) {
+    var f = frac();
+    W = de.clientWidth || b.clientWidth || 758;
+    var full = de.clientHeight || b.clientHeight || 897;
+    H = full - bar.offsetHeight - 6;
+    vp.style.width = W + "px"; vp.style.height = H + "px";
+    var cw = W - 2 * P;
+    col.style.width = cw + "px"; col.style.height = H + "px"; col.style.padding = "0 " + P + "px";
+    col.style.fontSize = fs + "px";
+    col.style.webkitColumnWidth = cw + "px"; col.style.webkitColumnGap = (2 * P) + "px";
+    col.style.columnWidth = cw + "px"; col.style.columnGap = (2 * P) + "px";
+    pages = Math.max(1, Math.ceil((col.scrollWidth + 2 * P) / W));
+    if (keep) page = Math.round(f * (pages - 1));
+    if (page > pages - 1) page = pages - 1;
+    show(keep);
+  }
+  // save: remember the position locally and send the server copy (only when it changed).
+  function show(save) {
+    col.style.left = (-page * W) + "px";
+    d.getElementById("pg").innerHTML = "стр. " + (page + 1) + " / " + pages;
+    if (IS_CH && save) {
+      var f = frac().toFixed(4);
+      ls("k_ch", ID); ls("k_frac", f);
+      if (f !== sent) { sent = f; new Image().src = "/pos?ch=" + ID + "&f=" + f + "&n=" + new Date().getTime(); }
+    }
+  }
+  function paint() { b.className = night ? "" : "day"; d.getElementById("mode").innerHTML = night ? "&#9728;" : "&#9790;"; }
+
+  paint();
+  layout(false);
+  if (IS_CH) {
+    var hf = hashF(), at = 0;
+    if (location.hash === "#end") at = 1;
+    else if (savedCh === ID && okF(savedF)) at = savedF;
+    else if (okF(hf)) at = hf;
+    else if (SRV && SRV.ch === ID && okF(SRV.f)) at = SRV.f;
+    page = Math.round(at * (pages - 1));
+    show(true);
+  } else {
+    var cur = savedCh, cf = savedF;
+    if (!(cur && d.getElementById("c-" + cur)) && SRV) { cur = SRV.ch; cf = SRV.f; }
+    var li = cur && d.getElementById("c-" + cur);
+    if (li) {
+      li.className += " cur";
+      var at2 = d.createElement("span");
+      at2.className = "at";
+      at2.innerHTML = " &#9656; читаете" + (okF(cf) ? ", " + Math.round(cf * 100) + "%" : "");
+      li.appendChild(at2);
+    }
+  }
+
+  d.getElementById("minus").onclick = function () { fs = Math.max(16, fs - 2); ls("k_fs", fs); layout(true); return false; };
+  d.getElementById("plus").onclick  = function () { fs = Math.min(48, fs + 2); ls("k_fs", fs); layout(true); return false; };
+  d.getElementById("mode").onclick  = function () { night = !night; ls("k_night", night ? 1 : 0); paint(); return false; };
+  vp.onclick = function (e) {
+    e = e || window.event;
+    var t = e.target || e.srcElement;
+    if (t && t.tagName === "A") return true;
+    if (e.clientX > W / 2) {
+      if (page < pages - 1) { page++; show(true); } else if (NEXT) { location.href = "/r/" + NEXT; }
+    } else {
+      if (page > 0) { page--; show(true); } else if (PREV) { location.href = "/r/" + PREV + "#end"; }
+    }
+    return false;
+  };
+})();
+</script>
+</body></html>

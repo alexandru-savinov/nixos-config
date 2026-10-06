@@ -70,7 +70,7 @@ in
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
 
     ../../modules/services/codex.nix
-    ../../modules/services/kindle-stub.nix
+    ../../modules/services/kindle-stub
     ../../modules/services/vigil.nix
     ../sancta-choir/studio-n8n-gate.nix # shared fact: is choir's studio n8n on (sq085)
 
