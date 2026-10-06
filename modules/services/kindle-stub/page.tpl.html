@@ -79,8 +79,16 @@
   paint();
   layout(false);
   if (IS_CH) {
-    var hf = hashF(), at = 0;
-    if (location.hash === "#end") at = 1;
+    var hf = hashF(), end = location.hash === "#end", at = 0;
+    // "#end" and "#f=" are one-shot hints. Drop them from the URL at once, so a reload or a reopened
+    // last URL cannot reapply them over the newer position the reader saves while paging.
+    if (end || okF(hf)) {
+      try {
+        if (history.replaceState) history.replaceState(null, "", location.pathname);
+        else location.replace(location.pathname + "#");
+      } catch (e) {}
+    }
+    if (end) at = 1;
     else if (savedCh === ID && okF(savedF)) at = savedF;
     else if (okF(hf)) at = hf;
     else if (SRV && SRV.ch === ID && okF(SRV.f)) at = SRV.f;
