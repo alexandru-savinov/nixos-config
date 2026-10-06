@@ -70,6 +70,7 @@ in
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
 
     ../../modules/services/codex.nix
+    ../../modules/services/kindle-stub.nix
     ../../modules/services/vigil.nix
     ../sancta-choir/studio-n8n-gate.nix # shared fact: is choir's studio n8n on (sq085)
 
@@ -124,6 +125,9 @@ in
   # OpenAI Codex CLI for the full, active Pi profile. Keep this out of the
   # minimal rpi5 SD-image profile so bootstrap images stay small.
   customModules.codex.enable = true;
+
+  # Answers the Kindle's Wi-Fi check for the isolated «kindle» VLAN (192.168.30.0/24).
+  customModules.kindleStub.enable = true;
 
   # Package overrides for memory-constrained ARM builds
   nixpkgs.overlays = [
