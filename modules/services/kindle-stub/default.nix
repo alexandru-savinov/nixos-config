@@ -117,6 +117,11 @@ in
         RestrictSUIDSGID = true;
         LockPersonality = true;
         SystemCallArchitectures = "native";
+
+        # Second boundary, independent of the iptables rule below and of tailscale0 being a
+        # trusted interface: the service's own sockets may only talk to the kindle subnet.
+        IPAddressAllow = [ cfg.allowedSubnet ];
+        IPAddressDeny = "any";
       };
     };
 
