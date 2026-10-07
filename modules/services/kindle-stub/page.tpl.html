@@ -59,7 +59,7 @@
     col.style.fontSize = fs + "px";
     col.style.webkitColumnWidth = cw + "px"; col.style.webkitColumnGap = (2 * P) + "px";
     col.style.columnWidth = cw + "px"; col.style.columnGap = (2 * P) + "px";
-    pages = Math.max(1, Math.ceil((col.scrollWidth + 2 * P) / W));
+    pages = Math.max(1, Math.ceil((col.scrollWidth - P) / W));
     if (keep) page = Math.round(f * (pages - 1));
     if (page > pages - 1) page = pages - 1;
     show(keep);
