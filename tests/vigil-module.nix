@@ -71,7 +71,7 @@ let
     state-parent = builtins.elem "d /var/lib/vigil 0755 vigil vigil -" config.systemd.tmpfiles.rules;
     ack-permissions = builtins.elem "d /var/lib/vigil/ack 0775 vigil users -" config.systemd.tmpfiles.rules;
     public-dashboard-allowlist = builtins.fromJSON service.environment.VIGIL_PUBLIC_NAMES ==
-      [ "channel" "choir-host" "choir-tick" "ha-alive" "ha-served" "soul-mirror-pull" "tailscaled" ]
+      [ "aspirator-robot" "aspirator-scripts" "channel" "choir-host" "choir-tick" "ha-alive" "ha-served" "soul-mirror-pull" "tailscaled" ]
       && tick.environment.VIGIL_PUBLIC_NAMES == service.environment.VIGIL_PUBLIC_NAMES;
     dashboard-endpoints =
       let
@@ -143,7 +143,7 @@ let
     wildcard-listener = shouldFail "vigil-listen" { modules = modules ++ [{ services.vigil.listenAddress = lib.mkForce "0.0.0.0"; }]; };
     missing-telegram = shouldFail "vigil-telegram" { modules = modules ++ [{ services.vigil.telegramEnvFile = lib.mkForce null; }]; };
     channel-needs-telegram = shouldFail "vigil-channel" { modules = fixtureModules ./fixtures/vigil/channel 1; };
-    hass-needs-token = shouldFail "vigil-hass" { modules = fixtureModules ./fixtures/vigil/hass 1; };
+    hass-needs-token = shouldFail "vigil-hass" { modules = fixtureModules ./fixtures/vigil/hass 1 ++ [{ services.vigil.hassUrl = lib.mkForce null; }]; };
     duplicate-name = shouldFail "vigil-duplicate" { modules = fixtureModules ./fixtures/vigil/duplicate 2; };
   };
   failures = builtins.attrNames (lib.filterAttrs (_: value: !value) checks);
