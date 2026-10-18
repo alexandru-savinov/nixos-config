@@ -58,14 +58,14 @@ nixos-rebuild build --flake .#rpi5-full &&
 systemctl is-active vigil.timer vigil-tick.socket
 sudo systemctl start vigil.service
 systemctl show vigil.service -p Result -p ExecMainStatus
-sudo jq -e '(.verde + .picat + .necitit) == 9 and .necitit == 0' /var/lib/vigil/tick
+sudo jq -e '(.verde + .picat + .necitit) == 11 and .necitit == 0' /var/lib/vigil/tick
 run_id=$(sudo jq -r .run_id /var/lib/vigil/tick)
 sudo journalctl _SYSTEMD_INVOCATION_ID="$run_id" -o cat --no-pager
 sudo stat /var/lib/vigil/last-channel-ok
 curl --fail --max-time 10 http://100.106.93.87:8747/status | jq '{stare, la}'
 ```
 
-The complete run must exit 0 or 1, with seven contracts and zero NECITIT,
+The complete run must exit 0 or 1, with eleven contracts (nine public + two private runtime) and zero NECITIT,
 after a confirmed channel probe. Choir peer checks may be picat until its
 socket is deployed. Failed Telegram probing leaves channel NECITIT honestly;
 do not create a success marker by hand. `backup-telegram-env` retains root

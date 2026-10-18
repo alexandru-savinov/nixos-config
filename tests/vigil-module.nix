@@ -6,11 +6,12 @@ let
     services.vigil = {
       enable = true;
       contractsDirs = [ ../hosts/rpi5-full/vigil-contracts "/run/vigil-contracts" ];
-      expectedContracts = 7;
+      expectedContracts = 9;
       expectedRuntimeContracts = 3;
       listenAddress = "100.106.93.87";
       telegramEnvFile = "/run/agenix/telegram";
       hassTokenFile = "/run/custom-ha-token";
+      hassUrl = "http://127.0.0.1:8123";
     };
   };
   modules = [ ../modules/services/vigil.nix base ];
@@ -42,7 +43,7 @@ let
     user = config.users.users.vigil.isSystemUser && config.users.users.vigil.group == "vigil";
     no-journal-grant = config.users.users.vigil.extraGroups == [ ];
     package-installed = lib.any (package: (package.pname or "") == "vigil") config.environment.systemPackages;
-    public-runtime-count = lib.hasSuffix "--expect 10" service.serviceConfig.ExecStart;
+    public-runtime-count = lib.hasSuffix "--expect 12" service.serviceConfig.ExecStart;
     mandatory-public-build-gate = lib.hasInfix
       (builtins.unsafeDiscardStringContext "${config.system.build.vigilContracts}/1")
       service.serviceConfig.ExecStart;
