@@ -6,11 +6,12 @@ let
     services.vigil = {
       enable = true;
       contractsDirs = [ ../hosts/rpi5-full/vigil-contracts "/run/vigil-contracts" ];
-      expectedContracts = 7;
+      expectedContracts = 9;
       expectedRuntimeContracts = 3;
       listenAddress = "100.106.93.87";
       telegramEnvFile = "/run/agenix/telegram";
       hassTokenFile = "/run/custom-ha-token";
+      hassUrl = "http://127.0.0.1:8123";
     };
   };
   modules = [ ../modules/services/vigil.nix base ];
@@ -42,7 +43,7 @@ let
     user = config.users.users.vigil.isSystemUser && config.users.users.vigil.group == "vigil";
     no-journal-grant = config.users.users.vigil.extraGroups == [ ];
     package-installed = lib.any (package: (package.pname or "") == "vigil") config.environment.systemPackages;
-    public-runtime-count = lib.hasSuffix "--expect 10" service.serviceConfig.ExecStart;
+    public-runtime-count = lib.hasSuffix "--expect 12" service.serviceConfig.ExecStart;
     mandatory-public-build-gate = lib.hasInfix
       (builtins.unsafeDiscardStringContext "${config.system.build.vigilContracts}/1")
       service.serviceConfig.ExecStart;
@@ -70,7 +71,7 @@ let
     state-parent = builtins.elem "d /var/lib/vigil 0755 vigil vigil -" config.systemd.tmpfiles.rules;
     ack-permissions = builtins.elem "d /var/lib/vigil/ack 0775 vigil users -" config.systemd.tmpfiles.rules;
     public-dashboard-allowlist = builtins.fromJSON service.environment.VIGIL_PUBLIC_NAMES ==
-      [ "channel" "choir-host" "choir-tick" "ha-alive" "ha-served" "soul-mirror-pull" "tailscaled" ]
+      [ "aspirator-robot" "aspirator-scripts" "channel" "choir-host" "choir-tick" "ha-alive" "ha-served" "soul-mirror-pull" "tailscaled" ]
       && tick.environment.VIGIL_PUBLIC_NAMES == service.environment.VIGIL_PUBLIC_NAMES;
     dashboard-endpoints =
       let
@@ -142,7 +143,7 @@ let
     wildcard-listener = shouldFail "vigil-listen" { modules = modules ++ [{ services.vigil.listenAddress = lib.mkForce "0.0.0.0"; }]; };
     missing-telegram = shouldFail "vigil-telegram" { modules = modules ++ [{ services.vigil.telegramEnvFile = lib.mkForce null; }]; };
     channel-needs-telegram = shouldFail "vigil-channel" { modules = fixtureModules ./fixtures/vigil/channel 1; };
-    hass-needs-token = shouldFail "vigil-hass" { modules = fixtureModules ./fixtures/vigil/hass 1; };
+    hass-needs-token = shouldFail "vigil-hass" { modules = fixtureModules ./fixtures/vigil/hass 1 ++ [{ services.vigil.hassUrl = lib.mkForce null; }]; };
     duplicate-name = shouldFail "vigil-duplicate" { modules = fixtureModules ./fixtures/vigil/duplicate 2; };
   };
   failures = builtins.attrNames (lib.filterAttrs (_: value: !value) checks);
