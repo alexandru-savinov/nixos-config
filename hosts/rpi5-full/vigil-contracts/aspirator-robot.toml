@@ -1,0 +1,12 @@
+[contract]
+nume = "aspirator-robot"
+ce = "Roborock Saros 10 reachable from Home Assistant"
+dimension = "availability"
+driver = "operational"
+verifica = "hass-state"
+tinta = "vacuum.saros_10"
+picat_dupa = 3
+astept = { disponibil = true }
+
+[spune]
+nivel = "nota"

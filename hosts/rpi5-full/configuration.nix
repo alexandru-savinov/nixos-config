@@ -252,7 +252,7 @@ in
   services.vigil = {
     enable = true;
     contractsDirs = [ ./vigil-contracts "/run/vigil-contracts" ];
-    expectedContracts = 7;
+    expectedContracts = 9;
     expectedRuntimeContracts = 2;
     telegramEnvFile = secret "backup-telegram-env";
     hassTokenFile = secret "ha-vigil-token";

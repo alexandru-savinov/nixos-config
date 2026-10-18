@@ -1,0 +1,12 @@
+[contract]
+nume = "aspirator-scripts"
+ce = "Room picker on the Aspirator dashboard"
+dimension = "availability"
+driver = "operational"
+verifica = "hass-state"
+tinta = "script.vacuum_room_toggle"
+picat_dupa = 2
+astept = { disponibil = true }
+
+[spune]
+nivel = "incident"

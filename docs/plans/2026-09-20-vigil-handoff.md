@@ -44,7 +44,7 @@ unknown evidence as green. Persisting backup success across boots requires
 a separately reviewed change to the backup producer, outside this plan’s
 restriction on modifying the soul-mirror services.
 
-## 1. rpi5: seven public contracts
+## 1. rpi5: nine public contracts
 
 After the rpi5 implementation PR is merged and CI is green, run from the owner's
 clean repository checkout on rpi5:
@@ -58,7 +58,7 @@ nixos-rebuild build --flake .#rpi5-full &&
 systemctl is-active vigil.timer vigil-tick.socket
 sudo systemctl start vigil.service
 systemctl show vigil.service -p Result -p ExecMainStatus
-sudo jq -e '(.verde + .picat + .necitit) == 7 and .necitit == 0' /var/lib/vigil/tick
+sudo jq -e '(.verde + .picat + .necitit) == 9 and .necitit == 0' /var/lib/vigil/tick
 run_id=$(sudo jq -r .run_id /var/lib/vigil/tick)
 sudo journalctl _SYSTEMD_INVOCATION_ID="$run_id" -o cat --no-pager
 sudo stat /var/lib/vigil/last-channel-ok
