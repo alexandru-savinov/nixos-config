@@ -30,15 +30,21 @@ jobs:
               with:
                   name: nix-community
 
+            # v6 of this action ran tar as the runner user, so with the
+            # multi-user store from install-nix-action every restore failed
+            # ("Permission denied", tar exit 2; upstream issue #296) and no run
+            # ever got a warm store. v7 restores with sudo. Keys carry a `v7`
+            # prefix so no job ever restores a cache written by v6 (upstream:
+            # v7 cannot use them) and a v6-era primary key cannot block saving.
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
+              uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
               with:
                   # Cache key based on flake.lock - changes when dependencies update
-                  primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}
+                  primary-key: nix-v7-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}
                   # Restore from partial matches if exact key not found
                   restore-prefixes-all-matches: |
-                      nix-${{ runner.os }}-check-
-                      nix-${{ runner.os }}-
+                      nix-v7-${{ runner.os }}-check-
+                      nix-v7-${{ runner.os }}-
                   # Only SAVE cache on main branch - PRs read but don't upload
                   # This is the key fix: PRs benefit from cache but skip slow uploads
                   save: ${{ github.ref == 'refs/heads/main' }}
@@ -100,11 +106,17 @@ jobs:
                           - 'flake.lock'
                           - '.github/workflows/check.yml'
 
+            # keep-outputs: n8n is unfree (never on a public cache) and only a
+            # BUILD-time input of the VM test, so the GC that runs before the
+            # cache is saved would delete it as garbage. Keeping the outputs of
+            # live derivations keeps it in the saved store, so the next run
+            # restores it instead of compiling it again (~10 min).
             - name: Install Nix
               uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
               with:
                   extra_nix_config: |
                       experimental-features = nix-command flakes
+                      keep-outputs = true
 
             - name: Setup Cachix
               uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
@@ -112,12 +124,12 @@ jobs:
                   name: nix-community
 
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
+              uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
               with:
-                  primary-key: nix-${{ runner.os }}-build-x86-${{ hashFiles('flake.lock') }}
+                  primary-key: nix-v7-${{ runner.os }}-build-x86-${{ hashFiles('flake.lock') }}
                   restore-prefixes-all-matches: |
-                      nix-${{ runner.os }}-build-x86-
-                      nix-${{ runner.os }}-
+                      nix-v7-${{ runner.os }}-build-x86-
+                      nix-v7-${{ runner.os }}-
                   save: ${{ github.ref == 'refs/heads/main' }}
                   gc-max-store-size: 5G
 
@@ -167,13 +179,13 @@ jobs:
                   name: nix-community
 
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
+              uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
               with:
-                  primary-key: nix-${{ runner.os }}-scripts-${{ matrix.script }}-${{ hashFiles('flake.lock') }}
+                  primary-key: nix-v7-${{ runner.os }}-scripts-${{ matrix.script }}-${{ hashFiles('flake.lock') }}
                   restore-prefixes-all-matches: |
-                      nix-${{ runner.os }}-scripts-${{ matrix.script }}-
-                      nix-${{ runner.os }}-scripts-
-                      nix-${{ runner.os }}-
+                      nix-v7-${{ runner.os }}-scripts-${{ matrix.script }}-
+                      nix-v7-${{ runner.os }}-scripts-
+                      nix-v7-${{ runner.os }}-
                   save: ${{ github.ref == 'refs/heads/main' }}
                   gc-max-store-size: 5G
 
@@ -200,12 +212,12 @@ jobs:
                   name: nix-community
 
             - name: Cache Nix Store
-              uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6
+              uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
               with:
-                  primary-key: nix-${{ runner.os }}-aarch64-${{ hashFiles('flake.lock') }}
+                  primary-key: nix-v7-${{ runner.os }}-aarch64-${{ hashFiles('flake.lock') }}
                   restore-prefixes-all-matches: |
-                      nix-${{ runner.os }}-aarch64-
-                      nix-${{ runner.os }}-
+                      nix-v7-${{ runner.os }}-aarch64-
+                      nix-v7-${{ runner.os }}-
                   save: ${{ github.ref == 'refs/heads/main' }}
                   gc-max-store-size: 5G
 
