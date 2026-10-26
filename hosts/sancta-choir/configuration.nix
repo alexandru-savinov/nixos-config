@@ -141,8 +141,8 @@
   # Agent tooling on the system PATH so herdr panes (which inherit the
   # herdr-server unit's PATH, not a login shell's) can find + launch them.
   #
-  # The `sancta` alias is the ONLY pointer from `sancta-session` / `sessions
-  # attach sancta` to the live backend, and it is deliberately declarative
+  # The `sancta` alias is the ONLY pointer from `sancta` / `sancta-session` /
+  # `sessions attach sancta` to the live backend, and it is deliberately declarative
   # (reviewed, not runtime state). Every approved Sancta recovery creates a NEW
   # `sancta-`-prefixed backend (docs/plans/2026-09-26-sancta-activation.md
   # step 6); that change MUST update this value in the same change as the Mac
@@ -187,6 +187,27 @@
       fi
       exec /run/wrappers/bin/sudo -iu sancta \
         ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions attach sancta
+    '')
+
+    # `sancta`: the short way in, for root and for the sancta account alike.
+    # Same contract as sancta-session: it only ATTACHES to the backend named by
+    # the `sancta` alias in /etc/agt-zmx-aliases.json and never starts,
+    # stops or reconciles a writer; a stale alias fails closed inside
+    # `sessions attach`.
+    (pkgs.writeShellScriptBin "sancta" ''
+      if [ "$#" -ne 0 ]; then
+        echo "usage: sancta" >&2
+        exit 2
+      fi
+      if [ "$EUID" -eq 0 ]; then
+        exec /run/wrappers/bin/sudo -iu sancta \
+          ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions attach sancta
+      fi
+      if [ "$(${pkgs.coreutils}/bin/id -un)" = sancta ]; then
+        exec ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions attach sancta
+      fi
+      echo "sancta: run as root or as sancta" >&2
+      exit 1
     '')
   ];
 

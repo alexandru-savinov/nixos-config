@@ -21,7 +21,9 @@ Existing restore commands retain their explicit host, account, backend and scope
 On another terminal or mobile, SSH to the account that owns the backend:
 
 ```sh
-# Choir: after logging in, switch to the Sancta account if necessary.
+# Choir: `sancta` attaches from root or from the Sancta account.
+sancta
+# The same, spelled out:
 sudo -iu sancta
 sessions list
 sessions attach sancta
@@ -95,7 +97,7 @@ sessions resume claude EXACT-CONVERSATION-UUID --cwd /ORIGINAL/DIRECTORY
 
 This shares the helper's lock and requires an existing, stopped conversation.
 There is no picker, `--continue`, ambiguous-name lookup or argument pass-through.
-For an already running Sancta backend, use `sessions attach sancta` instead.
+For an already running Sancta backend, use `sancta` (or `sessions attach sancta`) instead.
 Direct `claude --resume` and conversation switching inside Claude bypass this
 cooperative lock; it is not a security boundary against the owning account.
 
