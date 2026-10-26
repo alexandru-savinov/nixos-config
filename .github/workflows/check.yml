@@ -130,7 +130,7 @@ jobs:
                   restore-prefixes-all-matches: |
                       nix-v7-${{ runner.os }}-build-x86-
                       nix-v7-${{ runner.os }}-
-                  save: ${{ github.ref == 'refs/heads/main' }}
+                  save: true # PROBE ONLY: never merge
                   gc-max-store-size: 5G
 
             - name: Build sancta-choir (x86_64-linux)
