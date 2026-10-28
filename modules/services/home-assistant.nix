@@ -141,6 +141,10 @@ in
         RemainAfterExit = true;
         # The wait loops below total up to 240s (60s tailscaled + 180s HA);
         # without this the host's DefaultTimeoutStartSec=90s SIGTERMs the
+                                         # tailscaled can take >60s to come up after an unclean boot (rpi5,
+                                         # 2026-10-27 01:20): instead of staying failed until someone looks, retry.
+                                         Restart = "on-failure";
+                                         RestartSec = "30s";
         # oneshot mid-loop and HTTPS never comes up on cold boot.
         TimeoutStartSec = 300;
       };

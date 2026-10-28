@@ -652,6 +652,10 @@ in
         # Wait loops below total up to 120s (60s tailscaled + 60s gatus); the
         # rpi5 host default of 90s would SIGTERM the oneshot mid-loop.
         TimeoutStartSec = 150;
+        # tailscaled can take >60s to come up after an unclean boot (rpi5,
+        # 2026-10-27 01:20): instead of staying failed until someone looks, retry.
+        Restart = "on-failure";
+        RestartSec = "30s";
       };
 
       script = ''
