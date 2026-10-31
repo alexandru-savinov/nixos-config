@@ -79,6 +79,12 @@ in
   };
 
   # ── CrowdSec: sshd detection from the journal, local decisions only ─────
+  #
+  # Deliberate overlap: fail2ban's sshd jail (hosts/common.nix) stays on,
+  # unchanged, while both run side by side for a trial week. After that, one
+  # of the two sshd banners is retired in its own change. Until then an IP
+  # banned by either shows in `fail2ban-client status sshd` or
+  # `cscli decisions list`.
   services.crowdsec = {
     enable = true;
     openFirewall = false;
