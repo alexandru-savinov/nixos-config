@@ -69,7 +69,8 @@ let
   key = "[a-zA-Z0-9_-]+";
   scalar = ''("s"|true|false|[+-]?(0|[1-9][0-9]*))'';
   array = ''[[]${space}("s"(${space},${space}"s")*${space},?)?${space}[]]'';
-  pair = "${key}${space}=${space}${scalar}";
+  # Inline-table values may be scalars or string arrays (osquery `permis`).
+  pair = "${key}${space}=${space}(${scalar}|${array})";
   inline = "[{]${space}(${pair}(${space},${space}${pair})*)?${space}[}]";
   syntax = source: builtins.stringLength source <= 65536 && lib.all
     (line:
@@ -102,7 +103,7 @@ let
     && keys c [ "nume" "ce" "verifica" "tinta" "astept" "prag" "picat_dupa" "peer" "dimension" "driver" ] [ "nume" "ce" "verifica" "tinta" "picat_dupa" ]
     && keys document.spune [ "nivel" ] [ "nivel" ]
     && name c.nume && text c.ce && utf16Length c.ce <= 200
-    && builtins.elem kind [ "tcp" "http" "unit" "age" "disk" "mount" "cmd" "hass-state" ]
+    && builtins.elem kind [ "tcp" "http" "unit" "age" "disk" "mount" "cmd" "hass-state" "crowdsec" "osquery" "anomaly" ]
     && integer c.picat_dupa 1 12 && (!(c ? peer) || builtins.isBool c.peer)
     # Borrowed vocabulary: closed label sets, mirrored from lib/schema.mjs.
     && (!(c ? dimension) || builtins.elem c.dimension [ "accuracy" "completeness" "conformity" "consistency" "coverage" "timeliness" "uniqueness" "availability" ])
@@ -124,12 +125,31 @@ let
     && ((expectation ? valoare) != (expectation ? disponibil))
     && (!(expectation ? valoare) || text expectation.valoare)
     && (!(expectation ? disponibil) || expectation.disponibil == true)
+    # crowdsec: a scenario name (it lands in a LAPI query string, so a closed
+    # charset) and a look-back window in minutes, at most one week.
+    else if kind == "crowdsec" then keys expectation [ "scenariu" "fereastra_min" ] [ "scenariu" "fereastra_min" ]
+    && matches "[a-zA-Z0-9][a-zA-Z0-9_./-]{0,127}" expectation.scenariu
+    && integer expectation.fereastra_min 1 10080
+    # osquery: the allowlist of row keys; may be empty (e.g. etc_fim).
+    else if kind == "osquery" then keys expectation [ "permis" ] [ "permis" ]
+    && builtins.isList expectation.permis && builtins.length expectation.permis <= 1024
+    && lib.all text expectation.permis
     else !(c ? astept))
     && (if kind == "age" then (absolute target || matches "unit:[a-zA-Z0-9@_.:-]+\\.service" target) && duration (c.prag or null)
-    else if kind == "disk" then absolute target && integer (c.prag or null) 1 100 else !(c ? prag))
+    else if kind == "disk" then absolute target && integer (c.prag or null) 1 100
+    else if kind == "crowdsec" then integer (c.prag or null) 1 1000000
+    else if kind == "anomaly" then integer (c.prag or null) 1 100 else !(c ? prag))
     && (kind != "tcp" || tcp != null && integer (decimal (builtins.elemAt tcp 1)) 1 65535)
     && (kind != "unit" || matches "[a-zA-Z0-9@_.:-]+\\.service" target)
     && (kind != "mount" || absolute target)
+    # crowdsec LAPI is loopback-only: any other host is a validation error.
+    && (kind != "crowdsec" || (
+      let lapi = builtins.match "http://(127[.]0[.]0[.]1|[[]::1[]]):([1-9][0-9]{0,4})/?" target;
+      in lapi != null && lib.toInt (builtins.elemAt lapi 1) <= 65535
+    ))
+    # osquery: a query NAME from the fixed vigil pack, never SQL.
+    && (kind != "osquery" || matches "[a-z][a-z0-9_]{0,63}" target)
+    && (kind != "anomaly" || matches "[a-z0-9_]+[.][a-z0-9_]+" target)
     && (kind != "hass-state" || (matches "[a-z_][a-z0-9_]*\\.[a-z0-9_]+" target
     && !(matches "(person|device_tracker|mobile_app)\\..*" target)));
   parseSource = file: source:

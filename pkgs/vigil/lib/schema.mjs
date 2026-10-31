@@ -3,7 +3,7 @@ import net from 'node:net';
 import { NAME, duration } from './common.mjs';
 import { parseToml } from './toml.mjs';
 
-const TYPES = ['tcp', 'http', 'unit', 'age', 'disk', 'mount', 'cmd', 'hass-state'];
+const TYPES = ['tcp', 'http', 'unit', 'age', 'disk', 'mount', 'cmd', 'hass-state', 'crowdsec', 'osquery', 'anomaly'];
 // Borrowed vocabulary (labels only; no check branches on them). `dimension` is
 // the kind of promise, `driver` is whom it serves. The seven dimensions and the
 // first three drivers are ODCS v3.0.0's own names (quality.dimension, sla.driver);
@@ -71,6 +71,16 @@ export function validate(document) {
     if (hasValoare === hasDisponibil) fail();
     if (hasValoare && !text(c.astept.valoare)) fail();
     if (hasDisponibil && c.astept.disponibil !== true) fail();
+  } else if (c.verifica === 'crowdsec') {
+    // The scenario lands in a LAPI query string, so a closed charset; the
+    // look-back window is in minutes, at most one week.
+    keys(c.astept, ['scenariu', 'fereastra_min'], ['scenariu', 'fereastra_min']);
+    if (typeof c.astept.scenariu !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,127}$/.test(c.astept.scenariu)) fail();
+    if (!Number.isInteger(c.astept.fereastra_min) || c.astept.fereastra_min < 1 || c.astept.fereastra_min > 10080) fail();
+  } else if (c.verifica === 'osquery') {
+    // The allowlist of row keys; may be empty (e.g. etc_fim).
+    keys(c.astept, ['permis'], ['permis']);
+    if (!Array.isArray(c.astept.permis) || c.astept.permis.length > 1024 || !c.astept.permis.every(text)) fail();
   } else if (c.astept !== undefined) fail();
   if ((tailnetAddress(host) || host.toLowerCase().startsWith('fd7a:115c:a1e0:')) && c.peer !== true) fail();
   if (c.verifica === 'age') {
@@ -78,9 +88,21 @@ export function validate(document) {
     duration(c.prag);
   } else if (c.verifica === 'disk') {
     if (!path.isAbsolute(c.tinta) || !Number.isInteger(c.prag) || c.prag < 1 || c.prag > 100) fail();
+  } else if (c.verifica === 'crowdsec') {
+    if (!Number.isInteger(c.prag) || c.prag < 1 || c.prag > 1_000_000) fail();
+  } else if (c.verifica === 'anomaly') {
+    if (!Number.isInteger(c.prag) || c.prag < 1 || c.prag > 100) fail();
   } else if (c.prag !== undefined) fail();
   if (c.verifica === 'unit' && !/^[a-zA-Z0-9@_.:-]+\.service$/.test(c.tinta)) fail();
   if (c.verifica === 'mount' && !path.isAbsolute(c.tinta)) fail();
+  // crowdsec LAPI is loopback-only: any other host is a validation error.
+  if (c.verifica === 'crowdsec') {
+    const lapi = /^http:\/\/(127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})\/?$/.exec(c.tinta);
+    if (!lapi || Number(lapi[2]) > 65535) fail();
+  }
+  // osquery: a query NAME from the fixed vigil pack, never SQL.
+  if (c.verifica === 'osquery' && !/^[a-z][a-z0-9_]{0,63}$/.test(c.tinta)) fail();
+  if (c.verifica === 'anomaly' && !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(c.tinta)) fail();
   if (c.verifica === 'hass-state' && (!/^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(c.tinta)
     || /^(person|device_tracker|mobile_app)\./.test(c.tinta))) fail();
   return { ...c, nivel: document.spune.nivel };

@@ -360,5 +360,195 @@
     "name": "driver-not-string",
     "accept": false,
     "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndriver=1\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "crowdsec",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "crowdsec-ipv6-loopback",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://[::1]:8080/\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=3\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "crowdsec-unknown-key",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15,extra=1}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-missing-prag",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-missing-scenariu",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nastept={fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-missing-astept",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-prag-zero",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=0\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-window-zero",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=0}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-scenario-query",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"x&limit=0\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-non-loopback",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://10.0.0.5:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-localhost-name",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://localhost:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-tailnet",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://100.94.191.54:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\npeer=true\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-https",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"https://127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-path",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:8080/v1/alerts\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-no-port",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1/\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-port-range",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://127.0.0.1:65536\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "crowdsec-userinfo",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"crowdsec\"\ntinta=\"http://user@127.0.0.1:8080\"\npicat_dupa=2\nastept={scenariu=\"crowdsecurity/ssh-bf\",fereastra_min=15}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"listening_ports\"\npicat_dupa=2\nastept={permis=[\"22/6/sshd\",\"8747/6/systemd\"]}\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "osquery-empty-permis",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"etc_fim\"\npicat_dupa=2\nastept={permis=[]}\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "osquery-unknown-key",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"listening_ports\"\npicat_dupa=2\nastept={permis=[],extra=\"x\"}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery-missing-permis",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"listening_ports\"\npicat_dupa=2\nastept={}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery-missing-astept",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"listening_ports\"\npicat_dupa=2\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery-prag",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"listening_ports\"\npicat_dupa=2\nastept={permis=[\"22/6/sshd\",\"8747/6/systemd\"]}\nprag=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery-sql",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"SELECT * FROM users\"\npicat_dupa=2\nastept={permis=[\"22/6/sshd\",\"8747/6/systemd\"]}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery-sql-lower",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"select * from users;\"\npicat_dupa=2\nastept={permis=[\"22/6/sshd\",\"8747/6/systemd\"]}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery-name-65",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\npicat_dupa=2\nastept={permis=[\"22/6/sshd\",\"8747/6/systemd\"]}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "osquery-permis-not-strings",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"osquery\"\ntinta=\"listening_ports\"\npicat_dupa=2\nastept={permis=\"22\"}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "anomaly",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system.cpu\"\npicat_dupa=2\nprag=20\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "anomaly-prag-100",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system.ram\"\npicat_dupa=2\nprag=100\n[spune]\nnivel=\"nota\"\n",
+    "accept": true
+  },
+  {
+    "name": "anomaly-prag-zero",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system.cpu\"\npicat_dupa=2\nprag=0\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "anomaly-prag-101",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system.cpu\"\npicat_dupa=2\nprag=101\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "anomaly-missing-prag",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system.cpu\"\npicat_dupa=2\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "anomaly-astept",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system.cpu\"\npicat_dupa=2\nastept={valoare=\"x\"}\nprag=20\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "anomaly-unknown-key",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system.cpu\"\npicat_dupa=2\nprag=20\nextra=1\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "anomaly-bad-chart",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"system\"\npicat_dupa=2\nprag=20\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "anomaly-chart-url",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"anomaly\"\ntinta=\"http://127.0.0.1:19999/system.cpu\"\npicat_dupa=2\nprag=20\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "http-astept-array",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"http\"\ntinta=\"http://127.0.0.1/\"\npicat_dupa=2\nastept={status=[\"200\"]}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
+  },
+  {
+    "name": "hass-astept-array",
+    "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"hass-state\"\ntinta=\"sensor.fixture\"\npicat_dupa=2\nastept={valoare=[\"ready\"]}\n[spune]\nnivel=\"nota\"\n",
+    "accept": false
   }
 ]

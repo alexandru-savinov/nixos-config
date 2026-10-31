@@ -40,12 +40,12 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 ## Tasks
 
 ### Task 1: Schema for the three new types
-- [ ] Add `crowdsec`, `osquery`, `anomaly` to the type list in both `modules/services/vigil-schema.nix` and `pkgs/vigil/lib/schema.mjs`
-- [ ] `crowdsec`: `tinta` is an `http://127.0.0.1:<port>` or `http://[::1]:<port>` URL (any other host is a validation error); `astept = { scenariu = "<string>", fereastra_min = <int ≥ 1> }`; `prag` integer ≥ 1 required
-- [ ] `osquery`: `tinta` matches `^[a-z][a-z0-9_]{0,63}$` (a query name, never SQL); `astept = { permis = [ <strings> ] }` (may be empty); no `prag`
-- [ ] `anomaly`: `tinta` matches a Netdata chart id `^[a-z0-9_]+\.[a-z0-9_]+$`; `prag` integer 1–100 required; no `astept`
-- [ ] Add valid + invalid cases for each type to `pkgs/vigil/schema-fixtures.json` (valid, unknown key, missing required field, non-loopback crowdsec `tinta`, SQL-looking osquery `tinta`, `prag = 0` and `101` for anomaly)
-- [ ] Run the vigil package tests (`nix build .#vigil` builds and runs autoproba) and `nix build .#checks.x86_64-linux.module-eval` if a builder is available; both must pass
+- [x] Add `crowdsec`, `osquery`, `anomaly` to the type list in both `modules/services/vigil-schema.nix` and `pkgs/vigil/lib/schema.mjs`
+- [x] `crowdsec`: `tinta` is an `http://127.0.0.1:<port>` or `http://[::1]:<port>` URL (any other host is a validation error); `astept = { scenariu = "<string>", fereastra_min = <int ≥ 1> }`; `prag` integer ≥ 1 required
+- [x] `osquery`: `tinta` matches `^[a-z][a-z0-9_]{0,63}$` (a query name, never SQL); `astept = { permis = [ <strings> ] }` (may be empty); no `prag`
+- [x] `anomaly`: `tinta` matches a Netdata chart id `^[a-z0-9_]+\.[a-z0-9_]+$`; `prag` integer 1–100 required; no `astept`
+- [x] Add valid + invalid cases for each type to `pkgs/vigil/schema-fixtures.json` (valid, unknown key, missing required field, non-loopback crowdsec `tinta`, SQL-looking osquery `tinta`, `prag = 0` and `101` for anomaly)
+- [x] Run the vigil package tests (`nix build .#vigil` builds and runs autoproba) and `nix build .#checks.x86_64-linux.module-eval` if a builder is available; both must pass (no linux builder on this darwin host, so neither nix build could run: node autoproba suite run directly, 175/177 with the 2 failures also present on clean HEAD (darwin env); tests/vigil-module.nix incl. schema-parity evaluated to true)
 
 ### Task 2: crowdsec checker
 - [ ] In `pkgs/vigil/lib/checks.mjs` add `case 'crowdsec'`: read the machine credential file from `VIGIL_CROWDSEC_CREDENTIALS` (YAML with `login`/`password`/`url`; parse only those three keys), POST `/v1/watchers/login` for a JWT, GET `/v1/alerts?scenario=<scenariu>&since=<N>m`, count alerts

@@ -50,23 +50,24 @@ function parseValue(source) {
     if (!Number.isSafeInteger(number)) fail();
     return number;
   }
+  function array() {
+    cursor++;
+    const result = [];
+    space();
+    while (source[cursor] !== ']') {
+      if (source[cursor] !== '"') fail();
+      result.push(scalar());
+      space();
+      if (source[cursor] !== ',') break;
+      cursor++;
+      space();
+    }
+    if (source[cursor++] !== ']') fail();
+    return result;
+  }
   function value() {
     space();
-    if (source[cursor] === '[') {
-      cursor++;
-      const result = [];
-      space();
-      while (source[cursor] !== ']') {
-        if (source[cursor] !== '"') fail();
-        result.push(scalar());
-        space();
-        if (source[cursor] !== ',') break;
-        cursor++;
-        space();
-      }
-      if (source[cursor++] !== ']') fail();
-      return result;
-    }
+    if (source[cursor] === '[') return array();
     if (source[cursor] === '{') {
       cursor++;
       const result = Object.create(null);
@@ -77,7 +78,9 @@ function parseValue(source) {
         cursor += key[0].length;
         space();
         if (source[cursor++] !== '=') fail();
-        result[key[0]] = scalar();
+        space();
+        // Inline-table values may be scalars or string arrays (osquery `permis`).
+        result[key[0]] = source[cursor] === '[' ? array() : scalar();
         space();
         if (source[cursor] !== ',') break;
         cursor++;
