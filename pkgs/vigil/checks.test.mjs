@@ -18,12 +18,13 @@ test('stalled filesystem probes release check slots with unreadable verdicts', a
     { verifica: 'disk', tinta: '/', prag: 85 },
     { verifica: 'mount', tinta: '/fixture' },
     { verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } },
+    { verifica: 'crowdsec', tinta: 'http://127.0.0.1:1', prag: 1, astept: { scenariu: 'fixture/ssh-bf', fereastra_min: 15 } },
   ];
   let timer;
   try {
     const results = await Promise.race([
       Promise.all(contracts.map(c => check(c, { fs: io, fsTimeout: 10,
-        env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token' } }))),
+        env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token', VIGIL_CROWDSEC_CREDENTIALS: '/fixture/crowdsec' } }))),
       new Promise(resolve => { timer = setTimeout(() => resolve(null), 100); }),
     ]);
     assert.notEqual(results, null, 'filesystem probes must release their slots');
@@ -255,4 +256,130 @@ test('real TCP/HTTP probes use bounded responses, no redirects, and refused conn
     await new Promise(resolve => server.close(resolve));
   }
   assert.equal(await verdict({ verifica: 'tcp', tinta: `127.0.0.1:${port}` }), 'picat');
+});
+
+// A LAPI stand-in over real HTTP, shaped from crowdsec v1.7.2: no alerts is `null`.
+async function withCrowdsec(t, handlers) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      const url = new URL(req.url, 'http://fixture');
+      seen.push({ method: req.method, url, headers: req.headers, body });
+      if (url.pathname === '/v1/watchers/login') return (handlers.login || login)(req, res, body);
+      if (url.pathname === '/v1/alerts') return handlers.alerts(req, res, url);
+      res.writeHead(404); res.end();
+    });
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const contract = { verifica: 'crowdsec', tinta: `http://127.0.0.1:${server.address().port}`, prag: 2,
+    astept: { scenariu: 'crowdsecurity/ssh-bf', fereastra_min: 15 } };
+  return { contract, seen };
+}
+const login = (_req, res) => { res.writeHead(200); res.end('{"code":200,"expire":"2026-10-31T22:00:00Z","token":"fixture-jwt"}'); };
+const send = (status, body) => (_req, res) => { res.writeHead(status); res.end(body); };
+const credentials = 'url: http://10.0.0.5:8080/\nlogin: fixture-machine\npassword: fixture-password\nignored: key\n';
+const crowdsec = { env: { VIGIL_CROWDSEC_CREDENTIALS: '/fixture/crowdsec' }, fs: { readFile: async () => credentials } };
+
+test('crowdsec counts alerts against prag, and the empty null body is verde', async t => {
+  for (const [body, expected, reason] of [
+    ['null', 'verde', 'ok'], ['[]', 'verde', 'ok'], ['[{"id":1}]', 'verde', 'ok'],
+    ['[{"id":1},{"id":2}]', 'picat', 'crowdsec-alerts'], ['[{"id":1},{"id":2},{"id":3}]', 'picat', 'crowdsec-alerts'],
+  ]) {
+    const { contract } = await withCrowdsec(t, { alerts: send(200, body) });
+    const result = await check(contract, crowdsec);
+    assert.deepEqual(result, { verdict: expected, motiv: reason }, body);
+  }
+});
+
+test('crowdsec logs in with the credential and asks for local alerts in the window', async t => {
+  const { contract, seen } = await withCrowdsec(t, { alerts: send(200, 'null') });
+  assert.equal(await verdict(contract, crowdsec), 'verde');
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].method, 'POST');
+  assert.deepEqual(JSON.parse(seen[0].body), { machine_id: 'fixture-machine', password: 'fixture-password' });
+  assert.equal(seen[1].method, 'GET');
+  assert.equal(seen[1].headers.authorization, 'Bearer fixture-jwt');
+  assert.deepEqual(Object.fromEntries(seen[1].url.searchParams), {
+    scenario: 'crowdsecurity/ssh-bf', since: '15m', limit: '2', include_capi: 'false' });
+});
+
+test('crowdsec reads quoted YAML values as cscli may write them', async t => {
+  const { contract, seen } = await withCrowdsec(t, { alerts: send(200, 'null') });
+  const fs = { readFile: async () => 'login: "fixture-machine"\r\npassword: \'fixture-password\'\r\n' };
+  assert.equal(await verdict(contract, { ...crowdsec, fs }), 'verde');
+  assert.deepEqual(JSON.parse(seen[0].body), { machine_id: 'fixture-machine', password: 'fixture-password' });
+});
+
+test('crowdsec still decides picat when an attack makes the alert body large', async t => {
+  const { contract } = await withCrowdsec(t, { alerts: send(200, JSON.stringify([{ events: 'x'.repeat(70000) }, { id: 2 }])) });
+  assert.deepEqual(await check(contract, crowdsec), { verdict: 'picat', motiv: 'crowdsec-alerts' });
+});
+
+test('every crowdsec sensor fault is NECITIT with a distinct reason and no private data', async t => {
+  const cases = [
+    ['login 401', { login: send(401, 'private body'), alerts: send(200, 'null') }, crowdsec, 'crowdsec-auth'],
+    ['login garbage', { login: send(200, 'not json'), alerts: send(200, 'null') }, crowdsec, 'crowdsec-auth'],
+    ['login tokenless', { login: send(200, '{"code":200}'), alerts: send(200, 'null') }, crowdsec, 'crowdsec-auth'],
+    ['alerts 401', { alerts: send(401, 'private body') }, crowdsec, 'crowdsec-auth'],
+    ['alerts 500', { alerts: send(500, 'private body') }, crowdsec, 'crowdsec-response'],
+    ['garbage body', { alerts: send(200, '<html>') }, crowdsec, 'crowdsec-response'],
+    ['empty body', { alerts: send(200, '') }, crowdsec, 'crowdsec-response'],
+    ['object body', { alerts: send(200, '{"message":"x"}') }, crowdsec, 'crowdsec-response'],
+    ['oversized body', { alerts: send(200, JSON.stringify(['x'.repeat(5 * 1024 * 1024)])) }, crowdsec, 'crowdsec-response'],
+    ['no env', { alerts: send(200, 'null') }, { ...crowdsec, env: {} }, 'crowdsec-config'],
+    ['no file', { alerts: send(200, 'null') }, { ...crowdsec, fs: { readFile: async () => { throw new Error('/fixture/crowdsec'); } } }, 'crowdsec-config'],
+    ['no password', { alerts: send(200, 'null') }, { ...crowdsec, fs: { readFile: async () => 'login: fixture-machine\n' } }, 'crowdsec-config'],
+  ];
+  for (const [name, handlers, options, reason] of cases) {
+    const { contract } = await withCrowdsec(t, handlers);
+    const result = await check(contract, options);
+    assert.deepEqual(result, { verdict: 'NECITIT', motiv: reason }, name);
+    assert.doesNotMatch(JSON.stringify(result), /fixture|private|127\.0\.0\.1/, name);
+  }
+});
+
+test('a stopped crowdsec is NECITIT, never verde', async t => {
+  const { contract } = await withCrowdsec(t, { alerts: send(200, 'null') });
+  const dead = await new Promise((resolve, reject) => {
+    const probe = http.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
+  });
+  const result = await check({ ...contract, tinta: `http://127.0.0.1:${dead}` }, crowdsec);
+  assert.deepEqual(result, { verdict: 'NECITIT', motiv: 'crowdsec-unreachable' });
+});
+
+test('crowdsec shares one 10s budget across credential, login and alerts', async t => {
+  let clock = 1000;
+  t.mock.method(performance, 'now', () => clock);
+  const budgets = [];
+  const c = { verifica: 'crowdsec', tinta: 'http://127.0.0.1:8080', prag: 1, astept: { scenariu: 'fixture/ssh-bf', fereastra_min: 15 } };
+  const fs = { readFile: async () => { clock += 4000; return credentials; } };
+  const result = await check(c, { ...crowdsec, fs, request: async (url, config) => {
+    budgets.push(config.timeout);
+    clock += 3000;
+    return url.pathname === '/v1/watchers/login' ? { status: 200, body: '{"token":"fixture-jwt"}' } : { status: 200, body: 'null' };
+  } });
+  assert.equal(result.verdict, 'verde');
+  assert.deepEqual(budgets, [6000, 3000]);
+  clock = 1000;
+  const late = await check(c, { ...crowdsec, fs, request: async () => { clock += 7000; return { status: 200, body: '{"token":"fixture-jwt"}' }; } });
+  assert.deepEqual(late, { verdict: 'NECITIT', motiv: 'crowdsec-timeout' });
+});
+
+test('a hung crowdsec times out as NECITIT while http keeps reading it as a network failure', async t => {
+  const { contract } = await withCrowdsec(t, { login: () => {}, alerts: () => {} });
+  const short = (url, config) => request(url, { ...config, timeout: 25 });
+  assert.deepEqual(await check(contract, { ...crowdsec, request: short }), { verdict: 'NECITIT', motiv: 'crowdsec-timeout' });
+  const http = { verifica: 'http', tinta: `${contract.tinta}/v1/alerts`, astept: { status: 200 } };
+  assert.deepEqual(await check(http, { request: short }), { verdict: 'picat', motiv: 'network-unreachable' });
+});
+
+test('a timeout during a streaming crowdsec body is still a timeout', async t => {
+  const { contract } = await withCrowdsec(t, { login: (_req, res) => { res.writeHead(200); res.write('{'); } });
+  const short = (url, config) => request(url, { ...config, timeout: 25 });
+  assert.deepEqual(await check(contract, { ...crowdsec, request: short }), { verdict: 'NECITIT', motiv: 'crowdsec-timeout' });
 });

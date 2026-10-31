@@ -21,6 +21,9 @@ const mutations = [
   ['failed-run-publishes', 'vigil-tick.mjs', "!['0', '1', '2'].includes(env.EXIT_STATUS)", 'false'],
   ['vocabulary-dropped', 'vigil-check.mjs', "...(c.dimension !== undefined && { dimension: c.dimension }), ...(c.driver !== undefined && { driver: c.driver }),", ''],
   ['disponibil-unavailable-green', 'lib/checks.mjs', "if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');\n        if (c.astept.disponibil === true) return green();", "if (c.astept.disponibil === true) return green();\n        if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');"],
+  ['crowdsec-threshold-off-by-one', 'lib/checks.mjs', '(alerts?.length ?? 0) >= c.prag', '(alerts?.length ?? 0) > c.prag'],
+  ['crowdsec-empty-unreadable', 'lib/checks.mjs', 'if (alerts !== null && !Array.isArray(alerts))', 'if (!Array.isArray(alerts))'],
+  ['crowdsec-fault-green', 'lib/checks.mjs', "if (response.status !== 200) return unreadable('crowdsec-response');", "if (response.status !== 200) return green();"],
 ];
 const source = path.dirname(fileURLToPath(import.meta.url));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-mutants-'));

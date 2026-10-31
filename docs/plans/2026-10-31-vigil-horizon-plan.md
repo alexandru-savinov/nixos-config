@@ -48,10 +48,10 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 - [x] Run the vigil package tests (`nix build .#vigil` builds and runs autoproba) and `nix build .#checks.x86_64-linux.module-eval` if a builder is available; both must pass (no linux builder on this darwin host, so neither nix build could run: node autoproba suite run directly, 175/177 with the 2 failures also present on clean HEAD (darwin env); tests/vigil-module.nix incl. schema-parity evaluated to true)
 
 ### Task 2: crowdsec checker
-- [ ] In `pkgs/vigil/lib/checks.mjs` add `case 'crowdsec'`: read the machine credential file from `VIGIL_CROWDSEC_CREDENTIALS` (YAML with `login`/`password`/`url`; parse only those three keys), POST `/v1/watchers/login` for a JWT, GET `/v1/alerts?scenario=<scenariu>&since=<N>m`, count alerts
-- [ ] Verdicts: count ≥ `prag` → `picat` (`crowdsec-alerts`); below → `verde`; missing env/credential, non-200, unparsable JSON, timeout → `NECITIT` with distinct reasons (`crowdsec-config`, `crowdsec-auth`, `crowdsec-response`, `crowdsec-timeout`)
-- [ ] Use the same 10 s total budget pattern as `hass-state`; never log the password or token
-- [ ] Tests in `pkgs/vigil/checks.test.mjs` against a fake local HTTP server: 0 alerts → verde, prag alerts → picat, 401 → NECITIT, garbage body → NECITIT, server down → NECITIT
+- [x] In `pkgs/vigil/lib/checks.mjs` add `case 'crowdsec'`: read the machine credential file from `VIGIL_CROWDSEC_CREDENTIALS` (YAML with `login`/`password`/`url`; parse only those three keys), POST `/v1/watchers/login` for a JWT, GET `/v1/alerts?scenario=<scenariu>&since=<N>m`, count alerts
+- [x] Verdicts: count ≥ `prag` → `picat` (`crowdsec-alerts`); below → `verde`; missing env/credential, non-200, unparsable JSON, timeout → `NECITIT` with distinct reasons (`crowdsec-config`, `crowdsec-auth`, `crowdsec-response`, `crowdsec-timeout`)
+- [x] Use the same 10 s total budget pattern as `hass-state`; never log the password or token
+- [x] Tests in `pkgs/vigil/checks.test.mjs` against a fake local HTTP server: 0 alerts → verde, prag alerts → picat, 401 → NECITIT, garbage body → NECITIT, server down → NECITIT
 
 ### Task 3: osquery checker
 - [ ] Add `case 'osquery'`: read the osquery filesystem-logger results file at `VIGIL_OSQUERY_RESULTS` (JSON lines, osquery `snapshot` format), take the newest snapshot whose `name` equals `pack_vigil_<tinta>`

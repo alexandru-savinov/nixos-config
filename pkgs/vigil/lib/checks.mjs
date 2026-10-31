@@ -8,6 +8,7 @@ import { duration, validTime } from './common.mjs';
 import { tcpTarget } from './schema.mjs';
 
 const LIMIT = 65536;
+const CROWDSEC_LIMIT = 4 * 1024 * 1024;
 const answer = (verdict, motiv) => ({ verdict, motiv });
 const green = () => answer('verde', 'ok');
 const failed = reason => answer('picat', reason);
@@ -40,12 +41,15 @@ export function command(argv, timeout = 10000, environment = commandEnvironment(
   });
 }
 
-export function request(url, { headers = {}, timeout = 10000, readBody = true } = {}) {
+export function request(url, { headers = {}, timeout = 10000, readBody = true, method = 'GET', body, maxBytes = LIMIT } = {}) {
   return new Promise((resolve, reject) => {
     const client = url.protocol === 'https:' ? https : http;
     let size = 0;
+    let timedOut = false;
     const chunks = [];
-    const req = client.get(url, { headers }, response => {
+    // The message stays 'request-failed' on timeout: tcp/http read it as network-unreachable.
+    const fail = message => { clearTimeout(timer); reject(Object.assign(new Error(message), { timedOut })); };
+    const req = client.request(url, { method, headers }, response => {
       if (!readBody) {
         clearTimeout(timer);
         resolve({ status: response.statusCode, body: '' });
@@ -54,17 +58,18 @@ export function request(url, { headers = {}, timeout = 10000, readBody = true } 
       }
       response.on('data', chunk => {
         size += chunk.length;
-        if (size > LIMIT) req.destroy(new Error('response-limit'));
+        if (size > maxBytes) req.destroy(new Error('response-limit'));
         else chunks.push(chunk);
       });
-      response.on('error', () => { clearTimeout(timer); reject(new Error('response-unreadable')); });
+      response.on('error', () => fail('response-unreadable'));
       response.on('end', () => {
         clearTimeout(timer);
         resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString('utf8') });
       });
     });
-    const timer = setTimeout(() => req.destroy(new Error('request-timeout')), timeout);
-    req.on('error', error => { clearTimeout(timer); reject(new Error(error.message === 'response-limit' ? 'response-limit' : 'request-failed')); });
+    const timer = setTimeout(() => { timedOut = true; req.destroy(new Error('request-timeout')); }, timeout);
+    req.on('error', error => fail(error.message === 'response-limit' ? 'response-limit' : 'request-failed'));
+    req.end(body);
   });
 }
 
@@ -112,6 +117,57 @@ export function mounted(source, target) {
 function age(timestamp, limit, now) {
   if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp > now) return unreadable('age-unreadable');
   return now - timestamp < limit ? green() : failed('age-stale');
+}
+
+// `cscli machines add -f` writes flat YAML. Its url key is deliberately not read:
+// the password only ever goes to the contract's tinta, which the schema pins to loopback.
+function crowdsecCredentials(source) {
+  const fields = {};
+  for (const line of source.split(/\r?\n/)) {
+    const match = /^(login|password):[ \t]*(.*?)[ \t]*$/.exec(line);
+    if (match) fields[match[1]] = match[2].replace(/^(["'])(.*)\1$/, '$2');
+  }
+  return fields;
+}
+
+// Behaviour checked against crowdsec v1.7.2 pkg/database/{alerts,alertfilter}.go and
+// pkg/apiserver/controllers/v1/alerts.go:
+// - no alerts is the JSON body `null` (a nil Go slice), not [];
+// - alerts carry their events and metas, so the body outgrows LIMIT during the very
+//   attack being counted; limit=prag is enough to decide and keeps it bounded;
+// - scenario also matches an alert's decisions, so a community blocklist pull would
+//   match without include_capi=false.
+async function crowdsecAlerts(c, { env, io, read, get, started }) {
+  if (!env.VIGIL_CROWDSEC_CREDENTIALS) return unreadable('crowdsec-config');
+  let source;
+  try { source = await read(() => io.readFile(env.VIGIL_CROWDSEC_CREDENTIALS, 'utf8')); } catch { return unreadable('crowdsec-config'); }
+  const { login, password } = crowdsecCredentials(source);
+  if (!login || !password) return unreadable('crowdsec-config');
+  const send = (target, config) => {
+    const timeout = 10000 - (performance.now() - started);
+    if (timeout <= 0) throw Object.assign(new Error('request-failed'), { timedOut: true });
+    return get(new URL(target, c.tinta), { ...config, timeout });
+  };
+  try {
+    const session = await send('/v1/watchers/login', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ machine_id: login, password }) });
+    if (session.status !== 200) return unreadable('crowdsec-auth');
+    let token;
+    try { token = JSON.parse(session.body)?.token; } catch { return unreadable('crowdsec-auth'); }
+    if (typeof token !== 'string' || !token || /[\r\n]/.test(token)) return unreadable('crowdsec-auth');
+    const query = new URLSearchParams({ scenario: c.astept.scenariu, since: `${c.astept.fereastra_min}m`,
+      limit: String(c.prag), include_capi: 'false' });
+    const response = await send(`/v1/alerts?${query}`, { headers: { Authorization: `Bearer ${token}` }, maxBytes: CROWDSEC_LIMIT });
+    if (response.status === 401 || response.status === 403) return unreadable('crowdsec-auth');
+    if (response.status !== 200) return unreadable('crowdsec-response');
+    let alerts;
+    try { alerts = JSON.parse(response.body); } catch { return unreadable('crowdsec-response'); }
+    if (alerts !== null && !Array.isArray(alerts)) return unreadable('crowdsec-response');
+    return (alerts?.length ?? 0) >= c.prag ? failed('crowdsec-alerts') : green();
+  } catch (error) {
+    if (error.timedOut) return unreadable('crowdsec-timeout');
+    return unreadable(error.message.startsWith('response-') ? 'crowdsec-response' : 'crowdsec-unreachable');
+  }
 }
 
 export async function check(c, options = {}) {
@@ -202,6 +258,7 @@ export async function check(c, options = {}) {
         if (c.astept.disponibil === true) return green();
         return body.state === c.astept.valoare ? green() : failed('hass-value');
       }
+      case 'crowdsec': return await crowdsecAlerts(c, { env, io, read, get, started });
       default: return unreadable('contract-invalid');
     }
   } catch (error) {
