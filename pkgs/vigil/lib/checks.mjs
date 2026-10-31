@@ -12,6 +12,7 @@ const CROWDSEC_LIMIT = 4 * 1024 * 1024;
 const OSQUERY_TAIL = 4 * 1024 * 1024;
 const OSQUERY_DETAIL = 3;
 const OSQUERY_DETAIL_LENGTH = 128;
+const NETDATA_FRESH = 60000;
 // The row key of each pack query. `vacant` says an empty snapshot is a real answer: only
 // the event table may be quiet, a host with no listeners, users or wrappers is a blind sensor.
 const OSQUERY_QUERIES = new Map([
@@ -250,6 +251,75 @@ async function osqueryRows(c, { env, io, read, now }) {
     detaliu: [...unexpected].sort().slice(0, OSQUERY_DETAIL).map(key => key.slice(0, OSQUERY_DETAIL_LENGTH)) };
 }
 
+// Netdata's data API returns one row per points=1 query, or 404 with a plain-text body when
+// nothing matches. Each row is { labels, row }; row is absent when the window held no data.
+function netdataRow(body) {
+  let parsed;
+  try { parsed = JSON.parse(body); } catch { throw new Error('response-json'); }
+  const { labels, data } = parsed ?? {};
+  if (!Array.isArray(labels) || labels[0] !== 'time' || !Array.isArray(data)) throw new Error('response-shape');
+  const row = data[0];
+  if (row !== undefined && (!Array.isArray(row) || row.length !== labels.length || !Number.isFinite(row[0]))) throw new Error('response-shape');
+  return { labels, row };
+}
+
+// Verified against Netdata v2.8.4 source (web/api/v1/api_v1_data.c,
+// web/api/maps/rrdr_options.c, web/api/queries/query.c,
+// ml/ml.cc, ml/ml_public.cc, ml/ad_charts.cc) and a live 2.8.4 daemon:
+//   /api/v1/data?chart=<id>&after=-<s>&points=1&group=average&format=json
+//     &options=anomaly-bit,unaligned,all-dimensions
+// - anomaly-bit swaps each value for its anomaly rate, 0-100;
+// - without unaligned the window snaps to a multiple of itself and ends up to <s> in the past;
+// - an untrained dimension has no models, so it reports rate 0, exactly like a calm trained
+//   one. 0 alone is not evidence, and only a rate below prag can need the gate below;
+// - no API exposes training per chart, only per host. /api/v1/ml_info cannot be the gate: its
+//   trained-dimensions counts constant metrics, so it read 2150 of 2150 with no model built.
+//   netdata.ml_training_status counts constant metrics as trained too, but its untrained
+//   count covers variable ones only: untrained equalled netdata.ml_metric_types variable
+//   until the 15-minute minimum window passed. Models are then built about one per second,
+//   so during the ramp a chart can still be unmodelled with the host gate open. Requiring most
+//   variable metrics to be modelled is the closest proxy the API allows.
+async function anomalyRate(c, { env, get, now, started }) {
+  const interval = Number(env.VIGIL_ANOMALY_INTERVAL);
+  if (!env.VIGIL_NETDATA_URL || !Number.isInteger(interval) || interval <= 0) return unreadable('anomaly-config');
+  let base;
+  try { base = new URL(env.VIGIL_NETDATA_URL); } catch { return unreadable('anomaly-config'); }
+  if (base.protocol !== 'http:' || base.username || base.password) return unreadable('anomaly-config');
+  const query = async params => {
+    const timeout = 10000 - (performance.now() - started);
+    if (timeout <= 0) throw Object.assign(new Error('request-failed'), { timedOut: true });
+    const search = new URLSearchParams({ points: '1', format: 'json', ...params });
+    const response = await get(new URL(`/api/v1/data?${search}`, base), { timeout });
+    if (response.status === 404) return null;
+    if (response.status !== 200) throw new Error('response-status');
+    return netdataRow(response.body);
+  };
+  const fresh = ({ row }) => Math.abs(now - row[0] * 1000) <= NETDATA_FRESH;
+  const counters = context => query({ context, after: '-10', group: 'max' });
+  try {
+    const rates = await query({ chart: c.tinta, after: `-${interval}`, group: 'average',
+      options: 'anomaly-bit,unaligned,all-dimensions' });
+    if (!rates) return unreadable('anomaly-chart');
+    if (!rates.row) return unreadable('anomaly-nodata');
+    if (!fresh(rates)) return unreadable('anomaly-stale');
+    const values = rates.row.slice(1).filter(Number.isFinite);
+    if (!values.length) return unreadable('anomaly-nodata');
+    // A rate this high can only come from a trained dimension, so it needs no gate.
+    if (Math.max(...values) >= c.prag) return failed('anomaly-rate');
+    const [training, metrics] = [await counters('netdata.ml_training_status'), await counters('netdata.ml_metric_types')];
+    if (!training?.row || !metrics?.row) return unreadable('anomaly-untrained');
+    if (!fresh(training) || !fresh(metrics)) return unreadable('anomaly-stale');
+    const pick = ({ labels, row }, label) => row[labels.indexOf(label)];
+    const counts = [pick(training, 'untrained'), pick(training, 'pending-without-model'), pick(metrics, 'variable')];
+    if (!counts.every(Number.isFinite)) return unreadable('anomaly-response');
+    const [untrained, pending, variable] = counts;
+    return (untrained + pending) * 2 >= variable ? unreadable('anomaly-untrained') : green();
+  } catch (error) {
+    if (error.timedOut) return unreadable('anomaly-timeout');
+    return unreadable(error.message.startsWith('response-') ? 'anomaly-response' : 'anomaly-unreachable');
+  }
+}
+
 export async function check(c, options = {}) {
   const started = performance.now();
   const env = options.env || process.env;
@@ -340,6 +410,7 @@ export async function check(c, options = {}) {
       }
       case 'crowdsec': return await crowdsecAlerts(c, { env, io, read, get, started });
       case 'osquery': return await osqueryRows(c, { env, io, read, now });
+      case 'anomaly': return await anomalyRate(c, { env, get, now, started });
       default: return unreadable('contract-invalid');
     }
   } catch (error) {

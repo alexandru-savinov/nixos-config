@@ -61,16 +61,16 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 - [x] Tests with fixture result files: allowed only → verde, one extra port → picat, stale snapshot → NECITIT, missing file → NECITIT, truncated JSON line → NECITIT
 
 ### Task 4: anomaly checker
-- [ ] Confirm the Netdata 2.8.4 query for a chart's anomaly rate from the packaged docs or `netdata` source in the nix store (the v1/v2 data API with the anomaly-bit option); record the exact URL form in a comment with where it was verified
-- [ ] Add `case 'anomaly'`: query `http://127.0.0.1:19999` (from `VIGIL_NETDATA_URL`) for the chart's anomaly rate over the last tick interval; take the maximum across dimensions
-- [ ] Verdicts: rate ≥ `prag` → `picat` (`anomaly-rate`); below → `verde`; Netdata down, unknown chart (404), no anomaly data yet (ML untrained) → `NECITIT`
-- [ ] Tests against a fake server with recorded response bodies for each case
+- [x] Confirm the Netdata 2.8.4 query for a chart's anomaly rate from the packaged docs or `netdata` source in the nix store (the v1/v2 data API with the anomaly-bit option); record the exact URL form in a comment with where it was verified
+- [x] Add `case 'anomaly'`: query `http://127.0.0.1:19999` (from `VIGIL_NETDATA_URL`) for the chart's anomaly rate over the last tick interval; take the maximum across dimensions
+- [x] Verdicts: rate ≥ `prag` → `picat` (`anomaly-rate`); below → `verde`; Netdata down, unknown chart (404), no anomaly data yet (ML untrained) → `NECITIT` (untrained dimensions report rate 0 and Netdata has no per-chart training signal, so verde is gated on the host-level counters: `netdata.ml_training_status` untrained + pending-without-model must be under half of `netdata.ml_metric_types` variable; rows older than 60 s read `anomaly-stale`. Picat, NECITIT reasons and the live URL form were exercised against a real 2.8.4 daemon; verde was covered by unit tests only, because the gate did not open within the run)
+- [x] Tests against a fake server with recorded response bodies for each case
 
 ### Task 5: Sensor module
 - [ ] Create `modules/services/vigil-sensors.nix` with `services.vigil.sensors.{crowdsec,osquery,netdata}.enable` (`lib.mkEnableOption`), imported by `modules/services/vigil.nix`
 - [ ] CrowdSec: enable `services.crowdsec` with the sshd/journald acquisition, LAPI on 127.0.0.1 only, console enrolment off, its own notifications off, no bouncer; a root oneshot `vigil-crowdsec-register` (After crowdsec) that runs `cscli machines add vigil --auto -f /var/lib/vigil/crowdsec.yaml --force` only if the file is absent, then `chown vigil:vigil` + `chmod 0400`; export `VIGIL_CROWDSEC_CREDENTIALS`
 - [ ] osquery: enable `services.osquery` with a `vigil` pack containing exactly the four queries from Task 3 (snapshot mode, interval 300 s), filesystem logger snapshot file readable by group `vigil`; export `VIGIL_OSQUERY_RESULTS` and `VIGIL_OSQUERY_INTERVAL` (verified in osquery 5.21.0 source during Task 3: snapshot-mode results go to `osqueryd.snapshots.log`, not `osqueryd.results.log`, so that is the path `VIGIL_OSQUERY_RESULTS` must name; `listening_ports` has no `name` column, so that query must join `processes` on `pid` and select `port, protocol, name`; leave `--logger_snapshot_event_type` and `--logger_numerics` unset)
-- [ ] Netdata: enable `services.netdata` bound to 127.0.0.1:19999, ML enabled, cloud/claim disabled, retention capped (dbengine tier 0 only, ≤ 256 MiB disk); export `VIGIL_NETDATA_URL`
+- [ ] Netdata: enable `services.netdata` bound to 127.0.0.1:19999, ML enabled, cloud/claim disabled, retention capped (dbengine tier 0 only, ≤ 256 MiB disk); export `VIGIL_NETDATA_URL` and `VIGIL_ANOMALY_INTERVAL` (the tick interval in whole seconds; the anomaly checker reads `anomaly-config` without it. `services.vigil.interval` is a systemd string, default `5min`, so derive or declare the seconds rather than passing it through)
 - [ ] `MemoryMax` per sensor unit: netdata 400M, crowdsec 256M, osquery 128M
 - [ ] Ensure the vigil checker service can reach loopback (adjust its `IPAddressAllow` only if one is set on the service; do not widen the tailnet socket)
 - [ ] Add asserts to `tests/module-eval.nix`: type list contains the three types; each sensor's listen address is loopback; `MemoryMax` set on all three units; no crowdsec bouncer unit exists
@@ -84,7 +84,7 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 
 ### Task 7: VM behaviour test
 - [ ] Create `tests/vigil-soc.nix` (`pkgs.testers.runNixOSTest`), register it in `flake.nix` checks next to `vigil-module`
-- [ ] One node with sshd + vigil + all three sensors; wait for each sensor and for Netdata ML to report anomaly data (poll with a timeout, do not sleep blindly)
+- [ ] One node with sshd + vigil + all three sensors; wait for each sensor and for Netdata ML to report anomaly data (poll with a timeout, do not sleep blindly; the first models need the 15-minute `min training window`, then build at about one per second, and the checker reads `anomaly-untrained` until most variable metrics have one, so shorten that window in the test node)
 - [ ] Assert: at rest every generated contract reads `verde` (`vigil check --json` or the state file)
 - [ ] Assert: 10 failed ssh password logins from the test driver → `ssh-bruteforce` `picat` and an incident opens in `incidents.json`
 - [ ] Assert: `nc -l 4444 &` → after the next osquery interval (set to 30 s in the test) `porturi-noi` `picat`
@@ -95,7 +95,7 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 ### Task 8: Docs and handoff
 - [ ] Update the status line of `docs/plans/2026-10-31-vigil-horizon-design.md` to "phase 1 implemented, not deployed"
 - [ ] Add the three sensors to the Services table in `CLAUDE.md` as loopback-only, with a one-line note that Vigil is their only alerting path
-- [ ] Write the attended deploy + live acceptance steps (planted ssh-failure burst reaches Telegram; `systemctl show -p MemoryCurrent` under caps after 24 h) as a short section at the end of the design doc; do not execute them
+- [ ] Write the attended deploy + live acceptance steps (planted ssh-failure burst reaches Telegram; `systemctl show -p MemoryCurrent` under caps after 24 h; `cpu-anomalie` and `mem-anomalie` have left `anomaly-untrained` after 24 h, since the steady-state untrained share on a real host is unmeasured) as a short section at the end of the design doc; do not execute them
 
 ## Constraints
 

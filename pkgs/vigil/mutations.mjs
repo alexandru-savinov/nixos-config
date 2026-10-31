@@ -27,6 +27,11 @@ const mutations = [
   ['osquery-empty-green', 'lib/checks.mjs', "if (!record.snapshot.length && !query.vacant) return unreadable('osquery-empty');", ''],
   ['osquery-oldest-snapshot', 'lib/checks.mjs', 'for (let index = lines.length - 1; index >= 0; index--) {', 'for (let index = 0; index < lines.length; index++) {'],
   ['osquery-unbounded-tail', 'lib/checks.mjs', 'const length = Math.min(size, limit);', 'const length = size;'],
+  ['anomaly-threshold-off-by-one', 'lib/checks.mjs', 'Math.max(...values) >= c.prag', 'Math.max(...values) > c.prag'],
+  ['anomaly-first-dimension-only', 'lib/checks.mjs', 'Math.max(...values) >= c.prag', 'values[0] >= c.prag'],
+  ['anomaly-untrained-green', 'lib/checks.mjs', "(untrained + pending) * 2 >= variable ? unreadable('anomaly-untrained') : green()", 'green()'],
+  ['anomaly-stale-green', 'lib/checks.mjs', "if (!fresh(rates)) return unreadable('anomaly-stale');", ''],
+  ['anomaly-empty-green', 'lib/checks.mjs', "if (!values.length) return unreadable('anomaly-nodata');", ''],
   ['osquery-cut-line-kept', 'lib/checks.mjs', "return newline < 0 ? '' : tail.subarray(newline + 1).toString('utf8');", "return tail.toString('utf8');"],
   ['crowdsec-fault-green', 'lib/checks.mjs', "if (response.status !== 200) return unreadable('crowdsec-response');", "if (response.status !== 200) return green();"],
 ];

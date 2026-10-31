@@ -506,3 +506,129 @@ test('osquery reads only the bounded file tail and drops the line it cut', async
   assert.equal(reads.reduce((sum, length) => sum + length, 0), 4 * 1024 * 1024);
   assert.equal(closed, true);
 });
+
+// Bodies recorded from a live Netdata 2.8.4 daemon; only the row timestamps are substituted.
+const anomalyNow = 1793479454000;
+const anomalyStamp = Math.floor(anomalyNow / 1000) - 1;
+const cpuRates = (user = 0, system = 0, stamp = anomalyStamp) =>
+  `{\n "labels": ["time", "user", "nice", "system"],\n "data": [[${stamp}, ${user}, 0, ${system}]]\n}\n`;
+const trainingStatus = (untrained, stamp = anomalyStamp) =>
+  `{"labels":["time","untrained","pending-without-model","trained","pending-with-model","silenced"],"data":[[${stamp},${untrained},0,2663,0,0]]}`;
+const metricTypes = (variable, stamp = anomalyStamp) =>
+  `{"labels":["time","constant","variable"],"data":[[${stamp},1430,${variable}]]}`;
+const noMetrics = 'No metrics where matched to query.';
+
+async function withNetdata(t, handlers = {}) {
+  const seen = [];
+  const replies = {
+    chart: send(200, cpuRates()),
+    'netdata.ml_training_status': send(200, trainingStatus(10)),
+    'netdata.ml_metric_types': send(200, metricTypes(1773)),
+    ...handlers,
+  };
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://fixture');
+    seen.push(url);
+    if (url.pathname !== '/api/v1/data') { res.writeHead(404); return res.end(); }
+    return replies[url.searchParams.get('context') ?? 'chart'](req, res);
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const options = { now: anomalyNow, env: { VIGIL_NETDATA_URL: `http://127.0.0.1:${server.address().port}`, VIGIL_ANOMALY_INTERVAL: '300' } };
+  return { options, seen };
+}
+const anomalyContract = { verifica: 'anomaly', tinta: 'system.cpu', prag: 20 };
+
+test('anomaly compares the highest dimension rate against prag', async t => {
+  for (const [body, expected, motiv] of [
+    [cpuRates(0, 0), 'verde', 'ok'], [cpuRates(19.9, 3), 'verde', 'ok'],
+    [cpuRates(20, 0), 'picat', 'anomaly-rate'], [cpuRates(0, 30.7692308), 'picat', 'anomaly-rate'],
+  ]) {
+    const { options } = await withNetdata(t, { chart: send(200, body) });
+    assert.deepEqual(await check(anomalyContract, options), { verdict: expected, motiv });
+  }
+});
+
+test('anomaly asks for the chart anomaly rate over the tick interval, unaligned', async t => {
+  const { options, seen } = await withNetdata(t);
+  assert.equal(await verdict(anomalyContract, options), 'verde');
+  assert.deepEqual(Object.fromEntries(seen[0].searchParams), { points: '1', format: 'json', chart: 'system.cpu',
+    after: '-300', group: 'average', options: 'anomaly-bit,unaligned,all-dimensions' });
+});
+
+test('a zero rate is verde only once most variable metrics have a model', async t => {
+  for (const [untrained, variable, expected] of [
+    [1773, 1773, 'NECITIT'], [887, 1773, 'NECITIT'], [886, 1773, 'verde'], [0, 1773, 'verde'], [0, 0, 'NECITIT'],
+  ]) {
+    const { options } = await withNetdata(t, { 'netdata.ml_training_status': send(200, trainingStatus(untrained)),
+      'netdata.ml_metric_types': send(200, metricTypes(variable)) });
+    const result = await check(anomalyContract, options);
+    assert.equal(result.verdict, expected, `${untrained}/${variable}`);
+    if (expected === 'NECITIT') assert.equal(result.motiv, 'anomaly-untrained');
+  }
+});
+
+test('pending metrics without a model count as untrained', async t => {
+  const pending = '{"labels":["time","untrained","pending-without-model","trained","pending-with-model","silenced"],'
+    + `"data":[[${anomalyStamp},0,1000,2663,0,0]]}`;
+  const { options } = await withNetdata(t, { 'netdata.ml_training_status': send(200, pending) });
+  assert.deepEqual(await check(anomalyContract, options), { verdict: 'NECITIT', motiv: 'anomaly-untrained' });
+});
+
+test('a rate above prag is picat even while the host is still training', async t => {
+  const { options } = await withNetdata(t, { chart: send(200, cpuRates(55)), 'netdata.ml_training_status': send(200, trainingStatus(1773)) });
+  assert.deepEqual(await check(anomalyContract, options), { verdict: 'picat', motiv: 'anomaly-rate' });
+});
+
+test('every anomaly sensor fault is NECITIT with a distinct reason', async t => {
+  const stale = anomalyStamp - 120;
+  for (const [name, handlers, motiv] of [
+    ['unknown chart', { chart: send(404, noMetrics) }, 'anomaly-chart'],
+    ['chart 500', { chart: send(500, 'private body') }, 'anomaly-response'],
+    ['garbage chart', { chart: send(200, '<html>') }, 'anomaly-response'],
+    ['no labels', { chart: send(200, '{"data":[]}') }, 'anomaly-response'],
+    ['json null', { chart: send(200, 'null') }, 'anomaly-response'],
+    ['short row', { chart: send(200, `{"labels":["time","user"],"data":[[${anomalyStamp}]]}`) }, 'anomaly-response'],
+    ['bad time', { chart: send(200, '{"labels":["time","user"],"data":[["x",0]]}') }, 'anomaly-response'],
+    ['empty window', { chart: send(200, '{"labels":["time","user"],"data":[]}') }, 'anomaly-nodata'],
+    ['all null', { chart: send(200, `{"labels":["time","user"],"data":[[${anomalyStamp},null]]}`) }, 'anomaly-nodata'],
+    ['stale chart', { chart: send(200, cpuRates(0, 0, stale)) }, 'anomaly-stale'],
+    ['stale picat', { chart: send(200, cpuRates(99, 0, stale)) }, 'anomaly-stale'],
+    ['ml off', { 'netdata.ml_training_status': send(404, noMetrics) }, 'anomaly-untrained'],
+    ['metric types off', { 'netdata.ml_metric_types': send(404, noMetrics) }, 'anomaly-untrained'],
+    ['empty status', { 'netdata.ml_training_status': send(200, '{"labels":["time"],"data":[]}') }, 'anomaly-untrained'],
+    ['stale status', { 'netdata.ml_training_status': send(200, trainingStatus(0, stale)) }, 'anomaly-stale'],
+    ['stale metrics', { 'netdata.ml_metric_types': send(200, metricTypes(1773, stale)) }, 'anomaly-stale'],
+    ['renamed counter', { 'netdata.ml_metric_types': send(200, `{"labels":["time","other"],"data":[[${anomalyStamp},1]]}`) }, 'anomaly-response'],
+    ['null counter', { 'netdata.ml_training_status': send(200, trainingStatus('null')) }, 'anomaly-response'],
+  ]) {
+    const { options } = await withNetdata(t, handlers);
+    assert.deepEqual(await check(anomalyContract, options), { verdict: 'NECITIT', motiv }, name);
+  }
+});
+
+test('anomaly configuration and transport faults are NECITIT', async t => {
+  const { options } = await withNetdata(t);
+  for (const env of [{}, { ...options.env, VIGIL_NETDATA_URL: '' }, { ...options.env, VIGIL_NETDATA_URL: 'not a url' },
+    { ...options.env, VIGIL_NETDATA_URL: 'https://127.0.0.1:19999' }, { ...options.env, VIGIL_NETDATA_URL: 'http://user:x@127.0.0.1:19999' },
+    { ...options.env, VIGIL_ANOMALY_INTERVAL: '0' }, { ...options.env, VIGIL_ANOMALY_INTERVAL: 'x' }, { VIGIL_NETDATA_URL: options.env.VIGIL_NETDATA_URL }]) {
+    assert.deepEqual(await check(anomalyContract, { ...options, env }), { verdict: 'NECITIT', motiv: 'anomaly-config' });
+  }
+  const down = { ...options, env: { ...options.env, VIGIL_NETDATA_URL: 'http://127.0.0.1:1' } };
+  assert.deepEqual(await check(anomalyContract, down), { verdict: 'NECITIT', motiv: 'anomaly-unreachable' });
+  const hung = { ...options, request: async () => { throw Object.assign(new Error('request-failed'), { timedOut: true }); } };
+  assert.deepEqual(await check(anomalyContract, hung), { verdict: 'NECITIT', motiv: 'anomaly-timeout' });
+});
+
+test('anomaly requests share one 10 second budget', async t => {
+  const budgets = [];
+  const clock = performance.now;
+  t.after(() => { performance.now = clock; });
+  const { options } = await withNetdata(t);
+  let elapsed = 0;
+  performance.now = () => elapsed;
+  const replies = [cpuRates(), trainingStatus(10), metricTypes(1773)];
+  const slow = async (_url, { timeout }) => { budgets.push(timeout); elapsed += 6000; return { status: 200, body: replies[budgets.length - 1] }; };
+  assert.deepEqual(await check(anomalyContract, { ...options, request: slow }), { verdict: 'NECITIT', motiv: 'anomaly-timeout' });
+  assert.deepEqual(budgets, [10000, 4000]);
+});
