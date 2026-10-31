@@ -657,7 +657,11 @@ let
             # the house's absence guard. The bar's own violation count comes
             # from `absent-guard --count`, so is-failed on this unit is what
             # says whether that number is being produced at all.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service" env;
+            # auditd, crowdsec and crowdsec-firewall-bouncer joined on
+            # 2026-10-31 (modules/services/soc-in-a-box.nix): long-running
+            # units, and crowdsec needs the hub at every start, so a failed
+            # start must reach the bar rather than only the journal.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service crowdsec-firewall-bouncer.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
