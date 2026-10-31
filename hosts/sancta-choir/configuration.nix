@@ -40,6 +40,7 @@
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
+    ../../modules/system/soc-in-a-box.nix # auditd trail + CrowdSec (sshd), all local
     ../../modules/users/root.nix
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
