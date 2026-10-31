@@ -12,19 +12,21 @@ const response = (status, body) => async () => ({ status, body });
 
 test('stalled filesystem probes release check slots with unreadable verdicts', async () => {
   const stalled = () => new Promise(() => {});
-  const io = { stat: stalled, statfs: stalled, readFile: stalled };
+  const io = { stat: stalled, statfs: stalled, readFile: stalled, open: stalled };
   const contracts = [
     { verifica: 'age', tinta: '/fixture', prag: '1h' },
     { verifica: 'disk', tinta: '/', prag: 85 },
     { verifica: 'mount', tinta: '/fixture' },
     { verifica: 'hass-state', tinta: 'sensor.fixture', astept: { valoare: 'ready' } },
     { verifica: 'crowdsec', tinta: 'http://127.0.0.1:1', prag: 1, astept: { scenariu: 'fixture/ssh-bf', fereastra_min: 15 } },
+    { verifica: 'osquery', tinta: 'local_users', astept: { permis: [] } },
   ];
   let timer;
   try {
     const results = await Promise.race([
       Promise.all(contracts.map(c => check(c, { fs: io, fsTimeout: 10,
-        env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token', VIGIL_CROWDSEC_CREDENTIALS: '/fixture/crowdsec' } }))),
+        env: { HASS_URL: 'http://127.0.0.1:8123', VIGIL_HASS_TOKEN_FILE: '/fixture/token', VIGIL_CROWDSEC_CREDENTIALS: '/fixture/crowdsec',
+          VIGIL_OSQUERY_RESULTS: '/fixture/snapshots', VIGIL_OSQUERY_INTERVAL: '300' } }))),
       new Promise(resolve => { timer = setTimeout(() => resolve(null), 100); }),
     ]);
     assert.notEqual(results, null, 'filesystem probes must release their slots');
@@ -382,4 +384,125 @@ test('a timeout during a streaming crowdsec body is still a timeout', async t =>
   const { contract } = await withCrowdsec(t, { login: (_req, res) => { res.writeHead(200); res.write('{'); } });
   const short = (url, config) => request(url, { ...config, timeout: 25 });
   assert.deepEqual(await check(contract, { ...crowdsec, request: short }), { verdict: 'NECITIT', motiv: 'crowdsec-timeout' });
+});
+
+// Real snapshot log files, shaped from osquery 5.21.0: unixTime is a number of seconds and
+// row values are strings; the interval is 300 s, so snapshots go stale past 600 s.
+const unix = Math.floor(now / 1000);
+const snapshotLine = (query, rows, age = 60) => JSON.stringify({ snapshot: rows, action: 'snapshot',
+  name: `pack_vigil_${query}`, hostIdentifier: 'fixture', calendarTime: 'Sun Sep 20 11:59:00 2026 UTC',
+  unixTime: unix - age, epoch: 0, counter: 0, numerics: false });
+const ports = [{ port: '22', protocol: '6', name: 'sshd' }, { port: '8747', protocol: '6', name: 'systemd' }];
+const portContract = { verifica: 'osquery', tinta: 'listening_ports', astept: { permis: ['22/6/sshd', '8747/6/systemd'] } };
+
+async function withSnapshots(t, content) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vigil-osquery-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'osqueryd.snapshots.log');
+  if (content !== undefined) await fs.writeFile(file, content);
+  return { now, env: { VIGIL_OSQUERY_RESULTS: file, VIGIL_OSQUERY_INTERVAL: '300' } };
+}
+
+test('osquery reads verde for allowed rows, for reordered rows and for a quiet event table', async t => {
+  const options = await withSnapshots(t, [
+    snapshotLine('listening_ports', [...ports].reverse()), snapshotLine('etc_fim', []),
+    snapshotLine('local_users', [{ username: 'root' }]), snapshotLine('suid_bins', [{ path: '/run/wrappers/bin/sudo' }]),
+  ].join('\n') + '\n');
+  assert.deepEqual(await check(portContract, options), { verdict: 'verde', motiv: 'ok' });
+  for (const [tinta, permis] of [['etc_fim', []], ['local_users', ['root']], ['suid_bins', ['/run/wrappers/bin/sudo']]]) {
+    assert.deepEqual(await check({ verifica: 'osquery', tinta, astept: { permis } }, options), { verdict: 'verde', motiv: 'ok' }, tinta);
+  }
+});
+
+test('osquery names an unexpected row, keyed per query', async t => {
+  const options = await withSnapshots(t, [
+    snapshotLine('listening_ports', [...ports, { port: '4444', protocol: '6', name: 'nc' }]),
+    snapshotLine('local_users', [{ username: 'mallory' }]), snapshotLine('suid_bins', [{ path: '/tmp/sh' }]),
+    snapshotLine('etc_fim', [{ target_path: '/etc/passwd', action: 'UPDATED' }]),
+  ].join('\n') + '\n');
+  for (const [tinta, permis, detaliu] of [
+    ['listening_ports', portContract.astept.permis, ['4444/6/nc']], ['local_users', ['root'], ['mallory']],
+    ['suid_bins', [], ['/tmp/sh']], ['etc_fim', [], ['/etc/passwd']],
+  ]) {
+    assert.deepEqual(await check({ verifica: 'osquery', tinta, astept: { permis } }, options),
+      { verdict: 'picat', motiv: 'osquery-unexpected', detaliu }, tinta);
+  }
+});
+
+test('osquery detail is at most three sorted, deduplicated, capped keys', async t => {
+  const rows = ['d', 'b', 'a', 'c', 'a', 'x'.repeat(500)].map(username => ({ username }));
+  const options = await withSnapshots(t, `${snapshotLine('local_users', rows)}\n`);
+  const c = { verifica: 'osquery', tinta: 'local_users', astept: { permis: ['b'] } };
+  assert.deepEqual((await check(c, options)).detaliu, ['a', 'c', 'd']);
+  const long = await withSnapshots(t, `${snapshotLine('local_users', [{ username: 'x'.repeat(500) }])}\n`);
+  assert.equal((await check(c, long)).detaliu[0].length, 128);
+});
+
+test('osquery decides on the newest snapshot of its own query only', async t => {
+  const intruded = snapshotLine('listening_ports', [...ports, { port: '4444', protocol: '6', name: 'nc' }], 120);
+  const clean = snapshotLine('listening_ports', ports);
+  const other = snapshotLine('local_users', [{ username: 'root' }]);
+  assert.equal(await verdict(portContract, await withSnapshots(t, `${intruded}\n${clean}\n${other}\n`)), 'verde');
+  assert.equal(await verdict(portContract, await withSnapshots(t, `${clean}\n${intruded}\n${other}\n`)), 'picat');
+});
+
+test('every osquery sensor fault is NECITIT and never verde', async t => {
+  const fresh = snapshotLine('listening_ports', ports);
+  const cases = [
+    ['stale snapshot', snapshotLine('listening_ports', ports, 601), 'osquery-stale'],
+    ['truncated newest line', `${fresh}\n${fresh.slice(0, 40)}`, 'osquery-unreadable'],
+    ['garbage line', 'not json\n', 'osquery-unreadable'],
+    ['null line', 'null\n', 'osquery-unreadable'],
+    ['empty file', '', 'osquery-absent'],
+    ['other query only', `${snapshotLine('local_users', [{ username: 'root' }])}\n`, 'osquery-absent'],
+    ['differential record', `${JSON.stringify({ name: 'pack_vigil_listening_ports', action: 'added', columns: {}, unixTime: unix - 60 })}\n`, 'osquery-unreadable'],
+    ['snapshot not a list', `${JSON.stringify({ name: 'pack_vigil_listening_ports', action: 'snapshot', snapshot: {}, unixTime: unix - 60 })}\n`, 'osquery-unreadable'],
+    ['no timestamp', `${JSON.stringify({ name: 'pack_vigil_listening_ports', action: 'snapshot', snapshot: ports })}\n`, 'osquery-unreadable'],
+    ['string timestamp', `${snapshotLine('listening_ports', ports).replace(/"unixTime":\d+/, '"unixTime":"never"')}\n`, 'osquery-unreadable'],
+    ['future timestamp', `${snapshotLine('listening_ports', ports, -60)}\n`, 'osquery-unreadable'],
+    ['row without a key column', `${snapshotLine('listening_ports', [{ port: '22', protocol: '6' }])}\n`, 'osquery-unreadable'],
+    ['row that is not an object', `${snapshotLine('listening_ports', [null])}\n`, 'osquery-unreadable'],
+    ['blind empty snapshot', `${snapshotLine('listening_ports', [])}\n`, 'osquery-empty'],
+  ];
+  for (const [name, content, reason] of cases) {
+    assert.deepEqual(await check(portContract, await withSnapshots(t, content)), { verdict: 'NECITIT', motiv: reason }, name);
+  }
+});
+
+test('osquery configuration faults are NECITIT, including a missing file', async t => {
+  const options = await withSnapshots(t);
+  assert.deepEqual(await check(portContract, options), { verdict: 'NECITIT', motiv: 'osquery-unreadable' });
+  const good = await withSnapshots(t, `${snapshotLine('listening_ports', ports)}\n`);
+  assert.equal(await verdict(portContract, good), 'verde');
+  for (const env of [{}, { VIGIL_OSQUERY_INTERVAL: '300' }, { ...good.env, VIGIL_OSQUERY_INTERVAL: '' }, { ...good.env, VIGIL_OSQUERY_INTERVAL: '0' },
+    { ...good.env, VIGIL_OSQUERY_INTERVAL: 'soon' }, { VIGIL_OSQUERY_RESULTS: good.env.VIGIL_OSQUERY_RESULTS }]) {
+    assert.deepEqual(await check(portContract, { now, env }), { verdict: 'NECITIT', motiv: 'osquery-config' });
+  }
+  for (const tinta of ['open_sockets', 'constructor']) {
+    assert.deepEqual(await check({ ...portContract, tinta }, good), { verdict: 'NECITIT', motiv: 'osquery-query' }, tinta);
+  }
+});
+
+test('a corrupt line behind the newest snapshot does not wedge the contract', async t => {
+  assert.equal(await verdict(portContract, await withSnapshots(t, `not json\n${snapshotLine('listening_ports', ports)}\n`)), 'verde');
+});
+
+test('osquery reads only the bounded file tail and drops the line it cut', async t => {
+  const pad = JSON.stringify({ name: 'pack_vigil_local_users', action: 'snapshot', snapshot: [{ username: 'é'.repeat(1024 * 1024) }], unixTime: unix });
+  const old = snapshotLine('listening_ports', [...ports, { port: '4444', protocol: '6', name: 'nc' }]);
+  const big = await withSnapshots(t, `${old}\n${pad}\n${pad}\n${snapshotLine('listening_ports', ports)}\n`);
+  assert.ok((await fs.stat(big.env.VIGIL_OSQUERY_RESULTS)).size > 4 * 1024 * 1024);
+  assert.equal(await verdict(portContract, big), 'verde');
+  // The cut lands inside the only record: its tail must not be parsed as one.
+  const cut = await withSnapshots(t, `${'x'.repeat(5 * 1024 * 1024)}${snapshotLine('listening_ports', ports)}\n`);
+  assert.deepEqual(await check(portContract, cut), { verdict: 'NECITIT', motiv: 'osquery-absent' });
+  const reads = [];
+  const real = await fs.open(big.env.VIGIL_OSQUERY_RESULTS, 'r');
+  let closed = false;
+  const io = { open: async () => ({ stat: () => real.stat(),
+    read: async (...args) => { reads.push(args[2]); return real.read(...args); },
+    close: async () => { closed = true; await real.close(); } }) };
+  assert.equal(await verdict(portContract, { ...big, fs: io }), 'verde');
+  assert.equal(reads.reduce((sum, length) => sum + length, 0), 4 * 1024 * 1024);
+  assert.equal(closed, true);
 });

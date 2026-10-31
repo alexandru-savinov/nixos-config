@@ -54,11 +54,11 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 - [x] Tests in `pkgs/vigil/checks.test.mjs` against a fake local HTTP server: 0 alerts → verde, prag alerts → picat, 401 → NECITIT, garbage body → NECITIT, server down → NECITIT
 
 ### Task 3: osquery checker
-- [ ] Add `case 'osquery'`: read the osquery filesystem-logger results file at `VIGIL_OSQUERY_RESULTS` (JSON lines, osquery `snapshot` format), take the newest snapshot whose `name` equals `pack_vigil_<tinta>`
-- [ ] Row key per query is fixed in code: `listening_ports` → `port/protocol/name`, `local_users` → `username`, `suid_bins` → `path`, `etc_fim` → `target_path` (events format); unknown query name → `NECITIT` (`osquery-query`)
-- [ ] Verdicts: any key not in `permis` → `picat` (`osquery-unexpected`, include at most the first 3 unexpected keys in the reason detail); none → `verde`; file missing, newest snapshot older than 2 × `VIGIL_OSQUERY_INTERVAL` seconds, or unparsable → `NECITIT`
-- [ ] Read the file tail only (bounded, e.g. last 4 MiB) so a large log cannot stall the tick
-- [ ] Tests with fixture result files: allowed only → verde, one extra port → picat, stale snapshot → NECITIT, missing file → NECITIT, truncated JSON line → NECITIT
+- [x] Add `case 'osquery'`: read the osquery filesystem-logger results file at `VIGIL_OSQUERY_RESULTS` (JSON lines, osquery `snapshot` format), take the newest snapshot whose `name` equals `pack_vigil_<tinta>`
+- [x] Row key per query is fixed in code: `listening_ports` → `port/protocol/name`, `local_users` → `username`, `suid_bins` → `path`, `etc_fim` → `target_path` (events format); unknown query name → `NECITIT` (`osquery-query`)
+- [x] Verdicts: any key not in `permis` → `picat` (`osquery-unexpected`, include at most the first 3 unexpected keys in the reason detail); none → `verde`; file missing, newest snapshot older than 2 × `VIGIL_OSQUERY_INTERVAL` seconds, or unparsable → `NECITIT`
+- [x] Read the file tail only (bounded, e.g. last 4 MiB) so a large log cannot stall the tick
+- [x] Tests with fixture result files: allowed only → verde, one extra port → picat, stale snapshot → NECITIT, missing file → NECITIT, truncated JSON line → NECITIT
 
 ### Task 4: anomaly checker
 - [ ] Confirm the Netdata 2.8.4 query for a chart's anomaly rate from the packaged docs or `netdata` source in the nix store (the v1/v2 data API with the anomaly-bit option); record the exact URL form in a comment with where it was verified
@@ -69,7 +69,7 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 ### Task 5: Sensor module
 - [ ] Create `modules/services/vigil-sensors.nix` with `services.vigil.sensors.{crowdsec,osquery,netdata}.enable` (`lib.mkEnableOption`), imported by `modules/services/vigil.nix`
 - [ ] CrowdSec: enable `services.crowdsec` with the sshd/journald acquisition, LAPI on 127.0.0.1 only, console enrolment off, its own notifications off, no bouncer; a root oneshot `vigil-crowdsec-register` (After crowdsec) that runs `cscli machines add vigil --auto -f /var/lib/vigil/crowdsec.yaml --force` only if the file is absent, then `chown vigil:vigil` + `chmod 0400`; export `VIGIL_CROWDSEC_CREDENTIALS`
-- [ ] osquery: enable `services.osquery` with a `vigil` pack containing exactly the four queries from Task 3 (snapshot mode, interval 300 s), filesystem logger results file readable by group `vigil`; export `VIGIL_OSQUERY_RESULTS` and `VIGIL_OSQUERY_INTERVAL`
+- [ ] osquery: enable `services.osquery` with a `vigil` pack containing exactly the four queries from Task 3 (snapshot mode, interval 300 s), filesystem logger snapshot file readable by group `vigil`; export `VIGIL_OSQUERY_RESULTS` and `VIGIL_OSQUERY_INTERVAL` (verified in osquery 5.21.0 source during Task 3: snapshot-mode results go to `osqueryd.snapshots.log`, not `osqueryd.results.log`, so that is the path `VIGIL_OSQUERY_RESULTS` must name; `listening_ports` has no `name` column, so that query must join `processes` on `pid` and select `port, protocol, name`; leave `--logger_snapshot_event_type` and `--logger_numerics` unset)
 - [ ] Netdata: enable `services.netdata` bound to 127.0.0.1:19999, ML enabled, cloud/claim disabled, retention capped (dbengine tier 0 only, ≤ 256 MiB disk); export `VIGIL_NETDATA_URL`
 - [ ] `MemoryMax` per sensor unit: netdata 400M, crowdsec 256M, osquery 128M
 - [ ] Ensure the vigil checker service can reach loopback (adjust its `IPAddressAllow` only if one is set on the service; do not widen the tailnet socket)

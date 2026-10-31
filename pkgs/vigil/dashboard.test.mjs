@@ -109,3 +109,10 @@ test('dashboard public-name allowlist is explicit and bounded', () => {
     assert.throws(() => publicNames({ VIGIL_PUBLIC_NAMES: input }), /dashboard-invalid/);
   }
 });
+
+test('sensor verdicts keep their own reason on the dashboard instead of check-unreadable', async () => fixture(async f => {
+  for (const [verdict, reason] of [['picat', 'crowdsec-alerts'], ['NECITIT', 'crowdsec-unreachable'], ['picat', 'osquery-unexpected'], ['NECITIT', 'osquery-stale']]) {
+    await f.tick(verdict, reason);
+    assert.equal(f.body().reason, reason);
+  }
+}));

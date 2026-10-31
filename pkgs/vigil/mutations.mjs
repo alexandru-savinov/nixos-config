@@ -23,6 +23,11 @@ const mutations = [
   ['disponibil-unavailable-green', 'lib/checks.mjs', "if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');\n        if (c.astept.disponibil === true) return green();", "if (c.astept.disponibil === true) return green();\n        if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');"],
   ['crowdsec-threshold-off-by-one', 'lib/checks.mjs', '(alerts?.length ?? 0) >= c.prag', '(alerts?.length ?? 0) > c.prag'],
   ['crowdsec-empty-unreadable', 'lib/checks.mjs', 'if (alerts !== null && !Array.isArray(alerts))', 'if (!Array.isArray(alerts))'],
+  ['osquery-stale-green', 'lib/checks.mjs', "if (now - taken > 2 * interval * 1000) return unreadable('osquery-stale');", ''],
+  ['osquery-empty-green', 'lib/checks.mjs', "if (!record.snapshot.length && !query.vacant) return unreadable('osquery-empty');", ''],
+  ['osquery-oldest-snapshot', 'lib/checks.mjs', 'for (let index = lines.length - 1; index >= 0; index--) {', 'for (let index = 0; index < lines.length; index++) {'],
+  ['osquery-unbounded-tail', 'lib/checks.mjs', 'const length = Math.min(size, limit);', 'const length = size;'],
+  ['osquery-cut-line-kept', 'lib/checks.mjs', "return newline < 0 ? '' : tail.subarray(newline + 1).toString('utf8');", "return tail.toString('utf8');"],
   ['crowdsec-fault-green', 'lib/checks.mjs', "if (response.status !== 200) return unreadable('crowdsec-response');", "if (response.status !== 200) return green();"],
 ];
 const source = path.dirname(fileURLToPath(import.meta.url));

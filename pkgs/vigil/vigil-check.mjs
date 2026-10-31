@@ -142,7 +142,8 @@ export async function run(entries, options = {}) {
     }
     output(JSON.stringify({ nume: c.nume, verifica: c.verifica,
       ...(c.dimension !== undefined && { dimension: c.dimension }), ...(c.driver !== undefined && { driver: c.driver }),
-      verdict: result.verdict, motiv: result.motiv, incident: transition.state.open }));
+      verdict: result.verdict, motiv: result.motiv, ...(result.detaliu !== undefined && { detaliu: result.detaliu }),
+      incident: transition.state.open }));
   }
 
   if (enabled) {

@@ -9,6 +9,17 @@ import { tcpTarget } from './schema.mjs';
 
 const LIMIT = 65536;
 const CROWDSEC_LIMIT = 4 * 1024 * 1024;
+const OSQUERY_TAIL = 4 * 1024 * 1024;
+const OSQUERY_DETAIL = 3;
+const OSQUERY_DETAIL_LENGTH = 128;
+// The row key of each pack query. `vacant` says an empty snapshot is a real answer: only
+// the event table may be quiet, a host with no listeners, users or wrappers is a blind sensor.
+const OSQUERY_QUERIES = new Map([
+  ['listening_ports', { columns: ['port', 'protocol', 'name'], vacant: false }],
+  ['local_users', { columns: ['username'], vacant: false }],
+  ['suid_bins', { columns: ['path'], vacant: false }],
+  ['etc_fim', { columns: ['target_path'], vacant: true }],
+]);
 const answer = (verdict, motiv) => ({ verdict, motiv });
 const green = () => answer('verde', 'ok');
 const failed = reason => answer('picat', reason);
@@ -170,6 +181,75 @@ async function crowdsecAlerts(c, { env, io, read, get, started }) {
   }
 }
 
+// Reads at most `limit` bytes from the end, dropping the first line the cut landed inside.
+async function fileTail(io, file, limit) {
+  const handle = await io.open(file, 'r');
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(size, limit);
+    const position = size - length;
+    const buffer = Buffer.alloc(length);
+    let filled = 0;
+    while (filled < length) {
+      const { bytesRead } = await handle.read(buffer, filled, length - filled, position + filled);
+      if (!bytesRead) break;
+      filled += bytesRead;
+    }
+    const tail = buffer.subarray(0, filled);
+    if (!position) return tail.toString('utf8');
+    const newline = tail.indexOf(10);
+    return newline < 0 ? '' : tail.subarray(newline + 1).toString('utf8');
+  } finally { await handle.close(); }
+}
+
+// Walks newest to oldest and stops at the first match, so an old corrupt line cannot wedge
+// the contract. A corrupt line newer than the match means the newest record is unknown.
+function newestRecord(text, name) {
+  const lines = text.split('\n');
+  for (let index = lines.length - 1; index >= 0; index--) {
+    if (!lines[index].trim()) continue;
+    const record = JSON.parse(lines[index]);
+    if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('osquery-record');
+    if (record.name === name) return record;
+  }
+  return null;
+}
+
+// Shaped from osquery 5.21.0 (osquery/core/query.cpp, dispatcher/scheduler.cpp,
+// logger/logger.cpp, plugins/logger/filesystem_logger.cpp):
+// - a snapshot query is logged on every run, also with no rows, so silence is a dead sensor;
+// - the filesystem logger writes snapshots to osqueryd.snapshots.log, not osqueryd.results.log;
+// - one line per run: { snapshot: [rows], action: 'snapshot', name, unixTime: <seconds> };
+// - row values are strings unless --logger_numerics is set;
+// - with --logger_snapshot_event_type a line per row replaces this shape: never set it.
+async function osqueryRows(c, { env, io, read, now }) {
+  const query = OSQUERY_QUERIES.get(c.tinta);
+  if (!query) return unreadable('osquery-query');
+  const interval = Number(env.VIGIL_OSQUERY_INTERVAL);
+  if (!env.VIGIL_OSQUERY_RESULTS || !Number.isInteger(interval) || interval <= 0) return unreadable('osquery-config');
+  const text = await read(() => fileTail(io, env.VIGIL_OSQUERY_RESULTS, OSQUERY_TAIL));
+  const record = newestRecord(text, `pack_vigil_${c.tinta}`);
+  if (!record) return unreadable('osquery-absent');
+  if (record.action !== 'snapshot' || !Array.isArray(record.snapshot)) return unreadable('osquery-unreadable');
+  const taken = record.unixTime * 1000;
+  if (!Number.isFinite(taken) || taken <= 0 || taken > now) return unreadable('osquery-unreadable');
+  if (now - taken > 2 * interval * 1000) return unreadable('osquery-stale');
+  if (!record.snapshot.length && !query.vacant) return unreadable('osquery-empty');
+  const allowed = new Set(c.astept.permis);
+  const unexpected = new Set();
+  for (const row of record.snapshot) {
+    const parts = query.columns.map(column => row?.[column]);
+    if (parts.some(part => !['string', 'number'].includes(typeof part))) return unreadable('osquery-unreadable');
+    const key = parts.join('/');
+    if (!allowed.has(key)) unexpected.add(key);
+  }
+  if (!unexpected.size) return green();
+  // Sorted because row order is not stable between runs. Keys are host data: capped, and
+  // kept out of motiv, whose fixed vocabulary is what the public dashboard may serialize.
+  return { ...failed('osquery-unexpected'),
+    detaliu: [...unexpected].sort().slice(0, OSQUERY_DETAIL).map(key => key.slice(0, OSQUERY_DETAIL_LENGTH)) };
+}
+
 export async function check(c, options = {}) {
   const started = performance.now();
   const env = options.env || process.env;
@@ -259,6 +339,7 @@ export async function check(c, options = {}) {
         return body.state === c.astept.valoare ? green() : failed('hass-value');
       }
       case 'crowdsec': return await crowdsecAlerts(c, { env, io, read, get, started });
+      case 'osquery': return await osqueryRows(c, { env, io, read, now });
       default: return unreadable('contract-invalid');
     }
   } catch (error) {

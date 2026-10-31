@@ -63,6 +63,13 @@ async function harness(fn) {
   }); } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
+test('a check detail reaches the run line only when the check gave one', async () => harness(async h => {
+  await run([{ contract: { ...base, nume: 'detailed' } }, { contract: { ...base, nume: 'plain' } }], { ...h.options,
+    inspect: async c => c.nume === 'detailed' ? { verdict: 'picat', motiv: 'fixture', detaliu: ['4444/6/nc'] } : { verdict: 'picat', motiv: 'fixture' } });
+  assert.deepEqual(h.lines.find(line => line.nume === 'detailed').detaliu, ['4444/6/nc']);
+  assert.equal(Object.hasOwn(h.lines.find(line => line.nume === 'plain'), 'detaliu'), false);
+}));
+
 test('borrowed vocabulary labels reach the run line only when declared', async () => harness(async h => {
   await run([
     { contract: { ...base, nume: 'labelled', dimension: 'availability', driver: 'family' } },

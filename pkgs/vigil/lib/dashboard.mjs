@@ -6,7 +6,9 @@ const verdicts = ['verde', 'picat', 'NECITIT'];
 const reasons = new Set(('ok check-unreadable contract-invalid tcp-timeout tcp-unreachable tcp-unreadable network-unreachable '
   + 'mount-unreadable mount-absent age-unreadable age-stale http-status http-pattern http-body http-freshness http-stale http-unreadable '
   + 'unit-unreadable unit-unknown unit-inactive unit-result disk-unreadable disk-full cmd-allow cmd-denied cmd-execution cmd-value cmd-unreadable '
-  + 'hass-config hass-token hass-timeout hass-response hass-state hass-unavailable hass-value hass-unreadable').split(' '));
+  + 'hass-config hass-token hass-timeout hass-response hass-state hass-unavailable hass-value hass-unreadable '
+  + 'crowdsec-config crowdsec-auth crowdsec-response crowdsec-timeout crowdsec-unreachable crowdsec-alerts crowdsec-unreadable '
+  + 'osquery-query osquery-config osquery-absent osquery-stale osquery-empty osquery-unexpected osquery-unreadable').split(' '));
 const descriptions = {
   'ok': 'check passed',
   'network-unreachable': 'network request failed',
@@ -23,6 +25,9 @@ const descriptions = {
   'unit-inactive': 'service is not active',
   'unit-result': 'successful service completion unavailable',
   'check-unreadable': 'check result unavailable',
+  'crowdsec-alerts': 'scenario alerts reached the configured limit',
+  'osquery-unexpected': 'host state outside the allowlist',
+  'osquery-stale': 'newest osquery snapshot is too old',
 };
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
