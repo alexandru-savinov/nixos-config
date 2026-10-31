@@ -56,9 +56,12 @@ in
       #    /run/agenix is a symlink into this directory; watch the real tree.
       "-w ${config.age.secretsMountPoint} -p rwa -k agenix-secrets"
 
-      # 2. sudo policy changes.
+      # 2. sudo policy changes. The NixOS-generated /etc/sudoers has no
+      #    @includedir, so it is the whole policy; adding a drop-in directory
+      #    would first need a change to this watched file. (No sudoers.d watch:
+      #    the path does not exist on NixOS, and a watch that fails to load
+      #    can stop `auditctl -R` before the rules after it.)
       "-w /etc/sudoers -p wa -k sudoers"
-      "-w /etc/sudoers.d -p wa -k sudoers"
 
       # 3. sshd configuration changes.
       "-w /etc/ssh/sshd_config -p wa -k sshd-config"
@@ -68,8 +71,10 @@ in
       "-w /etc/shadow -p wa -k identity"
       "-w /etc/group -p wa -k identity"
 
-      # 5. commands run as root by a real logged-in user (sudo and friends).
+      # 5. commands run as root by a real logged-in user (sudo and friends),
+      #    on both syscall ABIs.
       "-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root-exec"
+      "-a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root-exec"
     ];
   };
 
