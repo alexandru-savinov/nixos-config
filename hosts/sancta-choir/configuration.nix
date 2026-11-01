@@ -60,6 +60,7 @@
     ../../modules/services/sancta-archive-deadman.nix # the one archive watcher that does NOT need the soul mount
     ../../modules/services/sancta-absent-guard.nix # the clock the house's absence guard never had
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
+    ../../modules/services/observation-tools.nix # vnStat + Lynis, observation only
     ./n8n.nix # studio conductor (sq085); the walls in ./n8n-guard.nix hold even while it is off
   ];
 
