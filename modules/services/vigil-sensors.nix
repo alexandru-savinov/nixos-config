@@ -36,6 +36,63 @@ let
     suid_bins = "SELECT path FROM file WHERE directory = '${config.security.wrapperDir}' AND CAST(mode AS INTEGER) >= 2000;";
     etc_fim = "SELECT target_path FROM file_events;";
   };
+
+  # Rendered here rather than through pkgs.formats.toml, whose output is a derivation and
+  # could only be read back through IFD. Single-line strings are all the schema accepts, and
+  # JSON quoting of these values is valid TOML.
+  contract = { nume, ce, dimension, verifica, tinta, picatDupa ? 1, prag ? null, astept ? null }: ''
+    [contract]
+    nume = ${builtins.toJSON nume}
+    ce = ${builtins.toJSON ce}
+    dimension = ${builtins.toJSON dimension}
+    driver = "operational"
+    verifica = ${builtins.toJSON verifica}
+    tinta = ${builtins.toJSON tinta}
+    picat_dupa = ${toString picatDupa}
+    ${lib.optionalString (prag != null) "prag = ${toString prag}"}
+    ${lib.optionalString (astept != null) "astept = ${astept}"}
+
+    [spune]
+    nivel = "incident"
+  '';
+  osqueryContract = nume: ce: tinta: permis: contract {
+    inherit nume ce tinta;
+    dimension = "conformity";
+    verifica = "osquery";
+    astept = "{ permis = ${builtins.toJSON permis} }";
+  };
+  anomalyContract = nume: ce: tinta: contract {
+    inherit nume ce tinta;
+    dimension = "accuracy";
+    verifica = "anomaly";
+    prag = 20;
+    picatDupa = 3;
+  };
+
+  # Keyed port/protocol/* (6 tcp, 17 udp): config declares a port but not the name of the
+  # process that binds it, and that name follows the packaging. Wrapped binaries show up as
+  # truncated .foo-wrapped comms, so an exact name would page on a package bump.
+  firewalls = [ config.networking.firewall ] ++ lib.attrValues config.networking.firewall.interfaces;
+  opened = ports: ranges: lib.concatMap
+    (firewall: firewall.${ports} ++ lib.concatMap ({ from, to }: lib.range from to) firewall.${ranges})
+    firewalls;
+  tcpPorts = opened "allowedTCPPorts" "allowedTCPPortRanges"
+    ++ lib.optionals config.services.openssh.enable config.services.openssh.ports
+    ++ [ vigil.tickPort ]
+    ++ lib.optional cfg.crowdsec.enable crowdsecPort
+    ++ lib.optional cfg.netdata.enable netdataPort
+    ++ lib.optional config.services.resolved.enable 53;
+  udpPorts = opened "allowedUDPPorts" "allowedUDPPortRanges"
+    ++ lib.optional config.services.resolved.enable 53
+    ++ lib.optional (config.networking.dhcpcd.enable || config.systemd.network.enable) 68;
+  portKeys = protocol: map (port: "${toString port}/${toString protocol}/*");
+  listeners = lib.unique (portKeys 6 tcpPorts ++ portKeys 17 udpPorts ++ cfg.osquery.allowedListeners);
+
+  # users.users lists system accounts too, and they are all in /etc/passwd.
+  users = lib.attrNames (lib.filterAttrs (_: user: user.enable or true) config.users.users);
+  # Capability-only wrappers carry no setuid or setgid bit, so the query never returns them.
+  suidPaths = map (wrapper: "${config.security.wrapperDir}/${wrapper.program}")
+    (lib.filter (wrapper: wrapper.setuid || wrapper.setgid) (lib.attrValues config.security.wrappers));
 in
 {
   options.services.vigil.sensors = {
@@ -43,6 +100,12 @@ in
     osquery = {
       enable = mkEnableOption "the osquery daemon with the vigil query pack";
       interval = mkOption { type = types.ints.positive; default = 300; description = "Seconds between runs of each pack query."; };
+      allowedListeners = mkOption {
+        type = types.listOf (types.strMatching "[0-9]+/(6|17)/.+");
+        default = [ ];
+        example = [ "8739/6/*" ];
+        description = "Row keys added to the porturi-noi allowlist, for listeners that no evaluated option declares: port/protocol/process, where a process of * accepts any.";
+      };
     };
     netdata.enable = mkEnableOption "Netdata with ML anomaly detection";
   };
@@ -100,6 +163,15 @@ in
           mv "$staged" ${crowdsecCredentials}
         '';
       };
+      services.vigil.generatedContracts.ssh-bruteforce = contract {
+        nume = "ssh-bruteforce";
+        ce = "SSH brute force";
+        dimension = "conformity";
+        verifica = "crowdsec";
+        tinta = "http://127.0.0.1:${toString crowdsecPort}";
+        prag = 1;
+        astept = ''{ scenariu = "crowdsecurity/ssh-bf", fereastra_min = 15 }'';
+      };
       systemd.services.vigil.environment.VIGIL_CROWDSEC_CREDENTIALS = crowdsecCredentials;
       # Same user as the checker, so the responder needs the file masked explicitly.
       systemd.services."vigil-tick@".serviceConfig.InaccessiblePaths = [ "-${crowdsecCredentials}" ];
@@ -124,6 +196,12 @@ in
             (_: query: { inherit query; inherit (cfg.osquery) interval; snapshot = true; })
             osqueryQueries;
         };
+      };
+      services.vigil.generatedContracts = {
+        porturi-noi = osqueryContract "porturi-noi" "Listening ports" "listening_ports" listeners;
+        utilizatori-noi = osqueryContract "utilizatori-noi" "Local users" "local_users" users;
+        suid-nou = osqueryContract "suid-nou" "Setuid binaries" "suid_bins" suidPaths;
+        etc-schimbat = osqueryContract "etc-schimbat" "Changes under /etc" "etc_fim" [ ];
       };
       systemd.services.osqueryd.serviceConfig = {
         # Root as before: only the group changes, so logs land root:vigil 0640 (logger_mode).
@@ -156,6 +234,10 @@ in
           # Both listen on their own ports and nothing here feeds them.
           plugins = { statsd = "no"; otel = "no"; };
         };
+      };
+      services.vigil.generatedContracts = {
+        cpu-anomalie = anomalyContract "cpu-anomalie" "CPU anomaly rate" "system.cpu";
+        mem-anomalie = anomalyContract "mem-anomalie" "Memory anomaly rate" "system.ram";
       };
       systemd.services.netdata.serviceConfig.MemoryMax = "400M";
       systemd.services.vigil.environment = {

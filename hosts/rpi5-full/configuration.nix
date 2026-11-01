@@ -252,13 +252,29 @@ in
   services.vigil = {
     enable = true;
     contractsDirs = [ ./vigil-contracts "/run/vigil-contracts" ];
-    expectedContracts = 9;
+    expectedContracts = 9 + builtins.length (builtins.attrNames config.services.vigil.generatedContracts);
     expectedRuntimeContracts = 2;
     telegramEnvFile = secret "backup-telegram-env";
     hassTokenFile = secret "ha-vigil-token";
     hassUrl = "http://127.0.0.1:8123";
     listenAddress = "100.106.93.87";
     cmdAllow = [ ];
+    sensors = {
+      crowdsec.enable = true;
+      netdata.enable = true;
+      osquery = {
+        enable = true;
+        # Bound on purpose but opened by no firewall rule: loopback behind Serve, and the
+        # Kindle stub on its own VLAN.
+        allowedListeners = map (port: "${toString port}/6/*") [
+          config.services.n8n-tailscale.port
+          config.services.gatus-tailscale.port
+          config.services.home-assistant-tailscale.port
+          config.services.sharedMemory.port
+          config.customModules.kindleStub.port
+        ];
+      };
+    };
   };
 
   # Advertise rpi5 as a Tailscale exit node for the tailnet.

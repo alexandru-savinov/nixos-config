@@ -423,9 +423,23 @@
     # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
     # +1 for vigil-contracts-n8n/n8n.toml, which ./n8n.nix adds to
     # contractsDirs only while the studio n8n exists.
-    expectedContracts = 10 + (if config.sancta.studio.n8n.enable then 1 else 0);
+    expectedContracts = 10 + (if config.sancta.studio.n8n.enable then 1 else 0)
+      + builtins.length (builtins.attrNames config.services.vigil.generatedContracts);
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
+    sensors = {
+      crowdsec.enable = true;
+      netdata.enable = true;
+      osquery = {
+        enable = true;
+        # Bound on purpose but opened by no firewall rule: the gallery port is a literal
+        # in its module's SocketBindAllow, the membrane sits on loopback behind Serve.
+        allowedListeners = [
+          "8739/6/*"
+          "${toString config.services.sancta-worker.port}/6/*"
+        ];
+      };
+    };
   };
 
   # The rendered surface. On 2026-07-26 three node processes served Sancta's

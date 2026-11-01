@@ -429,6 +429,22 @@ test('osquery names an unexpected row, keyed per query', async t => {
   }
 });
 
+test('osquery port wildcards accept any process on that port and nothing else', async t => {
+  const c = { verifica: 'osquery', tinta: 'listening_ports', astept: { permis: ['22/6/*', '8747/6/systemd'] } };
+  const options = await withSnapshots(t, snapshotLine('listening_ports', [
+    { port: '22', protocol: '6', name: '.sshd-wrapped' }, { port: '8747', protocol: '6', name: 'systemd' },
+  ]));
+  assert.deepEqual(await check(c, options), { verdict: 'verde', motiv: 'ok' });
+  for (const [port, protocol] of [['4444', '6'], ['22', '17']]) {
+    const other = await withSnapshots(t, snapshotLine('listening_ports', [{ port, protocol, name: 'nc' }]));
+    assert.deepEqual(await check(c, other),
+      { verdict: 'picat', motiv: 'osquery-unexpected', detaliu: [`${port}/${protocol}/nc`] });
+  }
+  const users = { verifica: 'osquery', tinta: 'local_users', astept: { permis: ['*'] } };
+  const people = await withSnapshots(t, snapshotLine('local_users', [{ username: 'mallory' }]));
+  assert.equal((await check(users, people)).verdict, 'picat');
+});
+
 test('osquery detail is at most three sorted, deduplicated, capped keys', async t => {
   const rows = ['d', 'b', 'a', 'c', 'a', 'x'.repeat(500)].map(username => ({ username }));
   const options = await withSnapshots(t, `${snapshotLine('local_users', rows)}\n`);

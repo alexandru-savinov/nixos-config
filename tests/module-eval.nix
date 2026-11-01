@@ -110,9 +110,11 @@ let
             contractsDirs = [ ./fixtures/vigil/row-only ];
             expectedContracts = 1;
             listenAddress = "100.106.93.87";
+            telegramEnvFile = "/run/agenix/telegram";
           };
         };
         sensors = {
+          services.vigil.expectedContracts = lib.mkForce 8;
           services.vigil.sensors = {
             crowdsec.enable = true;
             osquery.enable = true;
@@ -127,6 +129,39 @@ let
         netdata = on.services.netdata.config;
         queries = on.services.osquery.settings.packs.vigil.queries;
         register = services.vigil-crowdsec-register;
+        generated = on.services.vigil.generatedContracts;
+        parsed = lib.mapAttrs schema.parseSource generated;
+        names = [ "cpu-anomalie" "etc-schimbat" "mem-anomalie" "porturi-noi" "ssh-bruteforce" "suid-nou" "utilizatori-noi" ];
+        permis = name: parsed.${name}.astept.permis;
+        # The osquery contracts follow that one sensor; no other sensor drags them in.
+        onlyOsquery = evalConfig {
+          modules = [
+            ../modules/services/vigil.nix
+            vigilBase
+            {
+              services.vigil.expectedContracts = lib.mkForce 5;
+              services.vigil.sensors.osquery.enable = true;
+            }
+          ];
+        };
+        allowlisted = evalConfig {
+          modules = [
+            ../modules/services/vigil.nix
+            vigilBase
+            sensors
+            {
+              networking.firewall.allowedTCPPorts = [ 7000 ];
+              networking.firewall.allowedUDPPortRanges = [{ from = 7100; to = 7101; }];
+              networking.firewall.interfaces.lo.allowedTCPPorts = [ 7200 ];
+              services.openssh = { enable = true; ports = [ 2222 ]; };
+              services.vigil.sensors.osquery.allowedListeners = [ "7300/6/*" ];
+              users.users.alice = { isNormalUser = true; group = "users"; };
+              security.wrappers.setuidprobe = { source = "/bin/sh"; owner = "root"; group = "root"; setuid = true; };
+              security.wrappers.capprobe = { source = "/bin/sh"; owner = "root"; group = "root"; capabilities = "cap_net_raw+ep"; };
+            }
+          ];
+        };
+        allowed = name: (schema.parseSource name allowlisted.services.vigil.generatedContracts.${name}).astept.permis;
         onlyHour = interval: evalConfig {
           modules = [
             ../modules/services/vigil.nix
@@ -204,6 +239,41 @@ let
             (onlyHour "1h").systemd.services.vigil.environment.VIGIL_ANOMALY_INTERVAL == "3600"
             && (onlyHour "90").systemd.services.vigil.environment.VIGIL_ANOMALY_INTERVAL == "90"
             && (onlyHour "30s").systemd.services.vigil.environment.VIGIL_ANOMALY_INTERVAL == "30";
+
+          # Generated contracts go through both validators and the same checker run.
+          generatedSet = builtins.attrNames generated == names;
+          generatedOffWithoutSensors = off.services.vigil.generatedContracts == { };
+          generatedFollowSensor = builtins.attrNames onlyOsquery.services.vigil.generatedContracts
+            == [ "etc-schimbat" "porturi-noi" "suid-nou" "utilizatori-noi" ];
+          generatedPublished = lib.all
+            (name: builtins.elem name (builtins.fromJSON environment.VIGIL_PUBLIC_NAMES))
+            names;
+          generatedChecked = lib.hasInfix
+            (builtins.unsafeDiscardStringContext "${on.system.build.vigilContracts}/2")
+            services.vigil.serviceConfig.ExecStart;
+          generatedCounted = lib.hasSuffix "--expect 8" services.vigil.serviceConfig.ExecStart;
+          generatedBuildsNoIFD = lib.isString on.system.build.vigilContracts.drvPath;
+          wrongCountRejected = shouldFail "vigil-sensors-count" {
+            modules = [
+              ../modules/services/vigil.nix
+              vigilBase
+              sensors
+              { services.vigil.expectedContracts = lib.mkForce 7; }
+            ];
+          };
+          sshContract = parsed.ssh-bruteforce.astept == { scenariu = "crowdsecurity/ssh-bf"; fereastra_min = 15; }
+            && parsed.ssh-bruteforce.prag == 1
+            && parsed.ssh-bruteforce.tinta == "http://127.0.0.1:8088";
+          anomalyContracts = parsed.cpu-anomalie.tinta == "system.cpu" && parsed.mem-anomalie.tinta == "system.ram"
+            && lib.all (c: c.prag == 20 && c.picat_dupa == 3) [ parsed.cpu-anomalie parsed.mem-anomalie ];
+          etcAllowsNothing = permis "etc-schimbat" == [ ];
+          portsIncludeSensors = lib.all (key: builtins.elem key (permis "porturi-noi"))
+            [ "8747/6/*" "8088/6/*" "19999/6/*" ];
+          portsFromConfig = lib.all (key: builtins.elem key (allowed "porturi-noi"))
+            [ "7000/6/*" "7100/17/*" "7101/17/*" "7200/6/*" "2222/6/*" "7300/6/*" ];
+          usersFromConfig = lib.all (user: builtins.elem user (allowed "utilizatori-noi")) [ "alice" "root" "vigil" ];
+          suidFromWrappers = builtins.elem "/run/wrappers/bin/setuidprobe" (allowed "suid-nou")
+            && !(builtins.elem "/run/wrappers/bin/capprobe" (allowed "suid-nou"));
 
           # A filter on the checker would cut it off from every sensor.
           checkerReachesLoopback = !(services.vigil.serviceConfig ? IPAddressAllow)
@@ -2135,7 +2205,7 @@ let
             !off.sancta.studio.n8n.enable
             && !off.services.n8n-tailscale.enable
             && !off.services.n8n.enable
-            && off.services.vigil.expectedContracts == 10
+            && off.services.vigil.expectedContracts == 17
             && !(builtins.elem "n8n" (builtins.fromJSON off.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES));
           wallsPresentWhileOff = holds off modelWall && holds off bindWall;
 
@@ -2152,7 +2222,7 @@ let
             && n8nCfg.communityPackages == [ ]
             && n8nCfg.allowBuiltinModules == [ ]
             && n8nCfg.blockEnvAccessInCode
-            && onCfg.services.vigil.expectedContracts == 11
+            && onCfg.services.vigil.expectedContracts == 18
             && builtins.elem "n8n" (builtins.fromJSON onCfg.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES)
             && holds onCfg modelWall && holds onCfg bindWall && holds onCfg keyGate;
 

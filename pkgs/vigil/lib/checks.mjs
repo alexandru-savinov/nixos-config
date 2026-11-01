@@ -15,8 +15,10 @@ const OSQUERY_DETAIL_LENGTH = 128;
 const NETDATA_FRESH = 60000;
 // The row key of each pack query. `vacant` says an empty snapshot is a real answer: only
 // the event table may be quiet, a host with no listeners, users or wrappers is a blind sensor.
+// `anyLast` lets a `.../*` entry accept any final column: config declares a port, but the name
+// of the process binding it depends on packaging. A new port still reads picat.
 const OSQUERY_QUERIES = new Map([
-  ['listening_ports', { columns: ['port', 'protocol', 'name'], vacant: false }],
+  ['listening_ports', { columns: ['port', 'protocol', 'name'], vacant: false, anyLast: true }],
   ['local_users', { columns: ['username'], vacant: false }],
   ['suid_bins', { columns: ['path'], vacant: false }],
   ['etc_fim', { columns: ['target_path'], vacant: true }],
@@ -242,7 +244,7 @@ async function osqueryRows(c, { env, io, read, now }) {
     const parts = query.columns.map(column => row?.[column]);
     if (parts.some(part => !['string', 'number'].includes(typeof part))) return unreadable('osquery-unreadable');
     const key = parts.join('/');
-    if (!allowed.has(key)) unexpected.add(key);
+    if (!allowed.has(key) && !(query.anyLast && allowed.has(`${parts.slice(0, -1).join('/')}/*`))) unexpected.add(key);
   }
   if (!unexpected.size) return green();
   // Sorted because row order is not stable between runs. Keys are host data: capped, and

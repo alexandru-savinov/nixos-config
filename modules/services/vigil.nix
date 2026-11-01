@@ -11,18 +11,26 @@ let
     merge = lib.mergeEqualOption;
   };
   publicDirs = builtins.filter builtins.isPath cfg.contractsDirs;
+  # A derivation cannot sit in contractsDirs: reading it at evaluation is IFD, which needs a
+  # builder for the target system just to evaluate. Sources stay in Nix; the directory only
+  # feeds the same build gate and checker as the hand-written ones.
+  generatedDir = pkgs.symlinkJoin {
+    name = "vigil-generated-contracts";
+    paths = lib.mapAttrsToList (name: source: pkgs.writeTextDir "${name}.toml" source) cfg.generatedContracts;
+  };
+  bundledDirs = publicDirs ++ lib.optional (cfg.generatedContracts != { }) generatedDir;
   publicBundle = import ../../pkgs/vigil-public-contracts.nix {
     inherit pkgs;
     vigil = package;
-    directories = publicDirs;
+    directories = bundledDirs;
   };
-  checkedDirs = (lib.imap1 (index: _: "${publicBundle}/${toString index}") publicDirs)
+  checkedDirs = (lib.imap1 (index: _: "${publicBundle}/${toString index}") bundledDirs)
     ++ builtins.filter builtins.isString cfg.contractsDirs;
   files = lib.concatMap
     (directory: map (name: directory + "/${name}")
       (builtins.filter (name: lib.hasSuffix ".toml" name) (builtins.attrNames (builtins.readDir directory))))
     publicDirs;
-  contracts = map schema.parse files;
+  contracts = map schema.parse files ++ lib.mapAttrsToList schema.parseSource cfg.generatedContracts;
   names = map (contract: contract.nume) contracts;
   environment = {
     VIGIL_BIN = "${package}/bin/vigil";
@@ -62,7 +70,8 @@ in
   options.services.vigil = {
     enable = mkEnableOption "deterministic checks, incident delivery and peer freshness";
     contractsDirs = mkOption { type = types.listOf directoryType; default = [ ]; description = "Public Nix directories and private runtime directory strings."; };
-    expectedContracts = mkOption { type = types.ints.unsigned; description = "Exact number of public, evaluation-visible contracts."; };
+    expectedContracts = mkOption { type = types.ints.unsigned; description = "Exact number of public, evaluation-visible contracts, generated ones included."; };
+    generatedContracts = mkOption { type = types.attrsOf types.str; default = { }; internal = true; description = "Public contracts generated from evaluated config: file stem to TOML source."; };
     expectedRuntimeContracts = mkOption { type = types.ints.unsigned; default = 0; description = "Exact number of private runtime contracts."; };
     telegramEnvFile = mkOption { type = types.nullOr types.path; default = null; description = "Runtime EnvironmentFile containing TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID; null selects row-only mode."; };
     hassTokenFile = mkOption { type = types.nullOr types.path; default = null; description = "Runtime bearer-token file readable by vigil."; };
@@ -74,7 +83,7 @@ in
   };
   config = mkIf cfg.enable {
     assertions = [
-      { assertion = cfg.expectedContracts == builtins.length files; message = "vigil: expectedContracts must equal the public TOML file count"; }
+      { assertion = cfg.expectedContracts == builtins.length contracts; message = "vigil: expectedContracts must equal the public contract count, generated ones included"; }
       { assertion = builtins.length names == builtins.length (lib.unique names); message = "vigil: duplicate public contract name in ${lib.concatMapStringsSep ", " toString files}"; }
       { assertion = schema.tailnet cfg.listenAddress; message = "vigil: listenAddress must be in 100.64.0.0/10"; }
       { assertion = cfg.telegramEnvFile != null || lib.all (c: c.nivel != "incident" && c.nume != "channel") contracts; message = "vigil: incident/channel contracts require telegramEnvFile (${lib.concatMapStringsSep ", " toString files})"; }
