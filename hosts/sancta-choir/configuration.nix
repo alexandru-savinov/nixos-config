@@ -531,6 +531,14 @@
   #
   # Thresholds intentionally match rpi5's for now; tuning them for this host's
   # 8GB + 8GB zram is deliberately a separate change.
+  # At the 2026-11-01 23:37 boot tailscaled took ~68 s to come up, so
+  # tailscaled-autoconnect found no daemon and stayed failed until re-run by
+  # hand. Same race and same fix as rpi5-full (#639): retry instead.
+  systemd.services.tailscaled-autoconnect.serviceConfig = {
+    Restart = "on-failure";
+    RestartSec = "30s";
+  };
+
   services.earlyoom = {
     enable = true;
     freeMemThreshold = 5;
