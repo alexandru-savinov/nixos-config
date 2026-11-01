@@ -22,6 +22,7 @@ const mutations = [
   ['vocabulary-dropped', 'vigil-check.mjs', "...(c.dimension !== undefined && { dimension: c.dimension }), ...(c.driver !== undefined && { driver: c.driver }),", ''],
   ['disponibil-unavailable-green', 'lib/checks.mjs', "if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');\n        if (c.astept.disponibil === true) return green();", "if (c.astept.disponibil === true) return green();\n        if (['unknown', 'unavailable'].includes(body.state)) return failed('hass-unavailable');"],
   ['osquery-wildcard-ignores-port', 'lib/checks.mjs', "allowed.has(`${parts.slice(0, -1).join('/')}/*`)", "c.astept.permis.some(entry => entry.endsWith('/*'))"],
+  ['crowdsec-login-no-user-agent', 'lib/checks.mjs', "'Content-Type': 'application/json', 'User-Agent': 'vigil/1.0.0'", "'Content-Type': 'application/json'"],
   ['crowdsec-threshold-off-by-one', 'lib/checks.mjs', '(alerts?.length ?? 0) >= c.prag', '(alerts?.length ?? 0) > c.prag'],
   ['crowdsec-empty-unreadable', 'lib/checks.mjs', 'if (alerts !== null && !Array.isArray(alerts))', 'if (!Array.isArray(alerts))'],
   ['osquery-stale-green', 'lib/checks.mjs', "if (now - taken > 2 * interval * 1000) return unreadable('osquery-stale');", ''],

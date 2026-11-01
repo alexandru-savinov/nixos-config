@@ -280,7 +280,11 @@ async function withCrowdsec(t, handlers) {
     astept: { scenariu: 'crowdsecurity/ssh-bf', fereastra_min: 15 } };
   return { contract, seen };
 }
-const login = (_req, res) => { res.writeHead(200); res.end('{"code":200,"expire":"2026-10-31T22:00:00Z","token":"fixture-jwt"}'); };
+// v1.7.2 refuses a login whose User-Agent does not split into exactly name/version.
+const login = (req, res) => {
+  if ((req.headers['user-agent'] || '').split('/').length !== 2) { res.writeHead(401); res.end('{"code":401,"message":"incorrect Username or Password"}'); return; }
+  res.writeHead(200); res.end('{"code":200,"expire":"2026-10-31T22:00:00Z","token":"fixture-jwt"}');
+};
 const send = (status, body) => (_req, res) => { res.writeHead(status); res.end(body); };
 const credentials = 'url: http://10.0.0.5:8080/\nlogin: fixture-machine\npassword: fixture-password\nignored: key\n';
 const crowdsec = { env: { VIGIL_CROWDSEC_CREDENTIALS: '/fixture/crowdsec' }, fs: { readFile: async () => credentials } };

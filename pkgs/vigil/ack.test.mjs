@@ -44,6 +44,10 @@ test('isolated real age check consumes an ack and sends exactly one replacement 
     assert.equal(await tick(), 2);
     assert.equal(messages.length, 2);
     fs.writeFileSync(target, 'fixture');
+    // age() rejects timestamp > now, and a write in the tick's own millisecond is exactly that:
+    // mtimeMs keeps the fraction Date.now() truncates.
+    const fresh = new Date(Date.now() - 60000);
+    fs.utimesSync(target, fresh, fresh);
     assert.equal(await tick(), 0);
     assert.match(lines.at(-1), /"verdict":"verde"/);
     assert.equal(fs.existsSync(path.join(root, 'nota-sent', 'fixture')), false);
