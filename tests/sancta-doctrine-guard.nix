@@ -69,7 +69,7 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
       if res=$(run "$root" 2>&1); then
         echo "EXPECTED FAIL but guard passed: $label"; echo "$res"; exit 1
       fi
-      if ! echo "$res" | grep -qF "$want"; then
+      if ! grep -qF "$want" <<<"$res"; then
         echo "FAILED for the wrong reason: $label"
         echo "  wanted substring: $want"
         echo "$res"; exit 1
@@ -158,8 +158,8 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
     # contract this file promises in its own header.
     mkfixture "$R"; echo '{"hooks":{}}' > "$R/settings.json"
     res=$(run "$R" 2>&1 || true)
-    echo "$res" | grep -qF "lost hooks.UserPromptSubmit" || { echo "expected hooks loss reported"; echo "$res"; exit 1; }
-    echo "$res" | grep -qF "lost statusLine" || { echo "expected statusLine loss ALSO reported in the same run"; echo "$res"; exit 1; }
+    grep -qF "lost hooks.UserPromptSubmit" <<<"$res" || { echo "expected hooks loss reported"; echo "$res"; exit 1; }
+    grep -qF "lost statusLine" <<<"$res" || { echo "expected statusLine loss ALSO reported in the same run"; echo "$res"; exit 1; }
     echo "  ok: both losses reported from a single run, neither hides the other"
 
     echo "== malformed JSON must NOT masquerade as the hooks regression =="
@@ -191,7 +191,7 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
       if res=$(run_m "$root" "$managed" 2>&1); then
         echo "EXPECTED FAIL but guard passed: $label"; echo "$res"; exit 1
       fi
-      if ! echo "$res" | grep -qF "$want"; then
+      if ! grep -qF "$want" <<<"$res"; then
         echo "FAILED for the wrong reason: $label"
         echo "  wanted substring: $want"
         echo "$res"; exit 1
@@ -245,7 +245,7 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
     mkfixture "$R"
     echo '{"hooks": {' > "$M"
     res=$(run_m "$R" "$M" 2>&1 || true)
-    echo "$res" | grep -qF "managed settings ($M) is not valid JSON" || {
+    grep -qF "managed settings ($M) is not valid JSON" <<<"$res" || {
       echo "expected a distinct managed-JSON parse-error message"; echo "$res"; exit 1; }
     echo "  ok: malformed managed JSON reported distinctly, falls back to (healthy) settings.json"
 
@@ -258,11 +258,11 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
       mkfixture "$R"; chmod 000 "$R/skills/.git"
       res=$(run "$R" 2>&1 || true)
       chmod 755 "$R/skills/.git"
-      if echo "$res" | grep -qF "no tracked files at all"; then
+      if grep -qF "no tracked files at all" <<<"$res"; then
         echo "REGRESSION: an unreadable repo was reported as an empty one"
         echo "$res"; exit 1
       fi
-      echo "$res" | grep -qF "ls-files FAILED" || {
+      grep -qF "ls-files FAILED" <<<"$res" || {
         echo "expected a distinct ls-files failure message"; echo "$res"; exit 1; }
       echo "  ok: unreadable repo is not mistaken for an empty one"
     fi
@@ -270,12 +270,12 @@ pkgs.runCommand "sancta-doctrine-guard-tests"
     echo "== whole skills repo gone: must fail AND must not print a reassuring drift line =="
     mkfixture "$R"; rm -rf "$R/skills/.git"
     res=$(run "$R" 2>&1 || true)
-    echo "$res" | grep -qF "not a git repo" || { echo "expected 'not a git repo'"; echo "$res"; exit 1; }
+    grep -qF "not a git repo" <<<"$res" || { echo "expected 'not a git repo'"; echo "$res"; exit 1; }
     # Match the SKILLS drift line specifically. Since 2026-07-27 the lenses repo
     # has its own drift line whose text also contains "committed set == on-disk
     # set" — and there it is legitimate, because the lenses repo is fine. A
     # substring match would fail on a true statement about a different repo.
-    if echo "$res" | grep -qE '^ok: +drift: committed set == on-disk set'; then
+    if grep -qE '^ok: +drift: committed set == on-disk set' <<<"$res"; then
       echo "REGRESSION: printed a reassuring drift line for the catastrophic case"
       echo "$res"; exit 1
     fi
