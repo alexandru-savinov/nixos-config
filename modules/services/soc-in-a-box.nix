@@ -1,5 +1,7 @@
 # Host security monitoring in one file: the Linux audit trail (auditd) plus
-# CrowdSec reading sshd from the journal, with a local firewall bouncer.
+# CrowdSec reading sshd from the journal. Detection only: there is no
+# firewall bouncer here, so CrowdSec decisions are not applied to the host
+# firewall. Banning is a later, council-gated step (Vigil horizon, phase 4).
 #
 # Import it in a host's configuration.nix; there is no separate enable switch.
 # Everything stays on the host: auditd writes to /var/log/audit, CrowdSec's
@@ -147,14 +149,6 @@ in
         console_management = false;
       };
     };
-  };
-
-  # Firewall bouncer: applies local LAPI decisions to the host firewall. It
-  # registers itself against the local API (module default), so its API key
-  # is generated on the host at first start; nothing is stored in the repo.
-  services.crowdsec-firewall-bouncer = {
-    enable = true;
-    settings.api_url = "http://${lapiListen}";
   };
 
   assertions = [
