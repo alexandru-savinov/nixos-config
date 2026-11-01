@@ -37,7 +37,7 @@ pkgs.testers.runNixOSTest {
 
     virtualisation = { memorySize = 2048; cores = 2; diskSize = 2048; };
 
-    environment.systemPackages = [ pkgs.sshpass pkgs.iproute2 ];
+    environment.systemPackages = [ pkgs.curl pkgs.sshpass pkgs.iproute2 ];
     services.openssh = {
       enable = true;
       settings = {
@@ -89,18 +89,69 @@ pkgs.testers.runNixOSTest {
       (hubLink "scenarios" "sha256-JC82aE1mu64wROV2t8//72LVMjRl8/dPh5IxZ8bZM1Y=" "scenarios/crowdsecurity/ssh-bf.yaml")
     ];
 
-    # Models are built at about one per second, so train the two watched charts and nothing
-    # else, or the gate on untrained metrics adds minutes per thousand metrics.
-    services.netdata.config.ml."charts to skip from training" = "!system.cpu !system.ram *";
+    # Training is one FIFO of every dimension at about one per second, and a skipped or constant
+    # dimension still takes its second (src/ml/ml.cc, ml_train_main), so skipping only narrows
+    # the gate. What sets the wait for a model is the dimension count, so collect little else.
+    services.netdata.config = {
+      ml."charts to skip from training" = "!system.cpu !system.ram *";
+      plugins = lib.genAttrs [
+        "apps"
+        "cgroups"
+        "charts.d"
+        "debugfs"
+        "diskspace"
+        "ebpf"
+        "go.d"
+        "idlejitter"
+        "netdata pulse"
+        "network-viewer"
+        "perf"
+        "python.d"
+        "slabinfo"
+        "systemd-journal"
+        "tc"
+        "timex"
+      ]
+        (_: "no");
+      "plugin:proc" = lib.genAttrs [
+        "/proc/diskstats"
+        "/proc/interrupts"
+        "/proc/loadavg"
+        "/proc/mdstat"
+        "/proc/net/dev"
+        "/proc/net/netstat"
+        "/proc/net/sockstat"
+        "/proc/net/sockstat6"
+        "/proc/net/softnet_stat"
+        "/proc/net/stat/conntrack"
+        "/proc/net/stat/synproxy"
+        "/proc/pressure"
+        "/proc/softirqs"
+        "/proc/sys/fs/file-nr"
+        "/proc/sys/kernel/random/entropy_avail"
+        "/proc/uptime"
+        "/proc/vmstat"
+        "/sys/block/zram"
+        "/sys/devices/system/edac/mc"
+        "/sys/devices/system/node"
+        "/sys/fs/btrfs"
+        "/sys/kernel/mm/ksm"
+        "ipc"
+      ]
+        (_: "no");
+    };
   };
 
   testScript = ''
+    import collections
     import json
     import time
 
     OSQUERY = ["porturi-noi", "utilizatori-noi", "suid-nou", "etc-schimbat"]
     ANOMALY = ["cpu-anomalie", "mem-anomalie"]
     ALL = ["ssh-bruteforce"] + OSQUERY + ANOMALY
+    # One training pass takes this many seconds, and the wait below has to fit two.
+    MAX_DIMENSIONS = 400
     # Whitelisted by the hub for loopback and every private range, so a test-net address.
     ATTACKER = "203.0.113.7"
 
@@ -186,6 +237,14 @@ pkgs.testers.runNixOSTest {
         machine.succeed("touch /etc/vigil-soc-planted")
         rows = settle("picat", 120, ["etc-schimbat"], pause=5)
         assert any("vigil-soc-planted" in key for key in rows["etc-schimbat"]["detaliu"]), rows
+
+    with subtest("the training queue is short enough to finish inside the wait"):
+        charts = json.loads(machine.succeed("curl -sf http://127.0.0.1:19999/api/v1/charts"))
+        sizes = collections.Counter()
+        for chart in charts["charts"].values():
+            sizes[chart["type"]] += len(chart["dimensions"])
+        print("dimensions", sum(sizes.values()), sizes.most_common())
+        assert sum(sizes.values()) <= MAX_DIMENSIONS, sizes.most_common()
 
     with subtest("once trained, the anomaly contracts read verde"):
         settle("verde", 1500, ANOMALY, pause=15)
