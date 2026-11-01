@@ -339,6 +339,11 @@
             settings = self.nixosConfigurations.rpi5-full.config.services.gatus.settings;
           };
 
+          # Vigil's SOC sensors, live: verde at rest, picat on planted events, NECITIT
+          # when each sensor stops. Slow by necessity: Netdata will not train in under
+          # 15 minutes. tests/vigil-module.nix, through module-eval, covers the wiring.
+          vigil-soc = import ./tests/vigil-soc.nix { inherit pkgs; };
+
           vigil-public-contracts-rpi5 = import ./pkgs/vigil-public-contracts.nix {
             inherit pkgs;
             vigil = self.packages.x86_64-linux.vigil;
