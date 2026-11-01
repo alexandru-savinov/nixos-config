@@ -26,12 +26,14 @@ let
 
   # Row keys are fixed by OSQUERY_QUERIES in pkgs/vigil/lib/checks.mjs.
   # - listening_ports: LEFT JOIN so a socket with no resolvable owner still reports, and
-  #   the family filter drops AF_UNIX rows, which all read port 0.
+  #   the family filter drops AF_UNIX rows, which all read port 0. The protocol filter drops
+  #   raw sockets, which read protocol 255 with the IP protocol as port: dhcpcd holds
+  #   17/255 and 58/255 on any host using it, and no allowlist entry could describe them.
   # - suid_bins: the suid_bin table only walks /bin, /sbin, /usr/*bin, /usr/local/*bin and
   #   /tmp (osquery 5.21.0, tables/system/posix/suid_bin.cpp), which is nothing on NixOS, so
   #   read the wrapper directory. mode is four octal digits; 2000 and up is setuid or setgid.
   osqueryQueries = {
-    listening_ports = "SELECT DISTINCT lp.port, lp.protocol, COALESCE(p.name, '') AS name FROM listening_ports AS lp LEFT JOIN processes AS p USING (pid) WHERE lp.port != 0 AND lp.family IN (2, 10);";
+    listening_ports = "SELECT DISTINCT lp.port, lp.protocol, COALESCE(p.name, '') AS name FROM listening_ports AS lp LEFT JOIN processes AS p USING (pid) WHERE lp.port != 0 AND lp.family IN (2, 10) AND lp.protocol IN (6, 17);";
     local_users = "SELECT username FROM users;";
     suid_bins = "SELECT path FROM file WHERE directory = '${config.security.wrapperDir}' AND CAST(mode AS INTEGER) >= 2000;";
     etc_fim = "SELECT target_path FROM file_events;";

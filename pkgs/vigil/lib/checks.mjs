@@ -150,7 +150,9 @@ function crowdsecCredentials(source) {
 // - alerts carry their events and metas, so the body outgrows LIMIT during the very
 //   attack being counted; limit=prag is enough to decide and keeps it bounded;
 // - scenario also matches an alert's decisions, so a community blocklist pull would
-//   match without include_capi=false.
+//   match without include_capi=false;
+// - a login whose User-Agent is not exactly name/version is refused like a bad password
+//   (pkg/apiserver/middlewares/v1/jwt.go), and the version lands in the machine record.
 async function crowdsecAlerts(c, { env, io, read, get, started }) {
   if (!env.VIGIL_CROWDSEC_CREDENTIALS) return unreadable('crowdsec-config');
   let source;
@@ -164,7 +166,7 @@ async function crowdsecAlerts(c, { env, io, read, get, started }) {
   };
   try {
     const session = await send('/v1/watchers/login', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ machine_id: login, password }) });
+      headers: { 'Content-Type': 'application/json', 'User-Agent': 'vigil/1.0.0' }, body: JSON.stringify({ machine_id: login, password }) });
     if (session.status !== 200) return unreadable('crowdsec-auth');
     let token;
     try { token = JSON.parse(session.body)?.token; } catch { return unreadable('crowdsec-auth'); }
