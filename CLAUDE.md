@@ -89,6 +89,11 @@ Custom NixOS modules wrap upstream services with Tailscale integration and ageni
 | `services.qdrant-tailscale` | 6333 | Vector database for RAG on ARM |
 | `services.tailscale` | - | Mesh VPN (all services exposed via Tailscale only) |
 | `services.sancta-gallery` (sancta-choir) | 8739 | Rendered surface, publish-gated. Binds the tailnet address directly — documented exception below |
+| `services.vigil.sensors.crowdsec` | 8088 | CrowdSec detection, loopback only, no bouncer |
+| `services.vigil.sensors.osquery` | - | osquery scheduled queries, no listener, results read from its log file |
+| `services.vigil.sensors.netdata` | 19999 | Netdata ML anomaly rates, loopback only, cloud off |
+
+The three Vigil sensors have no Tailscale Serve proxy, and their own notifications are off: Vigil is their only alerting path.
 
 **Security Pattern:** Services bind to `127.0.0.1` only, accessed via Tailscale Serve HTTPS proxy. Localhost binding provides defense-in-depth. (`modules/services/openclaw.nix`, which used a different model — file-based inbox with per-UID nftables network restriction, no listener — was deleted 2026-08-22; see `docs/retired.md`.)
 

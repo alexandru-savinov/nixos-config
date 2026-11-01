@@ -93,9 +93,9 @@ osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
 - [x] Build it: `nix build .#checks.x86_64-linux.vigil-soc` (needs an x86_64-linux builder; if none is available locally, push the branch and use the CI run as the evidence) (no local builder: CI run 41348403844, success, test script finished in 1102 s, scratch commit 3551d4c byte-identical to this tree)
 
 ### Task 8: Docs and handoff
-- [ ] Update the status line of `docs/plans/2026-10-31-vigil-horizon-design.md` to "phase 1 implemented, not deployed"
-- [ ] Add the three sensors to the Services table in `CLAUDE.md` as loopback-only, with a one-line note that Vigil is their only alerting path
-- [ ] Write the attended deploy + live acceptance steps (planted ssh-failure burst reaches Telegram; `systemctl show -p MemoryCurrent` under caps after 24 h; `cpu-anomalie` and `mem-anomalie` have left `anomaly-untrained` after 24 h, since the steady-state untrained share on a real host is unmeasured) as a short section at the end of the design doc; do not execute them
+- [x] Update the status line of `docs/plans/2026-10-31-vigil-horizon-design.md` to "phase 1 implemented, not deployed"
+- [x] Add the three sensors to the Services table in `CLAUDE.md` as loopback-only, with a one-line note that Vigil is their only alerting path
+- [x] Write the attended deploy + live acceptance steps (planted ssh-failure burst reaches Telegram; `systemctl show -p MemoryCurrent` under caps after 24 h; `cpu-anomalie` and `mem-anomalie` have left `anomaly-untrained` after 24 h, since the steady-state untrained share on a real host is unmeasured) as a short section at the end of the design doc; do not execute them (the burst runs on the host from a documentation address on `lo`, because Tailscale SSH can intercept tailnet connections and the CrowdSec whitelist drops loopback and RFC 1918 sources; password auth is off on both hosts, so the `Invalid user` path it relies on is first proven by that attended step)
 
 ## Constraints
 

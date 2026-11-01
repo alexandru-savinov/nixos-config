@@ -1,8 +1,8 @@
 # Vigil horizon — from fleet monitor to personal NOC + SOC
 
-Status: design approved by the owner 2026-10-31. Phase 1 is specified here in
-full; phases 2–4 are fixed only at their interfaces and get their own spec,
-plan and run cycle.
+Status: phase 1 implemented, not deployed. Design approved by the owner
+2026-10-31. Phase 1 is specified here in full; phases 2–4 are fixed only at
+their interfaces and get their own spec, plan and run cycle.
 
 ## Scope and audience
 
@@ -175,3 +175,94 @@ semantics; any action capability before phase 4.
   Mac on 2026-10-31. Its location and role are to be supplied by the owner.
 - Whether the Tailscale plan exposes configuration audit logs and network flow
   logs; if yes, a `tailnet-audit` contract type joins phase 1b.
+
+## Phase 1 deploy and live acceptance (attended)
+
+Owner steps; nothing below has been run. Merge `feat/vigil-soc-p1` with green
+CI first. Do choir, then rpi5-full, and finish step 3 on choir before starting
+rpi5-full.
+
+Differences from the sections above: the CrowdSec credential is not an agenix
+secret. `vigil-crowdsec-register` generates `/var/lib/vigil/crowdsec.yaml` on
+the host, and the LAPI listens on 8088 because 8080 is Open-WebUI. The private
+`vigil-kb` repository and its runbooks do not exist yet and remain an owner
+step.
+
+**1. Deploy.** Choir is a non-atomic GRUB host, so build first with one job:
+
+```sh
+git switch main && git pull --ff-only
+nixos-rebuild build --flake .#sancta-choir --max-jobs 1 --cores 1 &&
+  sudo nixos-rebuild switch --flake .#sancta-choir --max-jobs 1 --cores 1
+```
+
+On rpi5: `sudo nixos-rebuild switch --flake .#rpi5-full`. CrowdSec needs network
+on first start to fetch its hub.
+
+**2. Read the first verdicts.** Expect 17 contracts on choir and 18 on
+rpi5-full (16 evaluated plus 2 runtime):
+
+```sh
+systemctl is-active crowdsec osqueryd netdata vigil.timer
+sudo stat -c '%U %a' /var/lib/vigil/crowdsec.yaml   # vigil 400
+sudo systemctl start vigil.service
+journalctl -u vigil.service -o cat -n 60 | grep '^{"nume"' | jq -c '{nume,verdict,motiv}'
+sudo jq '{verde,picat,necitit}' /var/lib/vigil/tick.counts.json
+```
+
+Expected noise on a first deploy:
+
+- `cpu-anomalie` and `mem-anomalie` read NECITIT (`anomaly-untrained`) for at
+  least 15 minutes.
+- The osquery contracts read NECITIT until the first 300 s snapshot lands.
+- `porturi-noi` reads `picat` for any socket config does not declare, for
+  example tailscaled's random peerapi port. Real listeners were never observed
+  on these hosts. Add each legitimate one to
+  `services.vigil.sensors.osquery.allowedListeners` in a PR.
+- `etc-schimbat` has an empty allowlist, so a switch that rewrites `/etc` may
+  page. How often this happens on a real host is unmeasured.
+
+Do not edit state to clear an incident; wait for the green threshold and
+30-minute hold-down.
+
+**3. Planted ssh-failure burst reaches Telegram.** Run it on the host, from a
+documentation address on `lo`. The other routes do not work: over the tailnet,
+`tailscale up --ssh` can answer port 22 before sshd sees the connection, and
+`crowdsecurity/whitelists` drops loopback and RFC 1918 sources, which include
+LAN clients. This also means `ssh-bruteforce` sees only sshd, never Tailscale
+SSH. Password auth is off on both hosts, so the burst relies on sshd's
+`Invalid user` line rather than the failed-password path the VM test used; this
+step is the first proof of that path.
+
+```sh
+sudo ip addr add 203.0.113.7/32 dev lo
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -b 203.0.113.7 intruder@203.0.113.7 true
+done
+sudo ip addr del 203.0.113.7/32 dev lo
+sudo cscli alerts list
+sudo systemctl start vigil.service
+sudo jq '.contracts["ssh-bruteforce"].open' /var/lib/vigil/incidents.json
+```
+
+Pass: a CrowdSec alert for `crowdsecurity/ssh-bf`, a non-null incident and a
+Telegram message. The alert stays in the 15-minute window, then the incident
+closes on its own. There is no bouncer, so the address is never blocked.
+
+**4. After 24 hours, on each host.**
+
+```sh
+for unit in netdata crowdsec osqueryd; do
+  systemctl show -p Id -p MemoryCurrent -p MemoryPeak -p MemoryMax "$unit.service"
+done
+sudo systemctl start vigil.service
+journalctl -u vigil.service -o cat -n 60 | grep '^{"nume"' |
+  jq -c 'select(.nume | test("anomalie")) | {nume,verdict,motiv}'
+```
+
+Pass: `MemoryCurrent` is below `MemoryMax` for all three units (netdata
+419430400, crowdsec 268435456, osqueryd 134217728), and neither anomaly contract
+reads `anomaly-untrained`. The steady-state untrained share on a real host is
+unmeasured. If either contract still reads `anomaly-untrained`, the checker's
+half-trained gate does not fit that host; treat that as a bug, not as noise.
