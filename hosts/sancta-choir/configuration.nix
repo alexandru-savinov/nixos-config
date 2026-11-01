@@ -369,7 +369,6 @@
     # failed start shows here instead of only in the journal.
     "auditd.service"
     "crowdsec.service"
-    "crowdsec-firewall-bouncer.service"
   ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
