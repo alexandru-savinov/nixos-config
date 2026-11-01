@@ -240,7 +240,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("the training queue is short enough to finish inside the wait"):
         charts = json.loads(machine.succeed("curl -sf http://127.0.0.1:19999/api/v1/charts"))
-        sizes = collections.Counter()
+        sizes: collections.Counter[str] = collections.Counter()
         for chart in charts["charts"].values():
             sizes[chart["type"]] += len(chart["dimensions"])
         print("dimensions", sum(sizes.values()), sizes.most_common())
