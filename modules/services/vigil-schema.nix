@@ -38,6 +38,7 @@ let
     in
     parts != null && builtins.stringLength number <= 16
     && decimal number <= builtins.div 9007199254740991 multiplier.${builtins.elemAt parts 1};
+  types = [ "tcp" "http" "unit" "age" "disk" "mount" "cmd" "hass-state" "crowdsec" "osquery" "anomaly" ];
   name = value: matches "[a-z0-9][a-z0-9-]{0,63}" value && value != "vigil" && !(lib.hasPrefix "invalid-" value);
   tailnet = value:
     let parts = lib.splitString "." value;
@@ -103,7 +104,7 @@ let
     && keys c [ "nume" "ce" "verifica" "tinta" "astept" "prag" "picat_dupa" "peer" "dimension" "driver" ] [ "nume" "ce" "verifica" "tinta" "picat_dupa" ]
     && keys document.spune [ "nivel" ] [ "nivel" ]
     && name c.nume && text c.ce && utf16Length c.ce <= 200
-    && builtins.elem kind [ "tcp" "http" "unit" "age" "disk" "mount" "cmd" "hass-state" "crowdsec" "osquery" "anomaly" ]
+    && builtins.elem kind types
     && integer c.picat_dupa 1 12 && (!(c ? peer) || builtins.isBool c.peer)
     # Borrowed vocabulary: closed label sets, mirrored from lib/schema.mjs.
     && (!(c ? dimension) || builtins.elem c.dimension [ "accuracy" "completeness" "conformity" "consistency" "coverage" "timeliness" "uniqueness" "availability" ])
@@ -164,4 +165,4 @@ let
     else throw "vigil: invalid contract ${toString file}";
   parse = file: parseSource file (builtins.readFile file);
 in
-{ inherit parse parseSource tailnet syntax validate; }
+{ inherit parse parseSource tailnet syntax types validate; }

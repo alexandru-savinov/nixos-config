@@ -57,6 +57,8 @@ let
   };
 in
 {
+  imports = [ ./vigil-sensors.nix ];
+
   options.services.vigil = {
     enable = mkEnableOption "deterministic checks, incident delivery and peer freshness";
     contractsDirs = mkOption { type = types.listOf directoryType; default = [ ]; description = "Public Nix directories and private runtime directory strings."; };

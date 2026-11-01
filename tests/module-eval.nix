@@ -98,6 +98,141 @@ let
       lib = nixpkgs.lib;
     };
 
+    # Sensors stay loopback-only, capped and enforcement-free; tests/vigil-soc.nix proves
+    # they run. Each check is named so a failure says which one.
+    vigil-sensors =
+      let
+        lib = nixpkgs.lib;
+        schema = import ../modules/services/vigil-schema.nix { inherit lib; };
+        vigilBase = {
+          services.vigil = {
+            enable = true;
+            contractsDirs = [ ./fixtures/vigil/row-only ];
+            expectedContracts = 1;
+            listenAddress = "100.106.93.87";
+          };
+        };
+        sensors = {
+          services.vigil.sensors = {
+            crowdsec.enable = true;
+            osquery.enable = true;
+            netdata.enable = true;
+          };
+        };
+        off = evalConfig { modules = [ ../modules/services/vigil.nix vigilBase ]; };
+        on = evalConfig { modules = [ ../modules/services/vigil.nix vigilBase sensors ]; };
+        inherit (on.systemd) services;
+        environment = services.vigil.environment;
+        lapi = on.services.crowdsec.settings;
+        netdata = on.services.netdata.config;
+        queries = on.services.osquery.settings.packs.vigil.queries;
+        register = services.vigil-crowdsec-register;
+        onlyHour = interval: evalConfig {
+          modules = [
+            ../modules/services/vigil.nix
+            vigilBase
+            sensors
+            { services.vigil.interval = interval; }
+          ];
+        };
+        checks = {
+          typeList = lib.all (type: builtins.elem type schema.types) [ "crowdsec" "osquery" "anomaly" ];
+          evaluates = forceEval on;
+
+          # Off is really off: no sensor, no new environment, no credential mask.
+          offByDefault =
+            !off.services.crowdsec.enable && !off.services.osquery.enable && !off.services.netdata.enable
+            && !(off.systemd.services ? vigil-crowdsec-register)
+            && !(off.systemd.services.vigil.environment ? VIGIL_CROWDSEC_CREDENTIALS)
+            && !(off.systemd.services.vigil.environment ? VIGIL_NETDATA_URL);
+
+          # Loopback binds, and the listeners the sensors would add by default are gone.
+          crowdsecLoopback = lapi.general.api.server.listen_uri == "127.0.0.1:8088";
+          crowdsecNoPrometheus = !lapi.general.prometheus.enabled;
+          netdataLoopback = netdata.web."bind to" == "127.0.0.1:19999";
+          netdataOnlyWebListener = netdata.plugins.statsd == "no" && netdata.plugins.otel == "no";
+          firewallUntouched = !on.services.crowdsec.openFirewall
+            && off.networking.firewall.allowedTCPPorts == on.networking.firewall.allowedTCPPorts;
+
+          memoryCaps = services.netdata.serviceConfig.MemoryMax == "400M"
+            && services.crowdsec.serviceConfig.MemoryMax == "256M"
+            && services.osqueryd.serviceConfig.MemoryMax == "128M";
+
+          # Detection only, and Vigil is the only speaker.
+          noBouncer = !on.services.crowdsec-firewall-bouncer.enable
+            && !lib.any (lib.hasInfix "bouncer") (builtins.attrNames services);
+          crowdsecSilent = on.services.crowdsec.localConfig.notifications == [ ]
+            && lapi.capi.credentialsFile == null && lapi.console.tokenFile == null;
+          netdataSilent = netdata.health.enabled == "no" && on.services.netdata.claimTokenFile == null;
+
+          crowdsecAcquisition = lib.any
+            (acquisition: acquisition.source == "journalctl"
+              && acquisition.journalctl_filter == [ "_SYSTEMD_UNIT=sshd.service" ])
+            on.services.crowdsec.localConfig.acquisitions;
+          # Upstream forces path empty, and the journalctl source needs the binary on PATH.
+          crowdsecFindsJournalctl = lib.hasInfix "-systemd-" services.crowdsec.environment.PATH;
+
+          registerUnit = register.wantedBy == [ "crowdsec.service" ]
+            && builtins.elem "crowdsec.service" register.after
+            && lib.hasInfix "/var/lib/vigil/crowdsec.yaml" register.script
+            && lib.hasInfix "chown -h vigil:vigil" register.script
+            && lib.hasInfix "chmod 0400" register.script
+            && lib.hasInfix "-f - --force" register.script;
+          # The responder shares the checker's user and must not reach the credential.
+          tickCannotReadCredential = builtins.elem "-/var/lib/vigil/crowdsec.yaml"
+            services."vigil-tick@".serviceConfig.InaccessiblePaths;
+
+          # Exactly the queries checks.mjs knows, in the snapshot shape it parses.
+          packQueries = builtins.attrNames queries == [ "etc_fim" "listening_ports" "local_users" "suid_bins" ];
+          packSnapshots = lib.all (query: query.snapshot && query.interval == 300) (builtins.attrValues queries);
+          packNoSuidBinTable = !(lib.hasInfix "suid_bin " queries.suid_bins.query)
+            && lib.hasInfix "/run/wrappers/bin" queries.suid_bins.query;
+          packPortRowShape = lib.hasInfix "lp.port, lp.protocol" queries.listening_ports.query
+            && lib.hasInfix "AS name" queries.listening_ports.query;
+          osqueryLogSafe = services.osqueryd.serviceConfig.Group == "vigil"
+            && on.services.osquery.flags.logger_rotate == "true"
+            && !(on.services.osquery.flags ? logger_snapshot_event_type)
+            && !(on.services.osquery.flags ? logger_numerics);
+
+          checkerEnvironment =
+            environment.VIGIL_CROWDSEC_CREDENTIALS == "/var/lib/vigil/crowdsec.yaml"
+            && environment.VIGIL_OSQUERY_RESULTS == "/var/log/osquery/osqueryd.snapshots.log"
+            && environment.VIGIL_OSQUERY_INTERVAL == "300"
+            && environment.VIGIL_NETDATA_URL == "http://127.0.0.1:19999"
+            && environment.VIGIL_ANOMALY_INTERVAL == "300";
+          anomalyIntervalFollowsTick =
+            (onlyHour "1h").systemd.services.vigil.environment.VIGIL_ANOMALY_INTERVAL == "3600"
+            && (onlyHour "90").systemd.services.vigil.environment.VIGIL_ANOMALY_INTERVAL == "90"
+            && (onlyHour "30s").systemd.services.vigil.environment.VIGIL_ANOMALY_INTERVAL == "30";
+
+          # A filter on the checker would cut it off from every sensor.
+          checkerReachesLoopback = !(services.vigil.serviceConfig ? IPAddressAllow)
+            && !(services.vigil.serviceConfig ? IPAddressDeny)
+            && builtins.elem "AF_INET" services.vigil.serviceConfig.RestrictAddressFamilies;
+          tailnetSocketNotWidened = on.systemd.sockets.vigil-tick.socketConfig.IPAddressAllow
+            == [ "100.64.0.0/10" "fd7a:115c:a1e0::/48" ];
+
+          unreadableIntervalRejected = shouldFail "vigil-sensors-interval" {
+            modules = [
+              ../modules/services/vigil.nix
+              vigilBase
+              sensors
+              { services.vigil.interval = "1h 30min"; }
+            ];
+          };
+          sensorsNeedVigil = shouldFail "vigil-sensors-orphan" {
+            modules = [
+              ../modules/services/vigil.nix
+              { services.vigil.expectedContracts = 0; services.vigil.listenAddress = "100.106.93.87"; }
+              sensors
+            ];
+          };
+        };
+        failed = builtins.attrNames (lib.filterAttrs (_: passed: !passed) checks);
+      in
+      if failed == [ ] then true
+      else builtins.throw "FAIL: vigil sensors — failed checks: ${builtins.toJSON failed}";
+
     # ── Qdrant ────────────────────────────────────────────────────
     qdrant-minimal = shouldEval "qdrant: minimal config" {
       modules = [
