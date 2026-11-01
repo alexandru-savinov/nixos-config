@@ -108,11 +108,9 @@ pkgs.testers.runNixOSTest {
     def tick():
         machine.succeed("systemctl start vigil.service")
         machine.succeed("journalctl --sync")
-        invocation = machine.succeed(
-            "systemctl show -p InvocationID --value vigil.service"
-        ).strip()
+        # The cursor limits this to the run above: a finished oneshot keeps no InvocationID.
         lines = machine.succeed(
-            f"journalctl -o cat --no-pager _SYSTEMD_INVOCATION_ID={invocation}"
+            "journalctl -u vigil.service -o cat --no-pager --cursor-file=/tmp/vigil.cursor"
         ).splitlines()
         rows = [json.loads(line) for line in lines if line.startswith('{"nume"')]
         verdicts = {row["nume"]: row for row in rows}
