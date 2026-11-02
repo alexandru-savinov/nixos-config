@@ -657,7 +657,14 @@ let
             # the house's absence guard. The bar's own violation count comes
             # from `absent-guard --count`, so is-failed on this unit is what
             # says whether that number is being produced at all.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service" env;
+            # auditd and crowdsec joined on
+            # 2026-10-31 (modules/services/soc-in-a-box.nix): long-running
+            # units, and crowdsec needs the hub at every start, so a failed
+            # start must reach the bar rather than only the journal.
+            # audit-rules-nixos.service joined on 2026-11-02: auditd can be
+            # active with no rules loaded, and only this oneshot's failed
+            # state says so.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
@@ -666,6 +673,18 @@ let
         true
       else
         builtins.throw "FAIL: sancta-choir statusline-refresh wiring — failed checks: ${builtins.toJSON failed}";
+
+    # soc-in-a-box is detection only (owner decision 2026-11-01): CrowdSec
+    # records decisions but nothing applies them to the firewall. Banning is a
+    # later, council-gated step (Vigil horizon, phase 4), so a bouncer unit
+    # appearing on choir must fail here rather than start enforcing silently.
+    soc-in-a-box-choir-no-firewall-bouncer =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+      in
+      if cfg.services.crowdsec.enable && !(cfg.systemd.services ? crowdsec-firewall-bouncer)
+      then true
+      else builtins.throw "FAIL: sancta-choir has a crowdsec-firewall-bouncer unit (or crowdsec is off); bans wait for a council-gated step";
 
     # An empty `units` list makes a host with dead services render identically
     # to a healthy one: the bar's "down" field can never populate. That is the
