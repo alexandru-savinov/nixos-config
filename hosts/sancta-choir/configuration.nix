@@ -40,6 +40,7 @@
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
+    ../../modules/services/soc-in-a-box.nix # auditd trail + CrowdSec (sshd), all local
     ../../modules/users/root.nix
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
@@ -364,6 +365,16 @@
     # run the guard. `is-failed` on the unit is what says whether the number
     # beside it is being produced at all.
     "sancta-absent-guard.service"
+    # soc-in-a-box (modules/services/soc-in-a-box.nix): long-running units, so
+    # "not active" is the signal. crowdsec needs the hub at every start; a
+    # failed start shows here instead of only in the journal.
+    "auditd.service"
+    "crowdsec.service"
+    # The oneshot that loads the audit rules (nixpkgs security/audit.nix,
+    # RemainAfterExit). auditd can be active with ZERO rules: one rejected
+    # line stops `auditctl -R` and its ExecStopPost deletes the rest, so this
+    # unit's failed state is the only signal that the trail is empty.
+    "audit-rules-nixos.service"
   ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
