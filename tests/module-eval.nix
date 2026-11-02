@@ -661,7 +661,10 @@ let
             # 2026-10-31 (modules/services/soc-in-a-box.nix): long-running
             # units, and crowdsec needs the hub at every start, so a failed
             # start must reach the bar rather than only the journal.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service" env;
+            # audit-rules-nixos.service joined on 2026-11-02: auditd can be
+            # active with no rules loaded, and only this oneshot's failed
+            # state says so.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
