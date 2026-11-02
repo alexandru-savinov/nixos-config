@@ -370,6 +370,11 @@
     # failed start shows here instead of only in the journal.
     "auditd.service"
     "crowdsec.service"
+    # The oneshot that loads the audit rules (nixpkgs security/audit.nix,
+    # RemainAfterExit). auditd can be active with ZERO rules: one rejected
+    # line stops `auditctl -R` and its ExecStopPost deletes the rest, so this
+    # unit's failed state is the only signal that the trail is empty.
+    "audit-rules-nixos.service"
   ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
