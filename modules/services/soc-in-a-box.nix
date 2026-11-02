@@ -13,8 +13,11 @@ let
   # target for Tailscale Serve in this repo, and LAPI must never sit behind it.
   lapiListen = "127.0.0.1:8095";
 
-  # Address ranges CrowdSec must never ban: the tailnet (CGNAT + Tailscale
-  # ULA), loopback, and private LAN ranges.
+  # Address ranges neither CrowdSec nor fail2ban may ever act on: the tailnet
+  # (CGNAT + Tailscale ULA), loopback, and private LAN ranges. One list for
+  # both engines, so an exemption cannot exist in one and be missing in the
+  # other. The tailnet is choir's admin path; a ban there is a lockout that
+  # only the Hetzner web console can undo.
   neverBan = [
     "100.64.0.0/10"
     "fd7a:115c:a1e0::/48"
@@ -56,6 +59,12 @@ in
     rules = [
       # 1. agenix-decrypted secrets: any read, write or attribute change.
       #    /run/agenix is a symlink into this directory; watch the real tree.
+      #    `auditctl -R` stops at the first rule the kernel rejects, and the
+      #    unit's ExecStopPost then deletes every rule, so no watch here may
+      #    be able to fail. A missing leaf does not fail: the kernel resolves
+      #    a watch through its parent directory (kernel/audit_watch.c,
+      #    audit_get_nd) and only a missing PARENT is an error. Every watched
+      #    path below has a parent that always exists (/run, /etc, /etc/ssh).
       "-w ${config.age.secretsMountPoint} -p rwa -k agenix-secrets"
 
       # 2. sudo policy changes. The NixOS-generated /etc/sudoers has no
@@ -82,11 +91,14 @@ in
 
   # ── CrowdSec: sshd detection from the journal, local decisions only ─────
   #
-  # Deliberate overlap: fail2ban's sshd jail (hosts/common.nix) stays on,
-  # unchanged, while both run side by side for a trial week. After that, one
-  # of the two sshd banners is retired in its own change. Until then an IP
-  # banned by either shows in `fail2ban-client status sshd` or
-  # `cscli decisions list`.
+  # One banning engine for sshd: fail2ban's sshd jail (hosts/common.nix) is
+  # the only thing that blocks an address. CrowdSec reads the same journal
+  # detect-only (no bouncer, see the header), so the two never stack bans on
+  # the admin path. An IP fail2ban has banned shows in
+  # `fail2ban-client status sshd`; an IP CrowdSec has only flagged (not
+  # blocked) shows in `cscli decisions list`.
+  services.fail2ban.ignoreIP = neverBan;
+
   services.crowdsec = {
     enable = true;
     openFirewall = false;
@@ -161,6 +173,13 @@ in
         && config.services.crowdsec.settings.capi.credentialsFile == null
         && config.services.crowdsec.settings.console.tokenFile == null;
       message = "soc-in-a-box: CrowdSec Central API and console must stay disabled.";
+    }
+    {
+      assertion = lib.all (cidr: lib.elem cidr config.services.fail2ban.ignoreIP) [
+        "100.64.0.0/10"
+        "fd7a:115c:a1e0::/48"
+      ];
+      message = "soc-in-a-box: fail2ban must never ban the tailnet (the admin path).";
     }
   ];
 }
