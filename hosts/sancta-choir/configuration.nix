@@ -62,6 +62,7 @@
     ../../modules/services/sancta-absent-guard.nix # the clock the house's absence guard never had
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
     ../../modules/services/observation-tools.nix # vnStat + Lynis, observation only
+    ../../modules/services/vulnix-nightly.nix # nightly CVE scan of the running system, report stays local
     ./n8n.nix # studio conductor (sq085); the walls in ./n8n-guard.nix hold even while it is off
   ];
 
@@ -199,6 +200,14 @@
   # imperative `loginctl enable-linger` marker (verified absent on this host).
   # Pinned by module-eval `sancta-choir-sancta-user-lingers`.
   users.users.sancta.linger = true;
+
+  # The private SOC page (rendered as sancta) reads the nightly vulnix report
+  # (modules/services/vulnix-nightly.nix). The report is 0640 vulnix:vulnix in
+  # a 0750 directory, so group membership is the only read path; the scanner
+  # itself gets nothing of sancta's. A running sancta process picks the group
+  # up only after it is restarted.
+  # Pinned by module-eval `vulnix-nightly-choir-shape`.
+  users.users.sancta.extraGroups = [ "vulnix" ];
 
   # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
   # which clobbers the claude agent-state hook that `herdr integration install`
