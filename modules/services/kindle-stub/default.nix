@@ -15,13 +15,16 @@
 # of the original wifistub.html. "/check" shows whether the caller is on the
 # kindle subnet.
 #
-# The reader: «Пятнадцатилетний капитан», Jules Verne, Russian translation by
-# Игнатий Петров (1934, public domain), from a pinned ru.wikisource revision,
-# turned into paged HTML at build time by build.js. "/" resumes the last read
-# position; "/r/<id>" is a chapter ("1-1".."2-20") or "index" (contents).
-# The page keeps the position in localStorage and also sends it to "/pos",
-# which stores it under StateDirectory, so a wiped Kindle browser still
-# resumes. Every other path is 404.
+# The reader: a shelf of public-domain books, each from a pinned ru.wikisource
+# revision, turned into paged HTML at build time by build.js:
+#   «Пятнадцатилетний капитан», Jules Verne, tr. Игнатий Петров (1934)
+#   «Капитанская дочка», Александр Пушкин (1836)
+# "/" is the shelf; "/b/<slug>" resumes a book; "/r/<id>" is a chapter
+# ("1-1".."2-20" for the Captain, "d-1".."d-15" for the Daughter) or a
+# contents page ("index", "d-index"). Each page keeps its book's position in
+# localStorage and also sends it to "/pos", which stores it per book under
+# StateDirectory, so a wiped Kindle browser still resumes. Every other path
+# is 404.
 #
 # Depends on controller state that is NOT in this repo: the kindle network
 # and firewall rules, plus static DNS records for spectrum.s3.amazonaws.com
@@ -43,8 +46,15 @@ let
     hash = "sha256-d0AwVZ8mMntCwc332ExSPII1VWOSJh6SQWmeRXIaUlw=";
   };
 
+  # https://ru.wikisource.org/wiki/Капитанская_дочка_(Пушкин)/1978_(СО), revision 5754617 (2026-10-03).
+  dochkaText = pkgs.fetchurl {
+    name = "kapitanskaya-dochka-5754617.wiki";
+    url = "https://ru.wikisource.org/w/index.php?title=%D0%9A%D0%B0%D0%BF%D0%B8%D1%82%D0%B0%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%D0%B4%D0%BE%D1%87%D0%BA%D0%B0_(%D0%9F%D1%83%D1%88%D0%BA%D0%B8%D0%BD)/1978_(%D0%A1%D0%9E)&oldid=5754617&action=raw";
+    hash = "sha256-H+sKr73LfI/4RCEc6sJvDl/E85tfLJut9KYksEJhy/Q=";
+  };
+
   reader = pkgs.runCommand "kindle-reader" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-    node ${./build.js} ${bookText} ${./page.tpl.html} $out
+    node ${./build.js} ${./page.tpl.html} $out ${bookText} ${dochkaText}
   '';
 
   fwRule = "-p tcp -s ${cfg.allowedSubnet} --dport ${toString cfg.port} -j nixos-fw-accept";

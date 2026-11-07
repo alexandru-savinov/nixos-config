@@ -4,7 +4,7 @@
 // Environment (set by the NixOS module; overridable for off-port tests):
 //   PORT           listen port
 //   STATE_DIR      where the server copy of the reading position lives
-//   READER_DIR     generated reader (start.html, chapters.json, book/*.html)
+//   READER_DIR     generated shelf (shelf.html, b-<slug>.html, books.json, book/*.html)
 //   WIFISTUB       file with the UUID body the Kindle Wi-Fi check expects
 //   SUBNET_PREFIX  e.g. "192.168.30." for the /check page
 "use strict";
@@ -22,38 +22,45 @@ if (!STATE_DIR || !READER_DIR || !process.env.WIFISTUB) {
 }
 
 const UUID = fs.readFileSync(process.env.WIFISTUB);
-const START = fs.readFileSync(path.join(READER_DIR, "start.html"), "utf8");
-const CHAPTERS = new Set(JSON.parse(fs.readFileSync(path.join(READER_DIR, "chapters.json"), "utf8")));
-// Every page is loaded once; /r/<id> can only ever serve one of these.
-const PAGES = new Map();
-for (const id of [...CHAPTERS, "index"]) {
-  PAGES.set(id, fs.readFileSync(path.join(READER_DIR, "book", id + ".html"), "utf8"));
+const SHELF = fs.readFileSync(path.join(READER_DIR, "shelf.html"), "utf8");
+// Each book: its chapter ids, its contents page, and the file its position is saved in.
+// Every page is loaded once; /r/<id> and /b/<slug> can only ever serve one of these.
+const BOOKS = new Map(), BOOK_OF = new Map(), PAGES = new Map();
+for (const bk of JSON.parse(fs.readFileSync(path.join(READER_DIR, "books.json"), "utf8"))) {
+  if (!/^[a-z]{1,16}$/.test(bk.slug) || !/^[a-z0-9.-]{1,32}\.json$/.test(bk.posFile)) throw new Error("bad book " + bk.slug);
+  const b = { slug: bk.slug, ids: new Set(bk.ids), posFile: path.join(STATE_DIR, bk.posFile),
+    start: fs.readFileSync(path.join(READER_DIR, "b-" + bk.slug + ".html"), "utf8") };
+  BOOKS.set(bk.slug, b);
+  for (const id of [...bk.ids, bk.toc]) {
+    if (BOOK_OF.has(id)) throw new Error("duplicate id " + id);
+    BOOK_OF.set(id, b);
+    PAGES.set(id, fs.readFileSync(path.join(READER_DIR, "book", id + ".html"), "utf8"));
+  }
 }
-const POS_FILE = path.join(STATE_DIR, "position.json");
 
-const CH_RE = /^[12]-[0-9]{1,2}$/;
+const CH_RE = /^([12]|d)-[0-9]{1,2}$/;
 const F_RE = /^(0(\.[0-9]{1,4})?|1(\.0{1,4})?)$/; // 0..1, at most 4 decimals
 const N_RE = /^[0-9]{1,15}$/; // cache-buster from the page; ignored
 
-function validPos(ch, f) {
-  return typeof ch === "string" && CH_RE.test(ch) && CHAPTERS.has(ch) &&
+function validPos(b, ch, f) {
+  return typeof ch === "string" && CH_RE.test(ch) && b.ids.has(ch) &&
     typeof f === "number" && Number.isFinite(f) && f >= 0 && f <= 1 && F_RE.test(String(f));
 }
 
-// The saved position, or null. Re-validated on read: the file is trusted no more than a request.
-function loadPos() {
+// A book's saved position, or null. Re-validated on read: the file is trusted no more than a request.
+function loadPos(b) {
   try {
-    const p = JSON.parse(fs.readFileSync(POS_FILE, "utf8"));
-    return p && validPos(p.ch, p.f) ? { ch: p.ch, f: p.f } : null;
+    const p = JSON.parse(fs.readFileSync(b.posFile, "utf8"));
+    return p && validPos(b, p.ch, p.f) ? { ch: p.ch, f: p.f } : null;
   } catch (e) {
     return null;
   }
 }
 
-function savePos(ch, f) {
-  const tmp = POS_FILE + ".tmp";
+function savePos(b, ch, f) {
+  const tmp = b.posFile + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify({ ch: ch, f: f }) + "\n");
-  fs.renameSync(tmp, POS_FILE); // atomic on the same filesystem
+  fs.renameSync(tmp, b.posFile); // atomic on the same filesystem
 }
 
 // Parse /pos?ch=..&f=..[&n=..] strictly: exactly these keys, each once.
@@ -65,13 +72,18 @@ function parsePos(query) {
   const ch = q.get("ch"), fs_ = q.get("f"), n = q.get("n");
   if (n !== null && !N_RE.test(n)) return null;
   if (!F_RE.test(fs_)) return null;
-  const f = Number(fs_);
-  return validPos(ch, f) ? { ch: ch, f: f } : null;
+  const f = Number(fs_), b = BOOK_OF.get(ch);
+  return b && validPos(b, ch, f) ? { b: b, ch: ch, f: f } : null;
 }
 
 // Values are validated, so JSON.stringify cannot break out of the script.
-function withPos(html) {
-  return html.replace("/*SRVPOS*/null", JSON.stringify(loadPos()));
+function withPos(html, b) {
+  return html.replace("/*SRVPOS*/null", JSON.stringify(loadPos(b)));
+}
+function shelf() {
+  let html = SHELF;
+  for (const b of BOOKS.values()) html = html.replace("/*SRVPOS:" + b.slug + "*/null", JSON.stringify(loadPos(b)));
+  return html;
 }
 
 function send(r, code, body, type) {
@@ -96,9 +108,11 @@ http.createServer(function (q, r) {
   } else if (p === "/kindle-wifi/wifistub.html" || p === "/kindle-wifi/wifistub-eink.html") {
     send(r, 200, UUID, "text/html");
   } else if (p === "/") {
-    send(r, 200, withPos(START));
-  } else if ((m = /^\/r\/(index|[12]-[0-9]{1,2})$/.exec(p)) && PAGES.has(m[1])) {
-    send(r, 200, withPos(PAGES.get(m[1])));
+    send(r, 200, shelf());
+  } else if ((m = /^\/b\/([a-z]{1,16})$/.exec(p)) && BOOKS.has(m[1])) {
+    send(r, 200, withPos(BOOKS.get(m[1]).start, BOOKS.get(m[1])));
+  } else if ((m = /^\/r\/(index|d-index|([12]|d)-[0-9]{1,2})$/.exec(p)) && PAGES.has(m[1])) {
+    send(r, 200, withPos(PAGES.get(m[1]), BOOK_OF.get(m[1])));
   } else if (p === "/pos") {
     const pos = qi < 0 ? null : parsePos(url.slice(qi + 1));
     if (!pos) {
@@ -106,7 +120,7 @@ http.createServer(function (q, r) {
       r.end();
     } else {
       try {
-        savePos(pos.ch, pos.f);
+        savePos(pos.b, pos.ch, pos.f);
         r.writeHead(204, { "Cache-Control": "no-store" });
       } catch (e) {
         console.error("cannot save position: " + e.message);
