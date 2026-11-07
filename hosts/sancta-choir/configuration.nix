@@ -40,6 +40,7 @@
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
+    ../../modules/services/soc-in-a-box.nix # auditd trail + CrowdSec (sshd), all local
     ../../modules/users/root.nix
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
@@ -60,6 +61,7 @@
     ../../modules/services/sancta-archive-deadman.nix # the one archive watcher that does NOT need the soul mount
     ../../modules/services/sancta-absent-guard.nix # the clock the house's absence guard never had
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
+    ../../modules/services/observation-tools.nix # vnStat + Lynis, observation only
     ./n8n.nix # studio conductor (sq085); the walls in ./n8n-guard.nix hold even while it is off
   ];
 
@@ -363,6 +365,16 @@
     # run the guard. `is-failed` on the unit is what says whether the number
     # beside it is being produced at all.
     "sancta-absent-guard.service"
+    # soc-in-a-box (modules/services/soc-in-a-box.nix): long-running units, so
+    # "not active" is the signal. crowdsec needs the hub at every start; a
+    # failed start shows here instead of only in the journal.
+    "auditd.service"
+    "crowdsec.service"
+    # The oneshot that loads the audit rules (nixpkgs security/audit.nix,
+    # RemainAfterExit). auditd can be active with ZERO rules: one rejected
+    # line stops `auditctl -R` and its ExecStopPost deletes the rest, so this
+    # unit's failed state is the only signal that the trail is empty.
+    "audit-rules-nixos.service"
   ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
@@ -530,6 +542,14 @@
   #
   # Thresholds intentionally match rpi5's for now; tuning them for this host's
   # 8GB + 8GB zram is deliberately a separate change.
+  # At the 2026-11-01 23:37 boot tailscaled took ~68 s to come up, so
+  # tailscaled-autoconnect found no daemon and stayed failed until re-run by
+  # hand. Same race and same fix as rpi5-full (#639): retry instead.
+  systemd.services.tailscaled-autoconnect.serviceConfig = {
+    Restart = "on-failure";
+    RestartSec = "30s";
+  };
+
   services.earlyoom = {
     enable = true;
     freeMemThreshold = 5;
@@ -553,6 +573,54 @@
       "--avoid"
       "^(sshd|[.]tailscaled-wra|tailscaled)"
     ];
+  };
+
+  # Sandbox the Tailscale DNS watchdog (modules/services/tailscale.nix).
+  # `systemd-analyze security` scored it 9.6 UNSAFE: a root oneshot with no
+  # sandboxing at all. Scoped to this host, not the shared module, so rpi5's
+  # watchdog is untouched until this has run here.
+  #
+  # What the script does, and therefore what it keeps:
+  #   - reads /etc/resolv.conf (world-readable; read-only is enough);
+  #   - `dig @100.100.100.100` over UDP and, only if telegramEnvFile is set,
+  #     `curl` to api.telegram.org — AF_INET/AF_INET6, plus AF_UNIX for nscd
+  #     and AF_NETLINK for glibc's getaddrinfo/AI_ADDRCONFIG interface probe;
+  #   - writes only its StateDirectory (/var/lib/tailscale-dns-watchdog),
+  #     which systemd keeps writable under ProtectSystem=strict;
+  #   - `systemctl restart tailscaled.service` as uid 0, over PID 1's private
+  #     socket. Connecting to a socket is unaffected by a read-only mount,
+  #     and PID 1 performs the restart in its own namespace, so none of the
+  #     mount/kernel protections below reach tailscaled.
+  # Deliberately NOT set: User=/DynamicUser= and CapabilityBoundingSet= (the
+  # restart path needs real root and is rarely exercised, so it is not worth
+  # guessing at), PrivateUsers=, ProtectProc=/ProcSubset= (systemctl may read
+  # /proc), PrivateNetwork= and IPAddressDeny= (the probe IS the network).
+  systemd.services.tailscale-dns-watchdog.serviceConfig = {
+    NoNewPrivileges = true; # no setuid helpers; root needs none to restart
+    ProtectSystem = "strict"; # only the StateDirectory is written
+    ProtectHome = true; # never touches /home, /root or /run/user
+    PrivateTmp = true; # no temp files (command substitution uses pipes)
+    PrivateDevices = true; # only /dev/null and /dev/urandom, both kept
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectKernelLogs = true;
+    ProtectControlGroups = true; # PID 1 restarts tailscaled, not this unit
+    ProtectClock = true;
+    ProtectHostname = true; # hostname is interpolated at build time
+    RestrictNamespaces = true;
+    RestrictSUIDSGID = true;
+    RestrictRealtime = true;
+    LockPersonality = true;
+    MemoryDenyWriteExecute = true; # bash/dig/curl/systemctl, no JIT
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [ "@system-service" ];
+    RestrictAddressFamilies = [
+      "AF_UNIX"
+      "AF_INET"
+      "AF_INET6"
+      "AF_NETLINK"
+    ];
+    UMask = "0077"; # its state files are its own
   };
 
   # Swap space (4GB for Open-WebUI + builds on 8GB VPS)

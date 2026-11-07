@@ -18,16 +18,18 @@
   #col h3 { font-size: 0.8em; margin: 0.8em 0 0 0; text-align: center; font-weight: normal; }
   #col p { margin: 0 0 0.45em 0; text-indent: 1.4em; }
   #col p.r { text-align: right; text-indent: 0; }
+  #col p.c { text-align: center; text-indent: 0; }
+  #col p.n { text-indent: 0; font-size: 0.8em; }
   #col ul { list-style: none; margin: 0; padding: 0; }
   #col li { margin: 0 0 0.5em 0; }
   #col li.part { font-weight: bold; margin-top: 0.6em; }
-  #col li a { color: #fff; }
-  body.day #col li a { color: #000; }
+  #col li a, #col p a { color: #fff; }
+  body.day #col li a, body.day #col p a { color: #000; }
   #col li.cur a { font-weight: bold; }
   #col li .at { font-style: italic; white-space: nowrap; }
 </style></head>
 <body>
-<div id="bar"><a href="/r/index" id="toc">&#8801;</a><a href="#" id="minus">A&minus;</a><a href="#" id="plus">A+</a><a href="#" id="mode">&#9728;</a><span id="pg"></span></div>
+<div id="bar"><a href="/r/%%TOC%%" id="toc">&#8801;</a><a href="#" id="minus">A&minus;</a><a href="#" id="plus">A+</a><a href="#" id="mode">&#9728;</a><span id="pg"></span></div>
 <div id="vp"><div id="col">
 %%BODY%%
 </div></div>
@@ -43,7 +45,7 @@
   var s = ls("k_fs"); if (s) fs = parseInt(s, 10) || 28;
   if (ls("k_night") === "0") night = false;
   // Read the saved position before the first layout, which would otherwise overwrite it.
-  var savedCh = ls("k_ch"), savedF = parseFloat(ls("k_frac") || ""), sent = "";
+  var savedCh = ls("%%KEY%%_ch"), savedF = parseFloat(ls("%%KEY%%_frac") || ""), sent = "";
   function okF(f) { return typeof f === "number" && f >= 0 && f <= 1; }
   function hashF() { var m = /^#f=([01](\.[0-9]{1,4})?)$/.exec(location.hash || ""); return m ? parseFloat(m[1]) : NaN; }
 
@@ -70,7 +72,7 @@
     d.getElementById("pg").innerHTML = "стр. " + (page + 1) + " / " + pages;
     if (IS_CH && save) {
       var f = frac().toFixed(4);
-      ls("k_ch", ID); ls("k_frac", f);
+      ls("%%KEY%%_ch", ID); ls("%%KEY%%_frac", f);
       if (f !== sent) { sent = f; new Image().src = "/pos?ch=" + ID + "&f=" + f + "&n=" + new Date().getTime(); }
     }
   }
