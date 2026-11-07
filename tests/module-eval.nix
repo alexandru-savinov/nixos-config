@@ -686,6 +686,38 @@ let
       then true
       else builtins.throw "FAIL: sancta-choir has a crowdsec-firewall-bouncer unit (or crowdsec is off); bans wait for a council-gated step";
 
+    # vulnix nightly (modules/services/vulnix-nightly.nix, SOC layer 2). The
+    # SOC page asks `systemctl is-active vulnix.timer`, so the unit names are
+    # a contract; the report must stay group-only (sancta reads it through
+    # the vulnix group, nobody else can); and the scan runs under a hard
+    # memory cap and a dedicated non-root user.
+    vulnix-nightly-choir-shape =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        svc = cfg.systemd.services.vulnix or { };
+        sc = svc.serviceConfig or { };
+        timer = cfg.systemd.timers.vulnix or { };
+        tc = timer.timerConfig or { };
+        checks = {
+          timerExists = cfg.systemd.timers ? vulnix;
+          timerWanted = builtins.elem "timers.target" (timer.wantedBy or [ ]);
+          timerPersistent = (tc.Persistent or false) == true;
+          oneshot = (sc.Type or null) == "oneshot";
+          dedicatedUser = (sc.User or null) == "vulnix" && (sc.DynamicUser or false) == false;
+          stateDir = (sc.StateDirectory or null) == "vulnix" && (sc.StateDirectoryMode or null) == "0750";
+          umask = (sc.UMask or null) == "0027";
+          strict = (sc.ProtectSystem or null) == "strict" && (sc.ProtectHome or false) == true;
+          noNewPrivs = (sc.NoNewPrivileges or false) == true;
+          memoryCapped = (sc.MemoryMax or null) != null;
+          sanctaReads = builtins.elem "vulnix" (cfg.users.users.sancta.extraGroups or [ ]);
+        };
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: ok: !ok) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir vulnix nightly shape — failed checks: ${builtins.toJSON failed}";
+
     # An empty `units` list makes a host with dead services render identically
     # to a healthy one: the bar's "down" field can never populate. That is the
     # exact silent-pass this module family exists to prevent, so it must fail at
