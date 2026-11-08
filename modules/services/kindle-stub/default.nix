@@ -23,8 +23,14 @@
 # ("1-1".."2-20" for the Captain, "d-1".."d-15" for the Daughter) or a
 # contents page ("index", "d-index"). Each page keeps its book's position in
 # localStorage and also sends it to "/pos", which stores it per book under
-# StateDirectory, so a wiped Kindle browser still resumes. Every other path
-# is 404.
+# StateDirectory, so a wiped Kindle browser still resumes. "/img/<name>.jpg"
+# serves the pictures pictures.json places in the text (public-domain
+# engravings and drawings, each credited under it) and the shelf covers.
+# Every other path is 404.
+#
+# The picture files are not in the store (about 20 MB of JPEGs would bloat
+# this public repo): they live in imagesDir, prepared once by hand. A picture
+# missing there is a 404 and the page shows its caption only.
 #
 # Depends on controller state that is NOT in this repo: the kindle network
 # and firewall rules, plus static DNS records for spectrum.s3.amazonaws.com
@@ -54,7 +60,7 @@ let
   };
 
   reader = pkgs.runCommand "kindle-reader" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-    node ${./build.js} ${./page.tpl.html} $out ${bookText} ${dochkaText}
+    node ${./build.js} ${./page.tpl.html} $out ${bookText} ${dochkaText} ${./pictures.json}
   '';
 
   fwRule = "-p tcp -s ${cfg.allowedSubnet} --dport ${toString cfg.port} -j nixos-fw-accept";
@@ -71,6 +77,12 @@ in
         the stub. Must be a /24: the check page derives its "on the kindle
         network" test from the first three octets.
       '';
+    };
+
+    imagesDir = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/lib/kindle-reader-images";
+      description = "Directory holding the JPEGs listed in pictures.json (readable by any user).";
     };
 
     port = lib.mkOption {
@@ -99,6 +111,7 @@ in
         READER_DIR = "${reader}";
         WIFISTUB = "${wifistub}";
         SUBNET_PREFIX = subnetPrefix;
+        IMG_DIR = cfg.imagesDir;
       };
       serviceConfig = {
         ExecStart = "${lib.getExe pkgs.nodejs} ${./server.js}";
