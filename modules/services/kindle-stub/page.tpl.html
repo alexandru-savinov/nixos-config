@@ -65,14 +65,27 @@
   function nextEl(n) { n = n.nextSibling; while (n && n.nodeType !== 1) n = n.nextSibling; return n; }
   function prevEl(n) { n = n.previousSibling; while (n && n.nodeType !== 1) n = n.previousSibling; return n; }
   function isPara(n) { return n && n.tagName === "P"; }
+  // Where picture i goes after paragraph el: past the earlier pictures already there, before the later
+  // ones, so pictures sharing a paragraph (anchored or floated there) keep their book order.
+  function slot(el, list, i) {
+    var n = nextEl(el), j;
+    while (n && n.className === "artmk") {
+      for (j = 0; j < i && list[j] !== n; j++) {}
+      if (j === i) break;
+      n = nextEl(nextEl(n));
+    }
+    return n;
+  }
   function placeArt() {
     if (!col.getElementsByClassName) return;
     var mk = col.getElementsByClassName("artmk"), i, j, ctop, list = [];
     for (i = 0; i < mk.length; i++) list.push(mk[i]);
     for (i = 0; i < list.length; i++) {
       var m = list[i], art = nextEl(m);
-      if (!m.home) m.home = prevEl(m);
-      col.insertBefore(m, nextEl(m.home)); col.insertBefore(art, nextEl(m));
+      // home = the anchor paragraph. Several pictures can follow one paragraph, so step back over
+      // the markers and pictures before this one rather than taking the previous element.
+      if (!m.home) { var hm = prevEl(m); while (hm && !isPara(hm)) hm = prevEl(hm); m.home = hm; }
+      col.insertBefore(m, slot(m.home, list, i)); col.insertBefore(art, nextEl(m));
       m.style.height = "0px"; art.style.height = H + "px"; art.style.display = "";
     }
     for (i = 0; i < list.length; i++) {
@@ -98,7 +111,7 @@
           if (cost < bestCost) { bestCost = cost; best = cands[j]; }
         }
         for (j = 0; j < probes.length; j++) col.removeChild(probes[j]);
-        if (best) { col.insertBefore(m, nextEl(best.el)); col.insertBefore(art, nextEl(m)); }
+        if (best) { col.insertBefore(m, slot(best.el, list, i)); col.insertBefore(art, nextEl(m)); }
         art.style.display = "";
         ctop = col.getBoundingClientRect().top;
         top = m.getBoundingClientRect().top - ctop;
