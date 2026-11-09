@@ -270,6 +270,12 @@ in
     useRoutingFeatures = lib.mkForce "both";
     extraUpFlags = [ "--advertise-exit-node" ];
   };
+  # `tailscale up` timed out at the 2026-10-27 01:20 boot and the unit stayed
+  # failed; retry instead of waiting for a human.
+  systemd.services.tailscaled-autoconnect.serviceConfig = {
+    Restart = "on-failure";
+    RestartSec = "30s";
+  };
 
   # Open-WebUI DISABLED — too heavy for RPi5 (triton-llvm, torch, etc.)
   # To re-enable: uncomment imports above, secrets, and this block

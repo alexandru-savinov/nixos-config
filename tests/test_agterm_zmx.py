@@ -43,6 +43,64 @@ def stage_route(name, port):
     return port
 
 
+CONVERSATION = "66666666-8bc5-467a-b603-4eecce495341"
+OTHER_CONVERSATION = "77777777-8bc5-467a-b603-4eecce495341"
+
+
+class OpenFixture:
+    """A fake /proc, Claude config and zmx state for `sessions open`."""
+
+    def __init__(self, root):
+        self.root = Path(root)
+        self.proc, self.state, self.config = self.root / "proc", self.root / "state", self.root / "claude"
+        self.home = self.root / "home"
+        for path in (self.proc, self.state, self.config / "sessions", self.config / "projects" / "p", self.home):
+            path.mkdir(parents=True)
+        self.state.chmod(0o700)
+        (self.proc / "stat").write_text("cpu 0\nbtime 1790000000\n")
+        (self.config / "projects" / "p" / (CONVERSATION + ".jsonl")).write_text("")
+        (self.state / "agt-mvp-sancta-main-owned-20260928.json").write_text(json.dumps(
+            {"cwd": str(self.home), "agent": "claude", "resume": CONVERSATION, "user_scope": True}))
+        self.process(1, 0, "systemd", ["/sbin/init"], cwd="/")
+
+    def process(self, pid, ppid, comm, argv, cwd=None, tty=0):
+        directory = self.proc / str(pid)
+        directory.mkdir()
+        (directory / "stat").write_text(
+            f"{pid} ({comm}) S {ppid} {pid} {pid} {tty} -1 " + "0 " * 13 + "12345 0 0\n")
+        (directory / "cmdline").write_bytes(("\0".join(argv) + "\0").encode())
+        os.symlink(cwd or str(self.home), directory / "cwd")
+
+    def metadata(self, pid, conversation=CONVERSATION):
+        (self.config / "sessions" / f"{pid}.json").write_text(json.dumps({"pid": pid, "sessionId": conversation}))
+
+    def environment(self):
+        return {"AGT_ZMX_STATE": str(self.state), "CLAUDE_CONFIG_DIR": str(self.config)}
+
+    def open(self, inventory=(), owners=None):
+        """Run `sessions open sancta`; returns (exec mock, error or None)."""
+        inventory = inventory if callable(inventory) else (lambda records=list(inventory): records)
+        with patch.dict(os.environ, self.environment()), \
+                patch.object(sessions, "resolve", return_value="sancta-main-owned-20260928"), \
+                patch.object(host, "inventory", side_effect=lambda: inventory()), \
+                patch.object(sessions, "backend_pids", return_value=dict(owners or {})), \
+                patch.object(sessions.os, "chdir"), \
+                patch.object(sessions.time, "sleep"), \
+                patch.object(sessions.os, "execvpe") as execute:
+            try:
+                sessions.open_conversation("sancta", proc_root=self.proc)
+            except ValueError as error:
+                return execute, error
+            return execute, None
+
+    def records(self):
+        return sorted(path.name for path in self.state.glob("agt-mvp-*.json"))
+
+
+def live(name, conversation=CONVERSATION):
+    return {"name": name, "cwd": "/x", "agent": "claude", "resume": conversation, "user_scope": True, "alive": True}
+
+
 class ProtocolTests(unittest.TestCase):
     def test_terminal_attach_refuses_missing_or_ended_backend(self):
         for records in [[], [{"name": "example", "alive": False}]]:
@@ -1041,6 +1099,207 @@ else:
                 finally:
                     relay.shutdown()
                     runner.join()
+
+    # ── `sessions open`: one live writer per conversation ───────────────
+
+    def test_open_refuses_outside_zmx_writer_and_names_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            fixture.process(100, 1, "bash", ["-bash"], tty=34818)
+            fixture.process(101, 100, ".claude-unwrapp", ["claude", "--resume", CONVERSATION], tty=34818)
+            execute, error = fixture.open()
+            self.assertRegex(str(error), r"writer outside zmx.*\n  pid 101 tty pts/2 started \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\nhint: ")
+            execute.assert_not_called()
+            self.assertEqual(fixture.records(), ["agt-mvp-sancta-main-owned-20260928.json"])
+
+    def test_open_refuses_bare_resume_in_conversation_cwd_and_metadata_writer(self):
+        for argv, metadata in [(["claude", "--resume"], False), (["claude", "-c"], False),
+                               (["claude", "--resume", "search words"], False), (["claude"], True)]:
+            with self.subTest(argv=argv), tempfile.TemporaryDirectory() as directory:
+                fixture = OpenFixture(directory)
+                fixture.process(101, 1, "claude", argv)
+                if metadata:
+                    fixture.metadata(101)
+                execute, error = fixture.open()
+                self.assertIn("pid 101", str(error))
+                execute.assert_not_called()
+
+    def test_open_main_exits_one_with_one_line_hint_for_outside_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            fixture.process(101, 1, "claude", ["claude", f"--resume={CONVERSATION}"])
+            stderr, real = io.StringIO(), sessions.processes
+            with patch.dict(os.environ, fixture.environment()), \
+                    patch.object(sys, "argv", ["sessions", "open", "sancta"]), \
+                    patch.object(sys, "stderr", stderr), \
+                    patch.object(sessions, "resolve", return_value="sancta-main-owned-20260928"), \
+                    patch.object(sessions, "processes", side_effect=lambda root=None: real(fixture.proc)), \
+                    patch.object(host, "inventory", return_value=[]), \
+                    patch.object(sessions, "backend_pids", return_value={}), \
+                    patch.object(sessions.os, "chdir"), \
+                    patch.object(sessions.os, "execvpe") as execute:
+                with self.assertRaises(SystemExit) as raised:
+                    sessions.main()
+            self.assertEqual(raised.exception.code, 1)
+            self.assertEqual(len([line for line in stderr.getvalue().splitlines() if line.startswith("hint:")]), 1)
+            self.assertIn("pid 101", stderr.getvalue())
+            execute.assert_not_called()
+
+    def test_open_attaches_to_live_backend_hosting_the_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            fixture.process(200, 1, "zmx", ["zmx", "attach", "agt-mvp-sancta-open-1"])
+            fixture.process(201, 200, "bash", ["bash", "-ic", "x"])
+            fixture.process(202, 201, "python3", ["python3", "sessions.py", "resume"])
+            fixture.process(203, 202, ".claude-unwrapp", ["claude", "--resume", CONVERSATION])
+            fixture.metadata(203)
+            execute, error = fixture.open([live("sancta-open-1"), live("sancta-other", OTHER_CONVERSATION)],
+                                          owners={201: "sancta-open-1"})
+            self.assertIsNone(error)
+            execute.assert_called_once()
+            self.assertEqual(execute.call_args.args[1], ["zmx", "attach", "agt-mvp-sancta-open-1", "false"])
+            self.assertEqual(execute.call_args.args[2]["ZMX_DIR"], str(fixture.state / "sockets"))
+            self.assertEqual(len(fixture.records()), 1)  # nothing new recorded
+
+    def test_open_attaches_to_live_backend_before_its_agent_appears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            execute, error = fixture.open([live("sancta-open-1")])
+            self.assertIsNone(error)
+            self.assertEqual(execute.call_args.args[1], ["zmx", "attach", "agt-mvp-sancta-open-1", "false"])
+
+    def test_open_refuses_writer_in_unrecorded_zmx_and_ambiguous_backends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            fixture.process(200, 1, "zmx", ["zmx", "attach", "elsewhere"])
+            fixture.process(201, 200, "claude", ["claude", "--resume", CONVERSATION])
+            execute, error = fixture.open([live("sancta-open-1")])
+            self.assertRegex(str(error), "pid 201 .*not a recorded live backend")
+            execute.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            execute, error = fixture.open([live("sancta-a"), live("sancta-b")])
+            self.assertRegex(str(error), "several live backends.*sancta-a, sancta-b")
+            execute.assert_not_called()
+
+    def test_open_starts_exactly_one_backend_via_guarded_resume_when_nothing_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            # Negative arm: none of these is a writer for this conversation.
+            fixture.process(101, 1, "claude", ["claude", "--resume", OTHER_CONVERSATION])
+            fixture.process(102, 1, "claude", ["claude", "--resume"], cwd="/tmp")
+            fixture.process(103, 1, "grep", ["grep", "--resume", CONVERSATION])
+            fixture.process(104, 1, "claude", ["claude"])
+            fixture.metadata(104, OTHER_CONVERSATION)
+            execute, error = fixture.open([{**live("sancta-main-owned-20260928"), "alive": False}])
+            self.assertIsNone(error)
+            execute.assert_called_once()
+            binary, argv, environment = execute.call_args.args
+            name = next(record for record in fixture.records() if "-open-" in record)
+            qualified = name.removesuffix(".json")
+            self.assertRegex(qualified, r"^agt-mvp-sancta-open-\d{8}-\d{6}$")
+            self.assertEqual(binary, "systemd-run")
+            self.assertIn(f"--unit={qualified}.scope", argv)
+            separator = argv.index("--")
+            self.assertEqual(argv[separator + 1:separator + 4], ["zmx", "attach", qualified])
+            self.assertEqual(argv[separator + 4], sys.executable)
+            self.assertEqual(Path(argv[separator + 5]).name, "sessions.py")
+            self.assertEqual(argv[separator + 6:], ["resume", "--cwd", str(fixture.home), "claude", CONVERSATION])
+            self.assertEqual(environment["XDG_RUNTIME_DIR"], f"/run/user/{os.getuid()}")
+            self.assertEqual(json.loads((fixture.state / name).read_text()),
+                             {"cwd": str(fixture.home), "agent": "claude", "resume": CONVERSATION, "user_scope": True})
+            self.assertEqual(len(fixture.records()), 2)
+
+    def test_open_resume_failure_is_reported_once_and_starts_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            (fixture.config / "projects" / "p" / (CONVERSATION + ".jsonl")).unlink()
+            execute, error = fixture.open()
+            self.assertIn("transcript not found", str(error))
+            execute.assert_not_called()
+            self.assertEqual(len(fixture.records()), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            with patch.dict(os.environ, fixture.environment()):
+                held = host.resume_lock(CONVERSATION)  # a cooperating launcher owns it
+            try:
+                execute, error = fixture.open()
+            finally:
+                held.close()
+            self.assertIn("owns this conversation", str(error))
+            execute.assert_not_called()
+            self.assertEqual(len(fixture.records()), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            with patch.object(sessions.os, "execvpe", side_effect=OSError("systemd-run missing")) as execute, \
+                    patch.dict(os.environ, fixture.environment()), \
+                    patch.object(sessions, "resolve", return_value="sancta-main-owned-20260928"), \
+                    patch.object(host, "inventory", return_value=[]), \
+                    patch.object(sessions.os, "chdir"):
+                with self.assertRaisesRegex(OSError, "systemd-run missing"):
+                    sessions.open_conversation("sancta", proc_root=fixture.proc)
+            self.assertEqual(execute.call_count, 1)  # no retry loop
+
+    def test_open_second_opener_during_a_start_attaches_instead_of_starting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            first, error = fixture.open()
+            self.assertIsNone(error)
+            self.assertEqual(first.call_args.args[0], "systemd-run")
+            started = next(record for record in fixture.records() if "-open-" in record)
+            name = started.removeprefix("agt-mvp-").removesuffix(".json")
+            # The backend is not live yet on the first look, then it is.
+            answers = iter([[], [], [live(name)]])
+            second, error = fixture.open(lambda: next(answers, [live(name)]))
+            self.assertIsNone(error)
+            second.assert_called_once()
+            self.assertEqual(second.call_args.args[1], ["zmx", "attach", "agt-mvp-" + name, "false"])
+            self.assertEqual(len(fixture.records()), 2)  # still exactly one started
+
+    def test_open_start_that_never_goes_live_is_not_restarted_within_the_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            fixture.open()
+            with patch.object(sessions, "START_POLL", 0):
+                execute, error = fixture.open()
+            self.assertRegex(str(error), "start began under a minute ago.*starting nothing")
+            execute.assert_not_called()
+            self.assertEqual(len(fixture.records()), 2)
+
+    def test_open_waits_for_opener_lock_and_gives_up_without_starting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            with (fixture.state / f"open-{CONVERSATION}.lock").open("a") as other:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.object(sessions, "OPEN_WAIT", 0):
+                    execute, error = fixture.open()
+            self.assertIn("another opener", str(error))
+            execute.assert_not_called()
+            self.assertEqual(len(fixture.records()), 1)
+
+    def test_open_requires_a_resumable_alias_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = OpenFixture(directory)
+            (fixture.state / "agt-mvp-sancta-main-owned-20260928.json").unlink()
+            execute, error = fixture.open()
+            self.assertIn("no backend record", str(error))
+            (fixture.state / "agt-mvp-sancta-main-owned-20260928.json").write_text(
+                json.dumps({"cwd": "/", "agent": "shell"}))
+            execute, error = fixture.open()
+            self.assertIn("not a resumable Claude conversation", str(error))
+            execute.assert_not_called()
+
+    def test_open_reads_the_real_proc_table_and_zmx_list_format(self):
+        table = sessions.processes()
+        me = table[os.getpid()]
+        self.assertEqual(me["ppid"], os.getppid())
+        self.assertTrue(me["argv"])
+        self.assertEqual(me["cwd"], os.getcwd())
+        self.assertEqual(sessions.tty_name(34818), "pts/2")
+        self.assertEqual(sessions.tty_name(0), "?")
+        output = "  name=agt-mvp-sancta-open-1\tpid=201\tclients=0\tcreated=1\n  name=foreign\tpid=9\nno sessions found\n"
+        with patch.object(sessions.subprocess, "check_output", return_value=output):
+            self.assertEqual(sessions.backend_pids({}), {201: "sancta-open-1"})
 
 
 @unittest.skipUnless(os.environ.get("AGT_ZMX_TEST_BINARY"), "set AGT_ZMX_TEST_BINARY for real PTY acceptance")
