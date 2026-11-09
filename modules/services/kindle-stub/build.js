@@ -142,11 +142,13 @@ const books = [
 // Put each picture after its anchor paragraph. Anchors are matched on plain text, ignoring
 // spacing, ё/е and the source's '' italics marks.
 const IMG_RE = /^[a-z0-9-]{1,32}\.jpg$/;
-const plain = h => h.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+// Text for matching only (never output): tags and any stray angle bracket dropped, entities left as is.
+const plain = h => h.replace(/<[^>]*>/g, "").replace(/[<>]/g, "");
 const norm = t => t.replace(/''/g, "").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 for (const bk of books) {
   const spec = PICS[bk.slug] || { pictures: [] };
   bk.cover = spec.cover || "";
+  if (bk.cover && !IMG_RE.test(bk.cover)) throw new Error(bk.slug + ": bad cover " + bk.cover);
   bk.imgs = new Set(bk.cover ? [bk.cover] : []);
   const orig = new Map(); // anchors match the text as parsed, not text with pictures already appended
   for (const pic of spec.pictures) {
