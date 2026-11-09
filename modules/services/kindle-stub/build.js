@@ -143,7 +143,15 @@ const books = [
 // spacing, ё/е and the source's '' italics marks.
 const IMG_RE = /^[a-z0-9-]{1,32}\.jpg$/;
 // Text for matching only (never output): tags and any stray angle bracket dropped, entities left as is.
-const plain = h => h.replace(/<[^>]*>/g, "").replace(/[<>]/g, "");
+const plain = h => {
+  let t = "", inTag = false;
+  for (const ch of h) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) t += ch;
+  }
+  return t;
+};
 const norm = t => t.replace(/''/g, "").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 for (const bk of books) {
   const spec = PICS[bk.slug] || { pictures: [] };
