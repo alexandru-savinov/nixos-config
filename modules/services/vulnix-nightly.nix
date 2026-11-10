@@ -39,6 +39,9 @@ let
     text = ''
       state="$STATE_DIRECTORY"
       # The NVD database (ZODB; grows with the NVD) is the scanner's own.
+      # vulnix bounds it itself: NVD.__exit__ calls db.pack() every 26th
+      # successful run (Meta.should_pack, vulnix 1.12.1 nvd.py), dropping
+      # old transactions, so nightly updates do not accumulate history.
       install -d -m 0700 "$state/cache"
 
       tmp=$(mktemp "$state/report.json.XXXXXX")

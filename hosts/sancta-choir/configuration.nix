@@ -408,6 +408,11 @@
     # line stops `auditctl -R` and its ExecStopPost deletes the rest, so this
     # unit's failed state is the only signal that the trail is empty.
     "audit-rules-nixos.service"
+    # The nightly vulnix scan (modules/services/vulnix-nightly.nix). A plain
+    # oneshot like doctrine-guard: a failed scan keeps the previous report, so
+    # without this line a scanner that stopped working would look like a clean
+    # system.
+    "vulnix.service"
   ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
