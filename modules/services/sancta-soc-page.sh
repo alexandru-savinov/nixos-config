@@ -51,6 +51,13 @@ flock -w 300 9 || {
   exit 2
 }
 
+# A run killed with SIGKILL skips the EXIT trap and leaves its stage behind.
+# Holding the lock, no other run can own one, so any stage present is orphaned.
+# At worst it holds bytes the gate already passed (a kill between gate and
+# promote), which the gallery could serve under the stage path; either way it
+# must not accumulate in the served tree.
+rm -rf -- "$out_dir"/.soc-stage.*
+
 stage="$(mktemp -d "$out_dir/.soc-stage.XXXXXX")"
 trap 'rm -rf -- "$stage"' EXIT
 

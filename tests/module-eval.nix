@@ -1719,6 +1719,9 @@ let
           systemProfileAfterPinned =
             let
               dirs = nixpkgs.lib.splitString ":" (svc.environment.PATH or "");
+              # lib.lists.findFirstIndex is real nixpkgs lib (since 23.11): on
+              # this flake's nixpkgs (25.11) `findFirstIndex (x: x == 3) null
+              # [ 1 2 3 ]` evaluates to 2. It returns the index or the default.
               at = pred: nixpkgs.lib.lists.findFirstIndex pred null dirs;
               sys = at (d: d == "/run/current-system/sw/bin");
               node = at (d: nixpkgs.lib.hasInfix "-nodejs-" d && nixpkgs.lib.hasSuffix "/bin" d);
