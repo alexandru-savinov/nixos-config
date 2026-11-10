@@ -73,8 +73,10 @@ pkgs.runCommand "sancta-soc-page-arms"
     for p in soc.html soc-decide.html; do
       echo "old $p" > "$o/$p"; echo '{"sha256":"old"}' > "$o/$p.passed"
     done
+    # An orphan stage left by a SIGKILLed run: every arm must sweep it.
+    mkdir -p "$o/.soc-stage.orphan"; echo stale > "$o/.soc-stage.orphan/soc.html"
   }
-  snap() { (cd "$o" && ls -A | sort && cat ./*) | sha256sum; }
+  snap() { (cd "$o" && ls -A | grep -v '^\.soc-stage' | sort && cat ./*) | sha256sum; }
 
   fail=0
   # arm <name> <MODE> <want exit> <want: same|promoted>
