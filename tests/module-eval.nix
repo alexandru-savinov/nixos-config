@@ -664,7 +664,10 @@ let
             # audit-rules-nixos.service joined on 2026-11-02: auditd can be
             # active with no rules loaded, and only this oneshot's failed
             # state says so.
-            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service";
+            # vulnix.service joined on 2026-11-10: a failed nightly scan keeps
+            # the previous report, so only its failed state says the scanner
+            # stopped.
+            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service vulnix.service";
 
           # The units value has spaces, so the RENDERED unit must quote it:
           # unquoted, systemd keeps only the first unit (live on choir until
