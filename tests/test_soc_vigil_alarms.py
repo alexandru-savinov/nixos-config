@@ -68,15 +68,15 @@ def event(serial, *, key, auid, exe, comm, path, argv, success="yes", syscall=25
     ])
 
 
-def login_reads_secret(serial=1, auid="1000", success="yes"):
+def login_reads_agenix(serial=1, auid="1000", success="yes"):
     return event(serial, key="agenix-secrets", auid=auid, exe=CAT, comm="cat",
-                 path="/run/agenix.d/3/openrouter-api-key", success=success,
-                 argv=["cat", "/run/agenix/openrouter-api-key"])
+                 path="/run/agenix.d/3/example-one", success=success,
+                 argv=["cat", "/run/agenix/example-one"])
 
 
-def service_reads_secret(serial=2):
+def service_reads_agenix(serial=2):
     return event(serial, key="agenix-secrets", auid=UNSET, exe=AGE, comm="rage",
-                 path="/run/agenix.d/3/tavily-api-key", argv=[AGE, "--decrypt"])
+                 path="/run/agenix.d/3/example-two", argv=[AGE, "--decrypt"])
 
 
 def activation_writes_sudoers(serial=3, auid="1000", setup_etc=SETUP_ETC, exe=PERL):
@@ -93,21 +93,21 @@ def classify(*events):
 class AuditRule(unittest.TestCase):
     # ── positive arms ──
     def test_login_read_of_agenix_fires(self):
-        hits = classify(login_reads_secret())
+        hits = classify(login_reads_agenix())
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]["keys"], ["agenix-secrets"])
         self.assertEqual(hits[0]["auid"], "1000")
-        self.assertEqual(hits[0]["paths"], ["/run/agenix.d/3/openrouter-api-key"])
+        self.assertEqual(hits[0]["paths"], ["/run/agenix.d/3/example-one"])
 
     def test_failed_attempt_by_login_fires(self):
-        self.assertEqual(len(classify(login_reads_secret(success="no"))), 1)
+        self.assertEqual(len(classify(login_reads_agenix(success="no"))), 1)
 
     def test_root_login_auid_zero_fires(self):
-        self.assertEqual(len(classify(login_reads_secret(auid="0"))), 1)
+        self.assertEqual(len(classify(login_reads_agenix(auid="0"))), 1)
 
     def test_agent_session_auid_fires(self):
         # Sancta's own sessions carry auid 993 (a login, not a service).
-        self.assertEqual(len(classify(login_reads_secret(auid="993"))), 1)
+        self.assertEqual(len(classify(login_reads_agenix(auid="993"))), 1)
 
     def test_login_edit_of_sudoers_fires(self):
         vi = event(4, key="sudoers", auid="1000", exe=f"/nix/store/{H}-vim-9.1/bin/vim",
@@ -140,12 +140,12 @@ class AuditRule(unittest.TestCase):
                   path="/run/agenix.d/3/a", argv=["cat"], enriched=False), SETUP_ETC)), 1)
 
     def test_missing_auid_fires(self):
-        ev = login_reads_secret().replace(" auid=1000 ", " ", 1)
+        ev = login_reads_agenix().replace(" auid=1000 ", " ", 1)
         self.assertEqual(len(classify(ev)), 1)
 
     # ── negative arms ──
     def test_service_read_of_agenix_is_silent(self):
-        self.assertEqual(classify(service_reads_secret()), [])
+        self.assertEqual(classify(service_reads_agenix()), [])
 
     def test_activation_write_to_sudoers_with_login_auid_is_silent(self):
         self.assertEqual(classify(activation_writes_sudoers()), [])
@@ -174,8 +174,8 @@ class AuditRule(unittest.TestCase):
 
     # ── mixed batch: only the login event survives ──
     def test_mixed_batch(self):
-        hits = classify(service_reads_secret(11), activation_writes_sudoers(12),
-                        login_reads_secret(13), service_reads_secret(14))
+        hits = classify(service_reads_agenix(11), activation_writes_sudoers(12),
+                        login_reads_agenix(13), service_reads_agenix(14))
         self.assertEqual([h["serial"] for h in hits], ["13"])
 
 
@@ -246,6 +246,11 @@ class BanRule(unittest.TestCase):
             sva.home_bans(decisions(("Ip", "not-an-ip")), f2b(), NEVER_BAN)
 
 
+# What `ausearch --raw` really does on a quiet window: exit 1, print nothing.
+# (audit 4.1.2 src/ausearch.c: "<no matches>" is suppressed for RPT_RAW.)
+QUIET = "exit 1\n"
+
+
 def slurp(path):
     with open(path) as fh:
         return fh.read()
@@ -276,14 +281,25 @@ class Runners(unittest.TestCase):
                          "--hold", str(hold), "--setup-etc", SETUP_ETC])
 
     def test_missing_state_dir_is_error(self):
-        a = self.ausearch('echo "<no matches>" >&2; exit 1\n')
+        a = self.ausearch(QUIET)
         self.assertEqual(sva.main(["audit", "--ausearch", a, "--state-dir", os.path.join(self.d, "nope"),
                                    "--hold", "900", "--setup-etc", SETUP_ETC]), 2)
 
-    def test_no_matches_is_clean_and_first_run_starts_recent(self):
-        a = self.ausearch('echo "<no matches>" >&2; exit 1\n')
+    def test_silent_exit_one_is_clean_and_first_run_starts_recent(self):
+        a = self.ausearch(QUIET)
         self.assertEqual(self.audit(a), 0)
-        self.assertIn("--start recent", slurp(self.log))
+        args = slurp(self.log)
+        self.assertIn("--start recent", args)
+        # Logs are forced even if fd 0 were a pipe (else ausearch reads stdin).
+        self.assertIn("--input-logs", args)
+
+    def test_legacy_no_matches_message_is_clean(self):
+        self.assertEqual(self.audit(self.ausearch('echo "<no matches>" >&2; exit 1\n')), 0)
+
+    def test_quiet_windows_never_turn_red(self):
+        a = self.ausearch(QUIET)
+        for _ in range(4):
+            self.assertEqual(self.audit(a), 0)
 
     def test_exit_one_without_no_matches_is_error(self):
         a = self.ausearch('echo "Error opening /var/log/audit/audit.log" >&2; exit 1\n')
@@ -291,7 +307,7 @@ class Runners(unittest.TestCase):
 
     def test_checkpoint_error_resumes_from_timestamp(self):
         open(self.cp, "w").close()
-        a = self.ausearch('case "$*" in *"--start checkpoint"*) echo "<no matches>" >&2; exit 1;; esac\nexit 12\n')
+        a = self.ausearch('case "$*" in *"--start checkpoint"*) exit 1;; esac\nexit 12\n')
         self.assertEqual(self.audit(a), 0)
         args = slurp(self.log).splitlines()
         self.assertEqual(len(args), 2)
@@ -301,10 +317,10 @@ class Runners(unittest.TestCase):
     def test_hit_turns_red_holds_then_clears(self):
         fixture = os.path.join(self.d, "fixture")
         with open(fixture, "w") as fh:
-            fh.write(login_reads_secret() + "\n")
+            fh.write(login_reads_agenix() + "\n")
         hit = self.ausearch(f"cat {fixture}\n")
         self.assertEqual(self.audit(hit), 1)
-        quiet = self.ausearch('echo "<no matches>" >&2; exit 1\n')
+        quiet = self.ausearch(QUIET)
         # Next window: no new events, still inside the hold -> still red.
         self.assertEqual(self.audit(quiet), 1)
         # Hold elapsed -> clears by itself, no acknowledgement needed.
@@ -315,12 +331,13 @@ class Runners(unittest.TestCase):
     def test_routine_events_never_turn_red(self):
         fixture = os.path.join(self.d, "fixture")
         with open(fixture, "w") as fh:
-            fh.write(service_reads_secret() + "\n" + activation_writes_sudoers() + "\n")
+            fh.write(service_reads_agenix() + "\n" + activation_writes_sudoers() + "\n")
         self.assertEqual(self.audit(self.ausearch(f"cat {fixture}\n")), 0)
         self.assertFalse(os.path.exists(self.last))
 
     def bans(self, cscli_body, f2b_body):
-        return sva.main(["bans", "--cscli", fake(self.d, "cscli", cscli_body),
+        guard = 'case " $* " in *" --limit 0 "*) ;; *) echo "default limit 100" >&2; exit 3;; esac\n'
+        return sva.main(["bans", "--cscli", fake(self.d, "cscli", guard + cscli_body),
                          "--fail2ban-client", fake(self.d, "f2b", f2b_body),
                          "--cidrs", ",".join(NEVER_BAN)])
 
