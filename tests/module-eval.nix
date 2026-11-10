@@ -664,7 +664,10 @@ let
             # audit-rules-nixos.service joined on 2026-11-02: auditd can be
             # active with no rules loaded, and only this oneshot's failed
             # state says so.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service" env;
+            # sancta-soc-page.service joined on 2026-11-10: the SOC page's
+            # daily rebuild. A red rebuild must reach the bar, not only the
+            # journal, or the gallery serves a stale reading in silence.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service sancta-soc-page.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
@@ -1657,6 +1660,111 @@ let
         true
       else
         builtins.throw "FAIL: sancta-choir absent-guard wiring — failed checks: ${builtins.toJSON failed}";
+
+    # ── sancta-soc-page ───────────────────────────────────────────
+    # The SOC page's daily rebuild. Shape only: tests/sancta-soc-page.nix
+    # drives the wrapper's promotion rule in both directions.
+    sancta-soc-page-choir-wiring =
+      let
+        choir = self.nixosConfigurations.sancta-choir.config;
+        svc = choir.systemd.services.sancta-soc-page;
+        timer = choir.systemd.timers.sancta-soc-page;
+        soulRoot = toString choir.services.sancta-soul-volume.mountPoint;
+        indexRoot = "${soulRoot}/index";
+        galleryDir = "${indexRoot}/gallery";
+        env = svc.serviceConfig.Environment or [ ];
+        execStart = toString (svc.serviceConfig.ExecStart or "");
+        rw = svc.serviceConfig.ReadWritePaths or [ ];
+        families = svc.serviceConfig.RestrictAddressFamilies or [ ];
+        pathHas = pname: nixpkgs.lib.any (p: (p.pname or "") == pname) (svc.path or [ ]);
+        checks = {
+          # Every input is on the soul volume: skipped, not red, without it.
+          hasMountCondition = (svc.unitConfig.ConditionPathIsMountPoint or null) == soulRoot;
+          hasMountRequires = builtins.elem "sancta-soul-mount.service" (svc.requires or [ ]);
+          hasMountAfter = builtins.elem "sancta-soul-mount.service" (svc.after or [ ]);
+          alertsOnFailure = (svc.onFailure or [ ]) == [ "sancta-soul-mirror-alert@%N.service" ];
+          runsAsSancta = (svc.serviceConfig.User or "") == "sancta";
+          isOneshot = (svc.serviceConfig.Type or "") == "oneshot";
+
+          # The store-backed wrapper, so unit-script-refs sees it and
+          # tests/sancta-soc-page.nix drives exactly this string.
+          execIsStoreWrapper =
+            nixpkgs.lib.hasPrefix builtins.storeDir execStart
+            && nixpkgs.lib.hasSuffix "sancta-soc-page.sh" execStart;
+
+          # Promotes into the directory the gallery SERVES, not a copy of it.
+          outIsServedGallery =
+            builtins.elem "SANCTA_SOC_OUT_DIR=${galleryDir}" env
+            && toString choir.services.sancta-gallery.galleryDir == galleryDir;
+          indexInEnv = builtins.elem "SANCTA_SOC_INDEX=${indexRoot}" env;
+          # gh finds its auth under $HOME; systemd gives a service no HOME.
+          homeInEnv = builtins.elem "HOME=${builtins.dirOf soulRoot}" env;
+
+          # Writable: the gallery (stage + rename) and the history file, and
+          # nothing wider. The soul root or index/ itself must never appear.
+          writableExact = rw == [ galleryDir "-${indexRoot}/soc-history.jsonl" ];
+          strictSystem = (svc.serviceConfig.ProtectSystem or null) == "strict";
+
+          # gh needs INET; `ss` needs NETLINK. Without NETLINK the listener
+          # panel reads "unread" and the unit still exits 0.
+          hasNetwork = builtins.elem "AF_INET" families && builtins.elem "AF_INET6" families;
+          hasNetlink = builtins.elem "AF_NETLINK" families;
+
+          pathHasTools =
+            pathHas "nodejs" && pathHas "gh" && pathHas "iproute2" && pathHas "jq" && pathHas "util-linux";
+          # The installed-tools probe in soc.mjs reads $PATH; the system
+          # profile must be there, and AFTER the pinned tools so they still
+          # win. Read off the rendered PATH: NixOS appends its own defaults
+          # after `path`, so the list's last element is not ours.
+          systemProfileAfterPinned =
+            let
+              dirs = nixpkgs.lib.splitString ":" (svc.environment.PATH or "");
+              at = pred: nixpkgs.lib.lists.findFirstIndex pred null dirs;
+              sys = at (d: d == "/run/current-system/sw/bin");
+              node = at (d: nixpkgs.lib.hasInfix "-nodejs-" d && nixpkgs.lib.hasSuffix "/bin" d);
+              gh = at (d: nixpkgs.lib.hasInfix "-gh-" d && nixpkgs.lib.hasSuffix "/bin" d);
+            in
+            sys != null && node != null && gh != null && node < sys && gh < sys;
+
+          dailyCatchUp =
+            (timer.timerConfig.Persistent or false) == true
+            && (timer.timerConfig.RandomizedDelaySec or null) != null
+            && builtins.elem "timers.target" (timer.wantedBy or [ ]);
+
+          statuslineSurfaced = builtins.elem "sancta-soc-page.service" choir.services.sancta-statusline-refresh.units;
+        };
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir soc-page wiring — failed checks: ${builtins.toJSON failed}";
+
+    # Negative arm for the galleryDir assertion, matched by MESSAGE so the arm
+    # cannot pass on an unrelated eval error (bare shouldFail would): point the
+    # gallery somewhere else and this module's own assertion must be the one
+    # that fails — and on the unmodified host it must not.
+    sancta-soc-page-gallery-mismatch-rejected =
+      let
+        failing =
+          cfg:
+          builtins.filter
+            (
+              a: !a.assertion && nixpkgs.lib.hasInfix "services.sancta-soc-page promotes into" a.message
+            )
+            cfg.assertions;
+        moved =
+          (self.nixosConfigurations.sancta-choir.extendModules {
+            modules = [{ services.sancta-gallery.galleryDir = nixpkgs.lib.mkForce "/var/lib/sancta/elsewhere"; }];
+          }).config;
+      in
+      if
+        builtins.length (failing moved) == 1
+        && failing self.nixosConfigurations.sancta-choir.config == [ ]
+      then
+        true
+      else
+        builtins.throw "FAIL: soc-page galleryDir assertion did not fire exactly when the gallery moved";
 
     # Negative arm for the module's own assertion: inputs moved OFF the soul
     # volume must be refused. ConditionPathIsMountPoint is a SKIP, not a

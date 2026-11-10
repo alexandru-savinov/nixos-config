@@ -406,6 +406,13 @@
             inherit pkgs self;
           };
 
+          # The SOC page's promotion rule, driven against the unit's REAL
+          # wrapper: a refused or missing page must never replace the served
+          # one, and only a fully passed pair is promoted.
+          sancta-soc-page = import ./tests/sancta-soc-page.nix {
+            inherit pkgs self;
+          };
+
           # The gallery's tailnet bind probe, exercised against real sockets.
           # module-eval proves the unit is ordered after tailscaled; this proves
           # the probe tells "address not here yet" apart from every other
