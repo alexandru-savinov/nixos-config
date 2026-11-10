@@ -334,6 +334,9 @@
             settings = self.nixosConfigurations.rpi5-full.config.services.gatus.settings;
           };
 
+          # Builds the Kindle reader: fails if a picture anchor in pictures.json no longer resolves.
+          kindle-reader = import ./modules/services/kindle-stub/reader.nix { inherit pkgs; };
+
           gatus-gallery = import ./tests/gatus-gallery.nix {
             inherit pkgs;
             settings = self.nixosConfigurations.rpi5-full.config.services.gatus.settings;
@@ -467,6 +470,7 @@
           sancta-membrane = import ./tests/sancta-membrane.nix { inherit pkgs; };
           sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
           sancta-gallery-bind-probe = import ./tests/sancta-gallery-bind-probe.nix { inherit pkgs; };
+          kindle-reader = import ./modules/services/kindle-stub/reader.nix { inherit pkgs; };
         };
 
       # Apps - makes packages runnable with `nix run`

@@ -144,8 +144,8 @@
   # Agent tooling on the system PATH so herdr panes (which inherit the
   # herdr-server unit's PATH, not a login shell's) can find + launch them.
   #
-  # The `sancta` alias is the ONLY pointer from `sancta-session` / `sessions
-  # attach sancta` to the live backend, and it is deliberately declarative
+  # The `sancta` alias is the ONLY pointer from `sancta` / `sancta-session` /
+  # `sessions attach sancta` to the live backend, and it is deliberately declarative
   # (reviewed, not runtime state). Every approved Sancta recovery creates a NEW
   # `sancta-`-prefixed backend (docs/plans/2026-09-26-sancta-activation.md
   # step 6); that change MUST update this value in the same change as the Mac
@@ -190,6 +190,30 @@
       fi
       exec /run/wrappers/bin/sudo -iu sancta \
         ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions attach sancta
+    '')
+
+    # `sancta`: the one way in, for root and for the sancta account alike.
+    # Thin wrapper around `sessions open sancta` (scripts/agterm-zmx/sessions.py
+    # header holds the full rule): the alias's backend record names the
+    # conversation; a Claude writer for it running OUTSIDE zmx is named (PID,
+    # TTY, start) and nothing starts (exit 1); a live recorded backend is
+    # attached; with no writer anywhere, ONE new `sancta-open-*` user-scope
+    # backend runs the guarded `sessions resume` and is attached. It never
+    # stops, kills or reconciles a process.
+    (pkgs.writeShellScriptBin "sancta" ''
+      if [ "$#" -ne 0 ]; then
+        echo "usage: sancta" >&2
+        exit 2
+      fi
+      if [ "$EUID" -eq 0 ]; then
+        exec /run/wrappers/bin/sudo -iu sancta \
+          ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions open sancta
+      fi
+      if [ "$(${pkgs.coreutils}/bin/id -un)" = sancta ]; then
+        exec ${self.packages.${pkgs.system}.agterm-zmx-host}/bin/sessions open sancta
+      fi
+      echo "sancta: run as root or as sancta" >&2
+      exit 1
     '')
   ];
 

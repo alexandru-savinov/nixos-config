@@ -1,13 +1,19 @@
 // Builds the Kindle shelf: two public-domain books from pinned ru.wikisource revisions.
 //   «Пятнадцатилетний капитан» (Verne, tr. Petrov 1934, PD-old)
 //   «Капитанская дочка» (Pushkin 1836, 1978 edition text, PD-old)
-// usage: node build.js <page.tpl.html> <outdir> <kapitan.wiki> <dochka.wiki>
+// usage: node build.js <page.tpl.html> <outdir> <kapitan.wiki> <dochka.wiki> <pictures.json>
 //
 // Output: book/<id>.html per chapter and contents page, b-<slug>.html (resume) per book,
-// shelf.html ("/"), and books.json, which tells the server which ids exist and where
-// each book's position is saved.
+// shelf.html ("/"), and books.json, which tells the server which ids exist, where
+// each book's position is saved, and which pictures it may serve.
+//
+// pictures.json: { <slug>: { cover, pictures: [{ chapter, img, anchor, caption, credit }] } }.
+// Each picture goes right after the paragraph of its chapter whose text ends with `anchor`
+// (the `nth` such paragraph when the anchor repeats); a missing or ambiguous anchor fails the build. The image files themselves are
+// not in the store: the server reads them from the module's imagesDir.
 const fs = require("fs"), path = require("path");
-const [tplPath, out, kapitanPath, dochkaPath] = process.argv.slice(2);
+const [tplPath, out, kapitanPath, dochkaPath, picsPath] = process.argv.slice(2);
+const PICS = JSON.parse(fs.readFileSync(picsPath, "utf8"));
 const tpl = fs.readFileSync(tplPath, "utf8");
 
 const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -133,6 +139,42 @@ const books = [
   },
 ];
 
+// Put each picture after its anchor paragraph. Anchors are matched on plain text, ignoring
+// spacing, ё/е and the source's '' italics marks.
+const IMG_RE = /^[a-z0-9-]{1,32}\.jpg$/;
+// Text for matching only (never output): tags and any stray angle bracket dropped, entities left as is.
+const plain = h => {
+  let t = "", inTag = false;
+  for (const ch of h) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) t += ch;
+  }
+  return t;
+};
+const norm = t => t.replace(/''/g, "").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+for (const bk of books) {
+  const spec = PICS[bk.slug] || { pictures: [] };
+  bk.cover = spec.cover || "";
+  if (bk.cover && !IMG_RE.test(bk.cover)) throw new Error(bk.slug + ": bad cover " + bk.cover);
+  bk.imgs = new Set(bk.cover ? [bk.cover] : []);
+  const orig = new Map(); // anchors match the text as parsed, not text with pictures already appended
+  for (const pic of spec.pictures) {
+    if (!IMG_RE.test(pic.img)) throw new Error(bk.slug + ": bad image name " + pic.img);
+    const c = bk.chapters.find(x => x.id === pic.chapter);
+    if (!c) throw new Error(bk.slug + ": no chapter " + pic.chapter + " for " + pic.img);
+    const a = norm(pic.anchor);
+    if (!orig.has(c)) orig.set(c, c.paras.map(h => norm(plain(h))));
+    const hits = orig.get(c).map((t, i) => i).filter(i => orig.get(c)[i].endsWith(a));
+    // A short anchor (a one-line reply) can repeat in a chapter: `nth` picks the occurrence.
+    const at = hits.length === 1 && pic.nth === undefined ? hits[0] : hits[pic.nth];
+    if (at === undefined) throw new Error(bk.slug + " " + pic.chapter + " " + pic.img + ": anchor matches " + hits.length + " paragraphs");
+    c.paras[at] += '\n<div class="artmk"></div><div class="art"><img class="pic" data-d="/img/' + pic.img + '" alt="">' +
+      '<p class="cap">' + esc(pic.caption) + '</p><p class="src">' + esc(pic.credit) + "</p></div>";
+    bk.imgs.add(pic.img);
+  }
+}
+
 const fill = (o) => tpl
   .replace("%%DOCTITLE%%", o.doctitle).replace("%%ID%%", o.id).replace(/%%KEY%%/g, o.key)
   .replace("%%TOC%%", o.toc)
@@ -180,10 +222,12 @@ let shelf = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Книги<
   "<style>body{background:#000;color:#fff;font:26px Georgia,serif;margin:40px}" +
   "body.day{background:#fff;color:#000}a{color:inherit}h1{font-size:1.1em;margin:0 0 1em 0}" +
   "div.b{border:2px solid;padding:16px 20px;margin:0 0 28px 0}div.b a{text-decoration:none;display:block}" +
-  "div.b span{display:block;font-size:0.75em;margin-top:6px}div.b i{display:block;font-size:0.75em;margin-top:8px}</style></head>" +
+  "div.b span{display:block;font-size:0.75em;margin-top:6px}div.b i{display:block;font-size:0.75em;margin-top:8px}" +
+  "div.b img{float:left;width:150px;margin:0 20px 0 0}div.b:after{content:'';display:block;clear:both}</style></head>" +
   "<body><h1>Книги</h1>\n";
 for (const bk of books) {
-  shelf += '<div class="b"><a href="/b/' + bk.slug + '">' + bk.title + "<span>" + bk.by + "</span>" +
+  shelf += '<div class="b"><a href="/b/' + bk.slug + '">' + (bk.cover ? '<img src="/img/' + bk.cover + '" alt="">' : "") +
+    bk.title + "<span>" + bk.by + "</span>" +
     '<i id="at-' + bk.slug + '"></i></a></div>\n';
 }
 shelf += "<script>(function(){var L=" + JSON.stringify(labels) + ",B=[";
@@ -198,12 +242,12 @@ fs.writeFileSync(path.join(out, "shelf.html"), shelf);
 
 // the server accepts /r/<id> and /pos only for these ids
 fs.writeFileSync(path.join(out, "books.json"), JSON.stringify(books.map(bk => ({
-  slug: bk.slug, toc: bk.toc, posFile: bk.posFile, ids: bk.chapters.map(c => c.id),
+  slug: bk.slug, toc: bk.toc, posFile: bk.posFile, ids: bk.chapters.map(c => c.id), imgs: [...bk.imgs].sort(),
 }))) + "\n");
 
 for (const bk of books) {
   const chs = bk.chapters, total = chs.reduce((a, c) => a + c.paras.length, 0);
-  console.log(bk.slug + ": chapters", chs.length, "paragraphs", total,
+  console.log(bk.slug + ": chapters", chs.length, "paragraphs", total, "pictures", bk.imgs.size,
     "| sizes KB min", Math.min(...chs.map(c => c.paras.join("").length)) / 1000 | 0,
     "max", Math.max(...chs.map(c => c.paras.join("").length)) / 1000 | 0);
 }
