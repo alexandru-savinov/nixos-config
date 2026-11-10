@@ -375,6 +375,19 @@ class Runners(unittest.TestCase):
             fh.write(f"{time.time() - 901:.0f}\n")
         self.assertEqual(self.audit(quiet), 0)
 
+    def test_hit_next_to_garbage_line_is_not_lost(self):
+        # The checkpoint has moved past this window, so the hit must be
+        # logged and must start the hold even though the batch had a bad line.
+        fixture = os.path.join(self.d, "fixture")
+        with open(fixture, "w") as fh:
+            fh.write(login_reads_agenix() + "\ngarbage line\n")
+        self.assertEqual(self.audit(self.ausearch(f"cat {fixture}\n")), 2)
+        self.assertTrue(os.path.exists(self.last))
+        hits, bad = sva.audit_scan(slurp(fixture), SETUP_ETC)
+        self.assertEqual((len(hits), len(bad)), (1, 1))
+        # Next window is quiet: still red for the hold, not clean.
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 1)
+
     def test_format_drift_turns_red(self):
         fixture = os.path.join(self.d, "fixture")
         with open(fixture, "w") as fh:
