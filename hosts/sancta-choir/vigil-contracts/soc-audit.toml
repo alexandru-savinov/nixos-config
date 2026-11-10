@@ -1,0 +1,11 @@
+[contract]
+nume = "soc-audit"
+ce = "Security: login access to agenix secrets or sudoers"
+driver = "operational"
+verifica = "age"
+tinta = "/var/lib/soc-vigil-alarms/audit-clean"
+picat_dupa = 2
+prag = "20m"
+
+[spune]
+nivel = "incident"
