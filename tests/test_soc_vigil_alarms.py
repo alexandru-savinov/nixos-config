@@ -168,6 +168,16 @@ class AuditRule(unittest.TestCase):
                    argv=["cat"]).replace('UID="root"', 'UID="root" key="sudoers"', 1)
         self.assertEqual(classify(ev), [])
 
+    def test_node_prefixed_records_parse(self):
+        ev = "\n".join("node=choir " + ln for ln in login_reads_agenix().split("\n"))
+        self.assertEqual(len(sva.audit_hits(ev, SETUP_ETC)), 1)
+
+    def test_unparseable_line_fails_closed(self):
+        with self.assertRaises(ValueError):
+            sva.audit_hits("event: something audit 4.2 might print\n", SETUP_ETC)
+        with self.assertRaises(ValueError):
+            classify(service_reads_agenix(), "typ=SYSCALL msg=audit(1.0:1): key=\"sudoers\"")
+
     def test_empty_and_noise_are_silent(self):
         self.assertEqual(sva.audit_hits("", SETUP_ETC), [])
         self.assertEqual(sva.audit_hits("<no matches>\n----\n", SETUP_ETC), [])
@@ -364,6 +374,12 @@ class Runners(unittest.TestCase):
         with open(self.last, "w") as fh:
             fh.write(f"{time.time() - 901:.0f}\n")
         self.assertEqual(self.audit(quiet), 0)
+
+    def test_format_drift_turns_red(self):
+        fixture = os.path.join(self.d, "fixture")
+        with open(fixture, "w") as fh:
+            fh.write("unrecognised audit output\n")
+        self.assertEqual(self.audit(self.ausearch(f"cat {fixture}\n")), 2)
 
     def test_routine_events_never_turn_red(self):
         fixture = os.path.join(self.d, "fixture")
