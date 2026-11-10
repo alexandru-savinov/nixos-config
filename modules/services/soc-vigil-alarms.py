@@ -27,7 +27,12 @@ THE AUDIT RULE (exact):
        console) and inherited by everything that login runs, sudo included.
        systemd services, timers, and nixos-rebuild's switch (which runs
        switch-to-configuration through `systemd-run`, nixos-rebuild-ng
-       nix.py SWITCH_TO_CONFIGURATION_CMD_PREFIX) have it unset. auid 0 (a
+       nix.py SWITCH_TO_CONFIGURATION_CMD_PREFIX) have it unset. Tailscale
+       SSH (choir's admin path) is a login too: its incubator runs
+       `login -f`, whose PAM stack has pam_loginuid. Checked live on choir
+       2026-11-11: a tailnet session (loginctl Service=login,
+       RemoteHost=100.x) and its descendants carry loginuid 993. Not
+       covered: an incubator fallback that skips login(1). auid 0 (a
        direct root login) counts as set. Attempts that FAIL (success=no) fire
        too: an attempt by a login on a secret is the signal, success or not.
     3. it is NOT the NixOS activation's /etc writer: key `sudoers`, exe a
