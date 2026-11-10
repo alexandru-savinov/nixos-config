@@ -21,7 +21,9 @@ Existing restore commands retain their explicit host, account, backend and scope
 On another terminal or mobile, SSH to the account that owns the backend:
 
 ```sh
-# Choir: after logging in, switch to the Sancta account if necessary.
+# Choir: `sancta` (root or the Sancta account) = `sessions open sancta`.
+sancta
+# Attach-only, spelled out:
 sudo -iu sancta
 sessions list
 sessions attach sancta
@@ -29,6 +31,15 @@ sessions attach sancta
 sessions list
 sessions attach NAME
 ```
+
+`sancta` lands in the single live writer of the conversation named by the
+`sancta` alias's record. A Claude for that conversation running outside zmx (a raw
+`claude --resume` in a terminal) is named by PID, TTY and start time, and nothing
+starts (exit 1): exit it yourself, then run `sancta` again. A live recorded backend
+is attached. With no writer anywhere it starts ONE new `sancta-open-*` user-scope
+backend whose only command is `sessions resume`, and attaches. A second `sancta`
+during that start waits for it instead of starting another. The full rule is in
+the header of `scripts/agterm-zmx/sessions.py`. It never stops or kills anything.
 
 Detach with Ctrl+\\ to leave the remote process running. `sessions attach` refuses
 missing or ended records, keeps the Mac route intact, and never starts another
@@ -95,7 +106,7 @@ sessions resume claude EXACT-CONVERSATION-UUID --cwd /ORIGINAL/DIRECTORY
 
 This shares the helper's lock and requires an existing, stopped conversation.
 There is no picker, `--continue`, ambiguous-name lookup or argument pass-through.
-For an already running Sancta backend, use `sessions attach sancta` instead.
+For Sancta on choir, `sancta` does this check-then-start in a new zmx backend.
 Direct `claude --resume` and conversation switching inside Claude bypass this
 cooperative lock; it is not a security boundary against the owning account.
 
