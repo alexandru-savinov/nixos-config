@@ -267,6 +267,18 @@ def cmd_audit(a) -> int:
         raise RuntimeError("no state directory (set --state-dir or STATE_DIRECTORY)")
     checkpoint = os.path.join(a.state_dir, "audit.checkpoint")
     last_hit = os.path.join(a.state_dir, "audit.last-hit")
+    # A quiet window is only evidence when the trail can record. auditd down,
+    # or audit-rules-nixos failed (its ExecStopPost deletes EVERY rule), also
+    # yields a silent exit 1 from ausearch; without this gate that blind state
+    # would read clean forever. Not proven here: rules deleted by hand while
+    # both units stay active (needs root, and root can stop auditd anyway).
+    if not a.require_active:
+        raise RuntimeError("no --require-active unit given: cannot prove the trail is live")
+    live = subprocess.run([a.systemctl, "is-active", "--quiet", "--", *a.require_active],
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if live.returncode != 0:
+        raise RuntimeError(f"audit trail not live: {' '.join(a.require_active)} not all active "
+                           f"(systemctl is-active exited {live.returncode})")
     hits = audit_hits(run_ausearch(a.ausearch, checkpoint), a.setup_etc)
     now = time.time()
     for h in hits:
@@ -315,6 +327,8 @@ def main(argv: list[str]) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     au = sub.add_parser("audit")
     au.add_argument("--ausearch", required=True)
+    au.add_argument("--systemctl", required=True)
+    au.add_argument("--require-active", action="append", default=[])
     au.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
     au.add_argument("--hold", type=int, required=True)
     au.add_argument("--setup-etc", required=True)
