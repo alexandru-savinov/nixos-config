@@ -64,7 +64,11 @@ import time
 WATCHED_KEYS = frozenset({"agenix-secrets", "sudoers"})
 UNSET_AUID = {"4294967295", "-1", "unset"}
 
-_HEADER = re.compile(r"^type=(\S+) msg=audit\(([0-9.]+):([0-9]+)\):\s?(.*)$")
+# Optional `node=<name> ` prefix: auditd writes it when name_format != none.
+_HEADER = re.compile(r"^(?:node=\S+ )?type=(\S+) msg=audit\(([0-9.]+):([0-9]+)\):\s?(.*)$")
+# The only non-record lines ausearch prints: its event separator and the
+# legacy empty-result note.
+_SEPARATORS = frozenset({"", "----", "<no matches>"})
 _FIELD = re.compile(r'([A-Za-z0-9_-]+)=("[^"]*"|\S+)')
 _STORE_PERL = re.compile(r"^/nix/store/[0-9a-z]{32}-perl-[^/]+/bin/perl$")
 _HEX = re.compile(r"^(?:[0-9A-Fa-f]{2})+$")
@@ -90,12 +94,23 @@ def _unhex(value: str) -> str | None:
 
 
 def parse_events(raw_text: str) -> list[dict]:
-    """Group raw audit lines into events by (timestamp, serial), in order."""
+    """Group raw audit lines into events by (timestamp, serial), in order.
+
+    Fails CLOSED: a line that is neither a record nor an ausearch separator
+    raises ValueError. If the trail's format ever stops matching (a changed
+    header, a new prefix), parsing nothing would read as a clean window
+    forever; raising makes it an evaluator error instead (exit 2, red).
+    """
     events: dict[tuple[str, str], dict] = {}
-    for line in raw_text.splitlines():
+    # split("\n"), NOT splitlines(): str.splitlines() also breaks on GS
+    # (0x1d), which is exactly the byte that separates the ENRICHED half of
+    # a record, so every enriched record would become two "lines".
+    for n, line in enumerate(raw_text.replace("\r\n", "\n").split("\n"), 1):
         m = _HEADER.match(line.strip())
         if not m:
-            continue  # ausearch separators ("----"), "<no matches>", noise
+            if line.strip() in _SEPARATORS:
+                continue
+            raise ValueError(f"unparseable audit line {n} (format drift?): {line[:80]!r}")
         rtype, ts, serial, body = m.groups()
         ev = events.setdefault((ts, serial), {"ts": ts, "serial": serial, "records": []})
         ev["records"].append((rtype, _fields(body)))
