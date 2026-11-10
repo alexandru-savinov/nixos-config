@@ -664,7 +664,10 @@ let
             # audit-rules-nixos.service joined on 2026-11-02: auditd can be
             # active with no rules loaded, and only this oneshot's failed
             # state says so.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service" env;
+            # vulnix.service joined on 2026-11-10: a failed nightly scan keeps
+            # the previous report, so only its failed state says the scanner
+            # stopped.
+            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service vulnix.service" env;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
