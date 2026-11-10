@@ -16,10 +16,18 @@
   #col { position: absolute; top: 0; left: 0; line-height: 1.45; }
   #col h2 { font-size: 1.05em; margin: 0.4em 0 0.8em 0; text-align: center; }
   #col h3 { font-size: 0.8em; margin: 0.8em 0 0 0; text-align: center; font-weight: normal; }
-  #col p { margin: 0 0 0.45em 0; text-indent: 1.4em; }
+  /* No paragraph margins: placeArt measures the page top exactly, and a bottom margin collapsing
+     through its zero-height marker pushed every picture to the page after a blank one. */
+  #col p { margin: 0; text-indent: 1.4em; }
   #col p.r { text-align: right; text-indent: 0; }
   #col p.c { text-align: center; text-indent: 0; }
   #col p.n { text-indent: 0; font-size: 0.8em; }
+  #col .art { margin: 0; padding: 0; overflow: hidden; text-align: center; -webkit-column-break-inside: avoid; break-inside: avoid; }
+  #col .artmk { margin: 0; padding: 0; height: 0; }
+  #col .art img { max-width: 100%; max-height: 420px; display: block; margin: 8px auto 10px auto; }
+  #col .art p { text-indent: 0; margin: 0 0 .5em 0; font-size: 22px; line-height: 1.35; }
+  #col .art .cap { font-style: italic; }
+  #col .art .src { font-size: 18px; }
   #col ul { list-style: none; margin: 0; padding: 0; }
   #col li { margin: 0 0 0.5em 0; }
   #col li.part { font-weight: bold; margin-top: 0.6em; }
@@ -49,6 +57,92 @@
   function okF(f) { return typeof f === "number" && f >= 0 && f <= 1; }
   function hashF() { var m = /^#f=([01](\.[0-9]{1,4})?)$/.exec(location.hash || ""); return m ? parseFloat(m[1]) : NaN; }
 
+  // Pictures: each .art block fills one whole page and must start at a page top. A zero-height .artmk
+  // marker before it is measured (unlike the block, it cannot straddle two pages) and grows to fill the
+  // rest of the page. If that would leave the page before the picture mostly empty, the picture floats to
+  // a nearby paragraph end (as plates do in printed books): candidates are measured with zero-height
+  // probes in one pass; drifting from the scene costs, appearing before it costs more.
+  function nextEl(n) { n = n.nextSibling; while (n && n.nodeType !== 1) n = n.nextSibling; return n; }
+  function prevEl(n) { n = n.previousSibling; while (n && n.nodeType !== 1) n = n.previousSibling; return n; }
+  function isPara(n) { return n && n.tagName === "P"; }
+  // Where picture i goes after paragraph el: past the earlier pictures already there, before the later
+  // ones, so pictures sharing a paragraph (anchored or floated there) keep their book order.
+  function slot(el, list, i) {
+    var n = nextEl(el), j;
+    while (n && n.className === "artmk") {
+      for (j = 0; j < i && list[j] !== n; j++) {}
+      if (j === i) break;
+      n = nextEl(nextEl(n));
+    }
+    return n;
+  }
+  function placeArt() {
+    if (!col.getElementsByClassName) return;
+    var mk = col.getElementsByClassName("artmk"), i, j, ctop, list = [];
+    for (i = 0; i < mk.length; i++) list.push(mk[i]);
+    for (i = 0; i < list.length; i++) {
+      var m = list[i], art = nextEl(m);
+      // home = the anchor paragraph. Several pictures can follow one paragraph, so step back over
+      // the markers and pictures before this one rather than taking the previous element.
+      if (!m.home) { var hm = prevEl(m); while (hm && !isPara(hm)) hm = prevEl(hm); m.home = hm; }
+      col.insertBefore(m, slot(m.home, list, i)); col.insertBefore(art, nextEl(m));
+      m.style.height = "0px"; art.style.height = H + "px"; art.style.display = "";
+    }
+    for (i = 0; i < list.length; i++) {
+      var m = list[i], art = nextEl(m);
+      ctop = col.getBoundingClientRect().top;
+      var top = m.getBoundingClientRect().top - ctop;
+      if (top > 1 && top < H && H - top > 0.25 * H) {
+        art.style.display = "none";
+        var cands = [], probes = [], e, k;
+        e = m.home; for (k = 0; k < 4 && isPara(e); k++) { cands.push({ el: e, d: -k }); e = prevEl(e); }
+        e = nextEl(m); if (e === art) e = nextEl(art);
+        for (k = 1; k <= 4 && isPara(e); k++) { cands.push({ el: e, d: k }); e = nextEl(e); }
+        for (j = 0; j < cands.length; j++) {
+          var pr = document.createElement("div"); pr.style.height = "0px";
+          col.insertBefore(pr, nextEl(cands[j].el)); probes.push(pr);
+        }
+        ctop = col.getBoundingClientRect().top;
+        var best = null, bestCost = 1e9;
+        for (j = 0; j < cands.length; j++) {
+          var t = probes[j].getBoundingClientRect().top - ctop;
+          var blank = (t > 1 && t < H) ? (H - t) : 0;
+          var d = cands[j].d, cost = blank + (d < 0 ? -d * 0.15 * H : d * 0.06 * H);
+          if (cost < bestCost) { bestCost = cost; best = cands[j]; }
+        }
+        for (j = 0; j < probes.length; j++) col.removeChild(probes[j]);
+        if (best) { col.insertBefore(m, slot(best.el, list, i)); col.insertBefore(art, nextEl(m)); }
+        art.style.display = "";
+        ctop = col.getBoundingClientRect().top;
+        top = m.getBoundingClientRect().top - ctop;
+      }
+      if (top > 1 && top < H) m.style.height = Math.ceil(H - top) + "px";
+    }
+    var arts = col.getElementsByClassName("art"), q, ps, capH, imgs;
+    for (i = 0; i < arts.length; i++) {
+      ps = arts[i].getElementsByTagName("p"); capH = 0;
+      for (q = 0; q < ps.length; q++) capH += ps[q].offsetHeight + 11;
+      imgs = arts[i].getElementsByTagName("img");
+      for (q = 0; q < imgs.length; q++) imgs[q].style.maxHeight = Math.max(300, H - capH - 30) + "px";
+    }
+  }
+  // Memory: the Kindle browser crashed when a chapter decoded all its pictures at once (both day and night
+  // copies). Only pictures on the current or next page get an image (the original engraving in both modes:
+  // inverted night copies looked bad on the device); the rest are
+  // released to a 1x1 placeholder.
+  var BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  function loadPics() {
+    if (!col.getElementsByClassName) return;
+    var arts = col.getElementsByClassName("art"), i, img, pg, want, cl = col.getBoundingClientRect().left;
+    for (i = 0; i < arts.length; i++) {
+      img = arts[i].getElementsByTagName("img")[0];
+      if (!img) continue;
+      pg = Math.floor((arts[i].getBoundingClientRect().left - cl + 1) / W);
+      want = (pg === page || pg === page + 1) ? img.getAttribute("data-d") : BLANK;
+      if (img.getAttribute("src") !== want) img.setAttribute("src", want);
+    }
+  }
+
   function frac() { return pages > 1 ? page / (pages - 1) : 0; }
   function layout(keep) {
     var f = frac();
@@ -61,6 +155,7 @@
     col.style.fontSize = fs + "px";
     col.style.webkitColumnWidth = cw + "px"; col.style.webkitColumnGap = (2 * P) + "px";
     col.style.columnWidth = cw + "px"; col.style.columnGap = (2 * P) + "px";
+    placeArt();
     pages = Math.max(1, Math.ceil((col.scrollWidth - P) / W));
     if (keep) page = Math.round(f * (pages - 1));
     if (page > pages - 1) page = pages - 1;
@@ -69,6 +164,7 @@
   // save: remember the position locally and send the server copy (only when it changed).
   function show(save) {
     col.style.left = (-page * W) + "px";
+    loadPics();
     d.getElementById("pg").innerHTML = "стр. " + (page + 1) + " / " + pages;
     if (IS_CH && save) {
       var f = frac().toFixed(4);
@@ -76,7 +172,7 @@
       if (f !== sent) { sent = f; new Image().src = "/pos?ch=" + ID + "&f=" + f + "&n=" + new Date().getTime(); }
     }
   }
-  function paint() { b.className = night ? "" : "day"; d.getElementById("mode").innerHTML = night ? "&#9728;" : "&#9790;"; }
+  function paint() { b.className = night ? "" : "day"; d.getElementById("mode").innerHTML = night ? "&#9728;" : "&#9790;"; if (W) loadPics(); }
 
   paint();
   layout(false);
