@@ -276,13 +276,34 @@ class Runners(unittest.TestCase):
     def ausearch(self, script):
         return fake(self.d, "ausearch", f'echo "$@" >> {self.log}\n' + script)
 
-    def audit(self, ausearch, hold=900):
-        return sva.main(["audit", "--ausearch", ausearch, "--state-dir", self.sd,
-                         "--hold", str(hold), "--setup-etc", SETUP_ETC])
+    def audit(self, ausearch, hold=900, systemctl_exit=0):
+        systemctl = fake(self.d, "systemctl", f'echo "$@" >> {self.log}.systemctl\nexit {systemctl_exit}\n')
+        return sva.main(["audit", "--ausearch", ausearch, "--systemctl", systemctl,
+                         "--require-active", "auditd.service", "--require-active", "audit-rules-nixos.service",
+                         "--state-dir", self.sd, "--hold", str(hold), "--setup-etc", SETUP_ETC])
+
+    def test_quiet_window_with_dead_trail_is_error(self):
+        # auditd stopped / rules unloaded: ausearch is just as silent, so the
+        # quiet window must NOT read clean.
+        self.assertEqual(self.audit(self.ausearch(QUIET), systemctl_exit=3), 2)
+        self.assertIn("is-active --quiet -- auditd.service audit-rules-nixos.service",
+                      slurp(self.log + ".systemctl"))
+        self.assertFalse(os.path.exists(self.log), "ausearch must not run on a dead trail")
+
+    def test_live_trail_quiet_window_is_clean(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET), systemctl_exit=0), 0)
+
+    def test_no_required_units_is_error(self):
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        self.assertEqual(sva.main(["audit", "--ausearch", self.ausearch(QUIET), "--systemctl", systemctl,
+                                   "--state-dir", self.sd, "--hold", "900", "--setup-etc", SETUP_ETC]), 2)
 
     def test_missing_state_dir_is_error(self):
         a = self.ausearch(QUIET)
-        self.assertEqual(sva.main(["audit", "--ausearch", a, "--state-dir", os.path.join(self.d, "nope"),
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        self.assertEqual(sva.main(["audit", "--ausearch", a, "--systemctl", systemctl,
+                                   "--require-active", "auditd.service",
+                                   "--state-dir", os.path.join(self.d, "nope"),
                                    "--hold", "900", "--setup-etc", SETUP_ETC]), 2)
 
     def test_silent_exit_one_is_clean_and_first_run_starts_recent(self):

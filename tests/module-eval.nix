@@ -1230,6 +1230,12 @@ let
           activationPinMatches = setupEtc != null
             && lib.hasInfix "--setup-etc ${builtins.head setupEtc}" (argv aSvc);
 
+          # A quiet window counts only while the trail is live: both the
+          # daemon and the rules unit must be required active by the script.
+          trailLivenessGate =
+            lib.hasInfix "--require-active auditd.service --require-active audit-rules-nixos.service" (argv aSvc)
+            && lib.hasInfix "/bin/systemctl " (argv aSvc);
+
           # Home = the exact neverBan list both engines exempt.
           neverBanIsBothEngines =
             lib.hasInfix "--cidrs ${lib.concatStringsSep "," ignoreIP}" (argv bSvc)

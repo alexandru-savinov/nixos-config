@@ -159,7 +159,10 @@ in
 
     systemd.services.soc-alarm-audit = {
       description = "SOC alarm: login access to agenix secrets or /etc/sudoers (auditd)";
-      after = [ "auditd.service" ];
+      after = [
+        "auditd.service"
+        "audit-rules-nixos.service"
+      ];
       serviceConfig = common // {
         ExecStart = lib.escapeShellArgs [
           python
@@ -167,6 +170,16 @@ in
           "audit"
           "--ausearch"
           "${pkgs.audit}/bin/ausearch"
+          # The trail must be live for a quiet window to mean anything: auditd
+          # running AND the rules loaded (audit-rules-nixos is RemainAfterExit;
+          # when it fails its ExecStopPost deletes every rule). Checked by the
+          # script, not by requires=, which would START a stopped auditd.
+          "--systemctl"
+          "${config.systemd.package}/bin/systemctl"
+          "--require-active"
+          "auditd.service"
+          "--require-active"
+          "audit-rules-nixos.service"
           "--hold"
           (toString cfg.auditHold)
           "--setup-etc"
