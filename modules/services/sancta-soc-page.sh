@@ -15,9 +15,19 @@
 # token must arrive TOGETHER or not at all, and a refused page must never
 # replace a served one. Hence:
 #
-#   1. soc.mjs writes into a private stage directory INSIDE the out dir (same
-#      filesystem, so the promoting rename(2) is atomic). It writes two pages
-#      there: soc.html and soc-decide.html, which soc.html links to.
+#   1. soc.mjs writes into a private stage directory INSIDE the out dir. It
+#      writes two pages there: soc.html and soc-decide.html, which soc.html
+#      links to. Why inside, although that is the served tree:
+#        - rename(2) must stay on ONE MOUNT, not merely one filesystem. The
+#          unit's ReadWritePaths bind-mounts gallery/ on its own; a stage in
+#          index/ would sit on a different (read-only) mount point, and
+#          rename(2) across mount points fails EXDEV even when the same
+#          filesystem is mounted at both (rename(2), ERRORS).
+#        - The stage is never servable, gated or not: gallery/link-rule.mjs
+#          cleanPath() refuses any dot-led path segment with 404 before the
+#          .passed rule is even consulted. Probed live on choir 2026-11-10:
+#          /.soc-stage.probe/soc.html answered 404 both before and after a
+#          PASS token was written beside it.
 #   2. publish.mjs gates each staged page; its token names only the basename
 #      and the sha256, so a token written in the stage is valid after the move.
 #   3. Any non-zero exit — generator (fails closed on a broken repo read),
@@ -53,9 +63,8 @@ flock -w 300 9 || {
 
 # A run killed with SIGKILL skips the EXIT trap and leaves its stage behind.
 # Holding the lock, no other run can own one, so any stage present is orphaned.
-# At worst it holds bytes the gate already passed (a kill between gate and
-# promote), which the gallery could serve under the stage path; either way it
-# must not accumulate in the served tree.
+# It is not servable (dot-led segment, see step 1 above), but it must not
+# accumulate in the served tree either.
 rm -rf -- "$out_dir"/.soc-stage.*
 
 stage="$(mktemp -d "$out_dir/.soc-stage.XXXXXX")"

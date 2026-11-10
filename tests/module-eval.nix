@@ -1719,10 +1719,13 @@ let
           systemProfileAfterPinned =
             let
               dirs = nixpkgs.lib.splitString ":" (svc.environment.PATH or "");
-              # lib.lists.findFirstIndex is real nixpkgs lib (since 23.11): on
-              # this flake's nixpkgs (25.11) `findFirstIndex (x: x == 3) null
-              # [ 1 2 3 ]` evaluates to 2. It returns the index or the default.
-              at = pred: nixpkgs.lib.lists.findFirstIndex pred null dirs;
+              # Index of the first entry matching pred, or null.
+              at =
+                pred:
+                let
+                  m = nixpkgs.lib.findFirst (x: pred x.v) null (nixpkgs.lib.imap0 (i: v: { inherit i v; }) dirs);
+                in
+                if m == null then null else m.i;
               sys = at (d: d == "/run/current-system/sw/bin");
               node = at (d: nixpkgs.lib.hasInfix "-nodejs-" d && nixpkgs.lib.hasSuffix "/bin" d);
               gh = at (d: nixpkgs.lib.hasInfix "-gh-" d && nixpkgs.lib.hasSuffix "/bin" d);
