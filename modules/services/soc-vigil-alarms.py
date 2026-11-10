@@ -274,11 +274,15 @@ def cmd_audit(a) -> int:
     # both units stay active (needs root, and root can stop auditd anyway).
     if not a.require_active:
         raise RuntimeError("no --require-active unit given: cannot prove the trail is live")
-    live = subprocess.run([a.systemctl, "is-active", "--quiet", "--", *a.require_active],
-                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    if live.returncode != 0:
-        raise RuntimeError(f"audit trail not live: {' '.join(a.require_active)} not all active "
-                           f"(systemctl is-active exited {live.returncode})")
+    # One call PER unit: with several units `systemctl is-active` exits 0 if
+    # ANY of them is active (systemctl(1)), which would pass with auditd up
+    # and the rules unit failed — the exact blind state this gate exists for.
+    for unit in a.require_active:
+        live = subprocess.run([a.systemctl, "is-active", "--quiet", "--", unit],
+                              capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if live.returncode != 0:
+            raise RuntimeError(f"audit trail not live: {unit} is not active "
+                               f"(systemctl is-active exited {live.returncode})")
     hits = audit_hits(run_ausearch(a.ausearch, checkpoint), a.setup_etc)
     now = time.time()
     for h in hits:

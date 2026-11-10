@@ -276,8 +276,17 @@ class Runners(unittest.TestCase):
     def ausearch(self, script):
         return fake(self.d, "ausearch", f'echo "$@" >> {self.log}\n' + script)
 
-    def audit(self, ausearch, hold=900, systemctl_exit=0):
-        systemctl = fake(self.d, "systemctl", f'echo "$@" >> {self.log}.systemctl\nexit {systemctl_exit}\n')
+    def audit(self, ausearch, hold=900, systemctl_exit=0, inactive=()):
+        # Behaves like the real one: with several units it exits 0 if ANY is
+        # active, so a gate that asks about both at once is caught below.
+        dead = " ".join(inactive)
+        systemctl = fake(self.d, "systemctl", (
+            f'echo "$@" >> {self.log}.systemctl\n'
+            f'[ {systemctl_exit} -ne 0 ] && exit {systemctl_exit}\n'
+            'shift 3\n'  # is-active --quiet --
+            'for u in "$@"; do case " ' + dead + ' " in *" $u "*) ;; *) exit 0;; esac; done\n'
+            'exit 3\n'
+        ))
         return sva.main(["audit", "--ausearch", ausearch, "--systemctl", systemctl,
                          "--require-active", "auditd.service", "--require-active", "audit-rules-nixos.service",
                          "--state-dir", self.sd, "--hold", str(hold), "--setup-etc", SETUP_ETC])
@@ -286,9 +295,16 @@ class Runners(unittest.TestCase):
         # auditd stopped / rules unloaded: ausearch is just as silent, so the
         # quiet window must NOT read clean.
         self.assertEqual(self.audit(self.ausearch(QUIET), systemctl_exit=3), 2)
-        self.assertIn("is-active --quiet -- auditd.service audit-rules-nixos.service",
-                      slurp(self.log + ".systemctl"))
+        self.assertIn("is-active --quiet -- auditd.service", slurp(self.log + ".systemctl"))
         self.assertFalse(os.path.exists(self.log), "ausearch must not run on a dead trail")
+
+    def test_rules_unit_failed_while_auditd_runs_is_error(self):
+        # audit-rules-nixos failed => every rule deleted, auditd still up.
+        self.assertEqual(self.audit(self.ausearch(QUIET), inactive=("audit-rules-nixos.service",)), 2)
+        self.assertFalse(os.path.exists(self.log), "ausearch must not run on a dead trail")
+
+    def test_auditd_down_while_rules_unit_active_is_error(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET), inactive=("auditd.service",)), 2)
 
     def test_live_trail_quiet_window_is_clean(self):
         self.assertEqual(self.audit(self.ausearch(QUIET), systemctl_exit=0), 0)
