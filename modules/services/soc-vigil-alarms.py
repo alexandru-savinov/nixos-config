@@ -106,7 +106,17 @@ def parse_events(raw_text: str) -> list[dict]:
     header, a new prefix), parsing nothing would read as a clean window
     forever; raising makes it an evaluator error instead (exit 2, red).
     """
+    events, bad = scan_events(raw_text)
+    if bad:
+        raise ValueError(bad[0])
+    return events
+
+
+def scan_events(raw_text: str) -> tuple[list[dict], list[str]]:
+    """Like parse_events, but returns (events, unparseable-line notes) so a
+    single bad line cannot hide the good events around it."""
     events: dict[tuple[str, str], dict] = {}
+    bad: list[str] = []
     # split("\n"), NOT splitlines(): str.splitlines() also breaks on GS
     # (0x1d), which is exactly the byte that separates the ENRICHED half of
     # a record, so every enriched record would become two "lines".
@@ -115,11 +125,12 @@ def parse_events(raw_text: str) -> list[dict]:
         if not m:
             if line.strip() in _SEPARATORS:
                 continue
-            raise ValueError(f"unparseable audit line {n} (format drift?): {line[:80]!r}")
+            bad.append(f"unparseable audit line {n} (format drift?): {line[:80]!r}")
+            continue
         rtype, ts, serial, body = m.groups()
         ev = events.setdefault((ts, serial), {"ts": ts, "serial": serial, "records": []})
         ev["records"].append((rtype, _fields(body)))
-    return list(events.values())
+    return list(events.values()), bad
 
 
 def _keys(syscall: dict) -> set[str]:
@@ -162,9 +173,19 @@ def is_activation_writer(event: dict, syscall: dict, keys: set[str], setup_etc: 
 
 
 def audit_hits(raw_text: str, setup_etc: str) -> list[dict]:
-    """PURE. Apply THE AUDIT RULE (module docstring) to `ausearch --raw` text."""
+    """PURE. Apply THE AUDIT RULE (module docstring) to `ausearch --raw` text.
+    Raises ValueError on any unparseable line (see parse_events)."""
+    hits, bad = audit_scan(raw_text, setup_etc)
+    if bad:
+        raise ValueError(bad[0])
+    return hits
+
+
+def audit_scan(raw_text: str, setup_etc: str) -> tuple[list[dict], list[str]]:
+    """PURE. THE AUDIT RULE over every parseable event, plus the bad lines."""
+    events, bad = scan_events(raw_text)
     hits = []
-    for ev in parse_events(raw_text):
+    for ev in events:
         syscall = next((f for t, f in ev["records"] if t == "SYSCALL"), None)
         if syscall is None:
             continue
@@ -187,7 +208,7 @@ def audit_hits(raw_text: str, setup_etc: str) -> list[dict]:
             "exe": _unhex(syscall.get("exe", "")) or "?",
             "paths": _paths(ev),
         })
-    return hits
+    return hits, bad
 
 
 # ── bans ───────────────────────────────────────────────────────────────────
@@ -303,13 +324,30 @@ def cmd_audit(a) -> int:
         if live.returncode != 0:
             raise RuntimeError(f"audit trail not live: {unit} is not active "
                                f"(systemctl is-active exited {live.returncode})")
-    hits = audit_hits(run_ausearch(a.ausearch, checkpoint), a.setup_etc)
+    raw = run_ausearch(a.ausearch, checkpoint)
+    # From here on the checkpoint has ALREADY moved past this window: an
+    # event not acted on now is never seen again. So every hit is logged and
+    # starts the hold BEFORE anything can fail, and a failure after this
+    # point starts the hold too (a window that could not be fully read may
+    # have held a hit), instead of leaving one 5-minute red blip that
+    # picat_dupa = 2 would absorb.
     now = time.time()
-    for h in hits:
-        _log("ALARM audit " + json.dumps(h, sort_keys=True))
-    if hits:
+
+    def start_hold():
         with open(last_hit, "w") as fh:
             fh.write(f"{now:.0f}\n")
+
+    try:
+        hits, bad = audit_scan(raw, a.setup_etc)
+    except Exception:
+        start_hold()
+        raise
+    for h in hits:
+        _log("ALARM audit " + json.dumps(h, sort_keys=True))
+    if hits or bad:
+        start_hold()
+    if bad:
+        raise ValueError(f"{len(bad)} unparseable line(s); first: {bad[0]}")
     # Stay red for a hold window after the last hit, then clear by itself.
     # vigil ticks every 5 min and opens after picat_dupa=2 red ticks; a red
     # stamp that lasted one 5-min evaluator period could fall between ticks.
