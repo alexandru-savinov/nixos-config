@@ -196,7 +196,10 @@ jobs:
           # neutralisation below before it becomes a real comment. claude.yml's
           # Bot-author gate (PR #555, merged) is the other lock; this is the
           # one that does not depend on the model choosing to use it correctly.
+          # Pinned reviewer: Claude Fable 5.2, newest Fable per the models
+          # overview (2026-11-10). Unset, the action picks its own default.
           claude_args: >-
+            --model claude-fable-5-2
             --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Read,Grep,Glob"
             --json-schema '{"type":"object","additionalProperties":false,"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"severity":{"type":"string","enum":["CRITICAL","HIGH","MEDIUM","LOW"]},"path":{"type":"string","minLength":1},"line":{"type":"integer","minimum":1},"side":{"type":"string","enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}},"required":["severity","path","line","side","body"]}}},"required":["findings"]}'
 
