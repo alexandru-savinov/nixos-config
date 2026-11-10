@@ -229,23 +229,36 @@ def _log(msg: str) -> None:
 
 def run_ausearch(ausearch: str, checkpoint: str) -> str:
     """Events since the last run. The checkpoint makes each event seen once."""
-    base = [ausearch, "--raw", "--checkpoint", checkpoint]
+    # --input-logs + stdin=/dev/null: ausearch reads STDIN instead of the
+    # logs whenever fd 0 is a pipe (ausearch.c is_pipe), and then never saves
+    # a checkpoint. Force the logs regardless of how this is started.
+    base = [ausearch, "--input-logs", "--raw", "--checkpoint", checkpoint]
     # First run ever: start ten minutes back instead of replaying the whole
     # trail, so deploying this unit does not page for history.
     first = [] if os.path.exists(checkpoint) else ["--start", "recent"]
-    p = subprocess.run(base + first, capture_output=True, text=True)
+
+    def run(extra):
+        return subprocess.run(base + extra, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+    p = run(first)
     if p.returncode in (10, 11, 12):
         # Rotated log or a damaged checkpoint: ausearch's documented recovery
         # is to resume from the checkpoint's timestamp.
         _log(f"ausearch checkpoint status {p.returncode}; resuming from its timestamp")
-        p = subprocess.run(base + ["--start", "checkpoint"], capture_output=True, text=True)
+        p = run(["--start", "checkpoint"])
     if p.returncode == 0:
         return p.stdout
-    # 1 means "nothing found" OR an argument / file error. Only the former
-    # prints "<no matches>"; anything else is an evaluator failure.
-    if p.returncode == 1 and "<no matches>" in (p.stderr + p.stdout):
+    # 1 means "nothing found" OR an argument / file error. In --raw mode the
+    # nothing-found exit is SILENT (audit 4.1.2 src/ausearch.c main():
+    # `if (report_format != RPT_RAW) fprintf(stderr, "<no matches>\n")`),
+    # while every error path in process_logs/process_file and option parsing
+    # writes to stderr. So: exit 1 with an empty stderr is a quiet window;
+    # exit 1 with anything on stderr is an evaluator failure. ("<no matches>"
+    # alone is accepted too, in case a later audit prints it in raw mode.)
+    err = p.stderr.strip()
+    if p.returncode == 1 and err in ("", "<no matches>"):
         return ""
-    raise RuntimeError(f"ausearch exited {p.returncode}: {p.stderr.strip()[:300]}")
+    raise RuntimeError(f"ausearch exited {p.returncode}: {err[:300]}")
 
 
 def cmd_audit(a) -> int:
@@ -277,10 +290,15 @@ def cmd_audit(a) -> int:
 
 
 def cmd_bans(a) -> int:
-    p1 = subprocess.run([a.cscli, "decisions", "list", "-o", "json"], capture_output=True, text=True)
+    # --limit 0: cscli returns only the newest 100 alerts by default
+    # (clidecision/decisions.go, crowdsec 1.7.2); a home decision past the
+    # first hundred would otherwise read clean.
+    p1 = subprocess.run([a.cscli, "decisions", "list", "-o", "json", "--limit", "0"],
+                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if p1.returncode != 0:
         raise RuntimeError(f"cscli exited {p1.returncode}: {p1.stderr.strip()[:300]}")
-    p2 = subprocess.run([a.fail2ban_client, "status", "sshd"], capture_output=True, text=True)
+    p2 = subprocess.run([a.fail2ban_client, "status", "sshd"], capture_output=True, text=True,
+                        stdin=subprocess.DEVNULL)
     if p2.returncode != 0:
         raise RuntimeError(f"fail2ban-client exited {p2.returncode}: {p2.stderr.strip()[:300]}")
     hits = home_bans(p1.stdout, p2.stdout, [c for c in a.cidrs.split(",") if c])
