@@ -6,6 +6,7 @@
 //   STATE_DIR      where the server copy of the reading position lives
 //   READER_DIR     generated shelf (shelf.html, b-<slug>.html, books.json, book/*.html)
 //   WIFISTUB       file with the UUID body the Kindle Wi-Fi check expects
+//   IMG_DIR        directory with the pictures books.json lists (read per request)
 //   SUBNET_PREFIX  e.g. "192.168.30." for the /check page
 "use strict";
 const http = require("http");
@@ -25,12 +26,17 @@ const UUID = fs.readFileSync(process.env.WIFISTUB);
 const SHELF = fs.readFileSync(path.join(READER_DIR, "shelf.html"), "utf8");
 // Each book: its chapter ids, its contents page, and the file its position is saved in.
 // Every page is loaded once; /r/<id> and /b/<slug> can only ever serve one of these.
-const BOOKS = new Map(), BOOK_OF = new Map(), PAGES = new Map();
+const BOOKS = new Map(), BOOK_OF = new Map(), PAGES = new Map(), IMGS = new Set();
+const IMG_DIR = process.env.IMG_DIR || "";
 for (const bk of JSON.parse(fs.readFileSync(path.join(READER_DIR, "books.json"), "utf8"))) {
   if (!/^[a-z]{1,16}$/.test(bk.slug) || !/^[a-z0-9.-]{1,32}\.json$/.test(bk.posFile)) throw new Error("bad book " + bk.slug);
   const b = { slug: bk.slug, ids: new Set(bk.ids), posFile: path.join(STATE_DIR, bk.posFile),
     start: fs.readFileSync(path.join(READER_DIR, "b-" + bk.slug + ".html"), "utf8") };
   BOOKS.set(bk.slug, b);
+  for (const f of bk.imgs || []) {
+    if (!/^[a-z0-9-]{1,32}\.jpg$/.test(f)) throw new Error("bad image " + f);
+    IMGS.add(f);
+  }
   for (const id of [...bk.ids, bk.toc]) {
     if (BOOK_OF.has(id)) throw new Error("duplicate id " + id);
     BOOK_OF.set(id, b);
@@ -113,6 +119,16 @@ http.createServer(function (q, r) {
     send(r, 200, withPos(BOOKS.get(m[1]).start, BOOKS.get(m[1])));
   } else if ((m = /^\/r\/(index|d-index|([12]|d)-[0-9]{1,2})$/.exec(p)) && PAGES.has(m[1])) {
     send(r, 200, withPos(PAGES.get(m[1]), BOOK_OF.get(m[1])));
+  } else if ((m = /^\/img\/([a-z0-9-]{1,32}\.jpg)$/.exec(p)) && IMGS.has(m[1]) && IMG_DIR) {
+    let img = null;
+    try { img = fs.readFileSync(path.join(IMG_DIR, m[1])); } catch (e) { console.error("missing picture " + m[1]); }
+    if (img) {
+      r.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": img.length, "Cache-Control": "max-age=604800" });
+      r.end(img);
+    } else {
+      r.writeHead(404);
+      r.end();
+    }
   } else if (p === "/pos") {
     const pos = qi < 0 ? null : parsePos(url.slice(qi + 1));
     if (!pos) {
