@@ -529,6 +529,15 @@ in
     extraComponents = [ "roborock" ];
   };
 
+  # DNS fallback. Tailscale takes /etc/resolv.conf over exclusively, and the file
+  # persists across reboots, so until tailscaled is up after a boot the only
+  # nameserver (100.100.100.100) answers nothing: on 2026-10-27 lookups failed
+  # for the first half-minute. The gateway is appended as a second nameserver;
+  # resolvers fall over to it when the first one is silent.
+  networking.resolvconf.extraConfig = ''
+    name_servers_append='192.168.1.1'
+  '';
+
   # python-roborock v4 login workaround. Roborock's v4 auth endpoint
   # (/api/v4/auth/email/login/code) returns "parameter error" (code 1002) for
   # some accounts/regions — confirmed for this account: every country/countryCode
@@ -538,9 +547,16 @@ in
   # never finish setup (and would also break later on token-reauth). The library
   # already delegates to its working v1 methods when country/country_code are
   # unset, so we force that fallback branch unconditionally.
+  #
+  # The patch file fixes a second upstream fault: a DNS or connection failure
+  # left the library as a raw aiohttp error, which Home Assistant treats as a
+  # crashed setup and never retries. One failed lookup at boot (2026-10-27) kept
+  # the vacuum unavailable for 15 days. Raised as RoborockException instead, it
+  # becomes ConfigEntryNotReady and Home Assistant retries on its own.
   services.home-assistant.package = pkgs.home-assistant.override {
     packageOverrides = _self: super: {
       python-roborock = super.python-roborock.overridePythonAttrs (old: {
+        patches = (old.patches or [ ]) ++ [ ./python-roborock-network-errors.patch ];
         postPatch = (old.postPatch or "") + ''
           substituteInPlace roborock/web_api.py \
             --replace-fail \
