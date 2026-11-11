@@ -73,6 +73,11 @@ let
   # whitelist (module-eval asserts the CrowdSec half). One source.
   neverBan = config.services.fail2ban.ignoreIP;
 
+  # Rule 4 is passed only when the key really is an agenix secret here and
+  # its user exists; otherwise the exemption is simply absent (fires).
+  councilExempt = (config.age.secrets ? ${cfg.councilKey.file})
+    && (config.users.users ? ${cfg.councilKey.user});
+
   common = {
     Type = "oneshot";
     ExecStopPost = "${pkgs.bash}/bin/bash ${stampScript}";
@@ -115,6 +120,31 @@ in
 {
   options.services.soc-vigil-alarms = {
     enable = mkEnableOption "SOC alarms for vigil: login access to secrets/sudoers, bans on home addresses";
+
+    councilKey = {
+      user = mkOption {
+        type = types.str;
+        default = "sancta";
+        description = ''
+          Account whose in-session /council runs read `councilKey.file`.
+          Passed by NAME and resolved to a uid at run time (on sancta-choir
+          users.users.sancta.uid is null: NixOS allocates it). One half of the
+          single audit exemption; see rule 4 in soc-vigil-alarms.py.
+        '';
+      };
+      file = mkOption {
+        type = types.str;
+        default = "jev-openrouter-key";
+        description = ''
+          The one agenix secret (its name under age.secretsDir) that
+          council/scripts/jev-shadow.mjs reads with node on every /council
+          run (owner decision 2026-11-11, "fix A"). Only an O_RDONLY openat
+          of exactly this file, by node from the store, with auid = uid =
+          `councilKey.user`, is exempt. If the secret is not declared on the
+          host, no exemption is passed and every read fires.
+        '';
+      };
+    };
 
     auditHold = mkOption {
       type = types.ints.between 600 3600;
@@ -184,10 +214,21 @@ in
           (toString cfg.auditHold)
           "--setup-etc"
           setupEtc
-        ];
+        ]
+        + lib.optionalString councilExempt (" " + lib.escapeShellArgs [
+          "--council-user"
+          cfg.councilKey.user
+          "--council-key"
+          cfg.councilKey.file
+        ]);
         # The checkpoint and last-hit files live in $STATE_DIRECTORY (set by
         # StateDirectory=), so no off-store path appears in ExecStart.
-        Environment = [ "SANCTA_DOCTRINE_STAMP=${cfg.auditStampPath}" ];
+        # The secrets paths for rule 4 go the same way (env, not argv).
+        Environment = [
+          "SANCTA_DOCTRINE_STAMP=${cfg.auditStampPath}"
+          "SOC_SECRETS_DIR=${config.age.secretsDir}"
+          "SOC_SECRETS_MOUNT=${config.age.secretsMountPoint}"
+        ];
         # Reads /var/log/audit (root-owned, so owner bits suffice: no caps).
         CapabilityBoundingSet = [ "" ];
         PrivateNetwork = true;

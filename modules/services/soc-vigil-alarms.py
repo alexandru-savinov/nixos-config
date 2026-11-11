@@ -40,6 +40,22 @@ THE AUDIT RULE (exact):
        generation among its argv (PROCTITLE). That is the only routine writer
        of /etc/sudoers, and it only carries a login auid when someone runs
        switch-to-configuration by hand instead of through nixos-rebuild.
+    4. it is NOT the council's own key read (owner decision 2026-11-11,
+       "fix A"): every /council run reads one agenix key in-session
+       (council/scripts/jev-shadow.mjs, readFileSync of DEFAULT_KEY_FILE)
+       and would otherwise page on each run. Exempt ONLY when ALL hold:
+         key == {agenix-secrets} exactly;
+         auid AND uid == the council user's uid (resolved at run time from
+           the account name, since NixOS allocates it: users.users.sancta.uid
+           is null on choir);
+         exe is /nix/store/<hash>-nodejs-<ver>/bin/node;
+         syscall is openat (x86_64 257) with O_ACCMODE == O_RDONLY;
+         every PATH record names exactly the key file, either as
+           <secretsDir>/<key> (/run/agenix is a symlink, and the kernel's
+           PATH name is the pathname as passed) or as
+           <secretsMountPoint>/<generation>/<key> (the resolved form).
+       The same user reading any other secret, any other program reading
+       this key, a write, or a relative path all still fire.
   Everything else in the audit log is ignored here.
 
 THE BAN RULE (exact):
@@ -172,16 +188,45 @@ def is_activation_writer(event: dict, syscall: dict, keys: set[str], setup_etc: 
     )
 
 
-def audit_hits(raw_text: str, setup_etc: str) -> list[dict]:
+_STORE_NODE = re.compile(r"^/nix/store/[0-9a-z]{32}-nodejs-[^/]+/bin/node$")
+_OPENAT_X86_64 = "257"
+_ARCH_X86_64 = "c000003e"
+
+
+def is_council_key_read(event: dict, syscall: dict, keys: set[str], exempt: dict | None) -> bool:
+    """Rule 4 (module docstring). `exempt` = {uid, key, secrets_dir,
+    secrets_mount}; None disables the exemption (everything fires)."""
+    if not exempt or exempt.get("uid") is None:
+        return False
+    uid = str(exempt["uid"])
+    if keys != {"agenix-secrets"} or syscall.get("auid") != uid or syscall.get("uid") != uid:
+        return False
+    if _STORE_NODE.match(_unhex(syscall.get("exe", "")) or "") is None:
+        return False
+    if syscall.get("arch") != _ARCH_X86_64 or syscall.get("syscall") != _OPENAT_X86_64:
+        return False
+    try:
+        if int(syscall.get("a2", "x"), 16) & 0o3 != 0:  # O_ACCMODE: read-only only
+            return False
+    except ValueError:
+        return False
+    key = exempt["key"]
+    direct = exempt["secrets_dir"].rstrip("/") + "/" + key
+    resolved = re.compile("^" + re.escape(exempt["secrets_mount"].rstrip("/")) + r"/[0-9]+/" + re.escape(key) + "$")
+    paths = _paths(event)
+    return bool(paths) and all(p == direct or resolved.match(p) for p in paths)
+
+
+def audit_hits(raw_text: str, setup_etc: str, exempt: dict | None = None) -> list[dict]:
     """PURE. Apply THE AUDIT RULE (module docstring) to `ausearch --raw` text.
     Raises ValueError on any unparseable line (see parse_events)."""
-    hits, bad = audit_scan(raw_text, setup_etc)
+    hits, bad = audit_scan(raw_text, setup_etc, exempt)
     if bad:
         raise ValueError(bad[0])
     return hits
 
 
-def audit_scan(raw_text: str, setup_etc: str) -> tuple[list[dict], list[str]]:
+def audit_scan(raw_text: str, setup_etc: str, exempt: dict | None = None) -> tuple[list[dict], list[str]]:
     """PURE. THE AUDIT RULE over every parseable event, plus the bad lines."""
     events, bad = scan_events(raw_text)
     hits = []
@@ -198,6 +243,8 @@ def audit_scan(raw_text: str, setup_etc: str) -> tuple[list[dict], list[str]]:
         if auid is not None and auid in UNSET_AUID:
             continue
         if is_activation_writer(ev, syscall, keys, setup_etc):
+            continue
+        if is_council_key_read(ev, syscall, keys, exempt):
             continue
         hits.append({
             "ts": ev["ts"],
@@ -338,7 +385,7 @@ def cmd_audit(a) -> int:
             fh.write(f"{now:.0f}\n")
 
     try:
-        hits, bad = audit_scan(raw, a.setup_etc)
+        hits, bad = audit_scan(raw, a.setup_etc, council_exemption(a))
     except Exception:
         start_hold()
         raise
@@ -384,6 +431,20 @@ def cmd_bans(a) -> int:
     return 0
 
 
+def council_exemption(a) -> dict | None:
+    """Resolve rule 4's uid from the account name. Unresolvable -> None: the
+    exemption switches OFF and the read fires (noise, never blindness)."""
+    if not (a.council_user and a.council_key and a.secrets_dir and a.secrets_mount):
+        return None
+    import pwd
+    try:
+        uid = pwd.getpwnam(a.council_user).pw_uid
+    except KeyError:
+        _log(f"council exemption off: no account {a.council_user!r}")
+        return None
+    return {"uid": uid, "key": a.council_key, "secrets_dir": a.secrets_dir, "secrets_mount": a.secrets_mount}
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="soc-vigil-alarms")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -394,6 +455,12 @@ def main(argv: list[str]) -> int:
     au.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
     au.add_argument("--hold", type=int, required=True)
     au.add_argument("--setup-etc", required=True)
+    au.add_argument("--council-user")
+    au.add_argument("--council-key")
+    # Paths come from the environment so no off-store path sits in ExecStart
+    # (tests/execstart-path-contract.nix).
+    au.add_argument("--secrets-dir", default=os.environ.get("SOC_SECRETS_DIR"))
+    au.add_argument("--secrets-mount", default=os.environ.get("SOC_SECRETS_MOUNT"))
     bn = sub.add_parser("bans")
     bn.add_argument("--cscli", required=True)
     bn.add_argument("--fail2ban-client", required=True)
