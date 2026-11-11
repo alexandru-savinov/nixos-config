@@ -687,7 +687,7 @@ let
     # soc-in-a-box banning step (Vigil horizon phase 4, council-gated):
     # CrowdSec's firewall bouncer applies local decisions on choir, behind a
     # firewall gate that RETURNs every neverBan range before the bouncer's
-    # chain, and fail2ban's sshd jail is retired on choir only. Each negative
+    # chain; fail2ban's sshd jail overlaps on choir until 2026-11-18. Each negative
     # arm asserts the SPECIFIC soc-in-a-box assertion fires on the REAL choir
     # config (not "evaluation failed somewhere"). A tailnet lockout is only
     # recoverable from the Hetzner console, so the gate is pinned both as an
@@ -710,9 +710,8 @@ let
         gateWall = "soc-in-a-box: the firewall gate in front of the CrowdSec bouncer";
         chainWall = "soc-in-a-box: the CrowdSec bouncer may hook only";
         keyWall = "soc-in-a-box: the CrowdSec bouncer must talk to the loopback LAPI only";
-        engineWall = "soc-in-a-box: fail2ban's sshd jail must be off where CrowdSec bans";
         f2bWall = "soc-in-a-box: fail2ban must never ban the tailnet";
-        walls = [ neverBanWall modeWall gateWall chainWall keyWall engineWall f2bWall ];
+        walls = [ neverBanWall modeWall gateWall chainWall keyWall f2bWall ];
 
         present = c: prefix: lib.any (a: lib.hasPrefix prefix a.message) c.assertions;
         fires = c: prefix: lib.any (a: !a.assertion && lib.hasPrefix prefix a.message) c.assertions;
@@ -727,6 +726,19 @@ let
           iptablesMode = b.settings.mode == "iptables" && !cfg.networking.nftables.enable;
           onlyBansChain = b.settings.iptables_chains == [ "sancta-crowdsec-bans" ];
           afterFirewall = builtins.elem "firewall.service" cfg.systemd.services.crowdsec-firewall-bouncer.after;
+          # Robustness (adversarial review): one crash or a slow LAPI at boot
+          # must not leave bans recorded but unapplied. Pinned in the option
+          # AND in the rendered unit text.
+          retryInitialConnect = b.settings.retry_initial_connect or false;
+          restartOnFailure =
+            let
+              sc = cfg.systemd.services.crowdsec-firewall-bouncer.serviceConfig;
+              unit = cfg.systemd.units."crowdsec-firewall-bouncer.service".text;
+            in
+            sc.Restart == "on-failure"
+            && sc.RestartSec == "10s"
+            && lib.hasInfix "Restart=on-failure" unit
+            && lib.hasInfix "RestartSec=10s" unit;
           # Rendered gate: every tailnet / loopback / LAN range RETURNs
           # before the jump to the bans chain, and the gate is nixos-fw rule 1.
           gateRendered =
@@ -751,9 +763,17 @@ let
           # The same list reaches CrowdSec's whitelist and fail2ban's ignoreIP.
           whitelistSameList = (lib.head cfg.services.crowdsec.localConfig.parsers.s02Enrich).whitelist.cidr == cfg.sancta.soc.neverBan;
           fail2banIgnoreSameList = cfg.services.fail2ban.ignoreIP == cfg.sancta.soc.neverBan;
-          # fail2ban sshd jail retired on choir, fail2ban itself still on.
-          choirSshdJailOff = cfg.services.fail2ban.enable && cfg.services.fail2ban.jails.sshd.settings.enabled == false;
-          # ...and ONLY on choir: rpi5-full keeps the common.nix jail.
+          # One-week overlap (until 2026-11-18): fail2ban's sshd jail stays
+          # ON on choir next to the bouncer, and its rendered DEFAULT
+          # ignoreip carries both tailnet ranges, so the overlap cannot stack
+          # bans on the admin path.
+          choirSshdJailOverlap =
+            let f = cfg.services.fail2ban;
+            in f.enable
+              && f.jails.sshd.settings.enabled == true
+              && lib.hasInfix "100.64.0.0/10" f.jails.DEFAULT.settings.ignoreip
+              && lib.hasInfix "fd7a:115c:a1e0::/48" f.jails.DEFAULT.settings.ignoreip;
+          # rpi5-full keeps the common.nix jail too.
           rpi5KeepsSshdJail =
             let r = self.nixosConfigurations.rpi5-full.config.services.fail2ban;
             in r.enable && r.jails.sshd.settings.enabled == true;
@@ -784,8 +804,6 @@ let
             }])
             keyWall;
           remoteLapiRejected = fires (extend [{ services.crowdsec-firewall-bouncer.settings.api_url = lib.mkForce "http://100.100.100.100:8095"; }]) keyWall;
-          # fail2ban sshd jail back on: two engines.
-          sshdJailBackRejected = fires (extend [{ services.fail2ban.jails.sshd.settings.enabled = lib.mkOverride 10 true; }]) engineWall;
           # fail2ban without the tailnet in ignoreIP: fires while fail2ban runs.
           fail2banIgnoreRejected = fires (extend [{ services.fail2ban.ignoreIP = lib.mkForce [ "127.0.0.0/8" ]; }]) f2bWall;
         };

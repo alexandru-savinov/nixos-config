@@ -1,8 +1,8 @@
 # Host security monitoring in one file: the Linux audit trail (auditd) plus
 # CrowdSec reading sshd from the journal, with a firewall bouncer that applies
 # CrowdSec's local decisions to the host firewall (Vigil horizon phase 4,
-# council-gated). CrowdSec is the only sshd banning engine on a host that
-# imports this file: fail2ban's sshd jail must be off (asserted below).
+# council-gated). fail2ban's sshd jail may run alongside it during an overlap;
+# both engines exempt the same neverBan list (asserted below).
 #
 # Import it in a host's configuration.nix; there is no separate enable switch.
 # Everything stays on the host: auditd writes to /var/log/audit, CrowdSec's
@@ -84,15 +84,6 @@ let
   returnIdx = cidr: lineIndex "-A ${gateChain} -s ${cidr} -j RETURN";
   jumpToBansIdx = lineIndex "-A ${gateChain} -j ${bansChain}";
   gateHookIdx = lineIndex "-I nixos-fw 1 -j ${gateChain}";
-  # fail2ban renders a jail as `{ enabled = jail.enabled; } // jail.settings`
-  # (nixpkgs fail2ban.nix, mkJailConfig), so settings.enabled wins when set.
-  fail2banSshdJailOn =
-    let
-      j = config.services.fail2ban.jails.sshd or null;
-    in
-    if j == null then false
-    else if builtins.isString j then j != ""
-    else j.settings.enabled or j.enabled;
 
   adminPathRendered = lib.filter (c: config.networking.enableIPv6 || !isV6 c) adminPath;
   gateExemptsAdminPath =
@@ -189,13 +180,15 @@ in
 
     # ── CrowdSec: sshd detection from the journal, local decisions only ─────
     #
-    # One banning engine for sshd: CrowdSec, through the firewall bouncer
-    # below. fail2ban's sshd jail (hosts/common.nix) must be off on any host
-    # that imports this file (the host turns it off; asserted below), so the
-    # two never stack bans on the admin path. A banned IP shows in
-    # `cscli decisions list`, and its drop in `iptables -L CROWDSEC_CHAIN -v`.
-    # ignoreIP stays set so that fail2ban, if a host ever runs it for another
-    # jail, inherits the same exemption list.
+    # Two engines may ban sshd during an overlap (choir: fail2ban's sshd jail
+    # stays on until 2026-11-18, see hosts/sancta-choir/configuration.nix).
+    # Stacking on the admin path is impossible: both exempt the same neverBan
+    # list (fail2ban via ignoreIP, CrowdSec via its whitelist AND the firewall
+    # gate), and the assertions below pin the tailnet in both. They differ in
+    # reach: fail2ban drops port 22 only, the bouncer drops EVERY port from a
+    # banned IP. A CrowdSec ban shows in `cscli decisions list` and its drop in
+    # `iptables -L CROWDSEC_CHAIN -v`; a fail2ban ban in
+    # `fail2ban-client status sshd`.
     services.fail2ban.ignoreIP = cfg.neverBan;
 
     services.crowdsec = {
@@ -283,14 +276,30 @@ in
         # The ONLY chain the bouncer hooks; see gateCommands above. The module
         # default is INPUT (lib.mkDefault), which would sit in front of the gate.
         iptables_chains = [ bansChain ];
+        # Keep retrying the first LAPI connection instead of exiting when
+        # crowdsec is slow to start (hub download at boot). Read by
+        # go-cs-bouncer v0.0.16 StreamBouncer (`retry_initial_connect`),
+        # which cs-firewall-bouncer 0.0.34 uses.
+        retry_initial_connect = true;
       };
     };
 
     networking.firewall.extraCommands = gateCommands;
 
-    # Start after the firewall has created the bans chain (boot order already
-    # puts the firewall before network-pre.target; this makes it explicit).
-    systemd.services.crowdsec-firewall-bouncer.after = [ "firewall.service" ];
+    systemd.services.crowdsec-firewall-bouncer = {
+      # Start after the firewall has created the bans chain (boot order
+      # already puts the firewall before network-pre.target; this makes it
+      # explicit).
+      after = [ "firewall.service" ];
+      # The nixpkgs unit has no Restart=: one crash and bans stop applying
+      # until someone notices. 10s apart never trips the default start limit
+      # (5 starts / 10s), so it keeps trying; each failure still reaches the
+      # statusline.
+      serviceConfig = {
+        Restart = "on-failure";
+        RestartSec = "10s";
+      };
+    };
 
     assertions = [
       {
@@ -318,10 +327,6 @@ in
           && bouncer.secrets.apiKeyPath == null
           && bouncer.settings.api_key == "@API_KEY_FILE@";
         message = "soc-in-a-box: the CrowdSec bouncer must talk to the loopback LAPI only, with a host-minted key (registerBouncer), never a key in the Nix store.";
-      }
-      {
-        assertion = !(config.services.fail2ban.enable && fail2banSshdJailOn);
-        message = "soc-in-a-box: fail2ban's sshd jail must be off where CrowdSec bans; two engines stack bans on the admin path.";
       }
       {
         assertion = lib.hasPrefix "127.0.0.1:" config.services.crowdsec.settings.general.api.server.listen_uri;

@@ -65,13 +65,14 @@
     ./n8n.nix # studio conductor (sq085); the walls in ./n8n-guard.nix hold even while it is off
   ];
 
-  # sshd bans on choir come from CrowdSec's firewall bouncer
-  # (modules/services/soc-in-a-box.nix), behind the neverBan gate. fail2ban's
-  # sshd jail (hosts/common.nix) is retired HERE only: other hosts keep it.
-  # One engine, so the two never stack bans on the admin path; soc-in-a-box
-  # asserts the jail stays off. fail2ban itself stays enabled with no jail, so
-  # its tailnet-ignoreIP assertion still guards any jail a later change adds.
-  services.fail2ban.jails.sshd.settings.enabled = lib.mkForce false;
+  # sshd bans on choir: CrowdSec's firewall bouncer
+  # (modules/services/soc-in-a-box.nix, behind the neverBan gate) AND
+  # fail2ban's sshd jail from hosts/common.nix, which stays ON here for a
+  # one-week overlap until 2026-11-18, then is retired in a follow-up PR
+  # (choir only; other hosts keep it). Stacking bans on the admin path is
+  # impossible during the overlap: both engines exempt the same neverBan
+  # list (fail2ban via ignoreIP, CrowdSec via its whitelist and the gate),
+  # and soc-in-a-box asserts the tailnet is in both.
 
   # Enable development tools and agent CLIs.
   customModules.dev-tools.enable = true;
