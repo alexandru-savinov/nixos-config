@@ -45,8 +45,15 @@ def hexargv(*argv):
     return "\x00".join(argv).encode().hex().upper()
 
 
+def kernel_proctitle(*argv):
+    # What kernel/auditsc.c logs: the first MAX_PROCTITLE_AUDIT_LEN (128)
+    # bytes of argv, trailing non-printables trimmed (audit_proctitle_rtrim).
+    raw = "\x00".join(argv).encode()[:128].rstrip(b"\x00")
+    return raw.hex().upper()
+
+
 def event(serial, *, key, auid, exe, comm, path, argv, success="yes", syscall=257, enriched=True,
-          uid="0", flags="0"):
+          uid="0", flags="0", title=None):
     stamp = f"msg=audit(1762790400.{serial % 1000:03d}:{serial})"
     # The kernel prints a key quoted, as (null), or hex when it holds several
     # keys joined by SOH. Uppercase-hex fixtures are passed through as-is.
@@ -65,7 +72,7 @@ def event(serial, *, key, auid, exe, comm, path, argv, success="yes", syscall=25
         f'type=CWD {stamp}: cwd="/root"',
         f'type=PATH {stamp}: item=0 name="{path}" inode=1234 dev=00:1a mode=0100400 '
         f"ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0",
-        f"type=PROCTITLE {stamp}: proctitle={hexargv(*argv)}",
+        f"type=PROCTITLE {stamp}: proctitle={title or hexargv(*argv)}",
     ])
 
 
@@ -85,10 +92,11 @@ STORE_ETC = f"/nix/store/{'c' * 32}-etc/etc"
 
 
 def activation_writes_sudoers(serial=3, auid="1000", setup_etc=SETUP_ETC, exe=PERL, argv=None,
-                              path="/etc/sudoers"):
+                              path="/etc/sudoers", truncated=False):
+    argv = argv or [PERL_ENV, setup_etc, STORE_ETC]
     return event(serial, key="sudoers", auid=auid, exe=exe, comm="perl",
-                 path=path, syscall=82,
-                 argv=argv or [PERL_ENV, setup_etc, STORE_ETC])
+                 path=path, syscall=82, argv=argv,
+                 title=kernel_proctitle(*argv) if truncated else None)
 
 
 def classify(*events):
@@ -141,6 +149,21 @@ class AuditRule(unittest.TestCase):
     def test_activation_tmp_then_rename_is_silent(self):
         self.assertEqual(classify(activation_writes_sudoers(path="/etc/sudoers.tmp")), [])
 
+    def test_truncated_activation_with_foreign_script_fires(self):
+        for argv in ([PERL_ENV, OTHER_SETUP_ETC, STORE_ETC],
+                     [PERL_ENV, "-e", "1", SETUP_ETC, STORE_ETC],
+                     [PERL_ENV + "x" * 60, SETUP_ETC, STORE_ETC]):  # cut inside the script word
+            self.assertEqual(len(classify(activation_writes_sudoers(argv=argv, truncated=True))), 1, argv)
+
+    def test_truncated_activation_with_a_non_store_tree_fires(self):
+        # Cut at 128 leaves "/t" of /tmp/...: not a prefix of the store shape.
+        self.assertEqual(len(classify(activation_writes_sudoers(
+            argv=[PERL_ENV, SETUP_ETC, "/tmp/evil-etc"], truncated=True))), 1)
+
+    def test_short_two_word_title_is_not_a_cut(self):
+        # Two words well under the limit: the third was never there.
+        self.assertEqual(len(classify(activation_writes_sudoers(argv=[PERL_ENV, SETUP_ETC], truncated=True))), 1)
+
     def test_activation_args_from_non_store_perl_fires(self):
         self.assertEqual(len(classify(activation_writes_sudoers(exe="/tmp/perl"))), 1)
 
@@ -172,6 +195,22 @@ class AuditRule(unittest.TestCase):
 
     def test_activation_write_to_sudoers_with_login_auid_is_silent(self):
         self.assertEqual(classify(activation_writes_sudoers()), [])
+
+    def test_truncated_activation_write_is_silent(self):
+        # The real call: perl-env 68 + script 56 + tree 51 + NULs = 177 bytes;
+        # the kernel keeps 128, so the tree arrives as "/n".
+        argv = [PERL_ENV, SETUP_ETC, STORE_ETC]
+        self.assertEqual(len("\x00".join(argv)), 177)
+        title = bytes.fromhex(kernel_proctitle(*argv)).decode()
+        self.assertEqual(title.split("\x00")[2], "/n")
+        self.assertEqual(classify(activation_writes_sudoers(truncated=True)), [])
+
+    def test_truncated_activation_cut_on_the_script_nul_is_silent(self):
+        # argv[0] two bytes longer puts the cut on the NUL after the script.
+        perl = PERL_ENV.replace("-env/", "00-env/")
+        argv = [perl, SETUP_ETC, STORE_ETC]
+        self.assertEqual(len(bytes.fromhex(kernel_proctitle(*argv))), 127)
+        self.assertEqual(classify(activation_writes_sudoers(argv=argv, truncated=True)), [])
 
     def test_activation_write_to_sudoers_via_systemd_run_is_silent(self):
         self.assertEqual(classify(activation_writes_sudoers(auid=UNSET)), [])

@@ -41,7 +41,9 @@ THE AUDIT RULE (exact):
        /nix/store perl, argv (PROCTITLE) exactly
        `<perl> <setup-etc.pl of THIS generation> /nix/store/<hash>-etc/etc`
        (three words, the script in second place, so no perl option or
-       inline code can come before it), and every PATH record one of
+       inline code can come before it; when the kernel's 128-byte PROCTITLE
+       cut falls past the script, the third word may be a prefix of that
+       shape or gone, see _etc_tree_word), and every PATH record one of
        /etc, /etc/sudoers, /etc/sudoers.tmp. That is the only routine writer
        of /etc/sudoers, and it only carries a login auid when someone runs
        switch-to-configuration by hand instead of through nixos-rebuild.
@@ -168,12 +170,15 @@ def _keys(syscall: dict) -> set[str]:
     return {k for k in decoded.split("\x01") if k}
 
 
-def _argv(event: dict) -> list[str]:
+def _proctitle(event: dict) -> str:
     for rtype, f in event["records"]:
         if rtype == "PROCTITLE" and "proctitle" in f:
-            decoded = _unhex(f["proctitle"]) or ""
-            return [a for a in decoded.split("\x00") if a]
-    return []
+            return _unhex(f["proctitle"]) or ""
+    return ""
+
+
+def _argv(event: dict) -> list[str]:
+    return [a for a in _proctitle(event).split("\x00") if a]
 
 
 def _paths(event: dict) -> list[str]:
@@ -187,11 +192,38 @@ def _paths(event: dict) -> list[str]:
 
 
 _STORE_ETC = re.compile(r"^/nix/store/[0-9a-z]{32}-etc/etc$")
+_STORE_ETC_FILL = f"/nix/store/{'0' * 32}-etc/etc"
+# kernel/auditsc.c MAX_PROCTITLE_AUDIT_LEN: PROCTITLE holds the first 128
+# bytes of argv, then trailing non-printables (the NUL at a cut) are trimmed.
+_PROCTITLE_MAX = 128
+
+
+def _etc_tree_word(argv: list[str], title: str) -> bool:
+    """argv[2] is the store etc tree, or what is left of it after the cut.
+
+    The real call is ~177 bytes (perl-env 68 + script 56 + tree 52 + NULs),
+    so on a live host the third word arrives as "/n". EXECVE would carry the
+    whole argv but is not an option: it is logged only for execve(2), and
+    this event is the rename/openat on /etc/sudoers. So the cut is accepted
+    as a cut: only when the title is at the kernel limit, the script word
+    is whole, and the stub is a prefix of the tree's shape. What the cut
+    hides (the tree, and anything after it) is not matched; exe, script and
+    PATH records carry the exemption there.
+    """
+    if len(argv) == 3 and _STORE_ETC.match(argv[2]):
+        return True
+    if len(title.encode("utf-8", "replace")) < _PROCTITLE_MAX - 1:
+        return False  # not truncated: the whole argv had to be there
+    if len(argv) == 2:
+        return title.endswith(argv[1])  # cut on the NUL after the script
+    stub = argv[2]
+    return len(stub) < len(_STORE_ETC_FILL) and _STORE_ETC.match(stub + _STORE_ETC_FILL[len(stub) :]) is not None
 _ACTIVATION_PATHS = frozenset({"/etc", "/etc/", "/etc/sudoers", "/etc/sudoers.tmp"})
 
 
 def is_activation_writer(event: dict, syscall: dict, keys: set[str], setup_etc: str) -> bool:
     exe = _unhex(syscall.get("exe", "")) or ""
+    title = _proctitle(event)
     argv = _argv(event)
     paths = _paths(event)
     return (
@@ -199,9 +231,9 @@ def is_activation_writer(event: dict, syscall: dict, keys: set[str], setup_etc: 
         and bool(setup_etc)
         and _STORE_PERL.match(exe) is not None
         # Positional, not membership: the script must be what perl runs.
-        and len(argv) == 3
+        and len(argv) in (2, 3)
         and argv[1] == setup_etc
-        and _STORE_ETC.match(argv[2]) is not None
+        and _etc_tree_word(argv, title)
         and bool(paths)
         and all(p in _ACTIVATION_PATHS for p in paths)
     )
