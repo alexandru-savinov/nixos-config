@@ -1,0 +1,13 @@
+--- a/roborock/web_api.py	2026-11-11 08:46:22.217974484 +0200
++++ b/roborock/web_api.py	2026-11-11 08:46:22.261974432 +0200
+@@ -671,6 +671,10 @@
+             _LOGGER.info("Resp raw: %s", resp_raw)
+             # Still raise the err so that it's clear it failed.
+             raise err
++        except (aiohttp.ClientConnectionError, TimeoutError) as err:
++            # A DNS or connection failure is temporary. Raised as RoborockException so callers
++            # (Home Assistant: ConfigEntryNotReady) retry instead of treating it as a crash.
++            raise RoborockException(f"Cannot reach {self.base_url}: {err}") from err
+         finally:
+             if close_session:
+                 await session.close()
