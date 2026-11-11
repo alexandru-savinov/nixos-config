@@ -34,6 +34,7 @@ let
       pkgs.vulnix
       pkgs.jq
       pkgs.coreutils
+      pkgs.findutils
       config.nix.package # same nix as the daemon; vulnix shells out to it
     ];
     text = ''
@@ -43,6 +44,17 @@ let
       # successful run (Meta.should_pack, vulnix 1.12.1 nvd.py), dropping
       # old transactions, so nightly updates do not accumulate history.
       install -d -m 0700 "$state/cache"
+
+      # Hard cap on top of that: if the cache is ever larger than
+      # VULNIX_CACHE_CAP_MB (a missed pack, the Data.fs.old a pack leaves
+      # behind, anything unforeseen), empty it and let this run rebuild it
+      # from the feeds. It holds nothing that cannot be downloaded again.
+      cap_mb="$VULNIX_CACHE_CAP_MB"
+      used_mb=$(du -sm "$state/cache" | cut -f1)
+      if [ "$used_mb" -gt "$cap_mb" ]; then
+        echo "vulnix-nightly: cache is $used_mb MB, over the $cap_mb MB cap; emptying it for a cold rebuild" >&2
+        find "$state/cache" -mindepth 1 -delete
+      fi
 
       tmp=$(mktemp "$state/report.json.XXXXXX")
       trap 'rm -f "$tmp"' EXIT
@@ -86,6 +98,10 @@ in
       # The store is read-only in this sandbox; talk to the daemon explicitly
       # instead of relying on nix's auto-detection.
       NIX_REMOTE = "daemon";
+      # Upper bound for /var/lib/vulnix/cache in MB, enforced by the scan
+      # script. A guess with room to spare, not a measured size (choir's
+      # disk is 150 GB); going over it costs one cold rebuild, nothing else.
+      VULNIX_CACHE_CAP_MB = "2048";
     };
     serviceConfig = {
       Type = "oneshot";
