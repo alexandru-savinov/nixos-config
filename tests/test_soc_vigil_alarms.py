@@ -80,11 +80,15 @@ def service_reads_agenix(serial=2):
                  path="/run/agenix.d/3/example-two", argv=[AGE, "--decrypt"])
 
 
-def activation_writes_sudoers(serial=3, auid="1000", setup_etc=SETUP_ETC, exe=PERL):
+PERL_ENV = f"/nix/store/{'e' * 32}-perl-5.40.0-env/bin/perl"
+STORE_ETC = f"/nix/store/{'c' * 32}-etc/etc"
+
+
+def activation_writes_sudoers(serial=3, auid="1000", setup_etc=SETUP_ETC, exe=PERL, argv=None,
+                              path="/etc/sudoers"):
     return event(serial, key="sudoers", auid=auid, exe=exe, comm="perl",
-                 path="/etc/sudoers", syscall=82,
-                 argv=[f"/nix/store/{'e' * 32}-perl-5.40.0-env/bin/perl", setup_etc,
-                       f"/nix/store/{'c' * 32}-etc/etc"])
+                 path=path, syscall=82,
+                 argv=argv or [PERL_ENV, setup_etc, STORE_ETC])
 
 
 def classify(*events):
@@ -118,6 +122,24 @@ class AuditRule(unittest.TestCase):
     def test_activation_with_foreign_setup_etc_fires(self):
         # Same perl, a setup-etc.pl that is not this generation's: not exempt.
         self.assertEqual(len(classify(activation_writes_sudoers(setup_etc=OTHER_SETUP_ETC))), 1)
+
+    def test_setup_etc_as_a_mere_argument_fires(self):
+        # The pinned path present in argv but not what perl runs: not exempt.
+        for argv in ([PERL_ENV, "-e", "1", SETUP_ETC],
+                     [PERL_ENV, "-e", "1", SETUP_ETC, STORE_ETC],
+                     [PERL_ENV, STORE_ETC, SETUP_ETC],
+                     [PERL_ENV, SETUP_ETC]):
+            self.assertEqual(len(classify(activation_writes_sudoers(argv=argv))), 1, argv)
+
+    def test_setup_etc_with_a_non_store_etc_tree_fires(self):
+        for tree in ("/tmp/evil-etc", STORE_ETC + "/..", f"/nix/store/{'c' * 32}-etc/etc/x"):
+            self.assertEqual(len(classify(activation_writes_sudoers(argv=[PERL_ENV, SETUP_ETC, tree]))), 1, tree)
+
+    def test_activation_touching_another_path_fires(self):
+        self.assertEqual(len(classify(activation_writes_sudoers(path="/etc/sudoers.d/x"))), 1)
+
+    def test_activation_tmp_then_rename_is_silent(self):
+        self.assertEqual(classify(activation_writes_sudoers(path="/etc/sudoers.tmp")), [])
 
     def test_activation_args_from_non_store_perl_fires(self):
         self.assertEqual(len(classify(activation_writes_sudoers(exe="/tmp/perl"))), 1)
