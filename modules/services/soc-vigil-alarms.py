@@ -27,14 +27,16 @@ THE AUDIT RULE (exact):
        console) and inherited by everything that login runs, sudo included.
        systemd services, timers, and nixos-rebuild's switch (which runs
        switch-to-configuration through `systemd-run`, nixos-rebuild-ng
-       nix.py SWITCH_TO_CONFIGURATION_CMD_PREFIX) have it unset. Tailscale
-       SSH (choir's admin path) is a login too: its incubator runs
-       `login -f`, whose PAM stack has pam_loginuid. Checked live on choir
-       2026-11-11: a tailnet session (loginctl Service=login,
-       RemoteHost=100.x) and its descendants carry loginuid 993. Not
-       covered: an incubator fallback that skips login(1). auid 0 (a
+       nix.py SWITCH_TO_CONFIGURATION_CMD_PREFIX) have it unset. auid 0 (a
        direct root login) counts as set. Attempts that FAIL (success=no) fire
        too: an attempt by a login on a secret is the signal, success or not.
+       Tailscale SSH (choir's admin path): VERIFIED ONLY for an interactive
+       terminal session, which the incubator hands to `login -f`, whose PAM
+       stack has pam_loginuid (checked live on choir 2026-11-11: loginctl
+       Service=login, loginuid 993 down the process tree). A session the
+       incubator does NOT hand to login(1) gets no auid from this host's
+       PAM stacks and is NOT covered by this rule: an open gap, for the
+       owner to measure (the PR's post-deploy check).
     3. it is NOT the NixOS activation's /etc writer: key `sudoers`, exe a
        /nix/store perl, and the exact setup-etc.pl store path of THIS system
        generation among its argv (PROCTITLE). That is the only routine writer
@@ -78,6 +80,7 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -316,7 +319,9 @@ def _log(msg: str) -> None:
 
 
 def run_ausearch(ausearch: str, checkpoint: str) -> str:
-    """Events since the last run. The checkpoint makes each event seen once."""
+    """Events since the checkpoint. ausearch rewrites `checkpoint` in place
+    when it finds events, so cmd_audit hands it a staged COPY and commits
+    that copy only after the window's outcome is recorded."""
     # --input-logs + stdin=/dev/null: ausearch reads STDIN instead of the
     # logs whenever fd 0 is a pipe (ausearch.c is_pipe), and then never saves
     # a checkpoint. Force the logs regardless of how this is started.
@@ -326,7 +331,10 @@ def run_ausearch(ausearch: str, checkpoint: str) -> str:
     first = [] if os.path.exists(checkpoint) else ["--start", "recent"]
 
     def run(extra):
-        return subprocess.run(base + extra, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        # errors="replace": a stray non-UTF-8 byte must become one bad line
+        # (reported below), not a decode error that hides the whole window.
+        return subprocess.run(base + extra, capture_output=True, encoding="utf-8",
+                              errors="replace", stdin=subprocess.DEVNULL)
 
     p = run(first)
     if p.returncode in (10, 11, 12):
@@ -347,6 +355,26 @@ def run_ausearch(ausearch: str, checkpoint: str) -> str:
     if p.returncode == 1 and err in ("", "<no matches>"):
         return ""
     raise RuntimeError(f"ausearch exited {p.returncode}: {err[:300]}")
+
+
+def _fsync_dir(path: str) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_durably(path: str, text: str) -> None:
+    """Write-then-rename, fsynced: a crash leaves the old file or the new
+    one, never an empty one (an empty last-hit would read as "no hold")."""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+    _fsync_dir(os.path.dirname(path))
 
 
 def cmd_audit(a) -> int:
@@ -371,28 +399,43 @@ def cmd_audit(a) -> int:
         if live.returncode != 0:
             raise RuntimeError(f"audit trail not live: {unit} is not active "
                                f"(systemctl is-active exited {live.returncode})")
-    raw = run_ausearch(a.ausearch, checkpoint)
-    # From here on the checkpoint has ALREADY moved past this window: an
-    # event not acted on now is never seen again. So every hit is logged and
-    # starts the hold BEFORE anything can fail, and a failure after this
-    # point starts the hold too (a window that could not be fully read may
-    # have held a hit), instead of leaving one 5-minute red blip that
-    # picat_dupa = 2 would absorb.
+    # ausearch moves its checkpoint by itself, before this script has seen a
+    # single event. So it works on a staged copy, and the real checkpoint is
+    # replaced only AFTER every hit is logged and the hold is on disk. If
+    # anything fails before that (a crash, a full disk, a bug), the next run
+    # reads the same window again: a repeated ALARM line, never a lost one.
+    staged = checkpoint + ".next"
+    if os.path.exists(checkpoint):
+        shutil.copyfile(checkpoint, staged)
+    elif os.path.exists(staged):
+        os.unlink(staged)  # left by a run that died before its first commit
+    raw = run_ausearch(a.ausearch, staged)
     now = time.time()
 
     def start_hold():
-        with open(last_hit, "w") as fh:
-            fh.write(f"{now:.0f}\n")
+        _write_durably(last_hit, f"{now:.0f}\n")
+
+    def commit_checkpoint():
+        if os.path.exists(staged):
+            with open(staged, "rb") as fh:
+                os.fsync(fh.fileno())
+            os.replace(staged, checkpoint)
+            _fsync_dir(a.state_dir)
 
     try:
         hits, bad = audit_scan(raw, a.setup_etc, council_exemption(a))
     except Exception:
+        # Could not classify at all: red for the hold, and the checkpoint
+        # stays put so this window is classified again once that works.
         start_hold()
         raise
     for h in hits:
         _log("ALARM audit " + json.dumps(h, sort_keys=True))
+    # A window with an unreadable line may have held a hit: it starts the
+    # hold too, instead of one 5-minute red blip that picat_dupa = 2 absorbs.
     if hits or bad:
         start_hold()
+    commit_checkpoint()
     if bad:
         raise ValueError(f"{len(bad)} unparseable line(s); first: {bad[0]}")
     # Stay red for a hold window after the last hit, then clear by itself.
