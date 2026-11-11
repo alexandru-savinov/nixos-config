@@ -76,6 +76,20 @@ test('file age distinguishes missing, fresh, stale and future timestamps', async
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('file age written earlier in the same millisecond as a whole-ms clock is fresh, not future', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vigil-check-'));
+  try {
+    const target = path.join(root, 'fixture');
+    const c = { verifica: 'age', tinta: target, prag: '15m' };
+    await fs.writeFile(target, 'fixture');
+    // A sub-millisecond mtime, as multigrain-timestamp kernels write it.
+    await fs.utimes(target, (now - 60000) / 1000, (now - 60000 + 0.5) / 1000);
+    assert.ok((await fs.stat(target)).mtimeMs > now - 60000); // the condition: mtime above the clock
+    assert.equal(await verdict(c, { now: now - 60000 }), 'verde');
+    assert.equal(await verdict(c, { now: now - 60001 }), 'NECITIT');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('HTTP requires exact status, body and valid freshness independently', async () => {
   const c = { verifica: 'http', tinta: 'http://127.0.0.1/', astept: { status: 200, body: '"la"', prospetime: '15m' } };
   const inspect = body => verdict(c, { now, request: response(200, body) });

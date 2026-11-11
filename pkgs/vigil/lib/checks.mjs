@@ -110,7 +110,11 @@ export function mounted(source, target) {
 }
 
 function age(timestamp, limit, now) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp > now) return unreadable('age-unreadable');
+  // `now` is a whole-millisecond clock (Date.now() floors real time), while a file's
+  // mtimeMs can carry sub-millisecond precision (multigrain timestamps, Linux >= 6.13).
+  // A file written earlier in the current millisecond is X.5 > X: compare at the
+  // clock's own resolution, or a fresh write reads as a future timestamp.
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || Math.floor(timestamp) > now) return unreadable('age-unreadable');
   return now - timestamp < limit ? green() : failed('age-stale');
 }
 
