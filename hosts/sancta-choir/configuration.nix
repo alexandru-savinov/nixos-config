@@ -60,6 +60,7 @@
     ../../modules/services/sancta-transcript-archive.nix # closed transcripts → encrypted objects rpi5 already pulls
     ../../modules/services/sancta-archive-deadman.nix # the one archive watcher that does NOT need the soul mount
     ../../modules/services/sancta-absent-guard.nix # the clock the house's absence guard never had
+    ../../modules/services/sancta-soc-page.nix # rebuild + gate the private SOC page daily
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
     ../../modules/services/observation-tools.nix # vnStat + Lynis, observation only
     ./n8n.nix # studio conductor (sq085); the walls in ./n8n-guard.nix hold even while it is off
@@ -399,7 +400,17 @@
     # line stops `auditctl -R` and its ExecStopPost deletes the rest, so this
     # unit's failed state is the only signal that the trail is empty.
     "audit-rules-nixos.service"
+    # The SOC page's daily rebuild (modules/services/sancta-soc-page.nix). A
+    # oneshot, same is-failed-first reader contract as doctrine-guard. Without
+    # it here a failed rebuild (gh auth gone, the gate refusing the page) shows
+    # only in the journal while the gallery keeps serving yesterday's reading.
+    "sancta-soc-page.service"
   ];
+
+  # Rebuild the private SOC page (gallery/soc.html + soc-decide.html) every
+  # morning and promote it only through the PII gate. Until now it was rebuilt
+  # only when a live session happened to run soc.mjs by hand.
+  services.sancta-soc-page.enable = true;
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
   # honest — soul-mirror health, MEMORY.md parity, witness requests rotting past
