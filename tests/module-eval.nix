@@ -667,7 +667,14 @@ let
             # sancta-soc-page.service joined on 2026-11-10: the SOC page's
             # daily rebuild. A red rebuild must reach the bar, not only the
             # journal, or the gallery serves a stale reading in silence.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service sancta-soc-page.service" env;
+            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service sancta-soc-page.service";
+
+          # The units value has spaces, so the RENDERED unit must quote it:
+          # unquoted, systemd keeps only the first unit (live on choir until
+          # 2026-11-11, the bar watched sancta-gallery alone).
+          unitsQuotedInUnit =
+            nixpkgs.lib.hasInfix ''Environment="SANCTA_STATUSLINE_UNITS=''
+              self.nixosConfigurations.sancta-choir.config.systemd.units."sancta-statusline-refresh.service".text;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
