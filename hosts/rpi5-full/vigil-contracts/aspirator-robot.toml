@@ -9,4 +9,4 @@ picat_dupa = 3
 astept = { disponibil = true }
 
 [spune]
-nivel = "nota"
+nivel = "incident"
