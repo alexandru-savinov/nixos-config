@@ -40,7 +40,7 @@
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
-    ../../modules/services/soc-in-a-box.nix # auditd trail + CrowdSec (sshd), all local
+    ../../modules/services/soc-in-a-box.nix # auditd trail + CrowdSec (sshd) + firewall bouncer, all local
     ../../modules/users/root.nix
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
@@ -64,6 +64,14 @@
     ../../modules/services/observation-tools.nix # vnStat + Lynis, observation only
     ./n8n.nix # studio conductor (sq085); the walls in ./n8n-guard.nix hold even while it is off
   ];
+
+  # sshd bans on choir come from CrowdSec's firewall bouncer
+  # (modules/services/soc-in-a-box.nix), behind the neverBan gate. fail2ban's
+  # sshd jail (hosts/common.nix) is retired HERE only: other hosts keep it.
+  # One engine, so the two never stack bans on the admin path; soc-in-a-box
+  # asserts the jail stays off. fail2ban itself stays enabled with no jail, so
+  # its tailnet-ignoreIP assertion still guards any jail a later change adds.
+  services.fail2ban.jails.sshd.settings.enabled = lib.mkForce false;
 
   # Enable development tools and agent CLIs.
   customModules.dev-tools.enable = true;
@@ -394,6 +402,11 @@
     # failed start shows here instead of only in the journal.
     "auditd.service"
     "crowdsec.service"
+    # The bouncer is what turns a decision into a drop; if it is down,
+    # CrowdSec still records bans that block nothing, so its failure must
+    # reach the bar. Its -register oneshot is a `requires` of this unit, so a
+    # failed registration shows as this unit failing to start.
+    "crowdsec-firewall-bouncer.service"
     # The oneshot that loads the audit rules (nixpkgs security/audit.nix,
     # RemainAfterExit). auditd can be active with ZERO rules: one rejected
     # line stops `auditctl -R` and its ExecStopPost deletes the rest, so this

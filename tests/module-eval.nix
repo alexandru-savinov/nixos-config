@@ -664,7 +664,10 @@ let
             # audit-rules-nixos.service joined on 2026-11-02: auditd can be
             # active with no rules loaded, and only this oneshot's failed
             # state says so.
-            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service";
+            # crowdsec-firewall-bouncer.service joined on 2026-11-11 (the
+            # banning step): with the bouncer down, CrowdSec records bans
+            # that block nothing.
+            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service crowdsec-firewall-bouncer.service audit-rules-nixos.service";
 
           # The units value has spaces, so the RENDERED unit must quote it:
           # unquoted, systemd keeps only the first unit (live on choir until
@@ -681,17 +684,116 @@ let
       else
         builtins.throw "FAIL: sancta-choir statusline-refresh wiring — failed checks: ${builtins.toJSON failed}";
 
-    # soc-in-a-box is detection only (owner decision 2026-11-01): CrowdSec
-    # records decisions but nothing applies them to the firewall. Banning is a
-    # later, council-gated step (Vigil horizon, phase 4), so a bouncer unit
-    # appearing on choir must fail here rather than start enforcing silently.
-    soc-in-a-box-choir-no-firewall-bouncer =
+    # soc-in-a-box banning step (Vigil horizon phase 4, council-gated):
+    # CrowdSec's firewall bouncer applies local decisions on choir, behind a
+    # firewall gate that RETURNs every neverBan range before the bouncer's
+    # chain, and fail2ban's sshd jail is retired on choir only. Each negative
+    # arm asserts the SPECIFIC soc-in-a-box assertion fires on the REAL choir
+    # config (not "evaluation failed somewhere"). A tailnet lockout is only
+    # recoverable from the Hetzner console, so the gate is pinned both as an
+    # assertion and as rendered firewall text.
+    soc-in-a-box-choir-bouncer =
       let
-        cfg = self.nixosConfigurations.sancta-choir.config;
+        lib = nixpkgs.lib;
+        base = self.nixosConfigurations.sancta-choir;
+        extend = modules: (base.extendModules { inherit modules; }).config;
+        cfg = base.config;
+        b = cfg.services.crowdsec-firewall-bouncer;
+        fwText = cfg.networking.firewall.extraCommands;
+        fwLines = lib.splitString "\n" fwText;
+        idx = needle:
+          let hits = lib.filter (i: lib.hasInfix needle (lib.elemAt fwLines i)) (lib.range 0 (lib.length fwLines - 1));
+          in if hits == [ ] then null else lib.head hits;
+
+        neverBanWall = "soc-in-a-box: the neverBan list must contain the tailnet ranges";
+        modeWall = "soc-in-a-box: the CrowdSec bouncer must run in iptables mode";
+        gateWall = "soc-in-a-box: the firewall gate in front of the CrowdSec bouncer";
+        chainWall = "soc-in-a-box: the CrowdSec bouncer may hook only";
+        keyWall = "soc-in-a-box: the CrowdSec bouncer must talk to the loopback LAPI only";
+        engineWall = "soc-in-a-box: fail2ban's sshd jail must be off where CrowdSec bans";
+        f2bWall = "soc-in-a-box: fail2ban must never ban the tailnet";
+        walls = [ neverBanWall modeWall gateWall chainWall keyWall engineWall f2bWall ];
+
+        present = c: prefix: lib.any (a: lib.hasPrefix prefix a.message) c.assertions;
+        fires = c: prefix: lib.any (a: !a.assertion && lib.hasPrefix prefix a.message) c.assertions;
+        holds = c: prefix: present c prefix && !(fires c prefix);
+
+        checks = {
+          # ── shape ──
+          bouncerOn = cfg.services.crowdsec.enable && b.enable && cfg.systemd.services ? crowdsec-firewall-bouncer;
+          registerUnit = cfg.systemd.services ? crowdsec-firewall-bouncer-register;
+          localLapiOnly = b.settings.api_url == "http://127.0.0.1:8095";
+          keyMintedOnHost = b.registerBouncer.enable && b.secrets.apiKeyPath == null && b.settings.api_key == "@API_KEY_FILE@";
+          iptablesMode = b.settings.mode == "iptables" && !cfg.networking.nftables.enable;
+          onlyBansChain = b.settings.iptables_chains == [ "sancta-crowdsec-bans" ];
+          afterFirewall = builtins.elem "firewall.service" cfg.systemd.services.crowdsec-firewall-bouncer.after;
+          # Rendered gate: every tailnet / loopback / LAN range RETURNs
+          # before the jump to the bans chain, and the gate is nixos-fw rule 1.
+          gateRendered =
+            let
+              jump = idx "-A sancta-crowdsec-gate -j sancta-crowdsec-bans";
+              ret = c: idx "-A sancta-crowdsec-gate -s ${c} -j RETURN";
+            in
+            jump != null
+            && idx "-I nixos-fw 1 -j sancta-crowdsec-gate" != null
+            && idx "-A sancta-crowdsec-gate -i tailscale0 -j RETURN" != null
+            && idx "-A sancta-crowdsec-gate -i lo -j RETURN" != null
+            && lib.all (c: let i = ret c; in i != null && i < jump) cfg.sancta.soc.neverBan;
+          neverBanFull = lib.all (c: builtins.elem c cfg.sancta.soc.neverBan) [
+            "100.64.0.0/10"
+            "fd7a:115c:a1e0::/48"
+            "127.0.0.0/8"
+            "::1/128"
+            "10.0.0.0/8"
+            "172.16.0.0/12"
+            "192.168.0.0/16"
+          ];
+          # The same list reaches CrowdSec's whitelist and fail2ban's ignoreIP.
+          whitelistSameList = (lib.head cfg.services.crowdsec.localConfig.parsers.s02Enrich).whitelist.cidr == cfg.sancta.soc.neverBan;
+          fail2banIgnoreSameList = cfg.services.fail2ban.ignoreIP == cfg.sancta.soc.neverBan;
+          # fail2ban sshd jail retired on choir, fail2ban itself still on.
+          choirSshdJailOff = cfg.services.fail2ban.enable && cfg.services.fail2ban.jails.sshd.settings.enabled == false;
+          # ...and ONLY on choir: rpi5-full keeps the common.nix jail.
+          rpi5KeepsSshdJail =
+            let r = self.nixosConfigurations.rpi5-full.config.services.fail2ban;
+            in r.enable && r.jails.sshd.settings.enabled == true;
+          allWallsHold = lib.all (holds cfg) walls;
+
+          # ── negative arms ──
+          # neverBan without the tailnet: both the list wall and the gate fire.
+          tailnetDroppedFromNeverBan =
+            let c = extend [{ sancta.soc.neverBan = lib.mkForce [ "127.0.0.0/8" "::1/128" ]; }];
+            in fires c neverBanWall && fires c gateWall;
+          # Only the IPv6 tailnet range dropped: still fires.
+          tailnetV6DroppedFromNeverBan =
+            let c = extend [{ sancta.soc.neverBan = lib.mkForce (lib.remove "fd7a:115c:a1e0::/48" cfg.sancta.soc.neverBan); }];
+            in fires c neverBanWall && fires c gateWall;
+          # The gate removed from the firewall script (the CrowdSec whitelist
+          # alone is NOT enough): fires.
+          gateRemoved = fires (extend [{ networking.firewall.extraCommands = lib.mkForce ""; }]) gateWall;
+          # Bouncer hooked on INPUT (the module default) bypasses the gate.
+          bouncerOnInput = fires (extend [{ services.crowdsec-firewall-bouncer.settings.iptables_chains = lib.mkForce [ "INPUT" ]; }]) chainWall;
+          bouncerExtraV4Chain = fires (extend [{ services.crowdsec-firewall-bouncer.settings.iptables_v4_chains = [ "INPUT" ]; }]) chainWall;
+          # nftables firewall: the bouncer's drop would be its own nft table.
+          nftablesRejected = fires (extend [{ networking.nftables.enable = lib.mkForce true; }]) modeWall;
+          # A key in the Nix store / a remote LAPI.
+          storeKeyRejected = fires
+            (extend [{
+              services.crowdsec-firewall-bouncer.registerBouncer.enable = lib.mkForce false;
+              services.crowdsec-firewall-bouncer.settings.api_key = lib.mkForce "in-the-store";
+            }])
+            keyWall;
+          remoteLapiRejected = fires (extend [{ services.crowdsec-firewall-bouncer.settings.api_url = lib.mkForce "http://100.100.100.100:8095"; }]) keyWall;
+          # fail2ban sshd jail back on: two engines.
+          sshdJailBackRejected = fires (extend [{ services.fail2ban.jails.sshd.settings.enabled = lib.mkOverride 10 true; }]) engineWall;
+          # fail2ban without the tailnet in ignoreIP: fires while fail2ban runs.
+          fail2banIgnoreRejected = fires (extend [{ services.fail2ban.ignoreIP = lib.mkForce [ "127.0.0.0/8" ]; }]) f2bWall;
+        };
+
+        failed = builtins.attrNames (lib.filterAttrs (_: v: !v) checks);
       in
-      if cfg.services.crowdsec.enable && !(cfg.systemd.services ? crowdsec-firewall-bouncer)
-      then true
-      else builtins.throw "FAIL: sancta-choir has a crowdsec-firewall-bouncer unit (or crowdsec is off); bans wait for a council-gated step";
+      if failed == [ ] then true
+      else builtins.throw "FAIL: soc-in-a-box choir bouncer — failed checks: ${builtins.toJSON failed}";
 
     # An empty `units` list makes a host with dead services render identically
     # to a healthy one: the bar's "down" field can never populate. That is the
