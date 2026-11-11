@@ -464,6 +464,77 @@ class Runners(unittest.TestCase):
         # Next window is quiet: still red for the hold, not clean.
         self.assertEqual(self.audit(self.ausearch(QUIET)), 1)
 
+    # ── the checkpoint moves only after the outcome is on disk ──
+    # A fake ausearch that, like the real one, rewrites the file it was given
+    # as --checkpoint when it finds events, and records what that file held.
+    ADVANCING = (
+        'cp=; prev=\n'
+        'for x in "$@"; do [ "$prev" = --checkpoint ] && cp=$x; prev=$x; done\n'
+        '{ [ -e "$cp" ] && cat "$cp" || echo absent; } >> %(seen)s\n'
+        'echo new > "$cp"\n'
+        'cat %(fixture)s\n'
+    )
+
+    def advancing(self, text):
+        fixture = os.path.join(self.d, "fixture")
+        with open(fixture, "w") as fh:
+            fh.write(text)
+        return self.ausearch(self.ADVANCING % {"seen": os.path.join(self.d, "seen"), "fixture": fixture})
+
+    def test_hit_is_not_lost_when_the_hold_cannot_be_recorded(self):
+        with open(self.cp, "w") as fh:
+            fh.write("old\n")
+        a = self.advancing(login_reads_agenix() + "\n")
+        os.mkdir(self.last)  # the hold file cannot be written
+        self.assertEqual(self.audit(a), 2)
+        # Not recorded => the window is still unread: checkpoint did not move.
+        self.assertEqual(slurp(self.cp), "old\n")
+        os.rmdir(self.last)
+        # Next run sees the SAME window again and the hit lands.
+        self.assertEqual(self.audit(a), 1)
+        self.assertEqual(slurp(os.path.join(self.d, "seen")), "old\nold\n")
+        self.assertTrue(os.path.isfile(self.last))
+        self.assertEqual(slurp(self.cp), "new\n")
+
+    def test_recorded_windows_advance_the_checkpoint(self):
+        # The other arm: once the outcome is recorded the window is consumed,
+        # for a hit, for routine events, and for a bad line (red, but moved on).
+        for text, want in ((login_reads_agenix() + "\n", 1),
+                           (service_reads_agenix() + "\n", 1),  # still in the hold
+                           (login_reads_agenix() + "\ngarbage line\n", 2)):
+            with open(self.cp, "w") as fh:
+                fh.write("old\n")
+            self.assertEqual(self.audit(self.advancing(text)), want)
+            self.assertEqual(slurp(self.cp), "new\n")
+            self.assertFalse(os.path.exists(self.cp + ".next"))
+
+    def test_routine_window_advances_and_stays_clean(self):
+        self.assertEqual(self.audit(self.advancing(service_reads_agenix() + "\n")), 0)
+        self.assertEqual(slurp(self.cp), "new\n")
+        self.assertFalse(os.path.exists(self.last))
+
+    def test_quiet_window_leaves_the_checkpoint_alone(self):
+        with open(self.cp, "w") as fh:
+            fh.write("old\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertEqual(slurp(self.cp), "old\n")
+
+    def test_stale_staged_checkpoint_is_never_used(self):
+        # A run that died before its first commit leaves only the staged file.
+        with open(self.cp + ".next", "w") as fh:
+            fh.write("stale\n")
+        self.assertEqual(self.audit(self.advancing(service_reads_agenix() + "\n")), 0)
+        self.assertEqual(slurp(os.path.join(self.d, "seen")), "absent\n")
+        self.assertIn("--start recent", slurp(self.log))
+
+    def test_undecodable_byte_does_not_hide_the_hit(self):
+        fixture = os.path.join(self.d, "fixture")
+        with open(fixture, "wb") as fh:
+            fh.write(login_reads_agenix().encode() + b"\n\xff\xfe\n")
+        self.assertEqual(self.audit(self.ausearch(f"cat {fixture}\n")), 2)
+        self.assertTrue(os.path.isfile(self.last))
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 1)
+
     def test_format_drift_turns_red(self):
         fixture = os.path.join(self.d, "fixture")
         with open(fixture, "w") as fh:
