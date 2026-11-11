@@ -1230,6 +1230,17 @@ let
           activationPinMatches = setupEtc != null
             && lib.hasInfix "--setup-etc ${builtins.head setupEtc}" (argv aSvc);
 
+          # Rule 4, the one audit exemption (owner decision 2026-11-11): only
+          # the declared council key, only for the council user (resolved by
+          # name at run time), with the secrets paths in env, not argv.
+          councilExemption =
+            alarms.councilKey.file == "jev-openrouter-key"
+            && alarms.councilKey.user == "sancta"
+            && choir.age.secrets ? jev-openrouter-key
+            && lib.hasInfix "--council-user sancta --council-key jev-openrouter-key" (argv aSvc)
+            && builtins.elem "SOC_SECRETS_DIR=${choir.age.secretsDir}" (envOf aSvc)
+            && builtins.elem "SOC_SECRETS_MOUNT=${choir.age.secretsMountPoint}" (envOf aSvc);
+
           # A quiet window counts only while the trail is live: both the
           # daemon and the rules unit must be required active by the script.
           trailLivenessGate =

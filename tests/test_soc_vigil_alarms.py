@@ -45,7 +45,8 @@ def hexargv(*argv):
     return "\x00".join(argv).encode().hex().upper()
 
 
-def event(serial, *, key, auid, exe, comm, path, argv, success="yes", syscall=257, enriched=True):
+def event(serial, *, key, auid, exe, comm, path, argv, success="yes", syscall=257, enriched=True,
+          uid="0", flags="0"):
     stamp = f"msg=audit(1762790400.{serial % 1000:03d}:{serial})"
     # The kernel prints a key quoted, as (null), or hex when it holds several
     # keys joined by SOH. Uppercase-hex fixtures are passed through as-is.
@@ -53,8 +54,8 @@ def event(serial, *, key, auid, exe, comm, path, argv, success="yes", syscall=25
     keyf = key if raw_key else f'"{key}"'
     sysc = (
         f"type=SYSCALL {stamp}: arch=c000003e syscall={syscall} success={success} exit=3 "
-        f"a0=ffffff9c a1=55d0c2 a2=0 a3=0 items=1 ppid=2201 pid={3000 + serial} auid={auid} "
-        f"uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=4 "
+        f"a0=ffffff9c a1=55d0c2 a2={flags} a3=0 items=1 ppid=2201 pid={3000 + serial} auid={auid} "
+        f"uid={uid} gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=4 "
         f'comm="{comm}" exe="{exe}" subj=unconfined key={keyf}'
     )
     if enriched:
@@ -187,6 +188,81 @@ class AuditRule(unittest.TestCase):
         hits = classify(service_reads_agenix(11), activation_writes_sudoers(12),
                         login_reads_agenix(13), service_reads_agenix(14))
         self.assertEqual([h["serial"] for h in hits], ["13"])
+
+
+# ── rule 4: the council's own key read (owner decision 2026-11-11, fix A) ──
+NODE = f"/nix/store/{'n' * 32}-nodejs-22.22.0/bin/node"
+COUNCIL_UID = "993"
+EXEMPT = {"uid": 993, "key": "jev-openrouter-key",
+          "secrets_dir": "/run/agenix", "secrets_mount": "/run/agenix.d"}
+O_RDONLY_CLOEXEC = "80000"  # what node's readFileSync passes to openat
+
+
+def council_read(serial=40, *, auid=COUNCIL_UID, uid=COUNCIL_UID, exe=NODE,
+                 path="/run/agenix/jev-openrouter-key", flags=O_RDONLY_CLOEXEC, syscall=257):
+    return event(serial, key="agenix-secrets", auid=auid, uid=uid, exe=exe, comm="node",
+                 path=path, flags=flags, syscall=syscall,
+                 argv=["node", "/var/lib/sancta/.claude/skills/council/scripts/jev-shadow.mjs"])
+
+
+def council_hits(*events, exempt=EXEMPT):
+    return sva.audit_hits("\n----\n".join(events) + "\n", SETUP_ETC, exempt)
+
+
+class CouncilExemption(unittest.TestCase):
+    # ── the one silent arm (fails against the commit before the exemption) ──
+    def test_council_key_read_via_symlinked_path_is_silent(self):
+        self.assertEqual(council_hits(council_read()), [])
+
+    def test_council_key_read_via_resolved_generation_path_is_silent(self):
+        self.assertEqual(council_hits(council_read(path="/run/agenix.d/2/jev-openrouter-key")), [])
+
+    # ── everything around it still fires ──
+    def test_same_uid_reading_another_secret_fires(self):
+        for p in ("/run/agenix/openrouter-api-key", "/run/agenix.d/2/anthropic-api-key",
+                  "/run/agenix/jev-openrouter-key.bak", "/run/agenix.d/2/x/jev-openrouter-key"):
+            self.assertEqual(len(council_hits(council_read(path=p))), 1, p)
+
+    def test_cat_reading_the_council_key_fires(self):
+        self.assertEqual(len(council_hits(council_read(exe=CAT))), 1)
+
+    def test_non_store_node_reading_the_council_key_fires(self):
+        self.assertEqual(len(council_hits(council_read(exe="/tmp/nodejs-22/bin/node"))), 1)
+
+    def test_other_auid_reading_the_council_key_fires(self):
+        for auid in ("1000", "0"):
+            self.assertEqual(len(council_hits(council_read(auid=auid))), 1, auid)
+
+    def test_council_auid_with_root_uid_fires(self):
+        # `sudo node ...` from the agent's session: auid 993, uid 0.
+        self.assertEqual(len(council_hits(council_read(uid="0"))), 1)
+
+    def test_write_open_of_the_council_key_fires(self):
+        for flags in ("80001", "80002", "80241"):  # O_WRONLY, O_RDWR, O_WRONLY|O_CREAT|O_TRUNC
+            self.assertEqual(len(council_hits(council_read(flags=flags))), 1, flags)
+
+    def test_non_openat_syscall_fires(self):
+        self.assertEqual(len(council_hits(council_read(syscall=90))), 1)  # chmod
+
+    def test_relative_path_fires(self):
+        self.assertEqual(len(council_hits(council_read(path="jev-openrouter-key"))), 1)
+
+    def test_exemption_off_fires(self):
+        self.assertEqual(len(council_hits(council_read(), exempt=None)), 1)
+        self.assertEqual(len(council_hits(council_read(), exempt=dict(EXEMPT, uid=None))), 1)
+
+    def test_mixed_batch_keeps_only_real_hits(self):
+        hits = council_hits(council_read(41), council_read(42, exe=CAT), service_reads_agenix(43))
+        self.assertEqual([h["serial"] for h in hits], ["42"])
+
+    def test_runner_resolves_user_by_name(self):
+        import pwd
+        me = pwd.getpwuid(os.getuid()).pw_name
+        a = type("A", (), dict(council_user=me, council_key="k", secrets_dir="/run/agenix",
+                               secrets_mount="/run/agenix.d"))()
+        self.assertEqual(sva.council_exemption(a)["uid"], os.getuid())
+        a.council_user = "no-such-user-soc"
+        self.assertIsNone(sva.council_exemption(a))
 
 
 def f2b(*ips):
