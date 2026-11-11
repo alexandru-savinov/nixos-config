@@ -214,6 +214,10 @@ in
         gnugrep
         coreutils
       ];
+      # The units list holds spaces, so it goes through `environment`, which
+      # NixOS renders quoted. As a raw serviceConfig.Environment entry it was
+      # written unquoted and systemd kept only the first unit (2026-11-11).
+      environment.SANCTA_STATUSLINE_UNITS = concatStringsSep " " cfg.units;
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
@@ -227,7 +231,6 @@ in
         Environment = [
           "SANCTA_STATUSLINE_STATE=${stateFile}"
           "SANCTA_STATUSLINE_REPO=${cfg.repo}"
-          "SANCTA_STATUSLINE_UNITS=${concatStringsSep " " cfg.units}"
           "HOME=${builtins.dirOf soulRoot}"
         ];
         # Bounded well under the timer interval: a run that outlives its own

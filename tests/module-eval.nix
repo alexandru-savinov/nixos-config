@@ -666,7 +666,14 @@ let
             # state says so.
             # soc-alarm-audit / soc-alarm-bans joined on 2026-11-10: the
             # oneshots behind vigil's soc-audit / soc-bans contracts.
-            && builtins.elem "SANCTA_STATUSLINE_UNITS=sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service soc-alarm-audit.service soc-alarm-bans.service" env;
+            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service soc-alarm-audit.service soc-alarm-bans.service";
+
+          # The units value has spaces, so the RENDERED unit must quote it:
+          # unquoted, systemd keeps only the first unit (live on choir until
+          # 2026-11-11, the bar watched sancta-gallery alone).
+          unitsQuotedInUnit =
+            nixpkgs.lib.hasInfix ''Environment="SANCTA_STATUSLINE_UNITS=''
+              self.nixosConfigurations.sancta-choir.config.systemd.units."sancta-statusline-refresh.service".text;
         };
 
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
