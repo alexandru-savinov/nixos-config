@@ -38,10 +38,15 @@ THE AUDIT RULE (exact):
        PAM stacks and is NOT covered by this rule: an open gap, for the
        owner to measure (the PR's post-deploy check).
     3. it is NOT the NixOS activation's /etc writer: key `sudoers`, exe a
-       /nix/store perl, and the exact setup-etc.pl store path of THIS system
-       generation among its argv (PROCTITLE). That is the only routine writer
+       /nix/store perl, argv (PROCTITLE) exactly
+       `<perl> <setup-etc.pl of THIS generation> /nix/store/<hash>-etc/etc`
+       (three words, the script in second place, so no perl option or
+       inline code can come before it), and every PATH record one of
+       /etc, /etc/sudoers, /etc/sudoers.tmp. That is the only routine writer
        of /etc/sudoers, and it only carries a login auid when someone runs
        switch-to-configuration by hand instead of through nixos-rebuild.
+       Not covered: the store path of the etc tree is matched by shape, not
+       pinned to this generation.
     4. it is NOT the council's own key read (owner decision 2026-11-11,
        "fix A"): every /council run reads one agenix key in-session
        (council/scripts/jev-shadow.mjs, readFileSync of DEFAULT_KEY_FILE)
@@ -181,13 +186,24 @@ def _paths(event: dict) -> list[str]:
     return out
 
 
+_STORE_ETC = re.compile(r"^/nix/store/[0-9a-z]{32}-etc/etc$")
+_ACTIVATION_PATHS = frozenset({"/etc", "/etc/", "/etc/sudoers", "/etc/sudoers.tmp"})
+
+
 def is_activation_writer(event: dict, syscall: dict, keys: set[str], setup_etc: str) -> bool:
     exe = _unhex(syscall.get("exe", "")) or ""
+    argv = _argv(event)
+    paths = _paths(event)
     return (
         keys == {"sudoers"}
         and bool(setup_etc)
         and _STORE_PERL.match(exe) is not None
-        and setup_etc in _argv(event)
+        # Positional, not membership: the script must be what perl runs.
+        and len(argv) == 3
+        and argv[1] == setup_etc
+        and _STORE_ETC.match(argv[2]) is not None
+        and bool(paths)
+        and all(p in _ACTIVATION_PATHS for p in paths)
     )
 
 
