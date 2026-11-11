@@ -81,8 +81,12 @@ let
           directory = ../hosts/sancta-choir/vigil-contracts;
         };
       in
-      builtins.length (builtins.attrNames endpoints) == 10
+      builtins.length (builtins.attrNames endpoints) == 12
       && endpoints ? choir-vigil-doctrine-guard
+      # The SOC alarms reach the rpi5 dashboard as rows only (no `alerts`,
+      # checked for every endpoint below): vigil stays their only voice.
+      && endpoints ? choir-vigil-soc-audit
+      && endpoints ? choir-vigil-soc-bans
       && endpoints.choir-vigil-galeria.url == "http://100.94.191.54:8747/checks/galeria"
       && builtins.elem "[BODY].detail == ok" endpoints.choir-vigil-galeria.conditions
       && lib.all (endpoint: !(endpoint ? alerts)) (builtins.attrValues endpoints);
@@ -127,7 +131,7 @@ let
       # gate off: the deployed map is unchanged
       && !choirBase.config.sancta.studio.n8n.enable
       && !(off ? choir-vigil-n8n)
-      && builtins.length (choirNames off) == 10
+      && builtins.length (choirNames off) == 12
       # gate on: the real map gains exactly the n8n endpoint and nothing else
       && choirOn.config.sancta.studio.n8n.enable
       && added == [ "choir-vigil-n8n" ]

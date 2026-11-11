@@ -394,6 +394,12 @@
           # the 2026-07-21 silent loss with better paperwork.
           sancta-doctrine-guard = import ./tests/sancta-doctrine-guard.nix { inherit pkgs; };
 
+          # The SOC alarms' rules (modules/services/soc-vigil-alarms.py), both
+          # arms each: a login touching agenix/sudoers fires, a service read or
+          # the activation's sudoers rewrite does not; a ban on 100.64.x fires,
+          # one on a public IP does not; a blind engine is red, never clean.
+          soc-vigil-alarms = import ./tests/soc-vigil-alarms.nix { inherit pkgs; };
+
           # The absence guard's clock, driven in BOTH directions against the
           # unit's REAL ExecStart: a quiet producer must turn the unit red, and
           # an all-fresh house must leave it green. module-eval proves the unit
