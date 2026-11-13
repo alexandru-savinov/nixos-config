@@ -23,8 +23,14 @@
 # ("1-1".."2-20" for the Captain, "d-1".."d-15" for the Daughter) or a
 # contents page ("index", "d-index"). Each page keeps its book's position in
 # localStorage and also sends it to "/pos", which stores it per book under
-# StateDirectory, so a wiped Kindle browser still resumes. Every other path
-# is 404.
+# StateDirectory, so a wiped Kindle browser still resumes. "/img/<name>.jpg"
+# serves the pictures pictures.json places in the text (public-domain
+# engravings and drawings, each credited under it) and the shelf covers.
+# Every other path is 404.
+#
+# The picture files are not in the store (about 20 MB of JPEGs would bloat
+# this public repo): they live in imagesDir, prepared once by hand. A picture
+# missing there is a 404 and the page shows its caption only.
 #
 # Depends on controller state that is NOT in this repo: the kindle network
 # and firewall rules, plus static DNS records for spectrum.s3.amazonaws.com
@@ -39,23 +45,7 @@ let
   wifistub = pkgs.writeText "kindle-wifistub.html"
     "<html>\n<body>\n81ce4465-7167-4dcb-835b-dcc9e44c112a\n</body>\n</html>\n";
 
-  # https://ru.wikisource.org/wiki/Пятнадцатилетний_капитан_(Верн;_Петров), revision 5648532 (2025-09-10).
-  bookText = pkgs.fetchurl {
-    name = "pyatnadcatiletniy-kapitan-5648532.wiki";
-    url = "https://ru.wikisource.org/w/index.php?title=%D0%9F%D1%8F%D1%82%D0%BD%D0%B0%D0%B4%D1%86%D0%B0%D1%82%D0%B8%D0%BB%D0%B5%D1%82%D0%BD%D0%B8%D0%B9_%D0%BA%D0%B0%D0%BF%D0%B8%D1%82%D0%B0%D0%BD_(%D0%92%D0%B5%D1%80%D0%BD;_%D0%9F%D0%B5%D1%82%D1%80%D0%BE%D0%B2)&oldid=5648532&action=raw";
-    hash = "sha256-d0AwVZ8mMntCwc332ExSPII1VWOSJh6SQWmeRXIaUlw=";
-  };
-
-  # https://ru.wikisource.org/wiki/Капитанская_дочка_(Пушкин)/1978_(СО), revision 5754617 (2026-10-03).
-  dochkaText = pkgs.fetchurl {
-    name = "kapitanskaya-dochka-5754617.wiki";
-    url = "https://ru.wikisource.org/w/index.php?title=%D0%9A%D0%B0%D0%BF%D0%B8%D1%82%D0%B0%D0%BD%D1%81%D0%BA%D0%B0%D1%8F_%D0%B4%D0%BE%D1%87%D0%BA%D0%B0_(%D0%9F%D1%83%D1%88%D0%BA%D0%B8%D0%BD)/1978_(%D0%A1%D0%9E)&oldid=5754617&action=raw";
-    hash = "sha256-H+sKr73LfI/4RCEc6sJvDl/E85tfLJut9KYksEJhy/Q=";
-  };
-
-  reader = pkgs.runCommand "kindle-reader" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-    node ${./build.js} ${./page.tpl.html} $out ${bookText} ${dochkaText}
-  '';
+  reader = import ./reader.nix { inherit pkgs; };
 
   fwRule = "-p tcp -s ${cfg.allowedSubnet} --dport ${toString cfg.port} -j nixos-fw-accept";
 in
@@ -71,6 +61,12 @@ in
         the stub. Must be a /24: the check page derives its "on the kindle
         network" test from the first three octets.
       '';
+    };
+
+    imagesDir = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/lib/kindle-reader-images";
+      description = "Directory holding the JPEGs listed in pictures.json (readable by any user).";
     };
 
     port = lib.mkOption {
@@ -99,6 +95,7 @@ in
         READER_DIR = "${reader}";
         WIFISTUB = "${wifistub}";
         SUBNET_PREFIX = subnetPrefix;
+        IMG_DIR = cfg.imagesDir;
       };
       serviceConfig = {
         ExecStart = "${lib.getExe pkgs.nodejs} ${./server.js}";
