@@ -65,7 +65,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash-001', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: $('Initialize Job').first().json.visionPrompt }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-3.5-flash-lite', max_tokens: 8192, temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: $('Initialize Job').first().json.visionPrompt }, { type: 'image_url', image_url: { url: $json.imageSource } }] }] }) }}",
         "options": {
           "timeout": 120000
         }
