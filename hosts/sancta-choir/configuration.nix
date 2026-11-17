@@ -41,6 +41,7 @@
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
     ../../modules/services/soc-in-a-box.nix # auditd trail + CrowdSec (sshd), all local
+    ../../modules/services/soc-vigil-alarms.nix # the two root-only SOC alarms, as vigil stamps
     ../../modules/users/root.nix
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
@@ -399,7 +400,26 @@
     # line stops `auditctl -R` and its ExecStopPost deletes the rest, so this
     # unit's failed state is the only signal that the trail is empty.
     "audit-rules-nixos.service"
+    # soc-vigil-alarms (2026-11-10): the two root oneshots behind the SOC's
+    # audit and ban alarms. Same oneshot reader contract as doctrine-guard
+    # above. A HIT or a blind evaluator leaves the unit failed until its next
+    # clean run, so the bar names which alarm vigil is about to raise.
+    # Caveat found 2026-11-10, NOT fixed here: the rendered unit carries
+    # `Environment=SANCTA_STATUSLINE_UNITS=a b c` unquoted, and systemd keeps
+    # only the first word (systemd-analyze verify: "Invalid environment
+    # assignment, ignoring"), so every entry after sancta-gallery is inert
+    # until sancta-statusline-refresh.nix quotes it.
+    "soc-alarm-audit.service"
+    "soc-alarm-bans.service"
   ];
+
+  # The two SOC alarms vigil cannot compute itself (the third, disk, is the
+  # plain vigil-contracts/disk-root.toml). Root oneshots every 5 minutes, each
+  # reporting through ONE stamp mtime that vigil stats: soc-audit.toml (a
+  # login touched agenix secrets or /etc/sudoers) and soc-bans.toml (a ban
+  # or CrowdSec decision on a tailnet/LAN address). The exact rules are in
+  # modules/services/soc-vigil-alarms.py; nothing here notifies anyone else.
+  services.soc-vigil-alarms.enable = true;
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
   # honest — soul-mirror health, MEMORY.md parity, witness requests rotting past
@@ -457,9 +477,11 @@
     # mtime = now after a clean run, epoch + 1s after any other outcome, so a
     # failed run reads picat on the next tick and a guard that stops running
     # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
+    # soc-audit.toml and soc-bans.toml are the same pattern over
+    # soc-vigil-alarms' two stamps (its auditStampPath / bansStampPath).
     # +1 for vigil-contracts-n8n/n8n.toml, which ./n8n.nix adds to
     # contractsDirs only while the studio n8n exists.
-    expectedContracts = 10 + (if config.sancta.studio.n8n.enable then 1 else 0);
+    expectedContracts = 12 + (if config.sancta.studio.n8n.enable then 1 else 0);
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };
