@@ -387,6 +387,13 @@
   #     ExecReload's `kill "-HUP" $MAINPID` has no off-store token at all
   #     (`$MAINPID` is a systemd-substituted PID, not a path). Same
   #     newly-visible-after-the-tokenizer-fix history as bluetooth above.
+  #   crowdsec-firewall-bouncer — nixpkgs' crowdsec-firewall-bouncer module
+  #     (sancta-choir, modules/services/soc-in-a-box.nix); ExecStart and the
+  #     second ExecStartPre invoke `cs-firewall-bouncer` by full /nix/store
+  #     path, and their only non-store token is
+  #     `/run/crowdsec-firewall-bouncer/config.yaml`, a CONFIG FILE argument
+  #     the first (store-path) ExecStartPre renders into the unit's
+  #     RuntimeDirectory — not a $PATH-resolved command.
   # Excluding these BY NAME, each with its own reason above, is the honest
   # choice — excluding by a shared pattern (e.g. "not sancta-*") would also
   # silently hide a real future sancta-owned unit that happened to match.
@@ -399,6 +406,7 @@
     "sshd@"
     "bluetooth"
     "home-assistant"
+    "crowdsec-firewall-bouncer"
   ];
 
   # Maintainer-curated map: nixpkgs package `pname` (verified empirically —
