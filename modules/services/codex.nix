@@ -13,11 +13,13 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = (pkgs.unstable or pkgs).codex;
-      defaultText = lib.literalExpression "(pkgs.unstable or pkgs).codex";
+      default = (pkgs.codexPkgs or pkgs.unstable or pkgs).codex;
+      defaultText = lib.literalExpression "(pkgs.codexPkgs or pkgs.unstable or pkgs).codex";
       description = ''
-        Codex CLI package to install. Defaults to nixpkgs-unstable because
-        Codex moves faster than stable nixpkgs branches.
+        Codex CLI package to install. Defaults to the dedicated
+        `nixpkgs-codex` flake input (nixpkgs-unstable branch), exposed as
+        `pkgs.codexPkgs`, because Codex releases faster than even
+        nixos-unstable; bumping it moves codex alone.
       '';
     };
   };
