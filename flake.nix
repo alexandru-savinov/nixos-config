@@ -8,6 +8,12 @@
     # already uses nixpkgs 25.11, so this aligns all hosts.
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Codex CLI only (customModules.codex). Tracks the nixpkgs-unstable
+    # branch, which gets new codex releases days before nixos-unstable, so
+    # codex can move forward without dragging every other pkgs.unstable
+    # consumer (and claude-code, which follows nixpkgs-unstable) with it.
+    # Bump on its own: nix flake update nixpkgs-codex
+    nixpkgs-codex.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     home-manager = {
       url = "github:nix-community/home-manager/release-25.11";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -91,6 +97,12 @@
       # which is what drove evaluation memory to 98% pressure before.
       unstablePkgsFor = forAllSystems importUnstable;
 
+      # Same memoized-per-architecture rule for the codex-only nixpkgs.
+      # Only `.codex` is ever forced from it, and nixpkgs is lazy, so the
+      # extra eval cost is that one package's closure, not a second full
+      # package set. Codex is Apache-2.0, so no allowUnfree here.
+      codexPkgsFor = forAllSystems (system: import inputs.nixpkgs-codex { inherit system; });
+
       # Exposes nixos-unstable as `pkgs.unstable` in every host, so modules
       # write `pkgs.unstable.foo` instead of taking a `pkgs-unstable`
       # specialArg (NixCon 2026, Yifei Sun: "modules without specialArgs").
@@ -99,10 +111,12 @@
       # Takes the pre-imported set (from `unstablePkgsFor` above) rather than
       # importing itself, so every host sharing an architecture shares the
       # same evaluation instead of paying for its own.
-      mkUnstableOverlay = u: {
+      mkUnstableOverlay = u: c: {
         nixpkgs.overlays = [
           (final: prev: {
             unstable = u;
+            # nixpkgs-codex, read only by modules/services/codex.nix.
+            codexPkgs = c;
           })
         ];
       };
@@ -186,7 +200,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
-            (mkUnstableOverlay unstablePkgsFor.x86_64-linux)
+            (mkUnstableOverlay unstablePkgsFor.x86_64-linux codexPkgsFor.x86_64-linux)
           ];
         };
 
@@ -209,7 +223,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
-            (mkUnstableOverlay unstablePkgsFor.aarch64-linux)
+            (mkUnstableOverlay unstablePkgsFor.aarch64-linux codexPkgsFor.aarch64-linux)
           ];
         };
 
@@ -230,7 +244,7 @@
             vscode-server.nixosModules.default
             agenix.nixosModules.default
             agenixModule
-            (mkUnstableOverlay unstablePkgsFor.aarch64-linux)
+            (mkUnstableOverlay unstablePkgsFor.aarch64-linux codexPkgsFor.aarch64-linux)
           ];
         };
       };
