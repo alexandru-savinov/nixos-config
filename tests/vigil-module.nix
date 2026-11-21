@@ -61,7 +61,8 @@ let
     socket-enabled = socket.wantedBy == [ "sockets.target" ];
     socket-bind = socket.socketConfig.ListenStream == "100.106.93.87:8747" && socket.socketConfig.FreeBind && socket.socketConfig.Accept;
     socket-acl = socket.socketConfig.IPAddressAllow == [ "100.64.0.0/10" "fd7a:115c:a1e0::/48" ] && socket.socketConfig.IPAddressDeny == "any";
-    socket-ordering = builtins.elem "tailscaled.service" socket.after && builtins.elem "tailscaled.service" socket.wants;
+    socket-ordering = builtins.elem "tailscaled.service" socket.after && builtins.elem "tailscaled.service" socket.wants
+      && socket.unitConfig.DefaultDependencies == false && builtins.elem "shutdown.target" socket.conflicts;
     tick-read-only = tick.environment.STATE_DIRECTORY == "/var/lib/vigil" && !(tick.serviceConfig ? StateDirectory) && tick.serviceConfig.ProtectSystem == "strict";
     tick-secrets-inaccessible = lib.all (path: builtins.elem path tick.serviceConfig.InaccessiblePaths)
       [ "-/run/agenix" "-/run/agenix.d" "-/run/agenix/telegram" "-/run/custom-ha-token" "-/run/vigil-contracts" ];

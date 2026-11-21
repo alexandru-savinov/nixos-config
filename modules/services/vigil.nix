@@ -119,8 +119,15 @@ in
     systemd.sockets.vigil-tick = {
       description = "Vigil freshness socket on the tailnet";
       wantedBy = [ "sockets.target" ];
-      after = [ "tailscaled.service" ];
+      # No default dependencies: they order the socket Before=sockets.target, and
+      # with After=tailscaled that closes a boot cycle (tailscaled > network-pre >
+      # resolvconf > basic.target > sockets.target), which systemd breaks by
+      # dropping a start job. FreeBind already lets it bind before the tailnet IP.
+      unitConfig.DefaultDependencies = false;
+      after = [ "sysinit.target" "tailscaled.service" ];
       wants = [ "tailscaled.service" ];
+      before = [ "shutdown.target" ];
+      conflicts = [ "shutdown.target" ];
       socketConfig = {
         ListenStream = "${cfg.listenAddress}:${toString cfg.tickPort}";
         FreeBind = true;
