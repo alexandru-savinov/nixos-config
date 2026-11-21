@@ -538,6 +538,15 @@ in
     name_servers_append='192.168.1.1'
   '';
 
+  # timesyncd NTP storm. Without systemd-networkd, /run/systemd/netif is absent,
+  # so timesyncd's network monitor watches /run/systemd/ itself for its creation.
+  # Every sandboxed unit start (PrivateTmp etc.) makes a /run/systemd/namespace-*
+  # directory there; timesyncd took each one as a network change and re-polled:
+  # with Vigil's per-minute tick probes that was ~10 NTP packets/min (strace,
+  # 2026-11-21). An empty netif/links dir moves the watch off /run/systemd/.
+  # Runtime test: 10 packets/min -> 0 in 2 min, NTPSynchronized=yes.
+  systemd.tmpfiles.rules = [ "d /run/systemd/netif/links 0755 root root -" ];
+
   # python-roborock v4 login workaround. Roborock's v4 auth endpoint
   # (/api/v4/auth/email/login/code) returns "parameter error" (code 1002) for
   # some accounts/regions — confirmed for this account: every country/countryCode
