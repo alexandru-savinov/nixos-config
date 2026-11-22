@@ -21,8 +21,21 @@ set -euo pipefail
 
 stamp="${SANCTA_DOCTRINE_STAMP:?SANCTA_DOCTRINE_STAMP is not set}"
 
+# Whatever else happens, an earlier green stamp must not outlive a run that
+# did not stamp: if the new mtime cannot be written, the stamp is invalidated
+# (epoch + 1s), and if even that fails it is removed (vigil reads a missing
+# file as unreadable, never as green). The script still exits non-zero.
+invalidate() {
+  touch -d @1 -- "$stamp" && return 0
+  rm -f -- "$stamp" || true
+  return 1
+}
+
 if [ "${SERVICE_RESULT:-}" = success ] && [ "${EXIT_CODE:-}" = exited ] && [ "${EXIT_STATUS:-}" = 0 ]; then
-  touch -- "$stamp"
+  if ! touch -- "$stamp"; then
+    invalidate || true
+    exit 1
+  fi
 else
-  touch -d @1 -- "$stamp"
+  invalidate || exit 1
 fi

@@ -468,6 +468,22 @@ def check_trail(a, last_lost_path: str, start_hold) -> int | None:
     return increase
 
 
+def check_stamp(a, ran_marker: str) -> None:
+    """The stamp is the only thing vigil reads. Once a run has completed here
+    (`ran_marker`), a missing stamp is an evaluator error: this run exits 2,
+    the stamp script writes the stamp already invalid, and vigil reads red
+    instead of an absent file (which it reads as unreadable, a note)."""
+    if not a.stamp:
+        raise RuntimeError("no stamp path (set --stamp or SANCTA_DOCTRINE_STAMP)")
+    if os.path.exists(ran_marker) and not os.path.lexists(a.stamp):
+        raise RuntimeError(f"outcome stamp {a.stamp} is missing after an earlier run")
+
+
+def mark_ran(ran_marker: str) -> None:
+    if not os.path.exists(ran_marker):
+        _write_durably(ran_marker, f"{time.time():.0f}\n")
+
+
 def cmd_audit(a) -> int:
     # systemd's StateDirectory= exports STATE_DIRECTORY; tests pass --state-dir.
     if not a.state_dir or not os.path.isdir(a.state_dir):
@@ -497,6 +513,8 @@ def cmd_audit(a) -> int:
     # reads the same window again: a repeated ALARM line, never a lost one.
     last_system = os.path.join(a.state_dir, "audit.last-system")
     last_lost = os.path.join(a.state_dir, "audit.last-lost")
+    ran_marker = os.path.join(a.state_dir, "audit.ran")
+    check_stamp(a, ran_marker)
     installed = os.path.join(a.state_dir, "audit.installed")
     mismatch_flag = os.path.join(a.state_dir, "audit.checkpoint-mismatch")
     target = _system_target(a.current_system)
@@ -574,6 +592,7 @@ def cmd_audit(a) -> int:
             last = float(fh.read().strip() or 0)
     except FileNotFoundError:
         last = 0.0
+    mark_ran(ran_marker)
     if now - last < a.hold:
         _log(f"audit: red, last hit {max(0.0, now - last):.0f}s ago (hold {a.hold}s)")
         return 1
@@ -582,6 +601,10 @@ def cmd_audit(a) -> int:
 
 
 def cmd_bans(a) -> int:
+    if not a.state_dir or not os.path.isdir(a.state_dir):
+        raise RuntimeError("no state directory (set --state-dir or STATE_DIRECTORY)")
+    ran_marker = os.path.join(a.state_dir, "bans.ran")
+    check_stamp(a, ran_marker)
     # --limit 0: cscli returns only the newest 100 alerts by default
     # (clidecision/decisions.go, crowdsec 1.7.2); a home decision past the
     # first hundred would otherwise read clean.
@@ -596,6 +619,7 @@ def cmd_bans(a) -> int:
     hits = home_bans(p1.stdout, p2.stdout, [c for c in a.cidrs.split(",") if c])
     for h in hits:
         _log("ALARM ban " + json.dumps(h, sort_keys=True))
+    mark_ran(ran_marker)
     if hits:
         return 1
     _log("bans: clean")
@@ -609,6 +633,7 @@ def main(argv: list[str]) -> int:
     au.add_argument("--ausearch", required=True)
     au.add_argument("--systemctl", required=True)
     au.add_argument("--auditctl", required=True)
+    au.add_argument("--stamp", default=os.environ.get("SANCTA_DOCTRINE_STAMP"))
     au.add_argument("--require-active", action="append", default=[])
     au.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
     au.add_argument("--hold", type=int, required=True)
@@ -619,6 +644,8 @@ def main(argv: list[str]) -> int:
     bn.add_argument("--cscli", required=True)
     bn.add_argument("--fail2ban-client", required=True)
     bn.add_argument("--cidrs", required=True)
+    bn.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
+    bn.add_argument("--stamp", default=os.environ.get("SANCTA_DOCTRINE_STAMP"))
     a = ap.parse_args(argv)
     try:
         return cmd_audit(a) if a.cmd == "audit" else cmd_bans(a)

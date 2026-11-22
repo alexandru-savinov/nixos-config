@@ -435,6 +435,7 @@ class Runners(unittest.TestCase):
         self.cs = os.path.join(self.d, "current-system")
         self.sudoers = os.path.join(self.d, "sudoers")
         self.last_system = os.path.join(self.sd, "audit.last-system")
+        self.stamp = os.path.join(self.d, "stamp")
         for gen in ("gen1", "gen2"):
             os.makedirs(os.path.join(self.d, gen, "etc"))
             with open(os.path.join(self.d, gen, "etc", "sudoers"), "w") as fh:
@@ -453,9 +454,17 @@ class Runners(unittest.TestCase):
     def ausearch(self, script):
         return fake(self.d, "ausearch", f'echo "$@" >> {self.log}\n' + script)
 
+    def stamp_like_execstoppost(self, rc):
+        """What the unit's ExecStopPost does with the exit status."""
+        with open(self.stamp, "a"):
+            pass
+        t = time.time() if rc == 0 else 1
+        os.utime(self.stamp, (t, t))
+        return rc
+
     def injected(self):
         return ["--current-system", self.cs, "--etc-sudoers", self.sudoers,
-                "--auditctl", self.auditctl]
+                "--auditctl", self.auditctl, "--stamp", self.stamp]
 
     def make_auditctl(self, *, enabled=1, lost=0, rules=None, status_exit=0, rules_exit=0):
         rules = HEALTHY_RULES if rules is None else rules
@@ -480,9 +489,10 @@ class Runners(unittest.TestCase):
             'for u in "$@"; do case " ' + dead + ' " in *" $u "*) ;; *) exit 0;; esac; done\n'
             'exit 3\n'
         ))
-        return sva.main(["audit", "--ausearch", ausearch, "--systemctl", systemctl,
-                         "--require-active", "auditd.service", "--require-active", "audit-rules-nixos.service",
-                         "--state-dir", self.sd, "--hold", str(hold)] + self.injected())
+        return self.stamp_like_execstoppost(
+            sva.main(["audit", "--ausearch", ausearch, "--systemctl", systemctl,
+                      "--require-active", "auditd.service", "--require-active", "audit-rules-nixos.service",
+                      "--state-dir", self.sd, "--hold", str(hold)] + self.injected()))
 
     def test_quiet_window_with_dead_trail_is_error(self):
         # auditd stopped / rules unloaded: ausearch is just as silent, so the
@@ -534,6 +544,50 @@ class Runners(unittest.TestCase):
     def test_exit_one_without_no_matches_is_error(self):
         a = self.ausearch('echo "Error opening /var/log/audit/audit.log" >&2; exit 1\n')
         self.assertEqual(self.audit(a), 2)
+
+    # ── a missing stamp, once a run has completed, reads red ──
+    def test_missing_stamp_after_a_completed_run_is_an_error(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        os.unlink(self.stamp)
+        os.unlink(self.log)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        self.assertFalse(os.path.exists(self.log), "evaluation must not run against a missing stamp")
+        # The stamp script then wrote it invalid: red, not absent.
+        self.assertEqual(int(os.stat(self.stamp).st_mtime), 1)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_missing_stamp_on_the_first_run_is_not_an_error(self):
+        self.assertFalse(os.path.exists(self.stamp))
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_invalid_stamp_is_not_a_missing_stamp(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        os.utime(self.stamp, (1, 1))
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_no_stamp_path_is_an_error(self):
+        args = [x for x in self.injected() if x != "--stamp"]
+        args = args[:-1] if args[-1] == self.stamp else args
+        a = self.ausearch(QUIET)
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        env = os.environ.pop("SANCTA_DOCTRINE_STAMP", None)
+        try:
+            self.assertEqual(sva.main(["audit", "--ausearch", a, "--systemctl", systemctl,
+                                       "--require-active", "auditd.service",
+                                       "--state-dir", self.sd, "--hold", "900"] + args
+                                      + ["--stamp", ""]), 2)
+        finally:
+            if env is not None:
+                os.environ["SANCTA_DOCTRINE_STAMP"] = env
+
+    def test_bans_missing_stamp_after_a_completed_run_is_an_error(self):
+        status = f2b("203.0.113.9").replace("\t", " ")
+        ok = (f"echo null\n", f"cat <<'E'\n{status}E\n")
+        self.assertEqual(self.bans(*ok), 0)
+        os.unlink(self.stamp)
+        self.assertEqual(self.bans(*ok), 2)
+        self.assertEqual(int(os.stat(self.stamp).st_mtime), 1)
+        self.assertEqual(self.bans(*ok), 0)
 
     # ── ausearch edge cases: each is an evaluator error ──
     def fixture_cmd(self, text):
@@ -907,9 +961,11 @@ class Runners(unittest.TestCase):
 
     def bans(self, cscli_body, f2b_body):
         guard = 'case " $* " in *" --limit 0 "*) ;; *) echo "default limit 100" >&2; exit 3;; esac\n'
-        return sva.main(["bans", "--cscli", fake(self.d, "cscli", guard + cscli_body),
-                         "--fail2ban-client", fake(self.d, "f2b", f2b_body),
-                         "--cidrs", ",".join(NEVER_BAN)])
+        return self.stamp_like_execstoppost(
+            sva.main(["bans", "--cscli", fake(self.d, "cscli", guard + cscli_body),
+                      "--fail2ban-client", fake(self.d, "f2b", f2b_body),
+                      "--cidrs", ",".join(NEVER_BAN),
+                      "--state-dir", self.sd, "--stamp", self.stamp]))
 
     def test_bans_runner_arms(self):
         status = f2b("203.0.113.9").replace("\t", " ")
@@ -919,6 +975,70 @@ class Runners(unittest.TestCase):
         # An engine that cannot answer is not clean.
         self.assertEqual(self.bans("echo boom >&2; exit 1\n", f"cat <<'E'\n{status}E\n"), 2)
         self.assertEqual(self.bans("echo null\n", "exit 255\n"), 2)
+
+
+STAMP_SCRIPT = os.environ.get(
+    "SOC_STAMP_SCRIPT",
+    os.path.join(HERE, "..", "modules", "services", "sancta-doctrine-guard-stamp.sh"),
+)
+
+
+class StampScript(unittest.TestCase):
+    """modules/services/sancta-doctrine-guard-stamp.sh, run for real with a
+    stand-in `touch` that can be made to fail (BSD touch has no -d @N)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.bin = os.path.join(self.d, "bin")
+        os.mkdir(self.bin)
+        self.stamp = os.path.join(self.d, "stamp")
+        py = os.path.realpath(__import__("sys").executable)
+        # fail=all|plain|none: which touch calls fail. `-d @N` sets mtime N.
+        fake(self.bin, "touch", (
+            'mode=plain; [ "$1" = -d ] && mode=epoch\n'
+            'case "$STAMP_TOUCH_FAIL" in all) exit 1;; "$mode") exit 1;; esac\n'
+            f'if [ "$mode" = epoch ]; then t=${{2#@}}; else t=$(date +%s); fi\n'
+            f'exec {py} -c "import os,sys; open(sys.argv[2],\'a\').close(); os.utime(sys.argv[2],(int(sys.argv[1]),)*2)" "$t" "$stamp_path"\n'
+        ).replace('"$stamp_path"', '"$STAMP_PATH"'))
+
+    def run_stamp(self, *, result="success", code="exited", status="0", fail="none"):
+        env = {"PATH": self.bin + ":/usr/bin:/bin", "SANCTA_DOCTRINE_STAMP": self.stamp,
+               "STAMP_PATH": self.stamp, "STAMP_TOUCH_FAIL": fail,
+               "SERVICE_RESULT": result, "EXIT_CODE": code, "EXIT_STATUS": status}
+        import subprocess
+        return subprocess.run(["bash", STAMP_SCRIPT], env=env, capture_output=True, text=True).returncode
+
+    def mtime(self):
+        return int(os.stat(self.stamp).st_mtime)
+
+    def green(self):
+        with open(self.stamp, "w"):
+            pass
+        os.utime(self.stamp, None)
+
+    def test_clean_run_stamps_now(self):
+        self.assertEqual(self.run_stamp(), 0)
+        self.assertLess(abs(time.time() - self.mtime()), 60)
+
+    def test_failed_run_stamps_epoch_plus_one(self):
+        self.green()
+        self.assertEqual(self.run_stamp(result="exit-code", status="2"), 0)
+        self.assertEqual(self.mtime(), 1)
+
+    def test_failed_write_does_not_leave_the_old_stamp_green(self):
+        self.green()
+        self.assertNotEqual(self.run_stamp(fail="plain"), 0)
+        self.assertEqual(self.mtime(), 1)
+
+    def test_failed_write_and_failed_invalidation_remove_the_stamp(self):
+        self.green()
+        self.assertNotEqual(self.run_stamp(fail="all"), 0)
+        self.assertFalse(os.path.exists(self.stamp))
+
+    def test_failed_run_whose_invalidation_fails_removes_the_stamp(self):
+        self.green()
+        self.assertNotEqual(self.run_stamp(result="exit-code", status="2", fail="all"), 0)
+        self.assertFalse(os.path.exists(self.stamp))
 
 
 if __name__ == "__main__":
