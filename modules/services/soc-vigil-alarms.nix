@@ -61,6 +61,16 @@ let
   # whitelist (module-eval asserts the CrowdSec half). One source.
   neverBan = config.services.fail2ban.ignoreIP;
 
+  # The watch rules the trail must have loaded, taken from the one place they
+  # are declared (soc-in-a-box's security.audit.rules) as PATH:PERM:KEY.
+  watchedKeys = [ "agenix-secrets" "sudoers" ];
+  expectedWatches = lib.concatMap
+    (rule:
+      let m = builtins.match "-w ([^ ]+) -p ([rwxa]+) -k ([a-z-]+)" rule;
+      in lib.optional (m != null && builtins.elem (builtins.elemAt m 2) watchedKeys)
+        "${builtins.elemAt m 0}:${builtins.elemAt m 1}:${builtins.elemAt m 2}")
+    config.security.audit.rules;
+
   common = {
     Type = "oneshot";
     ExecStopPost = "${pkgs.bash}/bin/bash ${stampScript}";
@@ -159,6 +169,10 @@ in
         message = "services.soc-vigil-alarms evaluates soc-in-a-box's engines (auditd, CrowdSec, fail2ban); import modules/services/soc-in-a-box.nix.";
       }
       {
+        assertion = lib.length expectedWatches == lib.length watchedKeys;
+        message = "services.soc-vigil-alarms: security.audit.rules must hold one `-w PATH -p PERM -k KEY` rule per watched key (${lib.concatStringsSep ", " watchedKeys}).";
+      }
+      {
         assertion = cscli != null;
         message = "services.soc-vigil-alarms: no `cscli` wrapper in environment.systemPackages (the nixpkgs crowdsec module provides it).";
       }
@@ -175,7 +189,7 @@ in
         "audit-rules-nixos.service"
       ];
       serviceConfig = common // {
-        ExecStart = lib.escapeShellArgs [
+        ExecStart = lib.escapeShellArgs ([
           python
           "${script}"
           "audit"
@@ -187,8 +201,9 @@ in
           # script, not by requires=, which would START a stopped auditd.
           "--systemctl"
           "${config.systemd.package}/bin/systemctl"
-          # Trail health (auditctl -s / -l): auditing enabled, no events lost
-          # since the last run, and the agenix-secrets and sudoers watches loaded.
+          # Trail health (auditctl -s / -l): auditing enabled with a live
+          # auditd, no events lost within a boot, and exactly the declared
+          # agenix-secrets and sudoers watches loaded (--expect-watch below).
           "--auditctl"
           "${pkgs.audit}/bin/auditctl"
           "--require-active"
@@ -197,7 +212,7 @@ in
           "audit-rules-nixos.service"
           "--hold"
           (toString cfg.auditHold)
-        ];
+        ] ++ lib.concatMap (w: [ "--expect-watch" w ]) expectedWatches);
         # The checkpoint and last-hit files live in $STATE_DIRECTORY (set by
         # StateDirectory=), so no off-store path appears in ExecStart.
         Environment = [

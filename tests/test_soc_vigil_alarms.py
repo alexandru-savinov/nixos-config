@@ -528,6 +528,8 @@ class Runners(unittest.TestCase):
         self.sudoers = os.path.join(self.d, "sudoers")
         self.last_system = os.path.join(self.sd, "audit.last-system")
         self.stamp = os.path.join(self.d, "stamp")
+        self.bootid = os.path.join(self.d, "boot_id")
+        self.set_boot("boot-A")
         for gen in ("gen1", "gen2"):
             os.makedirs(os.path.join(self.d, gen, "etc"))
             with open(os.path.join(self.d, gen, "etc", "sudoers"), "w") as fh:
@@ -556,15 +558,21 @@ class Runners(unittest.TestCase):
 
     def injected(self):
         return ["--current-system", self.cs, "--etc-sudoers", self.sudoers,
-                "--auditctl", self.auditctl, "--stamp", self.stamp]
+                "--auditctl", self.auditctl, "--stamp", self.stamp,
+                "--expect-watch", "/run/agenix:rwa:agenix-secrets", "--expect-watch", "/etc/sudoers:wa:sudoers",
+                "--boot-id-file", self.bootid]
 
-    def make_auditctl(self, *, enabled=1, lost=0, rules=None, status_exit=0, rules_exit=0):
+    def set_boot(self, ident):
+        with open(self.bootid, "w") as fh:
+            fh.write(ident + "\n")
+
+    def make_auditctl(self, *, enabled=1, lost=0, pid=1, rules=None, status_exit=0, rules_exit=0):
         rules = HEALTHY_RULES if rules is None else rules
         return fake(self.d, "auditctl", (
             f'echo "$@" >> {self.log}.auditctl\n'
             'case "$1" in\n'
             f'  -s) [ {status_exit} -ne 0 ] && {{ echo boom >&2; exit {status_exit}; }}\n'
-            f'      printf "enabled {enabled}\\nfailure 1\\npid 1\\nrate_limit 0\\nbacklog_limit 8192\\nlost {lost}\\nbacklog 0\\n";;\n'
+            f'      printf "enabled {enabled}\\nfailure 1\\npid {pid}\\nrate_limit 0\\nbacklog_limit 8192\\nlost {lost}\\nbacklog 0\\n";;\n'
             f'  -l) [ {rules_exit} -ne 0 ] && {{ echo boom >&2; exit {rules_exit}; }}\n'
             f"      cat <<'E'\n{rules}E\n;;\n"
             'esac\n'
@@ -658,19 +666,18 @@ class Runners(unittest.TestCase):
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
     def test_no_stamp_path_is_an_error(self):
-        args = [x for x in self.injected() if x != "--stamp"]
-        args = args[:-1] if args[-1] == self.stamp else args
+        args = self.injected()
+        args[args.index("--stamp") + 1] = ""
         a = self.ausearch(QUIET)
         systemctl = fake(self.d, "systemctl", "exit 0\n")
-        env = os.environ.pop("SANCTA_DOCTRINE_STAMP", None)
+        saved = os.environ.pop("SANCTA_DOCTRINE_STAMP", None)
         try:
             self.assertEqual(sva.main(["audit", "--ausearch", a, "--systemctl", systemctl,
                                        "--require-active", "auditd.service",
-                                       "--state-dir", self.sd, "--hold", "900"] + args
-                                      + ["--stamp", ""]), 2)
+                                       "--state-dir", self.sd, "--hold", "900"] + args), 2)
         finally:
-            if env is not None:
-                os.environ["SANCTA_DOCTRINE_STAMP"] = env
+            if saved is not None:
+                os.environ["SANCTA_DOCTRINE_STAMP"] = saved
 
     def test_bans_missing_stamp_after_a_completed_run_is_an_error(self):
         status = f2b("203.0.113.9").replace("\t", " ")
@@ -1033,14 +1040,14 @@ class Runners(unittest.TestCase):
 
     def test_watch_keys_in_filter_form_are_accepted(self):
         self.auditctl = self.make_auditctl(rules=(
-            "-a always,exit -F arch=b64 -S openat -F path=/etc/sudoers -F key=sudoers\n"
-            "-a always,exit -F arch=b64 -S openat -F dir=/run/agenix -F key=agenix-secrets\n"))
+            "-a always,exit -F arch=b64 -S openat -F path=/etc/sudoers -F perm=wa -F key=sudoers\n"
+            "-a always,exit -F arch=b64 -S openat -F dir=/run/agenix -F perm=rwa -F key=agenix-secrets\n"))
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
     def test_first_run_stores_the_lost_counter_without_alarm(self):
         self.auditctl = self.make_auditctl(lost=7)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "7")
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "boot-A 7")
 
     def test_unchanged_lost_counter_is_clean(self):
         self.auditctl = self.make_auditctl(lost=7)
@@ -1053,7 +1060,7 @@ class Runners(unittest.TestCase):
         self.auditctl = self.make_auditctl(lost=9)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
         self.assertTrue(os.path.exists(self.last))
-        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "9")
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "boot-A 9")
         # A single blip must not read clean on the next quiet window ...
         self.assertEqual(self.audit(self.ausearch(QUIET)), 1)
         # ... and clears once the hold has elapsed.
@@ -1061,11 +1068,78 @@ class Runners(unittest.TestCase):
             fh.write(f"{time.time() - 901:.0f}\n")
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
-    def test_lost_counter_reset_is_not_an_alarm(self):
+    def test_lost_counter_fall_within_one_boot_is_an_error(self):
         self.auditctl = self.make_auditctl(lost=9)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.auditctl = self.make_auditctl(lost=0)  # auditd restarted
+        self.auditctl = self.make_auditctl(lost=0)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        self.assertTrue(os.path.exists(self.last))
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "boot-A 0")
+
+    def test_new_boot_resets_the_lost_baseline(self):
+        self.auditctl = self.make_auditctl(lost=9)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.set_boot("boot-B")
+        self.auditctl = self.make_auditctl(lost=0)  # kernel counter restarted
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "boot-B 0")
+        # ... and the new boot is then tracked like any other.
+        self.auditctl = self.make_auditctl(lost=3)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+
+    def test_a_high_counter_at_a_new_boot_is_not_an_increase(self):
+        self.auditctl = self.make_auditctl(lost=1)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.set_boot("boot-B")
+        self.auditctl = self.make_auditctl(lost=50)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_unreadable_boot_id_is_an_error(self):
+        os.unlink(self.bootid)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+
+    def test_legacy_counter_file_is_a_baseline_not_an_alarm(self):
+        with open(os.path.join(self.sd, "audit.last-lost"), "w") as fh:
+            fh.write("7\n")
+        self.auditctl = self.make_auditctl(lost=2)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_auditd_pid_zero_is_an_error(self):
+        self.auditctl = self.make_auditctl(pid=0)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        self.assertFalse(os.path.exists(self.log), "ausearch must not run on a blind trail")
+
+    def test_rule_with_the_right_key_on_the_wrong_path_is_an_error(self):
+        for rules in ("-w /run/agenix -p rwa -k agenix-secrets\n-w /etc/shadow -p wa -k sudoers\n",
+                      "-w /tmp/agenix -p rwa -k agenix-secrets\n-w /etc/sudoers -p wa -k sudoers\n"):
+            self.auditctl = self.make_auditctl(rules=rules)
+            self.assertEqual(self.audit(self.ausearch(QUIET)), 2, rules)
+
+    def test_rule_with_the_wrong_permission_is_an_error(self):
+        for rules in ("-w /run/agenix -p r -k agenix-secrets\n-w /etc/sudoers -p wa -k sudoers\n",
+                      "-w /run/agenix -p rwa -k agenix-secrets\n-w /etc/sudoers -p r -k sudoers\n"):
+            self.auditctl = self.make_auditctl(rules=rules)
+            self.assertEqual(self.audit(self.ausearch(QUIET)), 2, rules)
+
+    def test_permission_letters_in_any_order_match(self):
+        self.auditctl = self.make_auditctl(rules="-w /run/agenix -p arw -k agenix-secrets\n-w /etc/sudoers -p aw -k sudoers\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_no_expected_watches_is_an_error(self):
+        args = self.injected()
+        i = args.index("--expect-watch")
+        while "--expect-watch" in args:
+            j = args.index("--expect-watch")
+            del args[j:j + 2]
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        self.assertEqual(sva.main(["audit", "--ausearch", self.ausearch(QUIET), "--systemctl", systemctl,
+                                   "--require-active", "auditd.service", "--state-dir", self.sd,
+                                   "--hold", "900"] + args), 2)
+
+    def test_expected_watches_come_from_the_arguments(self):
+        # Another configuration (a different secrets mount) is judged by what it declares.
+        self.auditctl = self.make_auditctl(rules="-w /run/agenix.d -p rwa -k agenix-secrets\n-w /etc/sudoers -p wa -k sudoers\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
 
     def test_lost_events_do_not_hide_a_hit_in_the_window(self):
         self.auditctl = self.make_auditctl(lost=1)

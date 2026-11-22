@@ -408,10 +408,6 @@ def sudoers_context(a) -> bool | None:
         return None
 
 
-_REQUIRED_WATCHES = ("agenix-secrets", "sudoers")
-_RULE_KEY = re.compile(r"(?:^|\s)(?:-k\s+|-F\s+key=)(\S+)")
-
-
 def _auditctl(a, flag: str) -> str:
     p = subprocess.run([a.auditctl, flag], capture_output=True, text=True,
                        stdin=subprocess.DEVNULL)
@@ -420,47 +416,95 @@ def _auditctl(a, flag: str) -> str:
     return p.stdout
 
 
-def audit_status(text: str) -> tuple[int, int]:
-    """PURE. (enabled, lost) from `auditctl -s`. Raises ValueError if either
+def audit_status(text: str) -> tuple[int, int, int]:
+    """PURE. (enabled, lost, pid) from `auditctl -s`. Raises ValueError if any
     is missing or not a number."""
     found = {}
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[0] in ("enabled", "lost"):
+        if len(parts) == 2 and parts[0] in ("enabled", "lost", "pid"):
             found[parts[0]] = int(parts[1])
-    if "enabled" not in found or "lost" not in found:
-        raise ValueError("auditctl -s output has no enabled/lost counters")
-    return found["enabled"], found["lost"]
+    if not {"enabled", "lost", "pid"} <= found.keys():
+        raise ValueError("auditctl -s output has no enabled/lost/pid counters")
+    return found["enabled"], found["lost"], found["pid"]
 
 
-def watch_keys(text: str) -> set[str]:
-    """PURE. Every key named by a rule in `auditctl -l` output."""
-    return {m.group(1) for line in text.splitlines() for m in [_RULE_KEY.search(line)] if m}
+def loaded_watches(text: str) -> set[tuple[str, frozenset, str]]:
+    """PURE. (path, perm letters, key) for every watch rule in `auditctl -l`
+    output, in either printed form: `-w PATH -p PERM -k KEY` or
+    `-a ... -F path=PATH|dir=PATH -F perm=PERM -F key=KEY`. A rule missing
+    its path, perm or key is not a watch for this purpose."""
+    out = set()
+    for line in text.splitlines():
+        t = line.split()
+        path = perm = key = None
+        for i, tok in enumerate(t):
+            nxt = t[i + 1] if i + 1 < len(t) else None
+            if tok == "-w":
+                path = nxt
+            elif tok == "-p":
+                perm = nxt
+            elif tok == "-k":
+                key = nxt
+            elif tok == "-F" and nxt and "=" in nxt:
+                name, _, value = nxt.partition("=")
+                if name in ("path", "dir"):
+                    path = value
+                elif name == "perm":
+                    perm = value
+                elif name == "key":
+                    key = value
+        if path and perm and key:
+            out.add((path, frozenset(perm), key))
+    return out
 
 
-def check_trail(a, last_lost_path: str, start_hold) -> int | None:
+def parse_expected_watch(spec: str) -> tuple[str, frozenset, str]:
+    path, perm, key = spec.rsplit(":", 2)
+    if not (path.startswith("/") and perm and key):
+        raise ValueError(f"bad --expect-watch {spec!r} (want PATH:PERM:KEY)")
+    return path, frozenset(perm), key
+
+
+def check_trail(a, last_lost_path: str, start_hold) -> str | None:
     """Trail health, checked on every evaluation before a quiet window is
-    accepted: auditing enabled, the watch rules loaded, and no events lost
-    since the previous evaluation. Returns the lost-counter increase to
-    report after the window was read (None when there is none); raises when
-    the trail cannot record."""
-    enabled, lost = audit_status(_auditctl(a, "-s"))
+    accepted: auditing enabled, a live auditd pid, exactly the expected watch
+    rules loaded, and a lost counter that never moves except at a boot.
+    Returns a problem to report after the window was read (the loss counter
+    moved); raises when the trail cannot record."""
+    enabled, lost, pid = audit_status(_auditctl(a, "-s"))
     if enabled not in (1, 2):
         raise RuntimeError(f"audit trail not recording: auditctl -s enabled={enabled}")
-    loaded = watch_keys(_auditctl(a, "-l"))
-    missing = [k for k in _REQUIRED_WATCHES if k not in loaded]
+    if pid == 0:
+        raise RuntimeError("audit trail not recording: no auditd registered with the kernel (pid 0)")
+    if not a.expect_watch:
+        raise RuntimeError("no --expect-watch given: cannot prove the watch rules are loaded")
+    loaded = loaded_watches(_auditctl(a, "-l"))
+    missing = [w for w in map(parse_expected_watch, a.expect_watch) if w not in loaded]
     if missing:
-        raise RuntimeError(f"audit watch rule(s) not loaded: {', '.join(missing)}")
+        raise RuntimeError("audit watch rule(s) not loaded as expected: "
+                           + ", ".join(f"{p} -p {''.join(sorted(m))} -k {k}" for p, m, k in missing))
+    boot = _read_text(a.boot_id_file)
+    if not boot:
+        raise RuntimeError(f"boot id unreadable ({a.boot_id_file})")
     stored = _read_text(last_lost_path)
-    previous = int(stored) if stored is not None else None
-    increase = lost - previous if previous is not None and lost > previous else None
-    if increase is not None:
-        # Events were dropped since the last evaluation: hold red, then record
-        # the new counter so the hold (not the counter) carries the signal.
+    previous = None  # (boot id, lost) recorded by the last evaluation of the SAME boot
+    if stored and len(stored.split()) == 2:
+        sb, sl = stored.split()
+        if sb == boot and sl.isdigit():
+            previous = int(sl)
+    problem = None
+    if previous is not None and lost != previous:
+        # The kernel counter only grows within a boot: a rise is dropped
+        # events, a fall is state this check cannot trust. Hold red, then
+        # record the new value so the hold carries the signal.
+        problem = (f"audit trail lost {lost - previous} event(s) since the last evaluation"
+                   if lost > previous else
+                   f"audit lost counter fell from {previous} to {lost} within one boot")
         start_hold()
-    if previous != lost:
-        _write_durably(last_lost_path, f"{lost}\n")
-    return increase
+    if previous != lost or stored is None or not stored.startswith(boot):
+        _write_durably(last_lost_path, f"{boot} {lost}\n")
+    return problem
 
 
 def check_stamp(a, ran_marker: str) -> None:
@@ -520,7 +564,7 @@ def cmd_audit(a) -> int:
     def start_hold():
         _write_durably(last_hit, f"{time.time():.0f}\n")
 
-    lost_increase = check_trail(a, last_lost, start_hold)
+    trail_problem = check_trail(a, last_lost, start_hold)
     # A checkpoint that goes missing once one was installed is not "first run".
     first_run = not os.path.exists(checkpoint)
     if first_run and os.path.exists(installed):
@@ -581,8 +625,8 @@ def cmd_audit(a) -> int:
     if gap is not None:
         errors.append(f"coverage gap: {gap:.0f}s since the last evaluation (limit {a.max_gap}s); "
                       "events in between may not have been read")
-    if lost_increase:
-        errors.append(f"audit trail lost {lost_increase} event(s) since the last evaluation")
+    if trail_problem:
+        errors.append(trail_problem)
     if bad:
         errors.append(f"{len(bad)} unparseable line(s); first: {bad[0]}")
     if os.path.exists(mismatch_flag) and not mismatch:
@@ -639,6 +683,10 @@ def main(argv: list[str]) -> int:
     au.add_argument("--systemctl", required=True)
     au.add_argument("--auditctl", required=True)
     au.add_argument("--stamp", default=os.environ.get("SANCTA_DOCTRINE_STAMP"))
+    # PATH:PERM:KEY, one per watch rule that must be loaded exactly; the unit
+    # derives them from config.security.audit.rules.
+    au.add_argument("--expect-watch", action="append", default=[])
+    au.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id")
     # The timer runs every 5 minutes; more than this since the last evaluation
     # means events may have gone unread (reboot, stopped timer, long outage).
     au.add_argument("--max-gap", type=int, default=600)

@@ -1287,6 +1287,12 @@ let
             && !(lib.hasInfix "--council" (argv aSvc))
             && !(lib.any (e: lib.hasPrefix "SOC_SECRETS_" e) (envOf aSvc));
 
+          # Trail health expects exactly the watches soc-in-a-box declares.
+          expectedWatches =
+            lib.hasInfix "--expect-watch ${choir.age.secretsMountPoint}:rwa:agenix-secrets" (argv aSvc)
+            && lib.hasInfix "--expect-watch /etc/sudoers:wa:sudoers" (argv aSvc)
+            && lib.hasInfix "--auditctl " (argv aSvc);
+
           # A quiet window counts only while the trail is live: both the
           # daemon and the rules unit must be required active by the script.
           trailLivenessGate =
