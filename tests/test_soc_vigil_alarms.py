@@ -611,6 +611,7 @@ class Runners(unittest.TestCase):
                 "--auditctl", self.auditctl, "--stamp", self.stamp,
                 "--expect-watch", "/run/agenix:rwa:agenix-secrets", "--expect-watch", "/etc/sudoers:wa:sudoers",
                 "--boot-id-file", self.bootid, "--audit-log-dir", self.d,
+                "--deploy-flag", os.path.join(self.d, "deploy-deadman-armed"),
                 # Off by default so a small CI disk cannot fail unrelated tests.
                 "--disk-warn-bytes", "0", "--disk-fail-bytes", "0", "--inode-fail-percent", "0"]
 
@@ -1326,6 +1327,28 @@ class Runners(unittest.TestCase):
         with open(self.last, "w") as fh:
             fh.write(f"{time.time() - 901:.0f}\n")
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_a_loss_during_a_deploy_stays_red_and_is_annotated(self):
+        # The deploy flag is context, never an exemption.
+        flag = os.path.join(self.d, "deploy-deadman-armed")
+        self.auditctl = self.make_auditctl(lost=7)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        with open(flag, "w"):
+            pass
+        self.auditctl = self.make_auditctl(lost=9)
+        rc, out = self.run_logged(self.ausearch(QUIET))
+        self.assertEqual(rc, 2)
+        self.assertIn("lost 2 event(s)", out)
+        self.assertIn("deploy in progress", out)
+        self.assertTrue(os.path.exists(self.last), "the hold starts as for any loss")
+
+    def test_a_loss_without_a_deploy_carries_no_deploy_note(self):
+        self.auditctl = self.make_auditctl(lost=7)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.auditctl = self.make_auditctl(lost=9)
+        rc, out = self.run_logged(self.ausearch(QUIET))
+        self.assertEqual(rc, 2)
+        self.assertNotIn("deploy in progress", out)
 
     def test_lost_counter_fall_within_one_boot_is_an_error(self):
         self.auditctl = self.make_auditctl(lost=9)

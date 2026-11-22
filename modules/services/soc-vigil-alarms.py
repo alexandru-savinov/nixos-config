@@ -566,6 +566,16 @@ def check_trail(a, last_lost_path: str, start_hold) -> str | None:
         problem = (f"audit trail lost {lost - previous} event(s) since the last evaluation"
                    if lost > previous else
                    f"audit lost counter fell from {previous} to {lost} within one boot")
+        # Context only, never an exemption: a deploy in progress is exactly
+        # when a loss must stay visible. The flag's mtime is logged so a stale
+        # or misplaced flag is itself evidence.
+        flag = getattr(a, "deploy_flag", None)
+        if flag and os.path.lexists(flag):
+            try:
+                since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.lstat(flag).st_mtime))
+            except OSError:
+                since = "unknown"
+            problem += f" (deploy in progress: {flag} present since {since})"
         start_hold()
     if previous != lost or stored is None or not stored.startswith(boot):
         _write_durably(last_lost_path, f"{boot} {lost}\n")
@@ -798,6 +808,9 @@ def main(argv: list[str]) -> int:
     au.add_argument("--disk-fail-bytes", type=int, default=5 * 1024 ** 3)
     au.add_argument("--inode-fail-percent", type=float, default=5.0)
     au.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id")
+    # Present while a deploy's dead-man rollback is armed; annotates a loss,
+    # never suppresses it.
+    au.add_argument("--deploy-flag", default="/run/deploy-deadman-armed")
     # The timer runs every 5 minutes; more than this since the last evaluation
     # means events may have gone unread (reboot, stopped timer, long outage).
     au.add_argument("--max-gap", type=int, default=600)
