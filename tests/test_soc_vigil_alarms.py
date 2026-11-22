@@ -656,6 +656,52 @@ class Runners(unittest.TestCase):
         self.assertEqual(int(os.stat(self.stamp).st_mtime), 1)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
+    # ── a failed run never leaves a fresh stamp ──
+    def run_main_without_stamp_writer(self, ausearch):
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        return sva.main(["audit", "--ausearch", ausearch, "--systemctl", systemctl,
+                         "--require-active", "auditd.service", "--state-dir", self.sd,
+                         "--hold", "900"] + self.injected())
+
+    def mtime(self):
+        return int(os.stat(self.stamp).st_mtime)
+
+    def test_the_stamp_is_invalidated_before_evaluating(self):
+        with open(self.stamp, "w"):
+            pass
+        os.utime(self.stamp, None)  # fresh from an earlier clean run
+        seen = os.path.join(self.d, "stamp-during")
+        py = os.path.realpath(__import__("sys").executable)
+        a = self.ausearch(f'{py} -c "import os;open(\'{seen}\',\'w\').write(str(int(os.stat(\'{self.stamp}\').st_mtime)))"\nexit 1\n')
+        self.assertEqual(self.run_main_without_stamp_writer(a), 0)
+        self.assertEqual(slurp(seen), "1", "the old fresh stamp must be gone while the run evaluates")
+        self.assertEqual(self.mtime(), 1, "and only the stamp writer makes it fresh again")
+
+    def test_an_uninvalidatable_stamp_is_an_error(self):
+        from unittest import mock
+        with open(self.stamp, "w"):
+            pass
+        with mock.patch("os.utime", side_effect=PermissionError("read-only")):
+            self.assertEqual(self.run_main_without_stamp_writer(self.ausearch(QUIET)), 2)
+        self.assertFalse(os.path.exists(self.log), "no evaluation behind a stamp that cannot be invalidated")
+
+    def test_double_failure_of_the_stamp_writer_leaves_the_stamp_invalid(self):
+        # touch AND rm both blocked in the stamp writer, after a clean run.
+        import subprocess
+        with open(self.stamp, "w"):
+            pass
+        os.utime(self.stamp, None)
+        self.assertEqual(self.run_main_without_stamp_writer(self.ausearch(QUIET)), 0)
+        blocked = os.path.join(self.d, "blocked-bin")
+        os.mkdir(blocked)
+        for tool in ("touch", "rm"):
+            fake(blocked, tool, "exit 1\n")
+        env = {"PATH": blocked + ":/usr/bin:/bin", "SANCTA_DOCTRINE_STAMP": self.stamp,
+               "SERVICE_RESULT": "success", "EXIT_CODE": "exited", "EXIT_STATUS": "0"}
+        rc = subprocess.run(["bash", STAMP_SCRIPT], env=env, capture_output=True).returncode
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(self.mtime(), 1, "a failed stamp writer must not leave the stamp fresh")
+
     def test_missing_stamp_on_the_first_run_is_not_an_error(self):
         self.assertFalse(os.path.exists(self.stamp))
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)

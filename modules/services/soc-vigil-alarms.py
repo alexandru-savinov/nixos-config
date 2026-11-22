@@ -516,6 +516,15 @@ def check_stamp(a, ran_marker: str) -> None:
         raise RuntimeError("no stamp path (set --stamp or SANCTA_DOCTRINE_STAMP)")
     if os.path.exists(ran_marker) and not os.path.lexists(a.stamp):
         raise RuntimeError(f"outcome stamp {a.stamp} is missing after an earlier run")
+    # Invalidate BEFORE evaluating (epoch + 1s). Only a clean run's stamp
+    # script makes it fresh again, so a run that dies, or whose stamp writer
+    # fails (even to remove the file), can never leave an earlier fresh stamp
+    # behind. If even this cannot be done the run is an error.
+    if os.path.lexists(a.stamp):
+        try:
+            os.utime(a.stamp, (1, 1))
+        except OSError as e:
+            raise RuntimeError(f"cannot invalidate outcome stamp {a.stamp}: {e}") from e
 
 
 def mark_ran(ran_marker: str) -> None:
