@@ -723,12 +723,34 @@ let
           journaldMax = nixpkgs.lib.hasInfix "SystemMaxUse=2G" cfg.services.journald.extraConfig;
           journaldFree = nixpkgs.lib.hasInfix "SystemKeepFree=4G" cfg.services.journald.extraConfig;
           auditSpaceLeft = cfg.security.auditd.settings.space_left == 4096;
+          auditSpaceLeftAction = cfg.security.auditd.settings.space_left_action == "syslog";
           auditAdminSuspend = cfg.security.auditd.settings.admin_space_left_action == "suspend";
         };
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
       in
       if failed == [ ] then true
       else builtins.throw "FAIL: sancta-choir disk policy — failed checks: ${builtins.toJSON failed}";
+
+    # /tmp policy on sancta-choir: the session-aware reaper ships in dry-run
+    # mode, runs on its own timer, and /tmp/claude-* is exempt from file aging.
+    choir-tmp-reaper =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        checks = {
+          timerExists = cfg.systemd.timers ? choir-tmp-session-reaper;
+          timerDaily0145 = (cfg.systemd.timers.choir-tmp-session-reaper.timerConfig.OnCalendar or "") == "*-*-* 01:45:00";
+          dryRunDefault = cfg.choirTmpReaper.dryRun == true;
+          excludesSession = cfg.choirTmpReaper.excludeSessions == [ "666bcb25" ];
+          excludePassed = nixpkgs.lib.hasInfix "export EXCLUDE_SESSIONS=666bcb25\n" cfg.choirTmpReaper.scriptText;
+          noRmRf = !(nixpkgs.lib.hasInfix "rm -rf" cfg.choirTmpReaper.scriptText);
+          deletesWithFind = nixpkgs.lib.hasInfix "-xdev -delete" cfg.choirTmpReaper.scriptText;
+          scriptDry = nixpkgs.lib.hasInfix "export DRY_RUN=1\n" cfg.choirTmpReaper.scriptText;
+          noRootDelete = nixpkgs.lib.hasInfix "setpriv --reuid" cfg.choirTmpReaper.scriptText;
+        };
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then true
+      else builtins.throw "FAIL: sancta-choir tmp reaper — failed checks: ${builtins.toJSON failed}";
 
     # vulnix nightly (modules/services/vulnix-nightly.nix, SOC layer 2). The
     # SOC page asks `systemctl is-active vulnix.timer`, so the unit names are

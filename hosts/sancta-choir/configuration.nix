@@ -39,6 +39,9 @@
 
   # Disk policy. Scheduled GC is choir-store-gc (modules/services/choir-store-gc.nix),
   # which replaces nix.gc, so the stock timer stays off.
+  # Session 666bcb25 is excluded from the /tmp reaper by prefix.
+  choirTmpReaper.excludeSessions = [ "666bcb25" ];
+
   nix.gc.automatic = false;
   boot.loader.grub.configurationLimit = 10;
 
@@ -65,6 +68,7 @@
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
     ../../modules/services/choir-store-gc.nix # generation-count GC (replaces nix.gc)
+    ../../modules/services/choir-tmp-session-reaper.nix # session-aware /tmp reaper (dry-run first)
     ../../modules/services/soc-in-a-box.nix # auditd trail + CrowdSec (sshd), all local
     ../../modules/services/soc-vigil-alarms.nix # the two root-only SOC alarms, as vigil stamps
     ../../modules/users/root.nix
