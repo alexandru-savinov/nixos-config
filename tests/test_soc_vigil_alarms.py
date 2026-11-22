@@ -251,11 +251,11 @@ class AuditRule(unittest.TestCase):
         self.assertEqual([h["serial"] for h in hits], ["13"])
 
 
-# ── rule 4: the council's own key read (owner decision 2026-11-11, fix A) ──
+# ── the council's key read is an ordinary agenix read ──
+# A read of jev-openrouter-key by the council user's node process used to be
+# exempt (rule 4). The exemption is removed: it is a login reading a secret.
 NODE = f"/nix/store/{'n' * 32}-nodejs-22.22.0/bin/node"
 COUNCIL_UID = "993"
-EXEMPT = {"uid": 993, "key": "jev-openrouter-key",
-          "secrets_dir": "/run/agenix", "secrets_mount": "/run/agenix.d"}
 O_RDONLY_CLOEXEC = "80000"  # what node's readFileSync passes to openat
 
 
@@ -266,19 +266,20 @@ def council_read(serial=40, *, auid=COUNCIL_UID, uid=COUNCIL_UID, exe=NODE,
                  argv=["node", "/var/lib/sancta/.claude/skills/council/scripts/jev-shadow.mjs"])
 
 
-def council_hits(*events, exempt=EXEMPT):
-    return sva.audit_hits("\n----\n".join(events) + "\n", SETUP_ETC, exempt)
+def council_hits(*events):
+    return classify(*events)
 
 
-class CouncilExemption(unittest.TestCase):
-    # ── the one silent arm (fails against the commit before the exemption) ──
-    def test_council_key_read_via_symlinked_path_is_silent(self):
-        self.assertEqual(council_hits(council_read()), [])
+class CouncilKeyRead(unittest.TestCase):
+    # Intentional behaviour change: these were the silent arms of rule 4.
+    def test_council_key_read_via_symlinked_path_fires(self):
+        hits = council_hits(council_read())
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["paths"], ["/run/agenix/jev-openrouter-key"])
 
-    def test_council_key_read_via_resolved_generation_path_is_silent(self):
-        self.assertEqual(council_hits(council_read(path="/run/agenix.d/2/jev-openrouter-key")), [])
+    def test_council_key_read_via_resolved_generation_path_fires(self):
+        self.assertEqual(len(council_hits(council_read(path="/run/agenix.d/2/jev-openrouter-key"))), 1)
 
-    # ── everything around it still fires ──
     def test_same_uid_reading_another_secret_fires(self):
         for p in ("/run/agenix/openrouter-api-key", "/run/agenix.d/2/anthropic-api-key",
                   "/run/agenix/jev-openrouter-key.bak", "/run/agenix.d/2/x/jev-openrouter-key"):
@@ -295,35 +296,25 @@ class CouncilExemption(unittest.TestCase):
             self.assertEqual(len(council_hits(council_read(auid=auid))), 1, auid)
 
     def test_council_auid_with_root_uid_fires(self):
-        # `sudo node ...` from the agent's session: auid 993, uid 0.
         self.assertEqual(len(council_hits(council_read(uid="0"))), 1)
 
     def test_write_open_of_the_council_key_fires(self):
-        for flags in ("80001", "80002", "80241"):  # O_WRONLY, O_RDWR, O_WRONLY|O_CREAT|O_TRUNC
+        for flags in ("80001", "80002", "80241"):
             self.assertEqual(len(council_hits(council_read(flags=flags))), 1, flags)
 
     def test_non_openat_syscall_fires(self):
-        self.assertEqual(len(council_hits(council_read(syscall=90))), 1)  # chmod
+        self.assertEqual(len(council_hits(council_read(syscall=90))), 1)
 
     def test_relative_path_fires(self):
         self.assertEqual(len(council_hits(council_read(path="jev-openrouter-key"))), 1)
 
-    def test_exemption_off_fires(self):
-        self.assertEqual(len(council_hits(council_read(), exempt=None)), 1)
-        self.assertEqual(len(council_hits(council_read(), exempt=dict(EXEMPT, uid=None))), 1)
-
-    def test_mixed_batch_keeps_only_real_hits(self):
+    def test_mixed_batch_keeps_every_login_read(self):
         hits = council_hits(council_read(41), council_read(42, exe=CAT), service_reads_agenix(43))
-        self.assertEqual([h["serial"] for h in hits], ["42"])
+        self.assertEqual([h["serial"] for h in hits], ["41", "42"])
 
-    def test_runner_resolves_user_by_name(self):
-        import pwd
-        me = pwd.getpwuid(os.getuid()).pw_name
-        a = type("A", (), dict(council_user=me, council_key="k", secrets_dir="/run/agenix",
-                               secrets_mount="/run/agenix.d"))()
-        self.assertEqual(sva.council_exemption(a)["uid"], os.getuid())
-        a.council_user = "no-such-user-soc"
-        self.assertIsNone(sva.council_exemption(a))
+    def test_service_read_of_the_council_key_stays_silent(self):
+        # Rule 2 is unchanged: an unset auid is still ignored.
+        self.assertEqual(council_hits(council_read(auid=UNSET)), [])
 
 
 def f2b(*ips):
