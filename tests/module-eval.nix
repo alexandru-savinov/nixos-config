@@ -1272,10 +1272,12 @@ let
           publicNames = builtins.elem "soc-audit" names && builtins.elem "soc-bans" names
             && builtins.elem "disk-root" names;
           # Paging: the option is the declared intent, the contract carries it.
-          # Initial report-only rollout: audit off, bans on.
+          # Initial report-only rollout: audit off, bans on; the audit tile
+          # carries a static coverage label.
           pagingPinned = (audit.page or true) == alarms.paging.audit
             && (bans.page or true) == alarms.paging.bans
             && alarms.paging.audit == false && alarms.paging.bans == true;
+          auditLabel = (audit.label or "") == "coverage: partial" && !(bans ? label);
           auditStamp = stampWired aSvc alarms.auditStampPath;
           bansStamp = stampWired bSvc alarms.bansStampPath;
 

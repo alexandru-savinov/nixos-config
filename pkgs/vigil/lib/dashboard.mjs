@@ -55,6 +55,7 @@ export function writeDashboard(root, entries, results, store, counts, env) {
       pending,
       green_since: state.greenSince === null ? null : iso(state.greenSince),
       close_not_before: state.open && state.greenSince !== null ? iso(state.greenSince + HOLD_DOWN) : null,
+      ...(c.label !== undefined && { label: c.label }),
     };
   });
   atomicWrite(statePath(root, 'dashboard.json'), { run_id: counts.run_id, la: counts.la, checks });
@@ -71,7 +72,9 @@ export function dashboardCheck(root, name, counts, now, env) {
   if (!exact(snapshot, ['run_id', 'la', 'checks']) || !snapshot.checks || typeof snapshot.checks !== 'object'
     || Array.isArray(snapshot.checks) || !Object.hasOwn(snapshot.checks, name)) throw new Error('dashboard-invalid');
   const c = snapshot.checks[name];
-  if (!exact(c, ['verdict', 'reason', 'consecutive', 'threshold', 'incident', 'delivery', 'pending', 'green_since', 'close_not_before'])
+  if (!exact(c, ['verdict', 'reason', 'consecutive', 'threshold', 'incident', 'delivery', 'pending', 'green_since', 'close_not_before',
+    ...(Object.hasOwn(c || {}, 'label') ? ['label'] : [])])
+    || Object.hasOwn(c, 'label') && (typeof c.label !== 'string' || !c.label.length || c.label.length > 80 || /[\u0000-\u001f\u007f]/.test(c.label))
     || !verdicts.includes(c.verdict) || !reasons.has(c.reason)
     || !Number.isSafeInteger(c.threshold) || c.threshold < 1 || !Number.isSafeInteger(c.consecutive)
     || c.consecutive < 1 || c.consecutive > c.threshold

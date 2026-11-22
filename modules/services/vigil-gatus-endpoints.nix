@@ -28,7 +28,8 @@ lib.listToAttrs (map
   (contract: {
     name = "${group}-vigil-${contract.nume}";
     value = {
-      name = "Vigil: ${labels.${contract.nume} or contract.nume}";
+      # A contract's static `label` (e.g. a coverage note) rides in the tile name.
+      name = "Vigil: ${labels.${contract.nume} or contract.nume}${lib.optionalString (contract ? label) " [${contract.label}]"}";
       inherit group;
       url = "http://${address}:${toString port}/checks/${contract.nume}";
       interval = "1m";
