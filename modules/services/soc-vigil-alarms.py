@@ -535,23 +535,19 @@ def check_stamp(a, ran_marker: str, stamps: list[str] | None = None) -> None:
     """The stamp is the only thing vigil reads. Once a run has completed here
     (`ran_marker`), a missing stamp is an evaluator error: this run exits 2,
     the stamp script writes the stamp already invalid, and vigil reads red
-    instead of an absent file (which it reads as unreadable, a note)."""
+    instead of an absent file (which it reads as unreadable, a note).
+
+    The evaluator never touches a stamp's mtime. The freshening touch is the
+    last action of a clean run (the unit's ExecStopPost), and a run that does
+    not end clean is invalidated there too (ExecStopPost runs after a
+    timeout, SIGKILL or OOM as well). A stamp that could not be written at all
+    just ages out: the contracts' 20 minute threshold bounds that."""
     stamps = stamps if stamps is not None else [a.stamp]
     if not all(stamps):
         raise RuntimeError("no stamp path (set --stamp / SANCTA_DOCTRINE_STAMP, and --health-stamp / SOC_HEALTH_STAMP for bans)")
     for stamp in stamps:
         if os.path.exists(ran_marker) and not os.path.lexists(stamp):
             raise RuntimeError(f"outcome stamp {stamp} is missing after an earlier run")
-    # Invalidate BEFORE evaluating (epoch + 1s). Only a clean run's stamp
-    # script makes it fresh again, so a run that dies, or whose stamp writer
-    # fails (even to remove the file), can never leave an earlier fresh stamp
-    # behind. If even this cannot be done the run is an error.
-    for stamp in stamps:
-        if os.path.lexists(stamp):
-            try:
-                os.utime(stamp, (1, 1))
-            except OSError as e:
-                raise RuntimeError(f"cannot invalidate outcome stamp {stamp}: {e}") from e
 
 
 def mark_ran(ran_marker: str) -> None:

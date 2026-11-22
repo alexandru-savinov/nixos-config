@@ -1264,6 +1264,8 @@ let
           && (svc.serviceConfig.StateDirectoryMode or null) == "0755"
           && (svc.serviceConfig.UMask or null) == "0077";
         names = builtins.fromJSON choir.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES;
+        # "5min" / "2m" / "20m" -> minutes.
+        mins = str: lib.toInt (builtins.head (builtins.match "([0-9]+) ?(min|m)" str));
         units = choir.services.sancta-statusline-refresh.units;
 
         checks = {
@@ -1318,6 +1320,19 @@ let
             && lib.all (cidr: builtins.elem cidr ignoreIP) whitelist
             && lib.all (cidr: builtins.elem cidr whitelist) ignoreIP
             && builtins.elem "100.64.0.0/10" whitelist;
+
+          # A stamp is freshened only by a clean run's ExecStopPost and nothing
+          # invalidates it before a run, so a hung or failing writer is bounded by
+          # age alone: timer interval + TimeoutStartSec must stay under each
+          # contract's threshold, or one slow run would flap the stamp.
+          stampAgeBound = lib.all
+            (u: mins choir.systemd.timers.${u.timer}.timerConfig.OnUnitActiveSec
+              + mins u.svc.serviceConfig.TimeoutStartSec < mins u.contract.prag)
+            [
+              { timer = "soc-alarm-audit"; svc = aSvc; contract = audit; }
+              { timer = "soc-alarm-bans"; svc = bSvc; contract = bans; }
+              { timer = "soc-alarm-bans"; svc = bSvc; contract = bansHealth; }
+            ];
 
           # Both run every 5 minutes from timers.target, as root oneshots.
           timers = lib.all

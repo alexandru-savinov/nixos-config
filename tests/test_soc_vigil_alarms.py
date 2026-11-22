@@ -693,7 +693,7 @@ class Runners(unittest.TestCase):
         self.assertEqual(int(os.stat(self.stamp).st_mtime), 1)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
-    # ── a failed run never leaves a fresh stamp ──
+    # ── the stamp is written only by the stamp writer (ExecStopPost) ──
     def run_main_without_stamp_writer(self, ausearch):
         systemctl = fake(self.d, "systemctl", "exit 0\n")
         return sva.main(["audit", "--ausearch", ausearch, "--systemctl", systemctl,
@@ -703,41 +703,53 @@ class Runners(unittest.TestCase):
     def mtime(self):
         return int(os.stat(self.stamp).st_mtime)
 
-    def test_the_stamp_is_invalidated_before_evaluating(self):
-        with open(self.stamp, "w"):
-            pass
-        os.utime(self.stamp, None)  # fresh from an earlier clean run
-        seen = os.path.join(self.d, "stamp-during")
-        py = os.path.realpath(__import__("sys").executable)
-        a = self.ausearch(f'{py} -c "import os;open(\'{seen}\',\'w\').write(str(int(os.stat(\'{self.stamp}\').st_mtime)))"\nexit 1\n')
-        self.assertEqual(self.run_main_without_stamp_writer(a), 0)
-        self.assertEqual(slurp(seen), "1", "the old fresh stamp must be gone while the run evaluates")
-        self.assertEqual(self.mtime(), 1, "and only the stamp writer makes it fresh again")
-
-    def test_an_uninvalidatable_stamp_is_an_error(self):
-        from unittest import mock
-        with open(self.stamp, "w"):
-            pass
-        with mock.patch("os.utime", side_effect=PermissionError("read-only")):
-            self.assertEqual(self.run_main_without_stamp_writer(self.ausearch(QUIET)), 2)
-        self.assertFalse(os.path.exists(self.log), "no evaluation behind a stamp that cannot be invalidated")
-
-    def test_double_failure_of_the_stamp_writer_leaves_the_stamp_invalid(self):
-        # touch AND rm both blocked in the stamp writer, after a clean run.
-        import subprocess
+    def test_the_stamp_stays_fresh_while_a_run_is_in_progress(self):
+        # No pre-evaluation invalidation: a vigil read DURING a run (or two of
+        # them) sees the previous clean result, never a transient red.
         with open(self.stamp, "w"):
             pass
         os.utime(self.stamp, None)
-        self.assertEqual(self.run_main_without_stamp_writer(self.ausearch(QUIET)), 0)
+        before = self.mtime()
+        seen = os.path.join(self.d, "stamp-during")
+        py = os.path.realpath(__import__("sys").executable)
+        a = self.ausearch(f'{py} -c "import os;open(\'{seen}\',\'a\').write(str(int(os.stat(\'{self.stamp}\').st_mtime))+\'\\\\n\')"\n'
+                          f'{py} -c "import os;open(\'{seen}\',\'a\').write(str(int(os.stat(\'{self.stamp}\').st_mtime))+\'\\\\n\')"\nexit 1\n')
+        self.assertEqual(self.run_main_without_stamp_writer(a), 0)
+        self.assertEqual(slurp(seen).split(), [str(before), str(before)], "two reads mid-run, both the fresh mtime")
+        self.assertEqual(self.mtime(), before, "the evaluator itself never writes the stamp")
+
+    def test_the_evaluator_never_writes_either_stamp_in_any_outcome(self):
+        for p in (self.stamp,):
+            with open(p, "w"):
+                pass
+            os.utime(p, (12345, 12345))
+        for ausearch in (self.ausearch(QUIET), self.ausearch("echo boom >&2\nexit 1\n"),
+                         self.ausearch(self.fixture_cmd(login_reads_agenix() + "\n"))):
+            self.run_main_without_stamp_writer(ausearch)
+            self.assertEqual(self.mtime(), 12345)
+
+    def test_stamp_scripts_use_no_shell_trap(self):
+        for path in (STAMP_SCRIPT, BANS_STAMP_SCRIPT):
+            with open(path) as fh:
+                self.assertNotIn("trap ", fh.read(), path)
+
+    def test_a_failed_freshening_never_advances_the_stamp(self):
+        # touch and rm both blocked in the stamp writer after a clean run: the
+        # script fails and does not claim success; the stamp keeps its old
+        # mtime and ages out under the contract threshold (module-eval pins
+        # the timing bound).
+        import subprocess
+        with open(self.stamp, "w"):
+            pass
+        os.utime(self.stamp, (12345, 12345))
         blocked = os.path.join(self.d, "blocked-bin")
         os.mkdir(blocked)
         for tool in ("touch", "rm"):
             fake(blocked, tool, "exit 1\n")
         env = {"PATH": blocked + ":/usr/bin:/bin", "SANCTA_DOCTRINE_STAMP": self.stamp,
                "SERVICE_RESULT": "success", "EXIT_CODE": "exited", "EXIT_STATUS": "0"}
-        rc = subprocess.run(["bash", STAMP_SCRIPT], env=env, capture_output=True).returncode
-        self.assertNotEqual(rc, 0)
-        self.assertEqual(self.mtime(), 1, "a failed stamp writer must not leave the stamp fresh")
+        self.assertNotEqual(subprocess.run(["bash", STAMP_SCRIPT], env=env, capture_output=True).returncode, 0)
+        self.assertEqual(self.mtime(), 12345)
 
     def test_missing_stamp_on_the_first_run_is_not_an_error(self):
         self.assertFalse(os.path.exists(self.stamp))
@@ -814,17 +826,18 @@ class Runners(unittest.TestCase):
         self.assertEqual(self.bans(*ok), 0)
         self.assertTrue(all(self.fresh(t) for t in self.stamps()))
 
-    def test_bans_evaluator_invalidates_both_stamps_before_running(self):
+    def test_bans_evaluator_never_writes_either_stamp(self):
         for p in (self.stamp, self.health):
             with open(p, "w"):
                 pass
+            os.utime(p, (12345, 12345))
         status = f2b("203.0.113.9").replace("\t", " ")
         rc = sva.main(["bans", "--cscli", fake(self.d, "cscli", "echo null\n"),
                        "--fail2ban-client", fake(self.d, "f2b", f"cat <<'E'\n{status}E\n"),
                        "--cidrs", ",".join(NEVER_BAN), "--state-dir", self.sd,
                        "--stamp", self.stamp, "--health-stamp", self.health])
         self.assertEqual(rc, 0)
-        self.assertEqual(self.stamps(), (1, 1), "only the stamp writer makes them fresh")
+        self.assertEqual(self.stamps(), (12345, 12345), "only the stamp writer freshens them")
 
     # ── ausearch edge cases: each is an evaluator error ──
     def fixture_cmd(self, text):
@@ -1419,6 +1432,16 @@ class StampScript(unittest.TestCase):
         self.green()
         self.assertEqual(self.run_stamp(result="exit-code", status="2"), 0)
         self.assertEqual(self.mtime(), 1)
+
+    def test_every_non_success_result_invalidates_a_fresh_stamp(self):
+        # ExecStopPost sees these after SIGKILL, OOM and timeouts too.
+        for kw in (dict(result="exit-code", status="1"), dict(result="exit-code", status="2"),
+                   dict(result="timeout", code="killed", status="TERM"), dict(result="signal", code="killed", status="KILL"),
+                   dict(result="oom-kill", code="killed", status="KILL"), dict(result="core-dump", code="dumped", status="SEGV"),
+                   dict(result="success", code="exited", status="3"), dict(result="", code="", status="")):
+            self.green()
+            self.assertEqual(self.run_stamp(**kw), 0, kw)
+            self.assertEqual(self.mtime(), 1, kw)
 
     def test_failed_write_does_not_leave_the_old_stamp_green(self):
         self.green()
