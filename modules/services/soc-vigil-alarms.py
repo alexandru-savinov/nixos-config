@@ -320,8 +320,10 @@ def run_ausearch(ausearch: str, checkpoint: str, first_run: bool = False) -> tup
 
     problems: list[str] = []
     mismatch = False
+    earlier = ""  # what the first attempt printed before a checkpoint retry
     p = run(first)
     if p.returncode in (10, 11, 12):
+        earlier = p.stdout
         # Rotated log or a damaged checkpoint. The timestamp retry still reads
         # the window (its events are classified and any hit is an ALARM), but
         # the mismatch itself is an evaluator error until it is reconciled.
@@ -347,7 +349,17 @@ def run_ausearch(ausearch: str, checkpoint: str, first_run: bool = False) -> tup
         problems.append(f"ausearch exited 1 with output on stdout: {p.stdout.strip()[:80]!r}")
     else:
         problems.append(f"ausearch exited {p.returncode}: {err[:300]}")
-    return p.stdout, problems, mismatch
+    out = p.stdout
+    if earlier:
+        # Keep the first attempt's records next to the retry's, once each.
+        seen, lines = set(), []
+        for line in (earlier + "\n" + out).split("\n"):
+            if line.strip() and line in seen:
+                continue
+            seen.add(line)
+            lines.append(line)
+        out = "\n".join(lines)
+    return out, problems, mismatch
 
 
 def _fsync_dir(path: str) -> None:
@@ -496,6 +508,7 @@ def cmd_audit(a) -> int:
     # reads the same window again: a repeated ALARM line, never a lost one.
     last_lost = os.path.join(a.state_dir, "audit.last-lost")
     ran_marker = os.path.join(a.state_dir, "audit.ran")
+    last_eval = os.path.join(a.state_dir, "audit.last-eval")
     check_stamp(a, ran_marker)
     installed = os.path.join(a.state_dir, "audit.installed")
     mismatch_flag = os.path.join(a.state_dir, "audit.checkpoint-mismatch")
@@ -515,8 +528,20 @@ def cmd_audit(a) -> int:
                            "(checkpoint removed or lost; not treated as a first run)")
     raw, problems, mismatch = run_ausearch(a.ausearch, staged, first_run)
     now = time.time()
+    previous_eval = _read_text(last_eval)
+    gap = None
+    if previous_eval is not None:
+        try:
+            gap = now - float(previous_eval)
+        except ValueError:
+            gap = float("inf")  # an unreadable boundary is a gap too
+        if gap <= a.max_gap:
+            gap = None
 
     def commit_checkpoint():
+        # The evaluation boundary is persisted even when the window was quiet
+        # and no checkpoint exists, so the next run can see a gap.
+        _write_durably(last_eval, f"{now:.0f}\n")
         if os.path.exists(staged):
             with open(staged, "rb") as fh:
                 os.fsync(fh.fileno())
@@ -539,7 +564,7 @@ def cmd_audit(a) -> int:
         _log("ALARM audit " + json.dumps(h, sort_keys=True))
     # A window with an unreadable line may have held a hit: it starts the
     # hold too, instead of one 5-minute red blip that picat_dupa = 2 absorbs.
-    if hits or bad or mismatch:
+    if hits or bad or mismatch or gap is not None:
         start_hold()
     if mismatch:
         # Stays an evaluator error until an operator reconciles it (reads the
@@ -553,6 +578,9 @@ def cmd_audit(a) -> int:
         if os.path.exists(checkpoint) and not os.path.exists(installed):
             _write_durably(installed, f"{now:.0f}\n")
     errors = list(problems)
+    if gap is not None:
+        errors.append(f"coverage gap: {gap:.0f}s since the last evaluation (limit {a.max_gap}s); "
+                      "events in between may not have been read")
     if lost_increase:
         errors.append(f"audit trail lost {lost_increase} event(s) since the last evaluation")
     if bad:
@@ -611,6 +639,9 @@ def main(argv: list[str]) -> int:
     au.add_argument("--systemctl", required=True)
     au.add_argument("--auditctl", required=True)
     au.add_argument("--stamp", default=os.environ.get("SANCTA_DOCTRINE_STAMP"))
+    # The timer runs every 5 minutes; more than this since the last evaluation
+    # means events may have gone unread (reboot, stopped timer, long outage).
+    au.add_argument("--max-gap", type=int, default=600)
     au.add_argument("--require-active", action="append", default=[])
     au.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
     au.add_argument("--hold", type=int, required=True)

@@ -724,6 +724,67 @@ class Runners(unittest.TestCase):
             fh.write(f"{time.time() - 901:.0f}\n")
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
+    def test_mismatch_keeps_the_first_attempts_records_next_to_the_retrys(self):
+        open(self.cp, "w").close()
+        first = self.fixture_cmd(login_reads_agenix(1) + "\n")
+        second = os.path.join(self.d, "second")
+        with open(second, "w") as fh:  # the retry repeats serial 1 and adds 2
+            fh.write(login_reads_agenix(1) + "\n----\n" + login_reads_agenix(2) + "\n")
+        a = self.ausearch(f'case "$*" in *"--start checkpoint"*) cat {second};; *) {first};; esac\nexit 11\n')
+        rc, out = self.run_logged(a)
+        self.assertEqual(rc, 2)
+        self.assertEqual(sorted(h["serial"] for h in self.alarm_lines(out)), ["1", "2"])
+
+    def test_mismatch_with_a_quiet_retry_still_alarms_on_the_first_attempt(self):
+        open(self.cp, "w").close()
+        first = self.fixture_cmd(login_reads_agenix(5) + "\n")
+        a = self.ausearch(f'case "$*" in *"--start checkpoint"*) exit 1;; *) {first};; esac\nexit 11\n')
+        rc, out = self.run_logged(a)
+        self.assertEqual(rc, 2)
+        self.assertEqual([h["serial"] for h in self.alarm_lines(out)], ["5"])
+
+    # ── evaluation boundary and coverage gap ──
+    def last_eval(self):
+        return os.path.join(self.sd, "audit.last-eval")
+
+    def test_quiet_first_run_persists_a_boundary(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertFalse(os.path.exists(self.cp))
+        self.assertLess(abs(time.time() - float(slurp(self.last_eval()))), 60)
+
+    def test_gap_over_ten_minutes_is_an_error_with_a_journal_line(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        with open(self.last_eval(), "w") as fh:
+            fh.write(f"{time.time() - 601:.0f}\n")
+        rc, out = self.run_logged(self.ausearch(QUIET))
+        self.assertEqual(rc, 2)
+        self.assertIn("coverage gap", out)
+        self.assertTrue(os.path.exists(self.last), "the hold starts so one red run is not absorbed")
+        # The boundary moved on: the next run is not a gap, only the hold.
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 1)
+
+    def test_gap_within_ten_minutes_is_fine(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        with open(self.last_eval(), "w") as fh:
+            fh.write(f"{time.time() - 590:.0f}\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_gap_does_not_hide_a_hit_in_the_window(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        with open(self.last_eval(), "w") as fh:
+            fh.write(f"{time.time() - 3600:.0f}\n")
+        rc, out = self.run_logged(self.ausearch(self.fixture_cmd(login_reads_agenix() + "\n")))
+        self.assertEqual(rc, 2)
+        self.assertIn("ALARM audit", out)
+        self.assertIn("coverage gap", out)
+
+    def test_unreadable_boundary_is_a_gap(self):
+        with open(self.last_eval(), "w") as fh:
+            fh.write("garbage\n")
+        rc, out = self.run_logged(self.ausearch(QUIET))
+        self.assertEqual(rc, 2)
+        self.assertIn("coverage gap", out)
+
     def test_exit_one_with_stdout_is_an_error(self):
         self.assertEqual(self.audit(self.ausearch("echo something\nexit 1\n")), 2)
         # ... and the events in it are still classified, window not consumed.
