@@ -10,7 +10,7 @@ prag = "20m"
 # and shown on the dashboard, but not sent to Telegram. Pinned to
 # services.soc-vigil-alarms.paging.audit by tests/module-eval.nix.
 page = false
-label = "coverage: partial"
+label = "coverage: partial; quiet = unverified"
 
 [spune]
 nivel = "incident"

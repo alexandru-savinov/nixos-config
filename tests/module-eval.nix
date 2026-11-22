@@ -1277,7 +1277,7 @@ let
           pagingPinned = (audit.page or true) == alarms.paging.audit
             && (bans.page or true) == alarms.paging.bans
             && alarms.paging.audit == false && alarms.paging.bans == true;
-          auditLabel = (audit.label or "") == "coverage: partial" && !(bans ? label);
+          auditLabel = (audit.label or "") == "coverage: partial; quiet = unverified" && !(bans ? label);
           auditStamp = stampWired aSvc alarms.auditStampPath;
           bansStamp = stampWired bSvc alarms.bansStampPath;
 
