@@ -374,6 +374,26 @@ class BanRule(unittest.TestCase):
     def test_crowdsec_null_means_none(self):
         self.assertEqual(sva.home_bans("null\n", f2b(), NEVER_BAN), [])
 
+    def test_crowdsec_empty_list_means_none(self):
+        self.assertEqual(sva.home_bans("[]", f2b(), NEVER_BAN), [])
+        self.assertEqual(sva.home_bans(" []\n", f2b(), NEVER_BAN), [])
+
+    def test_empty_cscli_output_is_unreadable(self):
+        for text in ("", "\n", "  "):
+            with self.assertRaises(ValueError, msg=repr(text)):
+                sva.home_bans(text, f2b(), NEVER_BAN)
+
+    def test_entries_without_the_expected_fields_are_unreadable(self):
+        for text in ("[{}]", '[{"id": 1}]', '[{"decisions": [{}]}]',
+                     '[{"decisions": [{"scope": "Ip"}]}]',
+                     '[{"decisions": [{"value": "100.64.1.1"}]}]',
+                     '[{"decisions": "x"}]', '[{"decisions": null}]', '["x"]', "[null]", "[[]]"):
+            with self.assertRaises(ValueError, msg=text):
+                sva.home_bans(text, f2b(), NEVER_BAN)
+
+    def test_empty_decision_list_inside_an_alert_is_fine(self):
+        self.assertEqual(sva.home_bans('[{"id": 1, "decisions": []}]', f2b(), NEVER_BAN), [])
+
     def test_fail2ban_ban_on_lan_fires(self):
         hits = sva.home_bans("null", f2b("203.0.113.9", "192.168.1.20"), NEVER_BAN)
         self.assertEqual([(h["engine"], h["value"]) for h in hits], [("fail2ban", "192.168.1.20")])
@@ -975,6 +995,10 @@ class Runners(unittest.TestCase):
         # An engine that cannot answer is not clean.
         self.assertEqual(self.bans("echo boom >&2; exit 1\n", f"cat <<'E'\n{status}E\n"), 2)
         self.assertEqual(self.bans("echo null\n", "exit 255\n"), 2)
+        # An empty answer or an entry without fields is not "no decisions".
+        self.assertEqual(self.bans("exit 0\n", f"cat <<'E'\n{status}E\n"), 2)
+        self.assertEqual(self.bans("echo '[{}]'\n", f"cat <<'E'\n{status}E\n"), 2)
+        self.assertEqual(self.bans("echo '[]'\n", f"cat <<'E'\n{status}E\n"), 0)
 
 
 STAMP_SCRIPT = os.environ.get(

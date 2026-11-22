@@ -266,7 +266,7 @@ def _in_home(value: str, nets: list) -> bool:
 def home_bans(decisions_json: str, fail2ban_status: str, cidrs: list[str]) -> list[dict]:
     """PURE. Apply THE BAN RULE (module docstring).
 
-    decisions_json: stdout of `cscli decisions list -o json` (`null` = none).
+    decisions_json: stdout of `cscli decisions list -o json` (`null` or `[]` = none).
     fail2ban_status: stdout of `fail2ban-client status sshd`.
     Raises ValueError on input it cannot read: unreadable is not clean.
     """
@@ -275,17 +275,25 @@ def home_bans(decisions_json: str, fail2ban_status: str, cidrs: list[str]) -> li
         raise ValueError("empty neverBan list")
     hits = []
 
-    alerts = json.loads(decisions_json) if decisions_json.strip() else None
+    # Only the documented "no decisions" answers are clean: JSON null or [].
+    # Empty output, or an entry without the fields read below, is unreadable.
+    if not decisions_json.strip():
+        raise ValueError("cscli output is empty")
+    alerts = json.loads(decisions_json)
     if alerts is None:
         alerts = []
     if not isinstance(alerts, list):
         raise ValueError("cscli output is not a list")
     for alert in alerts:
-        for d in (alert.get("decisions") or []):
-            scope = str(d.get("scope", "")).lower()
+        if not isinstance(alert, dict) or not isinstance(alert.get("decisions"), list):
+            raise ValueError(f"cscli alert without a decisions list: {str(alert)[:80]}")
+        for d in alert["decisions"]:
+            if not isinstance(d, dict) or "scope" not in d or "value" not in d:
+                raise ValueError(f"cscli decision without scope/value: {str(d)[:80]}")
+            scope = str(d["scope"]).lower()
             if scope not in ("ip", "range"):
                 continue
-            if _in_home(str(d.get("value", "")), nets):
+            if _in_home(str(d["value"]), nets):
                 hits.append({"engine": "crowdsec", "value": d["value"], "type": d.get("type")})
 
     banned_line = None
