@@ -241,6 +241,65 @@ def _in_home(value: str, nets: list) -> bool:
     return any(c.version == h.version and c.overlaps(h) for c in candidates for h in nets)
 
 
+def crowdsec_scan(decisions_json: str, nets: list) -> tuple[list[dict], list[str]]:
+    """PURE. (hits, errors) for `cscli decisions list -o json`. Every readable
+    decision is classified even when another entry is not, so one malformed
+    entry cannot hide a home-address decision next to it."""
+    hits: list[dict] = []
+    errors: list[str] = []
+    # Only the documented "no decisions" answers are clean: JSON null or [].
+    # Empty output, or an entry without the fields read below, is unreadable.
+    if not decisions_json.strip():
+        return hits, ["cscli output is empty"]
+    try:
+        alerts = json.loads(decisions_json)
+    except ValueError as e:
+        return hits, [f"cscli output is not JSON: {e}"]
+    if alerts is None:
+        alerts = []
+    if not isinstance(alerts, list):
+        return hits, ["cscli output is not a list"]
+    for alert in alerts:
+        if not isinstance(alert, dict) or not isinstance(alert.get("decisions"), list):
+            errors.append(f"cscli alert without a decisions list: {str(alert)[:80]}")
+            continue
+        for d in alert["decisions"]:
+            if not isinstance(d, dict) or "scope" not in d or "value" not in d:
+                errors.append(f"cscli decision without scope/value: {str(d)[:80]}")
+                continue
+            if not all(isinstance(d[k], str) and d[k].strip() for k in ("scope", "value")):
+                errors.append(f"cscli decision with a null, non-string or empty scope/value: {str(d)[:80]}")
+                continue
+            if d["scope"].lower() not in ("ip", "range"):
+                continue
+            try:
+                home = _in_home(d["value"], nets)
+            except ValueError as e:
+                errors.append(f"cscli decision value is not an address: {e}")
+                continue
+            if home:
+                hits.append({"engine": "crowdsec", "value": d["value"], "type": d.get("type")})
+    return hits, errors
+
+
+def fail2ban_scan(fail2ban_status: str, nets: list) -> tuple[list[dict], list[str]]:
+    """PURE. (hits, errors) for `fail2ban-client status sshd`."""
+    banned_line = None
+    for line in fail2ban_status.splitlines():
+        if "Banned IP list:" in line:
+            banned_line = line.split("Banned IP list:", 1)[1]
+    if banned_line is None:
+        return [], ["fail2ban status has no 'Banned IP list' line"]
+    hits, errors = [], []
+    for ip in banned_line.split():
+        try:
+            if _in_home(ip, nets):
+                hits.append({"engine": "fail2ban", "value": ip, "type": "ban"})
+        except ValueError as e:
+            errors.append(f"fail2ban banned address is not an address: {e}")
+    return hits, errors
+
+
 def home_bans(decisions_json: str, fail2ban_status: str, cidrs: list[str]) -> list[dict]:
     """PURE. Apply THE BAN RULE (module docstring).
 
@@ -251,41 +310,11 @@ def home_bans(decisions_json: str, fail2ban_status: str, cidrs: list[str]) -> li
     nets = _networks(cidrs)
     if not nets:
         raise ValueError("empty neverBan list")
-    hits = []
-
-    # Only the documented "no decisions" answers are clean: JSON null or [].
-    # Empty output, or an entry without the fields read below, is unreadable.
-    if not decisions_json.strip():
-        raise ValueError("cscli output is empty")
-    alerts = json.loads(decisions_json)
-    if alerts is None:
-        alerts = []
-    if not isinstance(alerts, list):
-        raise ValueError("cscli output is not a list")
-    for alert in alerts:
-        if not isinstance(alert, dict) or not isinstance(alert.get("decisions"), list):
-            raise ValueError(f"cscli alert without a decisions list: {str(alert)[:80]}")
-        for d in alert["decisions"]:
-            if not isinstance(d, dict) or "scope" not in d or "value" not in d:
-                raise ValueError(f"cscli decision without scope/value: {str(d)[:80]}")
-            if not all(isinstance(d[k], str) and d[k].strip() for k in ("scope", "value")):
-                raise ValueError(f"cscli decision with a null, non-string or empty scope/value: {str(d)[:80]}")
-            scope = d["scope"].lower()
-            if scope not in ("ip", "range"):
-                continue
-            if _in_home(str(d["value"]), nets):
-                hits.append({"engine": "crowdsec", "value": d["value"], "type": d.get("type")})
-
-    banned_line = None
-    for line in fail2ban_status.splitlines():
-        if "Banned IP list:" in line:
-            banned_line = line.split("Banned IP list:", 1)[1]
-    if banned_line is None:
-        raise ValueError("fail2ban status has no 'Banned IP list' line")
-    for ip in banned_line.split():
-        if _in_home(ip, nets):
-            hits.append({"engine": "fail2ban", "value": ip, "type": "ban"})
-    return hits
+    hits, errors = crowdsec_scan(decisions_json, nets)
+    more_hits, more_errors = fail2ban_scan(fail2ban_status, nets)
+    if errors or more_errors:
+        raise ValueError((errors + more_errors)[0])
+    return hits + more_hits
 
 
 # ── runners (impure: exec, state files) ─────────────────────────────────────
@@ -681,25 +710,57 @@ def cmd_audit(a) -> int:
     return 0
 
 
+def _engine(cmd: list[str], name: str) -> tuple[str | None, str | None]:
+    """(stdout, error): run one engine; a failure is an error, not an exception,
+    so the other engine is still read and classified."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as e:
+        return None, f"{name} could not run: {e}"
+    if p.returncode != 0:
+        return None, f"{name} exited {p.returncode}: {p.stderr.strip()[:300]}"
+    return p.stdout, None
+
+
 def cmd_bans(a) -> int:
+    """Exit 0 clean, 1 a ban was found, 2 the evaluator could not evaluate,
+    3 BOTH: a ban was found and some source could not be read. Every readable
+    source is classified before anything is reported, so an engine error can
+    never turn a real ban green (soc-bans-stamp.sh reds the paging stamp for 1
+    and 3, and the health stamp for 2 and 3)."""
     if not a.state_dir or not os.path.isdir(a.state_dir):
         raise RuntimeError("no state directory (set --state-dir or STATE_DIRECTORY)")
     ran_marker = os.path.join(a.state_dir, "bans.ran")
     check_stamp(a, ran_marker, [a.stamp, a.health_stamp])
+    nets = _networks([c for c in a.cidrs.split(",") if c])
+    if not nets:
+        raise RuntimeError("empty neverBan list")
+    hits: list[dict] = []
+    errors: list[str] = []
     # --limit 0: cscli returns only the newest 100 alerts by default
     # (clidecision/decisions.go, crowdsec 1.7.2); a home decision past the
     # first hundred would otherwise read clean.
-    p1 = subprocess.run([a.cscli, "decisions", "list", "-o", "json", "--limit", "0"],
-                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    if p1.returncode != 0:
-        raise RuntimeError(f"cscli exited {p1.returncode}: {p1.stderr.strip()[:300]}")
-    p2 = subprocess.run([a.fail2ban_client, "status", "sshd"], capture_output=True, text=True,
-                        stdin=subprocess.DEVNULL)
-    if p2.returncode != 0:
-        raise RuntimeError(f"fail2ban-client exited {p2.returncode}: {p2.stderr.strip()[:300]}")
-    hits = home_bans(p1.stdout, p2.stdout, [c for c in a.cidrs.split(",") if c])
+    out, err = _engine([a.cscli, "decisions", "list", "-o", "json", "--limit", "0"], "cscli")
+    if err:
+        errors.append(err)
+    else:
+        h, e = crowdsec_scan(out, nets)
+        hits += h
+        errors += e
+    out, err = _engine([a.fail2ban_client, "status", "sshd"], "fail2ban-client")
+    if err:
+        errors.append(err)
+    else:
+        h, e = fail2ban_scan(out, nets)
+        hits += h
+        errors += e
     for h in hits:
         _log("ALARM ban " + json.dumps(h, sort_keys=True))
+    if errors:
+        if not hits:
+            raise RuntimeError("; ".join(errors))
+        _log(f"EVALUATOR ERROR (bans): {'; '.join(errors)[:600]}")
+        return 3
     mark_ran(ran_marker)
     if hits:
         return 1

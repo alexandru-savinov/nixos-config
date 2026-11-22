@@ -7,6 +7,8 @@
 #   run                          bans stamp        health stamp
 #   clean (exit 0)               now               now
 #   a ban was found (exit 1)     epoch + 1s        now
+#   a ban AND a source that      epoch + 1s        epoch + 1s
+#   could not be read (exit 3)
 #   anything else (exit 2, a     now               epoch + 1s
 #   crash, a timeout, a signal)
 #
@@ -43,6 +45,8 @@ if [ "${SERVICE_RESULT:-}" = success ] && [ "${EXIT_CODE:-}" = exited ] && [ "${
   fresh "$bans"; fresh "$health"
 elif [ "${EXIT_CODE:-}" = exited ] && [ "${EXIT_STATUS:-}" = 1 ]; then
   stale "$bans"; fresh "$health"
+elif [ "${EXIT_CODE:-}" = exited ] && [ "${EXIT_STATUS:-}" = 3 ]; then
+  stale "$bans"; stale "$health"
 else
   fresh "$bans"; stale "$health"
 fi

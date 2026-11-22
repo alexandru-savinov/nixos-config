@@ -460,6 +460,16 @@ class BanRule(unittest.TestCase):
             with self.assertRaises(ValueError, msg=text):
                 sva.home_bans(text, f2b(), NEVER_BAN)
 
+    def test_scans_classify_every_readable_entry_and_report_the_rest(self):
+        nets = sva._networks(NEVER_BAN)
+        text = json.dumps([{"decisions": [{"scope": "Ip", "value": "100.64.1.1", "type": "ban"}]}, {}, "x"])
+        hits, errors = sva.crowdsec_scan(text, nets)
+        self.assertEqual([h["value"] for h in hits], ["100.64.1.1"])
+        self.assertEqual(len(errors), 2)
+        hits, errors = sva.fail2ban_scan(f2b("192.168.1.20", "not-an-ip"), nets)
+        self.assertEqual([h["value"] for h in hits], ["192.168.1.20"])
+        self.assertEqual(len(errors), 1)
+
     def test_non_ip_scope_with_a_string_value_is_still_ignored(self):
         self.assertEqual(sva.home_bans(decisions(("Country", "RO"), ("AS", "AS123")), f2b(), NEVER_BAN), [])
 
@@ -818,6 +828,43 @@ class Runners(unittest.TestCase):
             bans, health = self.stamps()
             self.assertTrue(self.fresh(bans), f"an error must not page: {cscli}")
             self.assertEqual(health, 1, cscli)
+
+    def test_a_hit_from_one_source_survives_an_error_in_the_other(self):
+        # Both stamps go red: the ban pages, and the error is visible.
+        status_ok = f2b("203.0.113.9").replace("\t", " ")
+        status_hit = f2b("192.168.1.20").replace("\t", " ")
+        cs_hit = f"cat <<'E'\n{decisions(('Ip', '100.64.1.1'))}\nE\n"
+        for cscli, f2b_body, why in (
+                (cs_hit, "exit 255\n", "crowdsec hit + failing fail2ban"),
+                (cs_hit, "echo garbage\n", "crowdsec hit + unreadable fail2ban"),
+                ("exit 1\n", f"cat <<'E'\n{status_hit}E\n", "fail2ban hit + failing cscli"),
+                ("exit 0\n", f"cat <<'E'\n{status_hit}E\n", "fail2ban hit + empty cscli"),
+                ("echo not-json\n", f"cat <<'E'\n{status_hit}E\n", "fail2ban hit + garbage cscli")):
+            rc = self.bans(cscli, f2b_body)
+            self.assertEqual(rc, 3, why)
+            self.assertEqual(self.stamps(), (1, 1), why)
+
+    def test_the_hit_is_logged_next_to_the_error(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.bans(f"cat <<'E'\n{decisions(('Ip', '100.64.1.1'))}\nE\n", "exit 255\n")
+        self.assertIn("ALARM ban", buf.getvalue())
+        self.assertIn("EVALUATOR ERROR (bans)", buf.getvalue())
+
+    def test_a_malformed_entry_does_not_hide_a_hit_beside_it(self):
+        text = json.dumps([{"decisions": [{"scope": "Ip", "value": "100.64.1.1"}]}, {}])
+        status_ok = f2b("203.0.113.9").replace("\t", " ")
+        self.assertEqual(self.bans(f"cat <<'E'\n{text}\nE\n", f"cat <<'E'\n{status_ok}E\n"), 3)
+        self.assertEqual(self.stamps(), (1, 1))
+
+    def test_hits_from_both_sources_are_a_plain_hit(self):
+        status_hit = f2b("192.168.1.20").replace("\t", " ")
+        self.assertEqual(self.bans(f"cat <<'E'\n{decisions(('Ip', '100.64.1.1'))}\nE\n", f"cat <<'E'\n{status_hit}E\n"), 1)
+        bans, health = self.stamps()
+        self.assertEqual(bans, 1)
+        self.assertTrue(self.fresh(health))
 
     def test_health_recovers_on_the_next_clean_run(self):
         status = f2b("203.0.113.9").replace("\t", " ")
@@ -1488,6 +1535,10 @@ class BansStampScript(unittest.TestCase):
         self.assertEqual(self.run_it(result="exit-code", status="1"), 0)
         self.assertEqual(self.mt(self.bans), 1)
         self.assertTrue(self.fresh(self.health))
+
+    def test_exit_three_a_ban_plus_an_unreadable_source_turns_both_red(self):
+        self.assertEqual(self.run_it(result="exit-code", status="3"), 0)
+        self.assertEqual((self.mt(self.bans), self.mt(self.health)), (1, 1))
 
     def test_exit_two_crash_timeout_and_signal_only_turn_health_red(self):
         for kw in (dict(result="exit-code", status="2"), dict(result="exit-code", status="137"),
