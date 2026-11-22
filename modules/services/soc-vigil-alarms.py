@@ -186,14 +186,30 @@ def audit_scan(raw_text: str) -> tuple[list[dict], list[str]]:
         missing = [k for k in _SYSCALL_REQUIRED if k not in syscall]
         if missing:
             bad.append(f"{where}: SYSCALL record lacks {', '.join(missing)}")
+        # A key cut mid-string (no closing quote) names no key: it must not
+        # read as "no watched key".
+        rawkey = syscall.get("key", "")
+        if rawkey.startswith('"') and (len(rawkey) < 2 or not rawkey.endswith('"')):
+            bad.append(f"{where}: SYSCALL key is not terminated")
         keys = _keys(syscall) & WATCHED_KEYS
         if not keys:
             continue
         # A PATH whose name is (null) on a watched key says nothing about
         # which file was touched: the rule cannot be applied, so it is an error.
-        if any(t == "PATH" and "name" in f and _unhex(f["name"]) in (None, "(null)")
-               for t, f in ev["records"]):
+        path_records = [f for t, f in ev["records"] if t == "PATH"]
+        if any("name" in f and _unhex(f["name"]) in (None, "(null)") for f in path_records):
             bad.append(f"{where}: PATH record with name (null) on a watched key")
+        # Completeness: every PATH record names its file and item, and the
+        # event carries as many PATH records as the SYSCALL announced.
+        if any("name" not in f or "item" not in f for f in path_records):
+            bad.append(f"{where}: PATH record without name or item on a watched key")
+        try:
+            announced = int(syscall.get("items", ""))
+        except ValueError:
+            bad.append(f"{where}: SYSCALL items missing or not a number on a watched key")
+        else:
+            if len({f["item"] for f in path_records if "item" in f}) < announced:
+                bad.append(f"{where}: fewer PATH records than SYSCALL items ({announced}) on a watched key")
         auid = syscall.get("auid")
         # A watched SYSCALL record without auid is malformed beyond anything
         # this rule was written for: fire rather than guess it was routine.

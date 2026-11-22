@@ -271,6 +271,38 @@ class AuditRule(unittest.TestCase):
     def test_parse_events_is_gone(self):
         self.assertFalse(hasattr(sva, "parse_events"))
 
+    def test_unterminated_key_is_bad_never_zero_and_zero(self):
+        import re
+        for ev in (login_reads_agenix(), service_reads_agenix(),
+                   event(62, key="identity", auid="1000", exe=CAT, comm="x", path="/etc/passwd", argv=["x"])):
+            cut = re.sub(r'key="([^"]*)"', r'key="\1', ev, count=1)
+            self.assertNotEqual(cut, ev)
+            self.assertEqual(len(self.scan_bad(cut)), 1, ev[:30])
+            with self.assertRaises(ValueError):
+                sva.audit_hits(cut)
+
+    def test_watched_path_missing_name_or_item_is_bad(self):
+        import re
+        for field in ("name", "item"):
+            ev = re.sub(rf" {field}=(\"[^\"]*\"|\S+)", "", login_reads_agenix(), count=1)
+            self.assertGreaterEqual(len(self.scan_bad(ev)), 1, field)
+        # Not a watched key: not this rule's business.
+        ev = event(63, key="identity", auid="1000", exe=CAT, comm="x", path="/etc/passwd", argv=["x"])
+        self.assertEqual(self.scan_bad(re.sub(r" name=\"[^\"]*\"", "", ev, count=1)), [])
+
+    def test_fewer_path_records_than_items_is_bad(self):
+        two = login_reads_agenix().replace(" items=1 ", " items=2 ", 1)
+        self.assertEqual(len(self.scan_bad(two)), 1)
+        extra = two.replace("type=PROCTITLE", "type=PATH msg=audit(1762790400.001:1): item=1 name=\"/run/agenix.d/3\" inode=1 dev=00:1a mode=040755\ntype=PROCTITLE", 1)
+        self.assertEqual(self.scan_bad(extra), [])
+        self.assertEqual(len(sva.audit_hits(extra)), 1)
+
+    def test_missing_or_garbled_items_on_a_watched_event_is_bad(self):
+        import re
+        for ev in (re.sub(r" items=\d+", "", login_reads_agenix(), count=1),
+                   login_reads_agenix().replace(" items=1 ", " items=x ", 1)):
+            self.assertEqual(len(self.scan_bad(ev)), 1)
+
     def test_path_without_a_syscall_in_the_event_is_bad(self):
         lines = login_reads_agenix().split("\n")
         orphan = "\n".join(l for l in lines if not l.startswith("type=SYSCALL"))
