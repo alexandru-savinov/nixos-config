@@ -53,6 +53,16 @@ THE AUDIT RULE (exact):
        own read of jev-openrouter-key; there is no per-key exemption.
   Everything else in the audit log is ignored here.
 
+EVALUATOR ERRORS (exit 2) on the audit side, besides unparseable lines:
+  auditctl -s/-l unhealthy (see check_trail); ausearch exit 1 with stdout,
+  exit 0 with stderr, or any other failure (the window is read again, not
+  consumed); a checkpoint status 10/11/12 (the retry's events are still
+  classified; the error persists until audit.checkpoint-mismatch is removed
+  by an operator); a missing checkpoint once audit.installed exists (the
+  marker is written when a checkpoint is first committed; a missing one
+  before that is the first run); a SYSCALL record lacking arch, syscall,
+  success, exe or key; a PATH record in an event with no SYSCALL record.
+
 THE BAN RULE (exact):
   Fires iff any address in `neverBan` (soc-in-a-box; the same list fail2ban
   receives as ignoreIP) is
@@ -88,6 +98,9 @@ _HEADER = re.compile(r"^(?:node=\S+ )?type=(\S+) msg=audit\(([0-9.]+):([0-9]+)\)
 # legacy empty-result note.
 _SEPARATORS = frozenset({"", "----", "<no matches>"})
 _FIELD = re.compile(r'([A-Za-z0-9_-]+)=("[^"]*"|\S+)')
+# What every SYSCALL record must carry for the rules to read it. auid is not
+# here: a watched SYSCALL without auid is an existing hit (audit_scan).
+_SYSCALL_REQUIRED = ("arch", "syscall", "success", "exe", "key")
 _STORE_PERL = re.compile(r"^/nix/store/[0-9a-z]{32}-perl-[^/]+/bin/perl$")
 _HEX = re.compile(r"^(?:[0-9A-Fa-f]{2})+$")
 
@@ -206,9 +219,15 @@ def audit_scan(raw_text: str) -> tuple[list[dict], list[str]]:
     events, bad = scan_events(raw_text)
     hits = []
     for ev in events:
+        where = f"event {ev['ts']}:{ev['serial']}"
         syscall = next((f for t, f in ev["records"] if t == "SYSCALL"), None)
         if syscall is None:
+            if any(t == "PATH" for t, _ in ev["records"]):
+                bad.append(f"{where}: PATH record without a SYSCALL record")
             continue
+        missing = [k for k in _SYSCALL_REQUIRED if k not in syscall]
+        if missing:
+            bad.append(f"{where}: SYSCALL record lacks {', '.join(missing)}")
         keys = _keys(syscall) & WATCHED_KEYS
         if not keys:
             continue
@@ -287,17 +306,23 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def run_ausearch(ausearch: str, checkpoint: str) -> str:
-    """Events since the checkpoint. ausearch rewrites `checkpoint` in place
-    when it finds events, so cmd_audit hands it a staged COPY and commits
-    that copy only after the window's outcome is recorded."""
+def run_ausearch(ausearch: str, checkpoint: str, first_run: bool = False) -> tuple[str, list[str], bool]:
+    """Events since the checkpoint: (stdout, problems, checkpoint_mismatch).
+
+    ausearch rewrites `checkpoint` in place when it finds events, so cmd_audit
+    hands it a staged COPY and commits that copy only after the window's
+    outcome is recorded. stdout is always returned, even next to a problem, so
+    the events in it are still classified; a non-empty `problems` means the
+    window cannot be called clean and must not be consumed.
+    """
     # --input-logs + stdin=/dev/null: ausearch reads STDIN instead of the
     # logs whenever fd 0 is a pipe (ausearch.c is_pipe), and then never saves
     # a checkpoint. Force the logs regardless of how this is started.
     base = [ausearch, "--input-logs", "--raw", "--checkpoint", checkpoint]
-    # First run ever: start ten minutes back instead of replaying the whole
-    # trail, so deploying this unit does not page for history.
-    first = [] if os.path.exists(checkpoint) else ["--start", "recent"]
+    # First run ever (no checkpoint and no install marker, decided by the
+    # caller): start ten minutes back instead of replaying the whole trail, so
+    # deploying this unit does not page for history.
+    first = ["--start", "recent"] if first_run else []
 
     def run(extra):
         # errors="replace": a stray non-UTF-8 byte must become one bad line
@@ -305,25 +330,36 @@ def run_ausearch(ausearch: str, checkpoint: str) -> str:
         return subprocess.run(base + extra, capture_output=True, encoding="utf-8",
                               errors="replace", stdin=subprocess.DEVNULL)
 
+    problems: list[str] = []
+    mismatch = False
     p = run(first)
     if p.returncode in (10, 11, 12):
-        # Rotated log or a damaged checkpoint: ausearch's documented recovery
-        # is to resume from the checkpoint's timestamp.
-        _log(f"ausearch checkpoint status {p.returncode}; resuming from its timestamp")
+        # Rotated log or a damaged checkpoint. The timestamp retry still reads
+        # the window (its events are classified and any hit is an ALARM), but
+        # the mismatch itself is an evaluator error until it is reconciled.
+        mismatch = True
+        problems.append(f"ausearch checkpoint status {p.returncode}: checkpoint does not match the logs")
+        _log(f"ausearch checkpoint status {p.returncode}; reading from its timestamp")
         p = run(["--start", "checkpoint"])
-    if p.returncode == 0:
-        return p.stdout
-    # 1 means "nothing found" OR an argument / file error. In --raw mode the
-    # nothing-found exit is SILENT (audit 4.1.2 src/ausearch.c main():
-    # `if (report_format != RPT_RAW) fprintf(stderr, "<no matches>\n")`),
-    # while every error path in process_logs/process_file and option parsing
-    # writes to stderr. So: exit 1 with an empty stderr is a quiet window;
-    # exit 1 with anything on stderr is an evaluator failure. ("<no matches>"
-    # alone is accepted too, in case a later audit prints it in raw mode.)
     err = p.stderr.strip()
-    if p.returncode == 1 and err in ("", "<no matches>"):
-        return ""
-    raise RuntimeError(f"ausearch exited {p.returncode}: {err[:300]}")
+    if p.returncode == 0:
+        # A successful ausearch has nothing to say on stderr.
+        if err:
+            problems.append(f"ausearch exited 0 with stderr: {err[:300]}")
+    elif p.returncode == 1 and not p.stdout.strip() and err in ("", "<no matches>"):
+        # 1 means "nothing found" OR an argument / file error. In --raw mode
+        # the nothing-found exit is SILENT (audit 4.1.2 src/ausearch.c main():
+        # `if (report_format != RPT_RAW) fprintf(stderr, "<no matches>\n")`),
+        # while every error path in process_logs/process_file and option
+        # parsing writes to stderr. So: exit 1 with empty stdout and empty
+        # stderr is a quiet window. ("<no matches>" alone is accepted too, in
+        # case a later audit prints it in raw mode.)
+        pass
+    elif p.returncode == 1 and p.stdout.strip():
+        problems.append(f"ausearch exited 1 with output on stdout: {p.stdout.strip()[:80]!r}")
+    else:
+        problems.append(f"ausearch exited {p.returncode}: {err[:300]}")
+    return p.stdout, problems, mismatch
 
 
 def _fsync_dir(path: str) -> None:
@@ -461,6 +497,8 @@ def cmd_audit(a) -> int:
     # reads the same window again: a repeated ALARM line, never a lost one.
     last_system = os.path.join(a.state_dir, "audit.last-system")
     last_lost = os.path.join(a.state_dir, "audit.last-lost")
+    installed = os.path.join(a.state_dir, "audit.installed")
+    mismatch_flag = os.path.join(a.state_dir, "audit.checkpoint-mismatch")
     target = _system_target(a.current_system)
     previous_target = _read_text(last_system)
     staged = checkpoint + ".next"
@@ -472,7 +510,12 @@ def cmd_audit(a) -> int:
         _write_durably(last_hit, f"{time.time():.0f}\n")
 
     lost_increase = check_trail(a, last_lost, start_hold)
-    raw = run_ausearch(a.ausearch, staged)
+    # A checkpoint that goes missing once one was installed is not "first run".
+    first_run = not os.path.exists(checkpoint)
+    if first_run and os.path.exists(installed):
+        raise RuntimeError("audit checkpoint is missing but the install marker exists "
+                           "(checkpoint removed or lost; not treated as a first run)")
+    raw, problems, mismatch = run_ausearch(a.ausearch, staged, first_run)
     now = time.time()
 
     def commit_checkpoint():
@@ -501,13 +544,28 @@ def cmd_audit(a) -> int:
         _log("ALARM audit " + json.dumps(h, sort_keys=True))
     # A window with an unreadable line may have held a hit: it starts the
     # hold too, instead of one 5-minute red blip that picat_dupa = 2 absorbs.
-    if hits or bad:
+    if hits or bad or mismatch:
         start_hold()
-    commit_checkpoint()
+    if mismatch:
+        # Stays an evaluator error until an operator reconciles it (reads the
+        # window by hand, then removes this file).
+        _write_durably(mismatch_flag, f"{now:.0f}\n")
+    # An ausearch anomaly leaves the window unconsumed: it is read again, a
+    # repeated ALARM line rather than a lost one. A mismatch is the exception:
+    # the retry's checkpoint is committed and the flag above carries the error.
+    if not [p for p in problems if "checkpoint status" not in p]:
+        commit_checkpoint()
+        if os.path.exists(checkpoint) and not os.path.exists(installed):
+            _write_durably(installed, f"{now:.0f}\n")
+    errors = list(problems)
     if lost_increase:
-        raise RuntimeError(f"audit trail lost {lost_increase} event(s) since the last evaluation")
+        errors.append(f"audit trail lost {lost_increase} event(s) since the last evaluation")
     if bad:
-        raise ValueError(f"{len(bad)} unparseable line(s); first: {bad[0]}")
+        errors.append(f"{len(bad)} unparseable line(s); first: {bad[0]}")
+    if os.path.exists(mismatch_flag) and not mismatch:
+        errors.append(f"audit checkpoint mismatch not reconciled (remove {mismatch_flag} after checking the window)")
+    if errors:
+        raise RuntimeError("; ".join(errors))
     # Stay red for a hold window after the last hit, then clear by itself.
     # vigil ticks every 5 min and opens after picat_dupa=2 red ticks; a red
     # stamp that lasted one 5-min evaluator period could fall between ticks.

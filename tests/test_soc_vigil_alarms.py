@@ -228,6 +228,33 @@ class AuditRule(unittest.TestCase):
         self.assertEqual(sva.audit_hits(""), [])
         self.assertEqual(sva.audit_hits("<no matches>\n----\n"), [])
 
+    # ── record shape: a malformed event is an error, not a quiet one ──
+    def scan_bad(self, text):
+        return sva.audit_scan(text)[1]
+
+    def test_syscall_missing_required_fields_is_bad(self):
+        import re
+        for field in ("arch", "syscall", "success", "exe", "key"):
+            ev = re.sub(rf" {field}=(\"[^\"]*\"|\S+)", "", login_reads_agenix(), count=1)
+            self.assertNotIn(f" {field}=", ev.split("\n")[0].split("\x1d")[0])
+            self.assertEqual(len(self.scan_bad(ev)), 1, field)
+            with self.assertRaises(ValueError):
+                sva.audit_hits(ev)
+
+    def test_path_without_a_syscall_in_the_event_is_bad(self):
+        lines = login_reads_agenix().split("\n")
+        orphan = "\n".join(l for l in lines if not l.startswith("type=SYSCALL"))
+        self.assertEqual(len(self.scan_bad(orphan)), 1)
+
+    def test_well_formed_events_are_not_bad(self):
+        for ev in (login_reads_agenix(), service_reads_agenix(),
+                   activation_writes_sudoers(), login_reads_agenix().replace(" auid=1000 ", " ", 1)):
+            self.assertEqual(self.scan_bad(ev), [])
+
+    def test_events_without_path_or_syscall_are_not_bad(self):
+        login = "type=USER_LOGIN msg=audit(1762790400.001:50): pid=1 uid=0 auid=1000 msg='op=login'"
+        self.assertEqual(self.scan_bad(login), [])
+
     # ── mixed batch: only the login event survives ──
     def test_mixed_batch(self):
         hits = expected(service_reads_agenix(11), activation_writes_sudoers(12),
@@ -508,14 +535,93 @@ class Runners(unittest.TestCase):
         a = self.ausearch('echo "Error opening /var/log/audit/audit.log" >&2; exit 1\n')
         self.assertEqual(self.audit(a), 2)
 
-    def test_checkpoint_error_resumes_from_timestamp(self):
+    # ── ausearch edge cases: each is an evaluator error ──
+    def fixture_cmd(self, text):
+        fixture = os.path.join(self.d, "fixture")
+        with open(fixture, "w") as fh:
+            fh.write(text)
+        return f"cat {fixture}\n"
+
+    def test_checkpoint_mismatch_is_an_error_not_a_silent_retry(self):
+        # Was: a silent retry from the checkpoint's timestamp, exit 0.
         open(self.cp, "w").close()
         a = self.ausearch('case "$*" in *"--start checkpoint"*) exit 1;; esac\nexit 12\n')
-        self.assertEqual(self.audit(a), 0)
+        self.assertEqual(self.audit(a), 2)
         args = slurp(self.log).splitlines()
         self.assertEqual(len(args), 2)
         self.assertNotIn("--start recent", args[0])
         self.assertIn("--start checkpoint", args[1])
+        self.assertTrue(os.path.exists(os.path.join(self.sd, "audit.checkpoint-mismatch")))
+
+    def test_checkpoint_mismatch_keeps_the_hits_of_the_retry_as_alarms(self):
+        for status in (10, 11, 12):
+            for f in os.listdir(self.sd):
+                os.unlink(os.path.join(self.sd, f))
+            open(self.cp, "w").close()
+            body = self.fixture_cmd(login_reads_agenix() + "\n")
+            a = self.ausearch(f'case "$*" in *"--start checkpoint"*) {body};; esac\nexit {status}\n')
+            rc, out = self.run_logged(a)
+            self.assertEqual(rc, 2, status)
+            self.assertIn("ALARM audit", out)
+            self.assertTrue(os.path.exists(self.last), "a retry hit starts the hold")
+
+    def test_checkpoint_mismatch_stays_an_error_until_reconciled(self):
+        open(self.cp, "w").close()
+        bad = self.ausearch('case "$*" in *"--start checkpoint"*) exit 1;; esac\nexit 12\n')
+        self.assertEqual(self.audit(bad), 2)
+        # Next runs are quiet and well-formed, but nothing reconciled it.
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        os.unlink(os.path.join(self.sd, "audit.checkpoint-mismatch"))
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 1)  # hold from the mismatch run
+        with open(self.last, "w") as fh:
+            fh.write(f"{time.time() - 901:.0f}\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_exit_one_with_stdout_is_an_error(self):
+        self.assertEqual(self.audit(self.ausearch("echo something\nexit 1\n")), 2)
+        # ... and the events in it are still classified, window not consumed.
+        with open(self.cp, "w") as fh:
+            fh.write("old\n")
+        body = self.fixture_cmd(login_reads_agenix() + "\n")
+        rc, out = self.run_logged(self.ausearch(f"echo new > \"$(echo \"$@\" | sed 's/.*--checkpoint //')\"\n{body}exit 1\n"))
+        self.assertEqual(rc, 2)
+        self.assertIn("ALARM audit", out)
+        self.assertEqual(slurp(self.cp), "old\n")
+
+    def test_malformed_event_turns_the_runner_red(self):
+        import re
+        ev = re.sub(r" exe=\"[^\"]*\"", "", login_reads_agenix(), count=1)
+        self.assertEqual(self.audit(self.ausearch(self.fixture_cmd(ev + "\n"))), 2)
+
+    def test_exit_zero_with_stderr_is_an_error(self):
+        self.assertEqual(self.audit(self.ausearch('echo "warning: x" >&2\nexit 0\n')), 2)
+        self.assertEqual(self.audit(self.ausearch("exit 0\n")), 0)
+
+    def test_missing_checkpoint_without_marker_is_a_first_run(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertIn("--start recent", slurp(self.log))
+        # Quiet runs leave no checkpoint (ausearch writes one only with events),
+        # so no marker yet and the next run is a first run again.
+        self.assertFalse(os.path.exists(os.path.join(self.sd, "audit.installed")))
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_marker_is_written_once_a_checkpoint_is_committed(self):
+        marker = os.path.join(self.sd, "audit.installed")
+        self.assertEqual(self.audit(self.advancing(service_reads_agenix() + "\n")), 0)
+        self.assertTrue(os.path.exists(marker))
+
+    def test_missing_checkpoint_with_marker_is_an_error(self):
+        self.assertEqual(self.audit(self.advancing(service_reads_agenix() + "\n")), 0)
+        os.unlink(self.cp)
+        os.unlink(self.log)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        self.assertFalse(os.path.exists(self.log), "ausearch must not run as a first run")
+
+    def test_present_checkpoint_with_marker_is_normal(self):
+        self.assertEqual(self.audit(self.advancing(service_reads_agenix() + "\n")), 0)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertNotIn("--start recent", slurp(self.log).splitlines()[-1])
 
     def test_hit_turns_red_holds_then_clears(self):
         fixture = os.path.join(self.d, "fixture")
