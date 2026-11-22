@@ -88,10 +88,11 @@ in
       "-w /etc/shadow -p wa -k identity"
       "-w /etc/group -p wa -k identity"
 
-      # 5. commands run as root by a real logged-in user (sudo and friends),
-      #    on both syscall ABIs.
-      "-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root-exec"
-      "-a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root-exec"
+      # 5. commands run as root from any login session (sudo and friends),
+      #    on both syscall ABIs. "Login session" means auid is set, the same
+      #    definition the other rules and the classifier use; no uid floor.
+      "-a always,exit -F arch=b64 -S execve -F euid=0 -F auid!=unset -k root-exec"
+      "-a always,exit -F arch=b32 -S execve -F euid=0 -F auid!=unset -k root-exec"
     ];
   };
 

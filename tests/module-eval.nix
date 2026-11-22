@@ -739,6 +739,17 @@ let
       if a.rateLimit == 0 && a.backlogLimit >= 32768 && a.failureMode == "printk"
       then true
       else builtins.throw "FAIL: sancta-choir audit limits: rateLimit=${toString a.rateLimit} backlogLimit=${toString a.backlogLimit} failureMode=${a.failureMode}";
+    # root-exec uses one definition of a login session: auid is set. A uid
+    # floor on auid would quietly narrow which logins the rule records.
+    soc-in-a-box-root-exec-login-filter =
+      let
+        rules = self.nixosConfigurations.sancta-choir.config.security.audit.rules;
+        rootExec = builtins.filter (nixpkgs.lib.hasInfix "-k root-exec") rules;
+        ok = r: nixpkgs.lib.hasInfix "-F auid!=unset" r && !(nixpkgs.lib.hasInfix "-F auid>" r) && !(nixpkgs.lib.hasInfix "-F auid<" r);
+      in
+      if builtins.length rootExec == 2 && builtins.all ok rootExec
+      then true
+      else builtins.throw "FAIL: sancta-choir root-exec audit rules must filter on auid!=unset only: ${builtins.toJSON rootExec}";
 
     # An empty `units` list makes a host with dead services render identically
     # to a healthy one: the bar's "down" field can never populate. That is the
