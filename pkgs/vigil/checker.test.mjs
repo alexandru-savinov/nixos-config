@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { run, loadContracts } from './vigil-check.mjs';
+import { contract as contractFromToml } from './lib/schema.mjs';
 import { say } from './vigil-say.mjs';
 import { loadStore } from './lib/store.mjs';
 import { failed } from './vigil.mjs';
@@ -415,4 +417,142 @@ test('unmatched preserved identities consume acknowledgements durably without lo
   assert.equal(fs.existsSync(path.join(h.root, 'nota-sent', 'fixture')), false);
   assert.equal(h.sent.some(event => event.nume === 'fixture' && event.tranzitie === 'nota'), false);
   assert.equal(h.state().contracts.fixture.open, incident);
+}));
+
+test('page = false records the incident and row but sends nothing; page default still sends', async () => harness(async h => {
+  const entries = [
+    { contract: { ...base, nume: 'quiet', page: false } },
+    { contract: { ...base, nume: 'loud' } },
+  ];
+  const red = { ...h.options, inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }) };
+  await run(entries, red);
+  h.time(300000);
+  await run(entries, red);
+  const state = h.state();
+  assert.match(state.contracts.quiet.open, /^2026-/, 'incident is recorded');
+  assert.equal(state.contracts.quiet.openDelivered, true);
+  assert.deepEqual(state.queue, []);
+  assert.deepEqual(h.sent.map(e => e.nume), ['loud'], 'only the default contract is paged');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(h.root, 'rows', 'quiet.json'), 'utf8')).stare, 'picat');
+  // Further red ticks neither re-create nor send the event.
+  h.time(300000);
+  await run(entries, red);
+  assert.deepEqual(h.sent.map(e => e.nume), ['loud']);
+  // Recovery is silent too, and the incident still closes by itself.
+  const green = { ...h.options, inspect: async () => ({ verdict: 'verde', motiv: 'ok' }) };
+  await run(entries, green);
+  h.time(300000);
+  await run(entries, green);
+  h.time(31 * 60000);
+  await run(entries, green);
+  assert.equal(h.state().contracts.quiet.open, null);
+  assert.deepEqual(h.sent.filter(e => e.nume === 'quiet'), []);
+  assert.deepEqual(h.sent.map(e => e.tranzitie), ['open', 'close']);
+}));
+
+test('page = true is the same as no page field', async () => harness(async h => {
+  const entries = [{ contract: { ...base, nume: 'explicit', page: true } }];
+  const red = { ...h.options, inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }) };
+  await run(entries, red);
+  h.time(300000);
+  await run(entries, red);
+  assert.deepEqual(h.sent.map(e => e.nume), ['explicit']);
+}));
+
+const redRun = (h, entries) => run(entries, { ...h.options, inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }) });
+const greenRun = (h, entries) => run(entries, { ...h.options, inspect: async () => ({ verdict: 'verde', motiv: 'ok' }) });
+
+test('an open queued before the page switch never sends, and does not hold up other contracts', async () => harness(async h => {
+  const both = page => [{ contract: { ...base, nume: 'quiet', ...(page === undefined ? {} : { page }) } }, { contract: { ...base, nume: 'loud' } }];
+  h.network(false);
+  await redRun(h, both());
+  h.time(300000);
+  await redRun(h, both());
+  assert.deepEqual(h.state().queue.map(e => `${e.nume}/${e.tranzitie}`), ['quiet/open', 'loud/open']);
+  assert.deepEqual(h.sent, []);
+  h.network(true);
+  h.time(300000);
+  await redRun(h, both(false)); // the switch
+  assert.deepEqual(h.sent.map(e => e.nume), ['loud'], 'only the paged contract sends');
+  assert.deepEqual(h.state().queue, []);
+  assert.equal(h.state().contracts.quiet.openSuppressed, true);
+}));
+
+test('re-enabling paging mid-incident sends no orphan close and a fresh open next time', async () => harness(async h => {
+  const entries = page => [{ contract: { ...base, nume: 'flip', page } }];
+  await redRun(h, entries(false));
+  h.time(300000);
+  await redRun(h, entries(false));
+  assert.match(h.state().contracts.flip.open, /^2026-/);
+  assert.deepEqual(h.sent, []);
+  // Paging comes back while the incident is open; the incident then recovers.
+  await greenRun(h, entries(true));
+  h.time(300000);
+  await greenRun(h, entries(true));
+  h.time(31 * 60000);
+  await greenRun(h, entries(true));
+  assert.equal(h.state().contracts.flip.open, null);
+  assert.deepEqual(h.sent, [], 'no close without a sent open');
+  assert.deepEqual(h.state().queue, []);
+  // The next incident is a normal one: its open is sent.
+  await redRun(h, entries(true));
+  h.time(300000);
+  await redRun(h, entries(true));
+  assert.deepEqual(h.sent.map(e => e.tranzitie), ['open']);
+}));
+
+test('a sent open still gets its close when paging stays on', async () => harness(async h => {
+  const entries = [{ contract: { ...base, nume: 'normal' } }];
+  await redRun(h, entries);
+  h.time(300000);
+  await redRun(h, entries);
+  await greenRun(h, entries);
+  h.time(300000);
+  await greenRun(h, entries);
+  h.time(31 * 60000);
+  await greenRun(h, entries);
+  assert.deepEqual(h.sent.map(e => e.tranzitie), ['open', 'close']);
+}));
+
+// The real SOC contracts, with their stamp path pointed at a temp file. The
+// directory is handed in by pkgs/vigil.nix's checkPhase (hosts/ is not in the
+// package source), else read relative to the repo checkout.
+const socDir = process.env.VIGIL_SOC_CONTRACTS_DIR
+  || fileURLToPath(new URL('../../hosts/sancta-choir/vigil-contracts/', import.meta.url));
+const socContract = (file, tinta) => ({
+  contract: contractFromToml(fs.readFileSync(path.join(socDir, file), 'utf8')),
+  tinta,
+});
+const withStamp = ({ contract: c, tinta }) => ({ contract: { ...c, tinta } });
+
+test('a stale soc-bans stamp reds the PAGING contract; a stale health stamp never pages', async () => harness(async h => {
+  const bansStamp = path.join(h.root, 'bans-clean');
+  const healthStamp = path.join(h.root, 'bans-health-clean');
+  for (const file of [bansStamp, healthStamp]) {
+    fs.writeFileSync(file, '');
+    // 30 minutes old: past the 20m threshold in both contracts.
+    const old = new Date(Date.parse('2026-09-20T12:00:00Z') - 30 * 60000);
+    fs.utimesSync(file, old, old);
+  }
+  const entries = [withStamp(socContract('soc-bans.toml', bansStamp)), withStamp(socContract('soc-bans-health.toml', healthStamp))];
+  assert.equal(entries[0].contract.page, true);
+  assert.equal(entries[1].contract.page, false);
+  await run(entries, h.options);                 // real age check, no inspect override
+  assert.equal(h.lines.find(l => l.nume === 'soc-bans').verdict, 'picat');
+  assert.equal(h.lines.find(l => l.nume === 'soc-bans').motiv, 'age-stale');
+  h.time(300000);
+  await run(entries, h.options);
+  assert.match(h.state().contracts['soc-bans'].open, /^2026-/, 'incident opens after picat_dupa = 2 stale samples');
+  assert.deepEqual(h.sent.map(e => `${e.nume}/${e.tranzitie}`), ['soc-bans/open'], 'paged; the health contract is not');
+  assert.match(h.state().contracts['soc-bans-health'].open, /^2026-/, 'but its incident is recorded');
+}));
+
+test('a fresh soc-bans stamp is green and sends nothing', async () => harness(async h => {
+  const stamp = path.join(h.root, 'bans-clean');
+  fs.writeFileSync(stamp, '');
+  const now = Date.parse('2026-09-20T12:00:00Z');
+  fs.utimesSync(stamp, new Date(now - 60000), new Date(now - 60000));
+  await run([withStamp(socContract('soc-bans.toml', stamp))], h.options);
+  assert.equal(h.lines[0].verdict, 'verde');
+  assert.deepEqual(h.sent, []);
 }));

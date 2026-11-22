@@ -1,0 +1,13 @@
+[contract]
+nume = "soc-bans"
+ce = "Security: ban or decision on a tailnet/LAN address"
+driver = "operational"
+verifica = "age"
+tinta = "/var/lib/soc-vigil-alarms/bans-clean"
+picat_dupa = 2
+prag = "20m"
+# Pinned to services.soc-vigil-alarms.paging.bans by tests/module-eval.nix.
+page = true
+
+[spune]
+nivel = "incident"

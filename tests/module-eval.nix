@@ -667,7 +667,9 @@ let
             # vulnix.service joined on 2026-11-10: a failed nightly scan keeps
             # the previous report, so only its failed state says the scanner
             # stopped.
-            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service vulnix.service";
+            # soc-alarm-audit / soc-alarm-bans joined on 2026-11-10: the
+            # oneshots behind vigil's soc-audit / soc-bans contracts.
+            && (svc.environment.SANCTA_STATUSLINE_UNITS or "") == "sancta-gallery.service sancta-doctrine-guard.service sancta-soul-mirror.timer sancta-wq-tick.service sancta-archive-deadman.service sancta-absent-guard.service auditd.service crowdsec.service audit-rules-nixos.service vulnix.service soc-alarm-audit.service soc-alarm-bans.service";
 
           # The units value has spaces, so the RENDERED unit must quote it:
           # unquoted, systemd keeps only the first unit (live on choir until
@@ -1230,6 +1232,172 @@ let
         true
       else
         builtins.throw "FAIL: sancta-choir doctrine-guard vigil stamp — failed checks: ${builtins.toJSON failed}";
+
+    # The two SOC alarms (modules/services/soc-vigil-alarms.nix) hold only as
+    # RELATIONS: contract tinta == module stamp path, the evaluator's argv ==
+    # the facts it filters on (soc-in-a-box's
+    # neverBan), and the absences (no OnFailure, no cmd grant, no pre-made
+    # stamp). Each can break while every unit still evaluates and vigil still
+    # reports something, so each is pinned here. The rules themselves are
+    # exercised by tests/test_soc_vigil_alarms.py (flake check soc-vigil-alarms).
+    soc-vigil-alarms-choir =
+      let
+        choir = self.nixosConfigurations.sancta-choir.config;
+        lib = nixpkgs.lib;
+        alarms = choir.services.soc-vigil-alarms;
+        schema = import ../modules/services/vigil-schema.nix { inherit lib; };
+        audit = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-audit.toml;
+        bans = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-bans.toml;
+        bansHealth = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-bans-health.toml;
+        aSvc = choir.systemd.services.soc-alarm-audit;
+        bSvc = choir.systemd.services.soc-alarm-bans;
+        argv = svc: svc.serviceConfig.ExecStart;
+        envOf = svc: svc.serviceConfig.Environment or [ ];
+        whitelist = (builtins.head choir.services.crowdsec.localConfig.parsers.s02Enrich).whitelist.cidr;
+        ignoreIP = choir.services.fail2ban.ignoreIP;
+        shape = c: path: c.verifica == "age" && c.tinta == path && c.nivel == "incident"
+          && c.picat_dupa == 2 && c.prag == "20m";
+        stampWired = svc: path: stampScript:
+          lib.hasSuffix stampScript (svc.serviceConfig.ExecStopPost or "")
+          && builtins.elem "SANCTA_DOCTRINE_STAMP=${path}" (envOf svc)
+          && lib.hasPrefix "/var/lib/${svc.serviceConfig.StateDirectory or "<none>"}/" path
+          && (svc.serviceConfig.StateDirectoryMode or null) == "0755"
+          && (svc.serviceConfig.UMask or null) == "0077";
+        names = builtins.fromJSON choir.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES;
+        # "5min" / "2m" / "20m" -> minutes.
+        mins = str: lib.toInt (builtins.head (builtins.match "([0-9]+) ?(min|m)" str));
+        units = choir.services.sancta-statusline-refresh.units;
+
+        checks = {
+          enabled = alarms.enable;
+          auditContract = shape audit alarms.auditStampPath;
+          bansContract = shape bans alarms.bansStampPath;
+          publicNames = builtins.elem "soc-audit" names && builtins.elem "soc-bans" names
+            && builtins.elem "soc-bans-health" names
+            && builtins.elem "disk-root" names;
+          # Paging: the option is the declared intent, the contract carries it.
+          # Initial report-only rollout: audit off, bans on; the audit tile
+          # carries a static coverage label.
+          pagingPinned = (audit.page or true) == alarms.paging.audit
+            && (bans.page or true) == alarms.paging.bans
+            && alarms.paging.audit == false && alarms.paging.bans == true;
+          auditLabel = (audit.label or "") == "coverage: partial; quiet = unverified" && !(bans ? label);
+          auditStamp = stampWired aSvc alarms.auditStampPath "sancta-doctrine-guard-stamp.sh";
+          bansStamp = stampWired bSvc alarms.bansStampPath "soc-bans-stamp.sh"
+            && builtins.elem "SOC_HEALTH_STAMP=${alarms.bansHealthStampPath}" (envOf bSvc);
+          # Bans errors must not page: their own contract, page = false, on
+          # its own stamp; a ban still pages through soc-bans.
+          bansHealthContract = shape bansHealth alarms.bansHealthStampPath && bansHealth.page == false
+            && alarms.paging.bansHealth == false
+            && lib.hasPrefix "/var/lib/${bSvc.serviceConfig.StateDirectory}/" alarms.bansHealthStampPath;
+
+          # No audit exemption for any key read: the council options, flags
+          # and secrets-path environment are gone.
+          noCouncilExemption = !(alarms ? councilKey)
+            && !(lib.hasInfix "--council" (argv aSvc))
+            && !(lib.any (e: lib.hasPrefix "SOC_SECRETS_" e) (envOf aSvc));
+
+          # Trail health expects exactly the watches soc-in-a-box declares.
+          expectedWatches =
+            lib.hasInfix "--expect-watch ${choir.age.secretsMountPoint}:rwa:agenix-secrets" (argv aSvc)
+            && lib.hasInfix "--expect-watch /etc/sudoers:wa:sudoers" (argv aSvc)
+            && lib.hasInfix "--auditctl " (argv aSvc);
+
+          # Free-space floors for the audit log filesystem, from options.
+          auditDiskFloors = alarms.auditDisk.warnGiB == 10 && alarms.auditDisk.failGiB == 5
+            && alarms.auditDisk.inodeFailPercent == 5
+            && lib.hasInfix "--disk-warn-bytes 10737418240 --disk-fail-bytes 5368709120 --inode-fail-percent 5" (argv aSvc);
+
+          # A quiet window counts only while the trail is live: both the
+          # daemon and the rules unit must be required active by the script.
+          trailLivenessGate =
+            lib.hasInfix "--require-active auditd.service --require-active audit-rules-nixos.service" (argv aSvc)
+            && lib.hasInfix "/bin/systemctl " (argv aSvc);
+
+          # Home = the exact neverBan list both engines exempt.
+          neverBanIsBothEngines =
+            lib.hasInfix "--cidrs ${lib.concatStringsSep "," ignoreIP}" (argv bSvc)
+            && lib.all (cidr: builtins.elem cidr ignoreIP) whitelist
+            && lib.all (cidr: builtins.elem cidr whitelist) ignoreIP
+            && builtins.elem "100.64.0.0/10" whitelist;
+
+          # A stamp is freshened only by a clean run's ExecStopPost and nothing
+          # invalidates it before a run, so a hung or failing writer is bounded by
+          # age alone: timer interval + TimeoutStartSec must stay under each
+          # contract's threshold, or one slow run would flap the stamp.
+          stampAgeBound = lib.all
+            (u: mins choir.systemd.timers.${u.timer}.timerConfig.OnUnitActiveSec
+              + mins u.svc.serviceConfig.TimeoutStartSec < mins u.contract.prag)
+            [
+              { timer = "soc-alarm-audit"; svc = aSvc; contract = audit; }
+              { timer = "soc-alarm-bans"; svc = bSvc; contract = bans; }
+              { timer = "soc-alarm-bans"; svc = bSvc; contract = bansHealth; }
+            ];
+
+          # One failed run between two good ones is normal (picat_dupa = 2 absorbs
+          # it), so the coverage-gap limit must exceed two timer periods plus a
+          # run's timeout, or the run after any failure reads as lost coverage.
+          maxGapAboveTwoPeriods =
+            let m = builtins.match ".*--max-gap ([0-9]+).*" (argv aSvc);
+            in m != null
+              && lib.toInt (builtins.head m) * 1 > 60 * (2 * mins choir.systemd.timers.soc-alarm-audit.timerConfig.OnUnitActiveSec
+              + mins aSvc.serviceConfig.TimeoutStartSec);
+
+          # Both run every 5 minutes from timers.target, as root oneshots.
+          timers = lib.all
+            (n: (choir.systemd.timers.${n}.timerConfig.OnUnitActiveSec or null) == "5min"
+              && builtins.elem "timers.target" choir.systemd.timers.${n}.wantedBy)
+            [ "soc-alarm-audit" "soc-alarm-bans" ];
+          oneshotRoot = lib.all (svc: svc.serviceConfig.Type == "oneshot" && !(svc.serviceConfig ? User)) [ aSvc bSvc ];
+
+          # The audit evaluator needs no network and one capability (CAP_AUDIT_CONTROL,
+          # for auditctl -s/-l); the ban
+          # evaluator only loopback (LAPI) and one read capability.
+          auditSandbox = (aSvc.serviceConfig.PrivateNetwork or false)
+            && aSvc.serviceConfig.CapabilityBoundingSet == [ "CAP_AUDIT_CONTROL" ]
+            && aSvc.serviceConfig.ProtectSystem == "strict";
+          bansSandbox = bSvc.serviceConfig.IPAddressDeny == "any"
+            && bSvc.serviceConfig.IPAddressAllow == "localhost"
+            && bSvc.serviceConfig.CapabilityBoundingSet == [ "CAP_DAC_READ_SEARCH" ]
+            && bSvc.serviceConfig.ProtectSystem == "strict"
+            && builtins.elem "USER=${choir.services.crowdsec.user}" (envOf bSvc);
+
+          # Zero other notifications: vigil is the only voice.
+          noOnFailure = (aSvc.onFailure or [ ]) == [ ] && (bSvc.onFailure or [ ]) == [ ]
+            && !(aSvc.unitConfig ? OnFailure) && !(bSvc.unitConfig ? OnFailure);
+          noCommandGrant = choir.services.vigil.cmdAllow == [ ];
+          noFabricatedStamp = builtins.all
+            (rule: !(lib.hasInfix "soc-vigil-alarms" rule))
+            (choir.systemd.tmpfiles.rules or [ ]);
+          onStatusBar = builtins.elem "soc-alarm-audit.service" units
+            && builtins.elem "soc-alarm-bans.service" units;
+        };
+
+        failed = builtins.attrNames (lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then
+        true
+      else
+        builtins.throw "FAIL: sancta-choir soc-vigil-alarms wiring — failed checks: ${builtins.toJSON failed}";
+
+    # Negative arm: without soc-in-a-box's engines the alarms refuse to
+    # evaluate, by THEIR assertion (not by some unrelated eval error, which a
+    # bare shouldFail could not tell apart). Positive arm: choir, above.
+    soc-vigil-alarms-requires-soc-in-a-box =
+      let
+        cfg = evalConfig {
+          modules = [
+            ../modules/services/soc-vigil-alarms.nix
+            { services.soc-vigil-alarms.enable = true; }
+          ];
+        };
+        prefix = "services.soc-vigil-alarms evaluates soc-in-a-box's engines";
+        fires = nixpkgs.lib.any (a: !a.assertion && nixpkgs.lib.hasPrefix prefix a.message) cfg.assertions;
+        heldOnChoir = nixpkgs.lib.any (a: a.assertion && nixpkgs.lib.hasPrefix prefix a.message)
+          self.nixosConfigurations.sancta-choir.config.assertions;
+      in
+      if fires && heldOnChoir then true
+      else builtins.throw "FAIL: soc-vigil-alarms soc-in-a-box assertion (fires=${toString fires}, heldOnChoir=${toString heldOnChoir})";
 
     # Negative arm 1 — the length check the mirror's own assertion cannot make.
     # services.sancta-soul-mirror asserts only that every entry LOOKS like a key
@@ -2071,7 +2239,7 @@ let
             !off.sancta.studio.n8n.enable
             && !off.services.n8n-tailscale.enable
             && !off.services.n8n.enable
-            && off.services.vigil.expectedContracts == 10
+            && off.services.vigil.expectedContracts == 13
             && !(builtins.elem "n8n" (builtins.fromJSON off.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES));
           wallsPresentWhileOff = holds off modelWall && holds off bindWall;
 
@@ -2088,7 +2256,7 @@ let
             && n8nCfg.communityPackages == [ ]
             && n8nCfg.allowBuiltinModules == [ ]
             && n8nCfg.blockEnvAccessInCode
-            && onCfg.services.vigil.expectedContracts == 11
+            && onCfg.services.vigil.expectedContracts == 14
             && builtins.elem "n8n" (builtins.fromJSON onCfg.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES)
             && holds onCfg modelWall && holds onCfg bindWall && holds onCfg keyGate;
 

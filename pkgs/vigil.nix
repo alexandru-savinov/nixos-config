@@ -8,8 +8,12 @@ stdenvNoCC.mkDerivation {
   dontConfigure = true;
   dontBuild = true;
   doCheck = true;
+  # A few tests check the real sancta-choir SOC contracts (labels, paging,
+  # stamp thresholds); the host directory is not under ./vigil, so it is
+  # handed in here. Outside the build they read it relative to the repo.
   checkPhase = ''
     runHook preCheck
+    export VIGIL_SOC_CONTRACTS_DIR=${../hosts/sancta-choir/vigil-contracts}
     node vigil.mjs autoproba
     runHook postCheck
   '';

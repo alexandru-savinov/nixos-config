@@ -99,12 +99,14 @@ let
       peer = !(tailnet host || lib.hasPrefix "fd7a:115c:a1e0:" (lib.toLower host)) || (c.peer or false);
     in
     keys document [ "contract" "spune" ] [ "contract" "spune" ]
-    && keys c [ "nume" "ce" "verifica" "tinta" "astept" "prag" "picat_dupa" "peer" "dimension" "driver" ] [ "nume" "ce" "verifica" "tinta" "picat_dupa" ]
+    && keys c [ "nume" "ce" "verifica" "tinta" "astept" "prag" "picat_dupa" "peer" "dimension" "driver" "page" "label" ] [ "nume" "ce" "verifica" "tinta" "picat_dupa" ]
     && keys document.spune [ "nivel" ] [ "nivel" ]
     && name c.nume && text c.ce && utf16Length c.ce <= 200
     && builtins.elem kind [ "tcp" "http" "unit" "age" "disk" "mount" "cmd" "hass-state" ]
     && integer c.picat_dupa 1 12 && (!(c ? peer) || builtins.isBool c.peer)
     # Borrowed vocabulary: closed label sets, mirrored from lib/schema.mjs.
+    && (!(c ? page) || builtins.isBool c.page)
+    && (!(c ? label) || text c.label && utf16Length c.label <= 80)
     && (!(c ? dimension) || builtins.elem c.dimension [ "accuracy" "completeness" "conformity" "consistency" "coverage" "timeliness" "uniqueness" "availability" ])
     && (!(c ? driver) || builtins.elem c.driver [ "regulatory" "analytics" "operational" "family" ])
     && builtins.elem document.spune.nivel [ "nota" "incident" ] && peer

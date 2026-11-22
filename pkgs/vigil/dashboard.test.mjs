@@ -109,3 +109,43 @@ test('dashboard public-name allowlist is explicit and bounded', () => {
     assert.throws(() => publicNames({ VIGIL_PUBLIC_NAMES: input }), /dashboard-invalid/);
   }
 });
+
+test('dashboard shows a contract label and marks suppressed delivery', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-dashboard-label-'));
+  let now = Date.parse('2026-09-22T06:00:00.000Z');
+  const env = { STATE_DIRECTORY: root, VIGIL_SAY: '1', VIGIL_PUBLIC_NAMES: '["quiet","plain"]', INVOCATION_ID: 'fixture-label' };
+  const mk = (nume, extra) => ({ contract: { nume, ce: 'x', verifica: 'age', tinta: '/x', prag: '1h', picat_dupa: 2, nivel: 'incident', ...extra } });
+  const entries = [mk('quiet', { page: false, label: 'coverage: partial' }), mk('plain', {})];
+  const tick = async verdict => {
+    env.INVOCATION_ID = `fixture-label-${now}`;
+    const code = await run(entries, { env, gazda: 'fixture', clock: () => now, probe: async () => 0,
+      inspect: async () => ({ verdict, motiv: verdict === 'verde' ? 'ok' : 'age-stale' }),
+      deliver: async () => 0, output: () => {}, summary: () => {} });
+    publish({ ...env, SERVICE_RESULT: 'success', EXIT_STATUS: String(code) });
+  };
+  const body = name => JSON.parse(response(root, 'GET', `/checks/${name}`, now, env).split('\r\n\r\n')[1]);
+  try {
+    await tick('verde');
+    // Green stays green, with the label beside it; a plain contract has none.
+    assert.equal(body('quiet').stare, 'verde');
+    assert.equal(body('quiet').detail, 'ok');
+    assert.equal(body('quiet').label, 'coverage: partial');
+    assert.equal(body('quiet').delivery, 'suppressed');
+    assert.equal(Object.hasOwn(body('plain'), 'label'), false);
+    assert.equal(body('plain').delivery, 'none');
+    now += 300000; await tick('picat');
+    now += 300000; await tick('picat');
+    const red = body('quiet');
+    assert.equal(red.stare, 'picat');
+    assert.equal(red.incident, 'open');
+    assert.equal(red.delivery, 'suppressed');
+    assert.equal(red.label, 'coverage: partial');
+    assert.equal(body('plain').delivery, 'confirmed');
+    // A tampered label is rejected like any other unexpected field.
+    const file = path.join(root, 'dashboard.json');
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    value.checks.quiet.label = 'x'.repeat(81);
+    fs.writeFileSync(file, JSON.stringify(value));
+    assert.match(response(root, 'GET', '/checks/quiet', now, env), /^HTTP\/1.1 503/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

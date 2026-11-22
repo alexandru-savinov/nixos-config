@@ -93,6 +93,7 @@ export async function run(entries, options = {}) {
   const now = clock();
   const events = [];
   const counts = { verde: 0, picat: 0, necitit: 0 };
+  const orphanClose = new Set();
   const unknownIdentities = entries.some(entry => entry.invalid);
   for (const name of Object.keys(store.contracts)) {
     if (!names.includes(name)) {
@@ -129,6 +130,12 @@ export async function run(entries, options = {}) {
     }
     const transition = advance(previous, c, result.verdict, { now, gazda, ack: ack !== null });
     store.contracts[c.nume] = { ...transition.state, nivel: c.nivel };
+    // An incident whose open was suppressed has no sent open: its close is
+    // not sent either, whatever the paging setting is by then.
+    if (previous?.openSuppressed) {
+      for (const event of transition.events) if (event.tranzitie === 'close') orphanClose.add(event.event_id);
+    }
+    if (!transition.state.open) delete store.contracts[c.nume].openSuppressed;
     if (transition.retireNota) {
       store.queue = store.queue.filter(event => event.nume !== c.nume || event.tranzitie !== 'nota');
       store.cleanup.push({ name: c.nume, marker: true, ack });
@@ -146,7 +153,21 @@ export async function run(entries, options = {}) {
   }
 
   if (enabled) {
-    store.queue.push(...events);
+    // `page = false` contracts: the incident, row and dashboard are recorded,
+    // but nothing reaches Telegram. That also covers entries queued before
+    // the switch: they are dropped here (so they cannot send, nor sit at the
+    // head of the queue ahead of other contracts) and marked suppressed, so
+    // the open is not re-created and, if paging comes back mid-incident, its
+    // close is not sent as an orphan.
+    const unpaged = new Set(entries.filter(({ contract: c }) => c.page === false).map(({ contract: c }) => c.nume));
+    for (const event of [...store.queue, ...events]) {
+      if (!unpaged.has(event.nume)) continue;
+      const state = store.contracts[event.nume];
+      if (event.tranzitie === 'open' && state?.open === event.incident_id) Object.assign(state, { openDelivered: true, openSuppressed: true });
+      if (event.tranzitie === 'nota' && state?.nota === event.incident_id) state.notaDelivered = true;
+    }
+    store.queue = store.queue.filter(event => !unpaged.has(event.nume));
+    store.queue.push(...events.filter(event => !unpaged.has(event.nume) && !orphanClose.has(event.event_id)));
     if (expireHistory(store, now)) summary('vigil-check: history-expired');
   } else store.queue = [];
   saveStore(root, store);

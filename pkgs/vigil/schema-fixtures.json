@@ -360,5 +360,40 @@
     "name": "driver-not-string",
     "accept": false,
     "source": "[contract]\nnume=\"fixture\"\nce=\"Fixture\"\nverifica=\"unit\"\ntinta=\"fixture.service\"\npicat_dupa=2\ndriver=1\n[spune]\nnivel=\"nota\"\n"
+  },
+  {
+    "name": "page-false",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"age\"\ntinta = \"/x\"\nprag = \"1h\"\npicat_dupa = 2\npage = false\n[spune]\nnivel = \"incident\"\n",
+    "accept": true
+  },
+  {
+    "name": "page-true",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"age\"\ntinta = \"/x\"\nprag = \"1h\"\npicat_dupa = 2\npage = true\n[spune]\nnivel = \"incident\"\n",
+    "accept": true
+  },
+  {
+    "name": "page-string",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"age\"\ntinta = \"/x\"\nprag = \"1h\"\npicat_dupa = 2\npage = \"no\"\n[spune]\nnivel = \"incident\"\n",
+    "accept": false
+  },
+  {
+    "name": "label",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"age\"\ntinta = \"/x\"\nprag = \"1h\"\npicat_dupa = 2\nlabel = \"coverage: partial\"\n[spune]\nnivel = \"incident\"\n",
+    "accept": true
+  },
+  {
+    "name": "label-empty",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"age\"\ntinta = \"/x\"\nprag = \"1h\"\npicat_dupa = 2\nlabel = \"\"\n[spune]\nnivel = \"incident\"\n",
+    "accept": false
+  },
+  {
+    "name": "label-too-long",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"age\"\ntinta = \"/x\"\nprag = \"1h\"\npicat_dupa = 2\nlabel = \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n[spune]\nnivel = \"incident\"\n",
+    "accept": false
+  },
+  {
+    "name": "label-number",
+    "source": "[contract]\nnume = \"fixture\"\nce = \"Fixture\"\nverifica = \"age\"\ntinta = \"/x\"\nprag = \"1h\"\npicat_dupa = 2\nlabel = 1\n[spune]\nnivel = \"incident\"\n",
+    "accept": false
   }
 ]
