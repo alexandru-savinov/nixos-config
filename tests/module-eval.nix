@@ -728,6 +728,16 @@ let
       else
         builtins.throw "FAIL: sancta-choir vulnix nightly shape — failed checks: ${builtins.toJSON failed}";
 
+    # The kernel audit queue must not drop records under bursts: no rate
+    # limit, and a backlog large enough for build/deploy bursts.
+    soc-in-a-box-audit-limits =
+      let
+        a = self.nixosConfigurations.sancta-choir.config.security.audit;
+      in
+      if a.rateLimit == 0 && a.backlogLimit >= 32768 && a.failureMode == "printk"
+      then true
+      else builtins.throw "FAIL: sancta-choir audit limits: rateLimit=${toString a.rateLimit} backlogLimit=${toString a.backlogLimit} failureMode=${a.failureMode}";
+
     # An empty `units` list makes a host with dead services render identically
     # to a healthy one: the bar's "down" field can never populate. That is the
     # exact silent-pass this module family exists to prevent, so it must fail at
