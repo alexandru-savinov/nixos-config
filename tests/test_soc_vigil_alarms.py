@@ -550,10 +550,15 @@ def fake_touch(bindir):
 
 
 def run_script(script, stamps, *, result="success", code="exited", status="0", fail="none", bindir=None):
+    import shutil
     import subprocess
-    env = {"PATH": f"{bindir}:/usr/bin:/bin", "STAMP_TOUCH_FAIL": fail,
+    # The fake bindir comes first (its `touch` wins); the inherited PATH
+    # follows, because /usr/bin:/bin do not exist inside the Nix build sandbox.
+    inherited = os.environ.get("PATH", "/usr/bin:/bin")
+    bash = shutil.which("bash") or "/bin/bash"
+    env = {"PATH": f"{bindir}:{inherited}", "STAMP_TOUCH_FAIL": fail,
            "SERVICE_RESULT": result, "EXIT_CODE": code, "EXIT_STATUS": status, **stamps}
-    return subprocess.run(["bash", script], env=env, capture_output=True, text=True).returncode
+    return subprocess.run([bash, script], env=env, capture_output=True, text=True).returncode
 
 
 class Runners(unittest.TestCase):
@@ -756,9 +761,11 @@ class Runners(unittest.TestCase):
         os.mkdir(blocked)
         for tool in ("touch", "rm"):
             fake(blocked, tool, "exit 1\n")
-        env = {"PATH": blocked + ":/usr/bin:/bin", "SANCTA_DOCTRINE_STAMP": self.stamp,
+        import shutil
+        env = {"PATH": blocked + ":" + os.environ.get("PATH", "/usr/bin:/bin"), "SANCTA_DOCTRINE_STAMP": self.stamp,
                "SERVICE_RESULT": "success", "EXIT_CODE": "exited", "EXIT_STATUS": "0"}
-        self.assertNotEqual(subprocess.run(["bash", STAMP_SCRIPT], env=env, capture_output=True).returncode, 0)
+        bash = shutil.which("bash") or "/bin/bash"
+        self.assertNotEqual(subprocess.run([bash, STAMP_SCRIPT], env=env, capture_output=True).returncode, 0)
         self.assertEqual(self.mtime(), 12345)
 
     def test_missing_stamp_on_the_first_run_is_not_an_error(self):
@@ -1564,7 +1571,9 @@ class BansStampScript(unittest.TestCase):
 
     def test_missing_variables_fail_loudly(self):
         import subprocess
-        r = subprocess.run(["bash", BANS_STAMP_SCRIPT], env={"PATH": "/usr/bin:/bin"}, capture_output=True)
+        import shutil
+        bash = shutil.which("bash") or "/bin/bash"
+        r = subprocess.run([bash, BANS_STAMP_SCRIPT], env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, capture_output=True)
         self.assertNotEqual(r.returncode, 0)
 
 
