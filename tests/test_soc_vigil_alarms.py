@@ -1232,8 +1232,8 @@ class Runners(unittest.TestCase):
 
     def test_watch_keys_in_filter_form_are_accepted(self):
         self.auditctl = self.make_auditctl(rules=(
-            "-a always,exit -F arch=b64 -S openat -F path=/etc/sudoers -F perm=wa -F key=sudoers\n"
-            "-a always,exit -F arch=b64 -S openat -F dir=/run/agenix -F perm=rwa -F key=agenix-secrets\n"))
+            "-a always,exit -F path=/etc/sudoers -F perm=wa -F key=sudoers\n"
+            "-a always,exit -F dir=/run/agenix -F perm=rwa -F key=agenix-secrets\n"))
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
     def test_first_run_stores_the_lost_counter_without_alarm(self):
@@ -1312,6 +1312,25 @@ class Runners(unittest.TestCase):
                       "-w /run/agenix -p rwa -k agenix-secrets\n-w /etc/sudoers -p r -k sudoers\n"):
             self.auditctl = self.make_auditctl(rules=rules)
             self.assertEqual(self.audit(self.ausearch(QUIET)), 2, rules)
+
+    def test_extra_filter_fields_on_an_otherwise_matching_rule_are_an_error(self):
+        sudoers_ok = "-w /etc/sudoers -p wa -k sudoers\n"
+        agenix_ok = "-w /run/agenix -p rwa -k agenix-secrets\n"
+        for bad in ("-a always,exit -F path=/etc/sudoers -F perm=wa -F auid!=4294967295 -F key=sudoers\n",
+                    "-a always,exit -F arch=b64 -S openat -F path=/etc/sudoers -F perm=wa -F key=sudoers\n",
+                    "-a always,exit -F path=/etc/sudoers -F perm=wa -F uid=1000 -F key=sudoers\n",
+                    "-w /etc/sudoers -p wa -k sudoers -k other\n",
+                    "-w /etc/sudoers -p wa -F auid>=1000 -k sudoers\n",
+                    "-a always,exit -F path=/etc/sudoers -F key=sudoers\n"):
+            self.auditctl = self.make_auditctl(rules=agenix_ok + bad)
+            self.assertEqual(self.audit(self.ausearch(QUIET)), 2, bad)
+        # A narrowed rule next to the exact one does not make the exact one wrong.
+        self.auditctl = self.make_auditctl(rules=agenix_ok + sudoers_ok + "-a always,exit -F path=/etc/sudoers -F perm=wa -F auid!=1 -F key=sudoers\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_extra_spaces_do_not_matter(self):
+        self.auditctl = self.make_auditctl(rules="-w  /run/agenix   -p rwa -k agenix-secrets\n-w /etc/sudoers -p wa  -k sudoers\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
     def test_permission_letters_in_any_order_match(self):
         self.auditctl = self.make_auditctl(rules="-w /run/agenix -p arw -k agenix-secrets\n-w /etc/sudoers -p aw -k sudoers\n")

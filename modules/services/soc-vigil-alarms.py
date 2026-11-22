@@ -429,34 +429,33 @@ def audit_status(text: str) -> tuple[int, int, int]:
     return found["enabled"], found["lost"], found["pid"]
 
 
-def loaded_watches(text: str) -> set[tuple[str, frozenset, str]]:
-    """PURE. (path, perm letters, key) for every watch rule in `auditctl -l`
-    output, in either printed form: `-w PATH -p PERM -k KEY` or
-    `-a ... -F path=PATH|dir=PATH -F perm=PERM -F key=KEY`. A rule missing
-    its path, perm or key is not a watch for this purpose."""
-    out = set()
-    for line in text.splitlines():
-        t = line.split()
-        path = perm = key = None
-        for i, tok in enumerate(t):
-            nxt = t[i + 1] if i + 1 < len(t) else None
-            if tok == "-w":
-                path = nxt
-            elif tok == "-p":
-                perm = nxt
-            elif tok == "-k":
-                key = nxt
-            elif tok == "-F" and nxt and "=" in nxt:
-                name, _, value = nxt.partition("=")
-                if name in ("path", "dir"):
-                    path = value
-                elif name == "perm":
-                    perm = value
-                elif name == "key":
-                    key = value
-        if path and perm and key:
-            out.add((path, frozenset(perm), key))
-    return out
+def _normalize_rule(line: str) -> str:
+    """One `auditctl -l` line with single spaces and permission letters
+    sorted, so that only a real difference in the rule changes it."""
+    t = line.split()
+    for i, tok in enumerate(t):
+        if tok == "-p" and i + 1 < len(t):
+            t[i + 1] = "".join(sorted(t[i + 1]))
+        elif tok == "-F" and i + 1 < len(t) and t[i + 1].startswith("perm="):
+            t[i + 1] = "perm=" + "".join(sorted(t[i + 1][5:]))
+    return " ".join(t)
+
+
+def loaded_rules(text: str) -> set[str]:
+    """PURE. Every rule line of `auditctl -l`, normalized."""
+    return {_normalize_rule(line) for line in text.splitlines() if line.strip()}
+
+
+def expected_rule_lines(spec: str) -> set[str]:
+    """PURE. The whole rule line(s) auditctl prints for an expected watch:
+    `-w PATH -p PERM -k KEY`, or the equivalent filter form. Anything else on
+    the line (another field such as a uid filter, a syscall, an arch) is a
+    different rule."""
+    path, perm, key = parse_expected_watch(spec)
+    perm = "".join(sorted(perm))
+    return {f"-w {path} -p {perm} -k {key}",
+            f"-a always,exit -F path={path} -F perm={perm} -F key={key}",
+            f"-a always,exit -F dir={path} -F perm={perm} -F key={key}"}
 
 
 def parse_expected_watch(spec: str) -> tuple[str, frozenset, str]:
@@ -505,11 +504,10 @@ def check_trail(a, last_lost_path: str, start_hold) -> str | None:
         raise RuntimeError("audit trail not recording: no auditd registered with the kernel (pid 0)")
     if not a.expect_watch:
         raise RuntimeError("no --expect-watch given: cannot prove the watch rules are loaded")
-    loaded = loaded_watches(_auditctl(a, "-l"))
-    missing = [w for w in map(parse_expected_watch, a.expect_watch) if w not in loaded]
+    loaded = loaded_rules(_auditctl(a, "-l"))
+    missing = [spec for spec in a.expect_watch if not (expected_rule_lines(spec) & loaded)]
     if missing:
-        raise RuntimeError("audit watch rule(s) not loaded as expected: "
-                           + ", ".join(f"{p} -p {''.join(sorted(m))} -k {k}" for p, m, k in missing))
+        raise RuntimeError("audit watch rule(s) not loaded exactly as expected: " + ", ".join(missing))
     boot = _read_text(a.boot_id_file)
     if not boot:
         raise RuntimeError(f"boot id unreadable ({a.boot_id_file})")
