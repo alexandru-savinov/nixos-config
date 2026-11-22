@@ -1349,6 +1349,10 @@ let
               && builtins.elem "timers.target" choir.systemd.timers.${n}.wantedBy)
             [ "soc-alarm-audit" "soc-alarm-bans" ];
           oneshotRoot = lib.all (svc: svc.serviceConfig.Type == "oneshot" && !(svc.serviceConfig ? User)) [ aSvc bSvc ];
+          # MemoryDenyWriteExecute is off ONLY for the bans unit (cscli's
+          # WebAssembly compiler needs executable memory); the audit unit keeps it.
+          mdweScoped = aSvc.serviceConfig.MemoryDenyWriteExecute == true
+            && bSvc.serviceConfig.MemoryDenyWriteExecute == false;
 
           # The audit evaluator needs no network and one capability (CAP_AUDIT_CONTROL,
           # for auditctl -s/-l); the ban
