@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { run, loadContracts } from './vigil-check.mjs';
+import { contract as contractFromToml } from './lib/schema.mjs';
 import { say } from './vigil-say.mjs';
 import { loadStore } from './lib/store.mjs';
 import { failed } from './vigil.mjs';
@@ -510,4 +511,43 @@ test('a sent open still gets its close when paging stays on', async () => harnes
   h.time(31 * 60000);
   await greenRun(h, entries);
   assert.deepEqual(h.sent.map(e => e.tranzitie), ['open', 'close']);
+}));
+
+// The real SOC contracts, with their stamp path pointed at a temp file.
+const socContract = (file, tinta) => ({
+  contract: contractFromToml(fs.readFileSync(new URL(`../../hosts/sancta-choir/vigil-contracts/${file}`, import.meta.url), 'utf8')),
+  tinta,
+});
+const withStamp = ({ contract: c, tinta }) => ({ contract: { ...c, tinta } });
+
+test('a stale soc-bans stamp reds the PAGING contract; a stale health stamp never pages', async () => harness(async h => {
+  const bansStamp = path.join(h.root, 'bans-clean');
+  const healthStamp = path.join(h.root, 'bans-health-clean');
+  for (const file of [bansStamp, healthStamp]) {
+    fs.writeFileSync(file, '');
+    // 30 minutes old: past the 20m threshold in both contracts.
+    const old = new Date(Date.parse('2026-09-20T12:00:00Z') - 30 * 60000);
+    fs.utimesSync(file, old, old);
+  }
+  const entries = [withStamp(socContract('soc-bans.toml', bansStamp)), withStamp(socContract('soc-bans-health.toml', healthStamp))];
+  assert.equal(entries[0].contract.page, true);
+  assert.equal(entries[1].contract.page, false);
+  await run(entries, h.options);                 // real age check, no inspect override
+  assert.equal(h.lines.find(l => l.nume === 'soc-bans').verdict, 'picat');
+  assert.equal(h.lines.find(l => l.nume === 'soc-bans').motiv, 'age-stale');
+  h.time(300000);
+  await run(entries, h.options);
+  assert.match(h.state().contracts['soc-bans'].open, /^2026-/, 'incident opens after picat_dupa = 2 stale samples');
+  assert.deepEqual(h.sent.map(e => `${e.nume}/${e.tranzitie}`), ['soc-bans/open'], 'paged; the health contract is not');
+  assert.match(h.state().contracts['soc-bans-health'].open, /^2026-/, 'but its incident is recorded');
+}));
+
+test('a fresh soc-bans stamp is green and sends nothing', async () => harness(async h => {
+  const stamp = path.join(h.root, 'bans-clean');
+  fs.writeFileSync(stamp, '');
+  const now = Date.parse('2026-09-20T12:00:00Z');
+  fs.utimesSync(stamp, new Date(now - 60000), new Date(now - 60000));
+  await run([withStamp(socContract('soc-bans.toml', stamp))], h.options);
+  assert.equal(h.lines[0].verdict, 'verde');
+  assert.deepEqual(h.sent, []);
 }));
