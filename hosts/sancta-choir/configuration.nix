@@ -43,7 +43,6 @@
   choirTmpReaper.excludeSessions = [ "666bcb25" ];
 
   nix.gc.automatic = false;
-  boot.loader.grub.configurationLimit = 10;
 
   # Weekly hard-link dedup of the store. Sun 01:00 keeps it clear of the 02:30
   # choir-store-gc run and the 03:50/04:20 soul jobs. The first run walks the

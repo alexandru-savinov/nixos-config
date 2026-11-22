@@ -390,6 +390,9 @@
           # MEDIUM arm actually flips it, which a green check alone never shows.
           claude-review-verdict = import ./tests/claude-review-verdict.nix { inherit pkgs; };
 
+          # choir-store-gc: booted and current generations survive GC.
+          choir-store-gc = import ./tests/choir-store-gc.nix { inherit pkgs; };
+
           # Session-aware /tmp reaper: live/resumable kept, stale removed, symlinks not followed.
           choir-tmp-session-reaper = import ./tests/choir-tmp-session-reaper.nix { inherit pkgs; };
 

@@ -3,6 +3,9 @@
 # Replaces nix.gc.automatic (kept false): rather than "older than N days", keep
 # the newest N system generations, delete the rest, then collect garbage.
 #
+# The booted generation (/run/booted-system) and the current one are never
+# deleted, however old: see choir-store-gc.sh.
+#
 # Schedule: daily 02:30 (+ up to 20 min random delay), so it ends well before
 # the soul jobs (03:50 mirror, 04:20 transcript archive) and the 05:15 vulnix
 # run, and clear of the weekly nix-optimise slot (Sun 01:00, see choir config).
@@ -19,37 +22,17 @@ let
   profile = "/nix/var/nix/profiles/system";
 
   scriptText = ''
-    set -euo pipefail
-    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.nix ]}
-    keep=${toString cfg.keepGenerations}
-
-    # Record what exists BEFORE deleting: generation number -> toplevel path
-    # (+ configurationRevision when the build recorded one), marking those the
-    # delete below will drop (everything but the newest $keep).
-    nums=$(ls -1 ${profile}-*-link 2>/dev/null \
-      | sed -E 's|.*/system-([0-9]+)-link|\1|' | sort -n || true)
-    total=$(printf '%s\n' "$nums" | grep -c . || true)
-    echo "choir-store-gc: $total system generations, keeping newest $keep"
-    idx=0
-    for n in $nums; do
-      idx=$((idx + 1))
-      link=${profile}-$n-link
-      top=$(readlink -f "$link" || echo "?")
-      rev=$(cat "$top/configuration-revision" 2>/dev/null || echo "n/a")
-      if [ $((total - idx)) -ge "$keep" ]; then act=DELETE; else act=keep; fi
-      echo "choir-store-gc: generation $n -> $top revision=$rev [$act]"
-    done
-
-    nix-env -p ${profile} --delete-generations +$keep
-    nix-collect-garbage
-  '';
+    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.gnused pkgs.nix ]}
+    export KEEP=${toString cfg.keepGenerations}
+    export PROFILE=${profile}
+  '' + builtins.readFile ./choir-store-gc.sh;
   gcScript = pkgs.writeShellScript "choir-store-gc" scriptText;
 in
 {
   options.choirStoreGc.keepGenerations = lib.mkOption {
     type = lib.types.ints.positive;
     default = 10;
-    description = "Number of newest system generations to keep (nix-env --delete-generations +N).";
+    description = "Number of newest system generations to keep (the booted and current generations are kept in addition).";
   };
 
   # Script source, exposed so tests can pin it without building the derivation.
