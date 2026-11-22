@@ -2517,7 +2517,9 @@ let
             ok = builtins.any (r: r.users or [ ] == [ "alexandru" ]) cfg.security.sudo.extraRules;
             what = "alexandru has its scoped sudo rule";
           }
-          { ok = cfg.sancta-choir.adminKeys.owner == [ ] && cfg.sancta-choir.adminKeys.agent == [ ]; what = "shipped key lists are empty"; }
+          # Owner: exactly the one hardware-backed key (pinned in detail by
+          # sancta-choir-ssh-admin-owner-key); agent: still no key shipped.
+          { ok = builtins.length cfg.sancta-choir.adminKeys.owner == 1 && cfg.sancta-choir.adminKeys.agent == [ ]; what = "shipped keys: one owner key, no agent key"; }
         ];
       in
       if failed == [ ] then true
@@ -2537,8 +2539,24 @@ let
         want = "from=\"100.64.0.0/10,fd7a:115c:a1e0::/48\" ";
         rendered = cfg.users.users.alexandru.openssh.authorizedKeys.keys ++ cfg.users.users.agent.openssh.authorizedKeys.keys;
       in
-      if builtins.length rendered == 2 && nixpkgs.lib.all (k: nixpkgs.lib.hasPrefix want k) rendered then true
+      # The host's own owner key plus the two test keys: every one restricted.
+      if builtins.length rendered == 3 && nixpkgs.lib.all (k: nixpkgs.lib.hasPrefix want k) rendered then true
       else builtins.throw "FAIL: sancta-choir admin keys missing from= restriction — rendered: ${builtins.toJSON rendered}";
+
+    # The owner's one key is the hardware-backed sk key, rendered with the
+    # tailnet from= restriction; the agent account has no key yet.
+    sancta-choir-ssh-admin-owner-key =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        owner = cfg.users.users.alexandru.openssh.authorizedKeys.keys;
+        agent = cfg.users.users.agent.openssh.authorizedKeys.keys;
+        k = builtins.head owner;
+      in
+      if builtins.length owner == 1 && agent == [ ]
+        && nixpkgs.lib.hasPrefix "from=\"100.64.0.0/10,fd7a:115c:a1e0::/48\" sk-ecdsa-sha2-nistp256@openssh.com " k
+        && nixpkgs.lib.hasSuffix " owner-se-ssh" k
+      then true
+      else builtins.throw "FAIL: sancta-choir owner key: ${builtins.toJSON owner} agent: ${builtins.toJSON agent}";
 
     sancta-choir-ssh-admin-multiline-key-rejected = shouldFail "sancta-choir: a key string carrying a second line rejected" {
       modules = [
