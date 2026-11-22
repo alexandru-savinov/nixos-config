@@ -117,6 +117,22 @@
           commands = [ ];
         };
 
+        # soc-alarm-audit — modules/services/soc-vigil-alarms.nix. ExecStart is
+        # `${python3}/bin/python3 <store>/soc-vigil-alarms.py audit …`: program
+        # and script are store paths (interpreter = null). It is in scope only
+        # because of two DATA arguments, `--expect-watch /run/agenix.d:rwa:…`
+        # and `--expect-watch /etc/sudoers:wa:…`: the watch rules the
+        # evaluator expects `auditctl -l` to print, compared as text, never
+        # executed. Every command the script runs (ausearch, auditctl,
+        # systemctl) is passed in as a full store path (--ausearch,
+        # --auditctl, --systemctl), and it calls nothing by bare name, so
+        # `commands = []` is a fact. If the script ever runs a bare command,
+        # this entry must grow with it.
+        soc-alarm-audit = {
+          interpreter = null;
+          commands = [ ];
+        };
+
         # sancta-wq-tick — modules/services/sancta-wq-tick.nix. ExecStart is
         # `${pkgs.util-linux}/bin/flock … <lockfile> <script>`: the PROGRAM
         # token is a store path, but both later tokens are off-store absolute
