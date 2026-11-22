@@ -2540,6 +2540,15 @@ let
       if builtins.length rendered == 2 && nixpkgs.lib.all (k: nixpkgs.lib.hasPrefix want k) rendered then true
       else builtins.throw "FAIL: sancta-choir admin keys missing from= restriction — rendered: ${builtins.toJSON rendered}";
 
+    sancta-choir-ssh-admin-multiline-key-rejected = shouldFail "sancta-choir: a key string carrying a second line rejected" {
+      modules = [
+        ../hosts/sancta-choir/ssh-admin.nix
+        {
+          sancta-choir.adminKeys.agent = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM a\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM b" ];
+        }
+      ];
+    };
+
     sancta-choir-ssh-admin-option-key-rejected = shouldFail "sancta-choir: key already carrying options rejected" {
       modules = [
         ../hosts/sancta-choir/ssh-admin.nix
@@ -2567,6 +2576,8 @@ let
             ok = nixpkgs.lib.hasSuffix "Match LocalPort 2222\n  AllowUsers alexandru agent\n  PermitRootLogin no" extra;
             what = "trailing Match LocalPort 2222 block allows only alexandru+agent, no root";
           }
+          { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n" extra; what = "alexandru+agent read only the declarative key file"; }
+          { ok = nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent\n" extra; what = "alexandru+agent denied on port 22"; }
           { ok = cfg.services.openssh.settings.PermitRootLogin == "prohibit-password"; what = "port-22 root policy unchanged"; }
           { ok = builtins.elem "--ssh" cfg.services.tailscale.extraUpFlags; what = "Tailscale SSH still enabled"; }
         ];

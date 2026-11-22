@@ -18,7 +18,8 @@ let
 
   # A plain public key starts with its key type, never with options.
   keyTypePattern = "(ssh-(ed25519|rsa|dss)|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\\.com|sk-ecdsa-sha2-nistp256@openssh\\.com) .*";
-  isPlainKey = key: builtins.match keyTypePattern key != null;
+  # One key per string: no newline (a second line would be a second, unrestricted key).
+  isPlainKey = key: builtins.match keyTypePattern key != null && !(lib.hasInfix "\n" key) && !(lib.hasInfix "\r" key);
 
   listenerPort = 2222;
 in
@@ -55,7 +56,9 @@ in
     # wheelNeedsPassword = true would make sudo unusable for alexandru.
     # Scoped exception: passwordless sudo for this one user only (the wheel
     # group policy for everyone else is unchanged). Access to the account is
-    # itself gated by the key + from= restriction above.
+    # gated by the key + from= restriction above for OpenSSH, and, while
+    # Tailscale SSH is on, by the tailnet ACL's `ssh` rules (outside this repo:
+    # check its `users` list for this host before adding keys).
     security.sudo.extraRules = [
       {
         users = [ "alexandru" ];
@@ -87,6 +90,15 @@ in
       # Match blocks must come last in sshd_config, hence mkAfter.
       extraConfig = lib.mkAfter ''
         Port ${toString listenerPort}
+
+        # These two accounts: only the declarative, from=-restricted key file
+        # (never a self-added ~/.ssh/authorized_keys), and never the public
+        # port-22 listener.
+        Match User alexandru,agent
+          AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
+
+        Match LocalPort 22
+          DenyUsers alexandru agent
 
         Match LocalPort ${toString listenerPort}
           AllowUsers alexandru agent
