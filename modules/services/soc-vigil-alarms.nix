@@ -241,6 +241,10 @@ in
         message = "services.soc-vigil-alarms: security.audit.rules must hold one `-w PATH -p PERM -k KEY` rule per watched key (${lib.concatStringsSep ", " watchedKeys}).";
       }
       {
+        assertion = lib.all (n: config.users.users ? ${n}) cfg.namedAccounts;
+        message = "services.soc-vigil-alarms.namedAccounts: every name must be a declared user (users.users); unknown: ${lib.concatStringsSep ", " (lib.filter (n: !(config.users.users ? ${n})) cfg.namedAccounts)}";
+      }
+      {
         assertion = cscli != null;
         message = "services.soc-vigil-alarms: no `cscli` wrapper in environment.systemPackages (the nixpkgs crowdsec module provides it).";
       }

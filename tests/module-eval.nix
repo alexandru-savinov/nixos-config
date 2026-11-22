@@ -1398,6 +1398,24 @@ let
     # Negative arm: without soc-in-a-box's engines the alarms refuse to
     # evaluate, by THEIR assertion (not by some unrelated eval error, which a
     # bare shouldFail could not tell apart). Positive arm: choir, above.
+    # namedAccounts must name declared users: a typo fails at eval, not as a
+    # permanently erroring audit evaluator on the host.
+    soc-vigil-alarms-named-accounts-declared =
+      let
+        cfg = evalConfig {
+          modules = [
+            ../modules/services/soc-vigil-alarms.nix
+            { services.soc-vigil-alarms = { enable = true; namedAccounts = [ "no-such-user" ]; }; }
+          ];
+        };
+        prefix = "services.soc-vigil-alarms.namedAccounts: every name must be a declared user";
+        fires = nixpkgs.lib.any (a: !a.assertion && nixpkgs.lib.hasPrefix prefix a.message) cfg.assertions;
+        heldOnChoir = nixpkgs.lib.any (a: a.assertion && nixpkgs.lib.hasPrefix prefix a.message)
+          self.nixosConfigurations.sancta-choir.config.assertions;
+      in
+      if fires && heldOnChoir then true
+      else builtins.throw "FAIL: soc-vigil-alarms namedAccounts assertion (fires=${toString fires}, heldOnChoir=${toString heldOnChoir})";
+
     soc-vigil-alarms-requires-soc-in-a-box =
       let
         cfg = evalConfig {
