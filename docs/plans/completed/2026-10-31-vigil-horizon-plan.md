@@ -1,0 +1,112 @@
+Build Vigil horizon phase 1 (SOC visibility): three new closed contract types — crowdsec, osquery, anomaly — backed by loopback-only CrowdSec, osquery and Netdata sensors, proven by unit tests and a NixOS VM test, deployable to sancta-choir and rpi5-full with one switch each.
+
+## Context
+
+Approved design: `docs/plans/2026-10-31-vigil-horizon-design.md` (read it first;
+the "Phase 1 — SOC visibility" section is the contract for this plan). Vigil v1
+is specified in `docs/plans/2026-09-20-vigil-plan.md` and its invariants hold
+unchanged: closed TOML schema, three-valued verdicts (`verde` / `picat` /
+`NECITIT`), exit codes 0/1/2/3, incidents, outbox, Telegram, `/status`.
+
+Files that matter:
+
+- `modules/services/vigil-schema.nix` — eval-time contract validator. The type
+  list is at the `builtins.elem kind [ … ]` line; per-type `astept`/`tinta`
+  rules follow it.
+- `pkgs/vigil/lib/schema.mjs` — runtime validator (`TYPES` array). It MUST
+  accept and reject exactly what `vigil-schema.nix` does.
+- `pkgs/vigil/schema-fixtures.json` — shared fixtures read by both
+  `pkgs/vigil/schema.test.mjs` and `tests/module-eval.nix`; this is how eval
+  and runtime are kept identical. Add cases here, not in only one side.
+- `pkgs/vigil/lib/checks.mjs` — the verdict dispatcher (`switch (c.verifica)`).
+  Follow the `hass-state` case as the pattern for an HTTP sensor
+  (timeout budget, `unreadable(...)` reasons, no throw escapes).
+- `pkgs/vigil/checks.test.mjs`, `pkgs/vigil/checker.test.mjs` — unit tests;
+  `pkgs/vigil.nix` runs the suite at build time (`node vigil.mjs autoproba`).
+- `modules/services/vigil.nix` — the unit, its environment (`VIGIL_*`
+  variables) and sandbox (`User=vigil`, `ProtectSystem=strict`,
+  `RestrictAddressFamilies`). Note the socket's `IPAddressAllow` is tailnet
+  only; the checker service must be able to reach 127.0.0.1.
+- `tests/module-eval.nix`, `tests/vigil-module.nix` — eval assertions; follow
+  their style for new asserts.
+- `flake.nix` `checks` — where VM and eval tests are registered.
+- Contracts: `hosts/sancta-choir/vigil-contracts/`,
+  `hosts/rpi5-full/vigil-contracts/`; counts in each host's
+  `services.vigil.expectedContracts`.
+
+Sensor versions in nixpkgs 25.11 (verified 2026-10-31): crowdsec 1.7.2,
+osquery 5.21.0, netdata 2.8.4 — all have NixOS modules.
+
+## Tasks
+
+### Task 1: Schema for the three new types
+- [x] Add `crowdsec`, `osquery`, `anomaly` to the type list in both `modules/services/vigil-schema.nix` and `pkgs/vigil/lib/schema.mjs`
+- [x] `crowdsec`: `tinta` is an `http://127.0.0.1:<port>` or `http://[::1]:<port>` URL (any other host is a validation error); `astept = { scenariu = "<string>", fereastra_min = <int ≥ 1> }`; `prag` integer ≥ 1 required
+- [x] `osquery`: `tinta` matches `^[a-z][a-z0-9_]{0,63}$` (a query name, never SQL); `astept = { permis = [ <strings> ] }` (may be empty); no `prag`
+- [x] `anomaly`: `tinta` matches a Netdata chart id `^[a-z0-9_]+\.[a-z0-9_]+$`; `prag` integer 1–100 required; no `astept`
+- [x] Add valid + invalid cases for each type to `pkgs/vigil/schema-fixtures.json` (valid, unknown key, missing required field, non-loopback crowdsec `tinta`, SQL-looking osquery `tinta`, `prag = 0` and `101` for anomaly)
+- [x] Run the vigil package tests (`nix build .#vigil` builds and runs autoproba) and `nix build .#checks.x86_64-linux.module-eval` if a builder is available; both must pass (no linux builder on this darwin host, so neither nix build could run: node autoproba suite run directly, 175/177 with the 2 failures also present on clean HEAD (darwin env); tests/vigil-module.nix incl. schema-parity evaluated to true)
+
+### Task 2: crowdsec checker
+- [x] In `pkgs/vigil/lib/checks.mjs` add `case 'crowdsec'`: read the machine credential file from `VIGIL_CROWDSEC_CREDENTIALS` (YAML with `login`/`password`/`url`; parse only those three keys), POST `/v1/watchers/login` for a JWT, GET `/v1/alerts?scenario=<scenariu>&since=<N>m`, count alerts
+- [x] Verdicts: count ≥ `prag` → `picat` (`crowdsec-alerts`); below → `verde`; missing env/credential, non-200, unparsable JSON, timeout → `NECITIT` with distinct reasons (`crowdsec-config`, `crowdsec-auth`, `crowdsec-response`, `crowdsec-timeout`)
+- [x] Use the same 10 s total budget pattern as `hass-state`; never log the password or token
+- [x] Tests in `pkgs/vigil/checks.test.mjs` against a fake local HTTP server: 0 alerts → verde, prag alerts → picat, 401 → NECITIT, garbage body → NECITIT, server down → NECITIT
+
+### Task 3: osquery checker
+- [x] Add `case 'osquery'`: read the osquery filesystem-logger results file at `VIGIL_OSQUERY_RESULTS` (JSON lines, osquery `snapshot` format), take the newest snapshot whose `name` equals `pack_vigil_<tinta>`
+- [x] Row key per query is fixed in code: `listening_ports` → `port/protocol/name`, `local_users` → `username`, `suid_bins` → `path`, `etc_fim` → `target_path` (events format); unknown query name → `NECITIT` (`osquery-query`)
+- [x] Verdicts: any key not in `permis` → `picat` (`osquery-unexpected`, include at most the first 3 unexpected keys in the reason detail); none → `verde`; file missing, newest snapshot older than 2 × `VIGIL_OSQUERY_INTERVAL` seconds, or unparsable → `NECITIT`
+- [x] Read the file tail only (bounded, e.g. last 4 MiB) so a large log cannot stall the tick
+- [x] Tests with fixture result files: allowed only → verde, one extra port → picat, stale snapshot → NECITIT, missing file → NECITIT, truncated JSON line → NECITIT
+
+### Task 4: anomaly checker
+- [x] Confirm the Netdata 2.8.4 query for a chart's anomaly rate from the packaged docs or `netdata` source in the nix store (the v1/v2 data API with the anomaly-bit option); record the exact URL form in a comment with where it was verified
+- [x] Add `case 'anomaly'`: query `http://127.0.0.1:19999` (from `VIGIL_NETDATA_URL`) for the chart's anomaly rate over the last tick interval; take the maximum across dimensions
+- [x] Verdicts: rate ≥ `prag` → `picat` (`anomaly-rate`); below → `verde`; Netdata down, unknown chart (404), no anomaly data yet (ML untrained) → `NECITIT` (untrained dimensions report rate 0 and Netdata has no per-chart training signal, so verde is gated on the host-level counters: `netdata.ml_training_status` untrained + pending-without-model must be under half of `netdata.ml_metric_types` variable; rows older than 60 s read `anomaly-stale`. Picat, NECITIT reasons and the live URL form were exercised against a real 2.8.4 daemon; verde was covered by unit tests only, because the gate did not open within the run)
+- [x] Tests against a fake server with recorded response bodies for each case
+
+### Task 5: Sensor module
+- [x] Create `modules/services/vigil-sensors.nix` with `services.vigil.sensors.{crowdsec,osquery,netdata}.enable` (`lib.mkEnableOption`), imported by `modules/services/vigil.nix`
+- [x] CrowdSec: enable `services.crowdsec` with the sshd/journald acquisition, LAPI on 127.0.0.1 only, console enrolment off, its own notifications off, no bouncer; a root oneshot `vigil-crowdsec-register` (After crowdsec) that runs `cscli machines add vigil --auto -f /var/lib/vigil/crowdsec.yaml --force` only if the file is absent, then `chown vigil:vigil` + `chmod 0400`; export `VIGIL_CROWDSEC_CREDENTIALS` (implemented as `-f -` run as user crowdsec, staged and moved into place, because the cscli wrapper cannot write the vigil state directory as crowdsec and root must not own files beside the live database; LAPI listens on 8088 since 8080 is Open-WebUI)
+- [x] osquery: enable `services.osquery` with a `vigil` pack containing exactly the four queries from Task 3 (snapshot mode, interval 300 s), filesystem logger snapshot file readable by group `vigil`; export `VIGIL_OSQUERY_RESULTS` and `VIGIL_OSQUERY_INTERVAL` (verified in osquery 5.21.0 source during Task 3: snapshot-mode results go to `osqueryd.snapshots.log`, not `osqueryd.results.log`, so that is the path `VIGIL_OSQUERY_RESULTS` must name; `listening_ports` has no `name` column, so that query must join `processes` on `pid` and select `port, protocol, name`; leave `--logger_snapshot_event_type` and `--logger_numerics` unset)
+- [x] Netdata: enable `services.netdata` bound to 127.0.0.1:19999, ML enabled, cloud/claim disabled, retention capped (dbengine tier 0 only, ≤ 256 MiB disk); export `VIGIL_NETDATA_URL` and `VIGIL_ANOMALY_INTERVAL` (the tick interval in whole seconds; the anomaly checker reads `anomaly-config` without it. `services.vigil.interval` is a systemd string, default `5min`, so derive or declare the seconds rather than passing it through)
+- [x] `MemoryMax` per sensor unit: netdata 400M, crowdsec 256M, osquery 128M
+- [x] Ensure the vigil checker service can reach loopback (adjust its `IPAddressAllow` only if one is set on the service; do not widen the tailnet socket)
+- [x] Add asserts to `tests/module-eval.nix`: type list contains the three types; each sensor's listen address is loopback; `MemoryMax` set on all three units; no crowdsec bouncer unit exists (no linux builder on this darwin host, and module-eval as a whole cannot evaluate here: sancta-archive-deadman-minimal needs an x86_64-linux build at eval time. vigil-sensors and vigil-module evaluated to true through a scratch driver over the unchanged test file; six mutations, netdata bind, crowdsec bind, osquery MemoryMax, tick credential mask, schema type list, anomaly interval, each failed the eval; both hosts yield a toplevel drvPath. `nix fmt` has no darwin formatter, so nixpkgs-fmt 1.3.0 from the pinned nixpkgs checked the four changed files. Sensors are not exercised at runtime until Task 7)
+
+### Task 6: Contracts with config-derived allowlists
+- [x] In `vigil-sensors.nix`, generate the osquery contracts (`porturi-noi`, `utilizatori-noi`, `suid-nou`, `etc-schimbat`) with `pkgs.writeTextDir` and append that directory to `services.vigil.contractsDirs`; derive `permis` from evaluated config: `users.users` names for `local_users`, `networking.firewall` + the declared service ports for `listening_ports`, the `security.wrappers` paths for `suid_bins`; `etc_fim` `permis = [ ]` (implemented as `services.vigil.generatedContracts`, TOML sources kept in Nix and bundled into `vigil-public-contracts`, because a derivation in `contractsDirs` would be read at evaluation through IFD; `listening_ports` entries are keyed `port/protocol/*` since config declares no process name, so the checker gained a port-scoped wildcard for that query only, with a unit test and mutation; the capability-only wrappers are excluded because the query never returns them; hosts declare listeners no option exposes in `sensors.osquery.allowedListeners`)
+- [x] Generate `ssh-bruteforce` (crowdsec, `crowdsecurity/ssh-bf`, window 15, prag 1) and `cpu-anomalie` / `mem-anomalie` (anomaly on `system.cpu` / `system.ram`, prag 20, `picat_dupa = 3`) the same way, only when the matching sensor is enabled
+- [x] Make `expectedContracts` on each host add the generated count automatically (derive it from the generated set; do not hand-edit a number per host)
+- [x] Enable all three sensors in `hosts/sancta-choir/configuration.nix` and `hosts/rpi5-full/configuration.nix`
+- [x] `nix eval` both hosts' `config.system.build.toplevel.drvPath` (or `nix flake check --no-build`) and run module-eval; the listening-port allowlist printed for choir must include 22, 8739, 8747, 19999 (loopback) and the crowdsec LAPI port (no linux builder on this darwin host and module-eval as a whole cannot evaluate here, as in Task 5: vigil-module, vigil-sensors and studio-n8n-choir evaluated to true through a scratch driver; four mutations, tick port, firewall interfaces, suid wrapper filter, anomaly prag, each failed the eval; both hosts yield a toplevel drvPath. Choir allowlist: 22, 8747, 8088, 19999, 8739, 8743 tcp and 41641 udp. rpi5-full: 22, 8747, 8088, 19999, 5678, 3001, 8123, 8730, 80 tcp and 41641, 68 udp. Evaluated contract counts 17 on choir, 16 + 2 runtime on rpi5-full. Real listeners on the hosts were not observed, since ssh is out of scope, so any socket config does not declare, for example tailscaled's random peerapi port, reads picat on first deploy)
+
+### Task 7: VM behaviour test
+- [x] Create `tests/vigil-soc.nix` (`pkgs.testers.runNixOSTest`), register it in `flake.nix` checks next to `vigil-module`
+- [x] One node with sshd + vigil + all three sensors; wait for each sensor and for Netdata ML to report anomaly data (poll with a timeout, do not sleep blindly; the first models need the 15-minute `min training window`, then build at about one per second, and the checker reads `anomaly-untrained` until most variable metrics have one, so shorten that window in the test node) (Netdata clamps the window to 900 s, so the test waits it out; collectors are trimmed to 166 dimensions, enforced by a guard of 400, because the default set never finished training in 25 minutes)
+- [x] Assert: at rest every generated contract reads `verde` (`vigil check --json` or the state file) (fast contracts at rest, the anomaly pair once trained: they read NECITIT until then)
+- [x] Assert: 10 failed ssh password logins from the test driver → `ssh-bruteforce` `picat` and an incident opens in `incidents.json`
+- [x] Assert: `nc -l 4444 &` → after the next osquery interval (set to 30 s in the test) `porturi-noi` `picat`
+- [x] Assert: a CPU burn (`stress-ng` or a busy loop) → `cpu-anomalie` `picat` within its tick budget; if ML training time makes this unreliable in CI, assert the checker's NECITIT→verdict path with a pinned trained model is out of reach and document it, but keep the other assertions (a flat load scores only at its edges, so the test oscillates it; picat for 3 ticks opened the incident while mem-anomalie stayed verde)
+- [x] Assert: stopping each sensor in turn makes its contracts `NECITIT`, never `verde`
+- [x] Build it: `nix build .#checks.x86_64-linux.vigil-soc` (needs an x86_64-linux builder; if none is available locally, push the branch and use the CI run as the evidence) (no local builder: CI run 41348403844, success, test script finished in 1102 s, scratch commit 3551d4c byte-identical to this tree)
+
+### Task 8: Docs and handoff
+- [x] Update the status line of `docs/plans/2026-10-31-vigil-horizon-design.md` to "phase 1 implemented, not deployed"
+- [x] Add the three sensors to the Services table in `CLAUDE.md` as loopback-only, with a one-line note that Vigil is their only alerting path
+- [x] Write the attended deploy + live acceptance steps (planted ssh-failure burst reaches Telegram; `systemctl show -p MemoryCurrent` under caps after 24 h; `cpu-anomalie` and `mem-anomalie` have left `anomaly-untrained` after 24 h, since the steady-state untrained share on a real host is unmeasured) as a short section at the end of the design doc; do not execute them (the burst runs on the host from a documentation address on `lo`, because Tailscale SSH can intercept tailnet connections and the CrowdSec whitelist drops loopback and RFC 1918 sources; password auth is off on both hosts, so the `Invalid user` path it relies on is first proven by that attended step)
+
+## Constraints
+
+- Do NOT deploy anything, run `nixos-rebuild switch`/`boot`, or ssh to any host. Deploys are attended owner steps (choir is a non-atomic GRUB host).
+- Do NOT change v1 verdict semantics, exit codes, incident open/close rules, outbox or Telegram delivery. New types plug into the existing dispatcher only.
+- Do NOT add any enforcement: no CrowdSec bouncer, no osquery distributed/write features, no `[recuperare]` handling. Phase 4 owns actions.
+- Do NOT add Suricata, Wazuh, docker, compose or any model/LLM call. Phase 2 owns models.
+- Sensors bind loopback only, with their own notification paths off. Vigil stays the only speaker.
+- Do NOT create or edit `.age` secrets. The CrowdSec credential is generated on-host by the register oneshot.
+- Never print or log credentials, JWTs or tokens, including in tests.
+- `vigil-schema.nix` and `schema.mjs` must stay identical in behaviour; every schema change gets a shared fixture in `schema-fixtures.json`.
+- Every unreadable condition degrades to `NECITIT`. A sensor fault must never read `verde` and must never crash the tick (exit 3 stays reserved for internal faults).
+- The `vigil-kb` security KB repo is private and lives on choir; do not create it or any runbook content in this public repo.
+- Follow repo conventions: `lib.mkIf`/`lib.mkEnableOption`, run `nix fmt` before each commit, commit with `nix shell nixpkgs#trivy -c git commit` on darwin (pre-commit needs trivy), one commit per task, branch `feat/vigil-soc-p1` off `origin/main`.
