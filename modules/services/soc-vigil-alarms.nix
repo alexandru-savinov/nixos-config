@@ -147,6 +147,24 @@ in
       };
     };
 
+    auditDisk = {
+      warnGiB = mkOption {
+        type = types.ints.positive;
+        default = 10;
+        description = "Free GiB on the audit log's filesystem below which the audit evaluator logs a WARN line (still clean).";
+      };
+      failGiB = mkOption {
+        type = types.ints.positive;
+        default = 5;
+        description = "Free GiB below which the audit evaluator reports an evaluator error: auditd suspends writing on a full disk while staying active.";
+      };
+      inodeFailPercent = mkOption {
+        type = types.numbers.between 0 100;
+        default = 5;
+        description = "Free-inode percentage below which the audit evaluator reports an evaluator error.";
+      };
+    };
+
     auditHold = mkOption {
       type = types.ints.between 600 3600;
       default = 900;
@@ -229,6 +247,12 @@ in
           "audit-rules-nixos.service"
           "--hold"
           (toString cfg.auditHold)
+          "--disk-warn-bytes"
+          (toString (cfg.auditDisk.warnGiB * 1073741824))
+          "--disk-fail-bytes"
+          (toString (cfg.auditDisk.failGiB * 1073741824))
+          "--inode-fail-percent"
+          (toString cfg.auditDisk.inodeFailPercent)
         ] ++ lib.concatMap (w: [ "--expect-watch" w ]) expectedWatches);
         # The checkpoint and last-hit files live in $STATE_DIRECTORY (set by
         # StateDirectory=), so no off-store path appears in ExecStart.

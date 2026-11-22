@@ -595,7 +595,9 @@ class Runners(unittest.TestCase):
         return ["--current-system", self.cs, "--etc-sudoers", self.sudoers,
                 "--auditctl", self.auditctl, "--stamp", self.stamp,
                 "--expect-watch", "/run/agenix:rwa:agenix-secrets", "--expect-watch", "/etc/sudoers:wa:sudoers",
-                "--boot-id-file", self.bootid]
+                "--boot-id-file", self.bootid, "--audit-log-dir", self.d,
+                # Off by default so a small CI disk cannot fail unrelated tests.
+                "--disk-warn-bytes", "0", "--disk-fail-bytes", "0", "--inode-fail-percent", "0"]
 
     def set_boot(self, ident):
         with open(self.bootid, "w") as fh:
@@ -1141,6 +1143,60 @@ class Runners(unittest.TestCase):
     def test_no_generation_state_is_kept(self):
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
         self.assertFalse(os.path.exists(self.last_system))
+
+    # ── disk floor on the audit log filesystem (os.statvfs, injectable path) ──
+    GIB = 1024 ** 3
+
+    def audit_with_disk(self, free_gib, files=1000, favail=1000, warn=10, fail=5, inode_pct=5, statvfs_error=None):
+        from unittest import mock
+        import contextlib
+        import io
+        vfs = type("V", (), dict(f_bavail=int(free_gib * 1024), f_frsize=1024 ** 2, f_files=files, f_favail=favail))()
+        args = [x for x in self.injected()]
+        for flag, value in (("--disk-warn-bytes", warn * self.GIB), ("--disk-fail-bytes", fail * self.GIB),
+                            ("--inode-fail-percent", inode_pct)):
+            args[args.index(flag) + 1] = str(value)
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        buf = io.StringIO()
+        patch = mock.patch("os.statvfs", side_effect=statvfs_error) if statvfs_error else mock.patch("os.statvfs", return_value=vfs)
+        with patch, contextlib.redirect_stdout(buf):
+            rc = self.stamp_like_execstoppost(sva.main(
+                ["audit", "--ausearch", self.ausearch(QUIET), "--systemctl", systemctl,
+                 "--require-active", "auditd.service", "--state-dir", self.sd, "--hold", "900"] + args))
+        return rc, buf.getvalue()
+
+    def test_disk_above_the_warn_threshold_is_clean_and_silent(self):
+        rc, out = self.audit_with_disk(free_gib=50)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("WARN", out)
+
+    def test_disk_in_the_warn_band_logs_a_warn_and_stays_clean(self):
+        rc, out = self.audit_with_disk(free_gib=7)
+        self.assertEqual(rc, 0)
+        self.assertIn("WARN audit", out)
+
+    def test_disk_below_the_fail_floor_is_an_error(self):
+        rc, out = self.audit_with_disk(free_gib=4)
+        self.assertEqual(rc, 2)
+        self.assertIn("nearly full", out)
+        self.assertFalse(os.path.exists(self.log), "no quiet window is accepted on a full disk")
+
+    def test_inodes_below_the_floor_are_an_error(self):
+        rc, out = self.audit_with_disk(free_gib=50, files=1000, favail=40)
+        self.assertEqual(rc, 2)
+        self.assertIn("inodes", out)
+
+    def test_inodes_at_the_floor_and_dynamic_inode_filesystems_are_fine(self):
+        self.assertEqual(self.audit_with_disk(free_gib=50, files=1000, favail=50)[0], 0)
+        self.assertEqual(self.audit_with_disk(free_gib=50, files=0, favail=0)[0], 0)
+
+    def test_statvfs_error_is_an_error(self):
+        rc, out = self.audit_with_disk(free_gib=50, statvfs_error=OSError("gone"))
+        self.assertEqual(rc, 2)
+        self.assertIn("cannot stat", out)
+
+    def test_fail_floor_exactly_at_the_boundary_is_not_an_error(self):
+        self.assertEqual(self.audit_with_disk(free_gib=5)[0], 0)
 
     # ── trail health: auditctl -s / -l, before a quiet window is accepted ──
     def test_trail_health_checked_before_a_quiet_window(self):

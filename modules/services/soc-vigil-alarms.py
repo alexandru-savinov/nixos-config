@@ -466,12 +466,38 @@ def parse_expected_watch(spec: str) -> tuple[str, frozenset, str]:
     return path, frozenset(perm), key
 
 
+def check_disk(a) -> None:
+    """The audit log's filesystem must have room: auditd suspends writing when
+    space runs out (disk_full_action / admin_space_left_action = suspend) and
+    stays "active". Below --disk-warn-bytes free: a WARN line, still clean.
+    Below --disk-fail-bytes free, or below --inode-fail-percent free inodes:
+    an evaluator error. An unreadable filesystem is an error too."""
+    try:
+        st = os.statvfs(a.audit_log_dir)
+    except OSError as e:
+        raise RuntimeError(f"cannot stat the audit log filesystem {a.audit_log_dir}: {e}") from e
+    free = st.f_bavail * st.f_frsize
+    gib = 1024 ** 3
+    if free < a.disk_fail_bytes:
+        raise RuntimeError(f"audit log filesystem nearly full: {free / gib:.1f} GiB free "
+                           f"(below {a.disk_fail_bytes / gib:.1f} GiB)")
+    if st.f_files > 0:  # filesystems with dynamic inodes report 0: nothing to check
+        pct = 100.0 * st.f_favail / st.f_files
+        if pct < a.inode_fail_percent:
+            raise RuntimeError(f"audit log filesystem out of inodes: {pct:.1f}% free "
+                               f"(below {a.inode_fail_percent}%)")
+    if free < a.disk_warn_bytes:
+        _log(f"WARN audit: {free / gib:.1f} GiB free on the audit log filesystem "
+             f"(warn below {a.disk_warn_bytes / gib:.1f} GiB)")
+
+
 def check_trail(a, last_lost_path: str, start_hold) -> str | None:
     """Trail health, checked on every evaluation before a quiet window is
     accepted: auditing enabled, a live auditd pid, exactly the expected watch
     rules loaded, and a lost counter that never moves except at a boot.
     Returns a problem to report after the window was read (the loss counter
     moved); raises when the trail cannot record."""
+    check_disk(a)
     enabled, lost, pid = audit_status(_auditctl(a, "-s"))
     if enabled not in (1, 2):
         raise RuntimeError(f"audit trail not recording: auditctl -s enabled={enabled}")
@@ -698,6 +724,12 @@ def main(argv: list[str]) -> int:
     # PATH:PERM:KEY, one per watch rule that must be loaded exactly; the unit
     # derives them from config.security.audit.rules.
     au.add_argument("--expect-watch", action="append", default=[])
+    # Free space / inodes on the filesystem holding the audit log (nix options
+    # services.soc-vigil-alarms.auditDisk.*; defaults 10 GiB warn, 5 GiB fail, 5%).
+    au.add_argument("--audit-log-dir", default="/var/log/audit")
+    au.add_argument("--disk-warn-bytes", type=int, default=10 * 1024 ** 3)
+    au.add_argument("--disk-fail-bytes", type=int, default=5 * 1024 ** 3)
+    au.add_argument("--inode-fail-percent", type=float, default=5.0)
     au.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id")
     # The timer runs every 5 minutes; more than this since the last evaluation
     # means events may have gone unread (reboot, stopped timer, long outage).

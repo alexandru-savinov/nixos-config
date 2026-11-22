@@ -1301,6 +1301,11 @@ let
             && lib.hasInfix "--expect-watch /etc/sudoers:wa:sudoers" (argv aSvc)
             && lib.hasInfix "--auditctl " (argv aSvc);
 
+          # Free-space floors for the audit log filesystem, from options.
+          auditDiskFloors = alarms.auditDisk.warnGiB == 10 && alarms.auditDisk.failGiB == 5
+            && alarms.auditDisk.inodeFailPercent == 5
+            && lib.hasInfix "--disk-warn-bytes 10737418240 --disk-fail-bytes 5368709120 --inode-fail-percent 5" (argv aSvc);
+
           # A quiet window counts only while the trail is live: both the
           # daemon and the rules unit must be required active by the script.
           trailLivenessGate =
