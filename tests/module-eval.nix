@@ -2569,8 +2569,8 @@ let
         && nixpkgs.lib.hasInfix "--named-account alexandru" argv
         && nixpkgs.lib.hasInfix "--named-account agent" argv
         # NOPASSWD condition (advisor): the owner account runs nothing long-lived.
-        && !(cfg.users.users.alexandru.linger or false)
-        && !(cfg.users.users.agent.linger or false)
+        && (cfg.users.users.alexandru.linger or null) != true
+        && (cfg.users.users.agent.linger or null) != true
       then true
       else builtins.throw "FAIL: sancta-choir named accounts not watched by soc-audit";
 

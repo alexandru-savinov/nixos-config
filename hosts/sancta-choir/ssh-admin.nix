@@ -5,9 +5,13 @@
 # off: port 22 (public, used by the soul-mirror pull), Tailscale SSH and the
 # root/herdr/sancta key files stay exactly as they were.
 #
-# Keys come from the options below (default: none, so nobody can log in until
-# a key is added). Every key is rendered with a `from=` source restriction to
-# the tailnet ranges; callers pass plain public keys only.
+# Keys come from the options below; every key is rendered with a `from=`
+# source restriction to the tailnet ranges; callers pass plain public keys
+# only. These keys gate OpenSSH only. While Tailscale SSH is on, the accounts
+# are reachable through it from the moment they exist, governed solely by the
+# tailnet policy's `ssh` rules (outside this repo), which must admit only
+# principals that already have root on this host. Stage 4 of the cutover
+# removes Tailscale SSH and those rules.
 { config, lib, ... }:
 
 let
@@ -56,9 +60,10 @@ in
     # wheelNeedsPassword = true would make sudo unusable for alexandru.
     # Scoped exception: passwordless sudo for this one user only (the wheel
     # group policy for everyone else is unchanged). Access to the account is
-    # gated by the key + from= restriction above for OpenSSH, and, while
-    # Tailscale SSH is on, by the tailnet ACL's `ssh` rules (outside this repo:
-    # check its `users` list for this host before adding keys).
+    # gated by the key + from= restriction above for OpenSSH. While Tailscale
+    # SSH is on it is ALSO reachable through it, with no key, under the tailnet
+    # policy's `ssh` rules: those must admit only principals that already have
+    # root here, checked before deploy (see the header).
     security.sudo.extraRules = [
       {
         users = [ "alexandru" ];
