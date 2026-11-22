@@ -99,11 +99,6 @@ def activation_writes_sudoers(serial=3, auid="1000", setup_etc=SETUP_ETC, exe=PE
                  title=kernel_proctitle(*argv) if truncated else None)
 
 
-def expected(*events):
-    """Hits left when the runner judges the window an expected change."""
-    return sva.partition_hits(classify(*events), True)[0]
-
-
 def classify(*events):
     return sva.audit_hits("\n----\n".join(events) + "\n")
 
@@ -135,8 +130,39 @@ class AuditRule(unittest.TestCase):
     def test_activation_touching_another_path_fires(self):
         self.assertEqual(len(classify(activation_writes_sudoers(path="/etc/sudoers.d/x"))), 1)
 
-    def test_activation_tmp_then_rename_is_an_expected_candidate(self):
-        self.assertEqual(expected(activation_writes_sudoers(path="/etc/sudoers.tmp")), [])
+    def test_activation_tmp_then_rename_fires(self):
+        self.assertEqual(len(classify(activation_writes_sudoers(path="/etc/sudoers.tmp"))), 1)
+
+    def test_activation_with_foreign_setup_etc_fires(self):
+        # Same perl, a setup-etc.pl that is not this generation's: not exempt.
+        self.assertEqual(len(classify(activation_writes_sudoers(setup_etc=OTHER_SETUP_ETC))), 1)
+
+    def test_setup_etc_as_a_mere_argument_fires(self):
+        # The pinned path present in argv but not what perl runs: not exempt.
+        for argv in ([PERL_ENV, "-e", "1", SETUP_ETC],
+                     [PERL_ENV, "-e", "1", SETUP_ETC, STORE_ETC],
+                     [PERL_ENV, STORE_ETC, SETUP_ETC],
+                     [PERL_ENV, SETUP_ETC]):
+            self.assertEqual(len(classify(activation_writes_sudoers(argv=argv))), 1, argv)
+
+    def test_setup_etc_with_a_non_store_etc_tree_fires(self):
+        for tree in ("/tmp/evil-etc", STORE_ETC + "/..", f"/nix/store/{'c' * 32}-etc/etc/x"):
+            self.assertEqual(len(classify(activation_writes_sudoers(argv=[PERL_ENV, SETUP_ETC, tree]))), 1, tree)
+
+    def test_truncated_activation_with_foreign_script_fires(self):
+        for argv in ([PERL_ENV, OTHER_SETUP_ETC, STORE_ETC],
+                     [PERL_ENV, "-e", "1", SETUP_ETC, STORE_ETC],
+                     [PERL_ENV + "x" * 60, SETUP_ETC, STORE_ETC]):  # cut inside the script word
+            self.assertEqual(len(classify(activation_writes_sudoers(argv=argv, truncated=True))), 1, argv)
+
+    def test_truncated_activation_with_a_non_store_tree_fires(self):
+        # Cut at 128 leaves "/t" of /tmp/...: not a prefix of the store shape.
+        self.assertEqual(len(classify(activation_writes_sudoers(
+            argv=[PERL_ENV, SETUP_ETC, "/tmp/evil-etc"], truncated=True))), 1)
+
+    def test_short_two_word_title_is_not_a_cut(self):
+        # Two words well under the limit: the third was never there.
+        self.assertEqual(len(classify(activation_writes_sudoers(argv=[PERL_ENV, SETUP_ETC], truncated=True))), 1)
 
     def test_activation_args_from_non_store_perl_fires(self):
         self.assertEqual(len(classify(activation_writes_sudoers(exe="/tmp/perl"))), 1)
@@ -167,34 +193,16 @@ class AuditRule(unittest.TestCase):
     def test_service_read_of_agenix_is_silent(self):
         self.assertEqual(classify(service_reads_agenix()), [])
 
-    def test_activation_candidate_is_a_hit_until_expected(self):
+    def test_login_activation_write_to_sudoers_fires(self):
+        # Was: exempt as the activation's /etc writer. Rule 3 is removed.
         hits = classify(activation_writes_sudoers())
         self.assertEqual(len(hits), 1)
-        self.assertTrue(hits[0]["activation_candidate"])
-        self.assertEqual(expected(activation_writes_sudoers()), [])
+        self.assertEqual(hits[0]["keys"], ["sudoers"])
 
-    def test_argv_is_not_consulted(self):
-        # Foreign script, extra args, a non-store tree, a cut title: all the
-        # same candidate. Nothing about argv/PROCTITLE can make or break one.
-        for argv, trunc in (([PERL_ENV, OTHER_SETUP_ETC, STORE_ETC], False),
-                            ([PERL_ENV, "-e", "1", SETUP_ETC], False),
-                            ([PERL_ENV, SETUP_ETC, "/tmp/evil-etc"], True),
-                            ([PERL_ENV, SETUP_ETC, STORE_ETC], True)):
-            hits = classify(activation_writes_sudoers(argv=argv, truncated=trunc))
-            self.assertEqual([h["activation_candidate"] for h in hits], [True], argv)
-
-    def test_candidate_needs_perl_exe_and_etc_paths(self):
-        vi = event(4, key="sudoers", auid="1000", exe=f"/nix/store/{H}-vim-9.1/bin/vim",
-                   comm="vim", path="/etc/sudoers", argv=["vim", "/etc/sudoers"])
-        self.assertEqual([h["activation_candidate"] for h in classify(vi)], [False])
-        self.assertEqual(expected(vi), classify(vi))
-        self.assertEqual([h["activation_candidate"]
-                          for h in classify(activation_writes_sudoers(path="/etc/sudoers.d/x"))], [False])
-
-    def test_candidate_never_covers_agenix(self):
-        ev = event(5, key="agenix-secrets", auid="1000", exe=PERL, comm="perl",
-                   path="/etc/sudoers", argv=["perl"])
-        self.assertEqual(expected(ev), classify(ev))
+    def test_activation_with_login_auid_fires_for_any_argv(self):
+        for argv, trunc in (([PERL_ENV, SETUP_ETC, STORE_ETC], False), ([PERL_ENV, SETUP_ETC, STORE_ETC], True),
+                            ([PERL_ENV, "-e", "1"], False)):
+            self.assertEqual(len(classify(activation_writes_sudoers(argv=argv, truncated=trunc))), 1, argv)
 
     def test_activation_write_to_sudoers_via_systemd_run_is_silent(self):
         self.assertEqual(classify(activation_writes_sudoers(auid=UNSET)), [])
@@ -279,12 +287,11 @@ class AuditRule(unittest.TestCase):
 
     # ── mixed batch: only the login event survives ──
     def test_mixed_batch(self):
-        hits = expected(service_reads_agenix(11), activation_writes_sudoers(12),
+        # The login-attributed activation write is a hit too (rule 3 removed);
+        # before, only serial 13 survived.
+        hits = classify(service_reads_agenix(11), activation_writes_sudoers(12),
                         login_reads_agenix(13), service_reads_agenix(14))
-        self.assertEqual([h["serial"] for h in hits], ["13"])
-        # Not an expected change: the activation-shaped event is a hit too.
-        self.assertEqual([h["serial"] for h in classify(
-            service_reads_agenix(11), activation_writes_sudoers(12), login_reads_agenix(13))], ["12", "13"])
+        self.assertEqual([h["serial"] for h in hits], ["12", "13"])
 
 
 # ── the council's key read is an ordinary agenix read ──
@@ -830,8 +837,8 @@ class Runners(unittest.TestCase):
         self.assertEqual(self.audit(self.ausearch(f"cat {fixture}\n")), 0)
         self.assertFalse(os.path.exists(self.last))
 
-    # ── rule 3: an activation sudoers write is expected only when the live
-    # file matches the new system's copy AND the system target changed ──
+    # ── rule 3 is removed: a login-attributed sudoers write is always a hit;
+    # a hash match against the current generation is journal context only ──
     def activation_fixture(self, **kw):
         fixture = os.path.join(self.d, "fixture")
         with open(fixture, "w") as fh:
@@ -846,71 +853,47 @@ class Runners(unittest.TestCase):
             rc = self.audit(a)
         return rc, buf.getvalue()
 
-    def test_expected_sudoers_change_is_a_notice_not_a_hit(self):
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)  # records gen1
-        self.switch("gen2")
-        rc, out = self.run_logged(self.activation_fixture())
-        self.assertEqual(rc, 0)
-        self.assertIn("NOTICE audit expected sudoers change", out)
-        self.assertNotIn("ALARM", out)
-        self.assertFalse(os.path.exists(self.last))
+    def alarm_lines(self, out):
+        return [json.loads(l.split("ALARM audit ", 1)[1]) for l in out.splitlines() if l.startswith("ALARM audit ")]
 
-    def test_sudoers_hash_mismatch_is_a_hit(self):
+    def test_activation_write_matching_the_generation_is_still_a_hit(self):
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.switch("gen2")
-        with open(self.sudoers, "a") as fh:
-            fh.write("evil ALL=(ALL) NOPASSWD: ALL\n")
+        self.switch("gen2")  # live sudoers equals gen2's copy
         rc, out = self.run_logged(self.activation_fixture())
         self.assertEqual(rc, 1)
-        self.assertIn("ALARM audit", out)
         self.assertNotIn("NOTICE", out)
+        alarms = self.alarm_lines(out)
+        self.assertEqual(len(alarms), 1)
+        self.assertIs(alarms[0]["sudoers_matches_generation"], True)
 
-    def test_unchanged_system_target_is_a_hit(self):
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        rc, out = self.run_logged(self.activation_fixture())  # still gen1
-        self.assertEqual(rc, 1)
-        self.assertIn("ALARM audit", out)
-
-    def test_no_recorded_target_is_a_hit(self):
-        rc, out = self.run_logged(self.activation_fixture())
-        self.assertEqual(rc, 1)
-        self.assertIn("ALARM audit", out)
-
-    def test_argv_does_not_make_a_write_expected(self):
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+    def test_hash_mismatch_is_a_hit_with_context(self):
         self.switch("gen2")
         with open(self.sudoers, "a") as fh:
-            fh.write("evil ALL=(ALL) NOPASSWD: ALL\n")
-        # The classic activation argv, but the file content does not match.
+            fh.write("extra ALL=(ALL) ALL\n")
+        rc, out = self.run_logged(self.activation_fixture())
+        self.assertEqual(rc, 1)
+        self.assertIs(self.alarm_lines(out)[0]["sudoers_matches_generation"], False)
+
+    def test_unchanged_generation_is_a_hit(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
         self.assertEqual(self.audit(self.activation_fixture()), 1)
 
-    def test_argv_does_not_make_a_write_unexpected(self):
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.switch("gen2")
-        self.assertEqual(self.audit(self.activation_fixture(argv=["perl", "-e", "1"])), 0)
+    def test_unreadable_context_does_not_hide_or_break_the_hit(self):
+        os.unlink(self.sudoers)
+        rc, out = self.run_logged(self.activation_fixture())
+        self.assertEqual(rc, 1)
+        self.assertIsNone(self.alarm_lines(out)[0]["sudoers_matches_generation"])
 
-    def test_non_activation_writer_is_a_hit_even_when_content_matches(self):
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.switch("gen2")
+    def test_agenix_hit_carries_no_sudoers_context(self):
         fixture = os.path.join(self.d, "fixture")
         with open(fixture, "w") as fh:
-            fh.write(event(4, key="sudoers", auid="1000", exe=f"/nix/store/{H}-vim-9.1/bin/vim",
-                           comm="vim", path="/etc/sudoers", argv=["vim", "/etc/sudoers"]) + "\n")
-        self.assertEqual(self.audit(self.ausearch(f"cat {fixture}\n")), 1)
+            fh.write(login_reads_agenix() + "\n")
+        rc, out = self.run_logged(self.ausearch(f"cat {fixture}\n"))
+        self.assertNotIn("sudoers_matches_generation", self.alarm_lines(out)[0])
 
-    def test_target_is_recorded_on_every_run(self):
+    def test_no_generation_state_is_kept(self):
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.assertEqual(slurp(self.last_system).strip(), os.path.realpath(self.cs))
-        self.switch("gen2")
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.assertEqual(slurp(self.last_system).strip(), os.path.realpath(self.cs))
-
-    def test_second_window_after_the_switch_is_a_hit(self):
-        # The change is expected once, in the window that follows the switch.
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.switch("gen2")
-        self.assertEqual(self.audit(self.activation_fixture()), 0)
-        self.assertEqual(self.audit(self.activation_fixture()), 1)
+        self.assertFalse(os.path.exists(self.last_system))
 
     # ── trail health: auditctl -s / -l, before a quiet window is accepted ──
     def test_trail_health_checked_before_a_quiet_window(self):
@@ -990,16 +973,6 @@ class Runners(unittest.TestCase):
         rc, out = self.run_logged(self.ausearch(f"cat {fixture}\n"))
         self.assertEqual(rc, 2)
         self.assertIn("ALARM audit", out)
-
-    def test_unresolvable_current_system_is_an_error(self):
-        os.unlink(self.cs)
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
-
-    def test_unreadable_sudoers_with_a_candidate_is_an_error(self):
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.switch("gen2")
-        os.unlink(self.sudoers)
-        self.assertEqual(self.audit(self.activation_fixture()), 2)
 
     def bans(self, cscli_body, f2b_body):
         guard = 'case " $* " in *" --limit 0 "*) ;; *) echo "default limit 100" >&2; exit 3;; esac\n'

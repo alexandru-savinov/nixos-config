@@ -21,10 +21,9 @@
 #
 #   * Audit fires only for a LOGIN auid. Services reading their agenix
 #     secrets at start (auid unset) and nixos-rebuild's activation (run via
-#     systemd-run, auid unset) stay silent by construction. A sudoers write
-#     by the activation's perl with a login auid is logged as a NOTICE, not a
-#     hit, only when /etc/sudoers matches the new generation's copy and
-#     /run/current-system changed since the last run.
+#     systemd-run, auid unset) stay silent by construction. A login-attributed
+#     sudoers write is always a hit; whether /etc/sudoers matches the current
+#     system's copy is logged on the ALARM line as context only.
 #
 #   * Audit is "since the last run" (ausearch --checkpoint): one event raises
 #     the stamp red for `auditHold`, then it clears BY ITSELF. Not "red until

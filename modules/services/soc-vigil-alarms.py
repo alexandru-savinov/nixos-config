@@ -37,18 +37,11 @@ THE AUDIT RULE (exact):
        incubator does NOT hand to login(1) gets no auid from this host's
        PAM stacks and is NOT covered by this rule: an open gap, for the
        owner to measure (the PR's post-deploy check).
-    3. it is NOT an expected activation change. An event on key `sudoers`
-       from a /nix/store perl whose PATH records are all /etc, /etc/sudoers
-       or /etc/sudoers.tmp is only a CANDIDATE (the shape of the activation's
-       /etc writer); argv/PROCTITLE is not consulted. A candidate is an
-       expected change, logged as a NOTICE and not a hit, only when BOTH
-       hold at evaluation time:
-         (a) sha256 of the live /etc/sudoers equals sha256 of the sudoers
-             file in the etc tree of /run/current-system, and
-         (b) the /run/current-system target differs from the one recorded by
-             the previous evaluation (kept in the state directory; with no
-             recorded target nothing is expected).
-       Otherwise every candidate is a hit.
+    3. (There is no activation exemption: a login-attributed write to
+       /etc/sudoers fires, whoever the writer claims to be. When the live
+       file's sha256 equals that of the sudoers file in the etc tree of
+       /run/current-system, the ALARM line says so as
+       `sudoers_matches_generation`: journal context only, never a verdict.)
        A login's read of any agenix key fires, including the council user's
        own read of jev-openrouter-key; there is no per-key exemption.
   Everything else in the audit log is ignored here.
@@ -101,7 +94,6 @@ _FIELD = re.compile(r'([A-Za-z0-9_-]+)=("[^"]*"|\S+)')
 # What every SYSCALL record must carry for the rules to read it. auid is not
 # here: a watched SYSCALL without auid is an existing hit (audit_scan).
 _SYSCALL_REQUIRED = ("arch", "syscall", "success", "exe", "key")
-_STORE_PERL = re.compile(r"^/nix/store/[0-9a-z]{32}-perl-[^/]+/bin/perl$")
 _HEX = re.compile(r"^(?:[0-9A-Fa-f]{2})+$")
 
 
@@ -169,29 +161,6 @@ def _paths(event: dict) -> list[str]:
     return out
 
 
-_ACTIVATION_PATHS = frozenset({"/etc", "/etc/", "/etc/sudoers", "/etc/sudoers.tmp"})
-
-
-def is_activation_candidate(event: dict, syscall: dict, keys: set[str]) -> bool:
-    """Shape of the activation's /etc writer, from kernel-supplied fields only
-    (exe and PATH records). Whether it is expected is decided by the runner
-    (see partition_hits)."""
-    exe = _unhex(syscall.get("exe", "")) or ""
-    paths = _paths(event)
-    return (
-        keys == {"sudoers"}
-        and _STORE_PERL.match(exe) is not None
-        and bool(paths)
-        and all(p in _ACTIVATION_PATHS for p in paths)
-    )
-
-
-def partition_hits(hits: list[dict], expected_change: bool) -> tuple[list[dict], list[dict]]:
-    """PURE. Split audit_scan's hits into (hits, expected-change notices)."""
-    if not expected_change:
-        return hits, []
-    return ([h for h in hits if not h.get("activation_candidate")],
-            [h for h in hits if h.get("activation_candidate")])
 
 
 def audit_hits(raw_text: str) -> list[dict]:
@@ -238,7 +207,6 @@ def audit_scan(raw_text: str) -> tuple[list[dict], list[str]]:
             "success": syscall.get("success"),
             "exe": _unhex(syscall.get("exe", "")) or "?",
             "paths": _paths(ev),
-            "activation_candidate": is_activation_candidate(ev, syscall, keys),
         })
     return hits, bad
 
@@ -392,13 +360,6 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def _system_target(current_system: str) -> str:
-    target = os.path.realpath(current_system)
-    if not os.path.isdir(target):
-        raise RuntimeError(f"{current_system} does not resolve to a system directory")
-    return target
-
-
 def _read_text(path: str) -> str | None:
     try:
         with open(path) as fh:
@@ -407,12 +368,14 @@ def _read_text(path: str) -> str | None:
         return None
 
 
-def expected_sudoers_change(a, target: str, previous: str | None) -> bool:
-    """Rule 3 (module docstring): live /etc/sudoers equals the one in the
-    current system's etc tree, and the system target moved since last run."""
-    if previous is None or previous == target:
-        return False
-    return _sha256(a.etc_sudoers) == _sha256(os.path.join(a.current_system, "etc", "sudoers"))
+def sudoers_context(a) -> bool | None:
+    """Journal context for a sudoers hit: does the live /etc/sudoers equal the
+    sudoers file in the etc tree of the current system? None when that cannot
+    be read. Never raises and never decides anything."""
+    try:
+        return _sha256(a.etc_sudoers) == _sha256(os.path.join(a.current_system, "etc", "sudoers"))
+    except OSError:
+        return None
 
 
 _REQUIRED_WATCHES = ("agenix-secrets", "sudoers")
@@ -513,14 +476,11 @@ def cmd_audit(a) -> int:
     # replaced only AFTER every hit is logged and the hold is on disk. If
     # anything fails before that (a crash, a full disk, a bug), the next run
     # reads the same window again: a repeated ALARM line, never a lost one.
-    last_system = os.path.join(a.state_dir, "audit.last-system")
     last_lost = os.path.join(a.state_dir, "audit.last-lost")
     ran_marker = os.path.join(a.state_dir, "audit.ran")
     check_stamp(a, ran_marker)
     installed = os.path.join(a.state_dir, "audit.installed")
     mismatch_flag = os.path.join(a.state_dir, "audit.checkpoint-mismatch")
-    target = _system_target(a.current_system)
-    previous_target = _read_text(last_system)
     staged = checkpoint + ".next"
     if os.path.exists(checkpoint):
         shutil.copyfile(checkpoint, staged)
@@ -539,9 +499,6 @@ def cmd_audit(a) -> int:
     now = time.time()
 
     def commit_checkpoint():
-        # The target is recorded with the window it was evaluated for, so a
-        # window that is read again is judged against the same previous value.
-        _write_durably(last_system, target + "\n")
         if os.path.exists(staged):
             with open(staged, "rb") as fh:
                 os.fsync(fh.fileno())
@@ -550,16 +507,16 @@ def cmd_audit(a) -> int:
 
     try:
         hits, bad = audit_scan(raw)
-        candidates = [h for h in hits if h["activation_candidate"]]
-        expected = bool(candidates) and expected_sudoers_change(a, target, previous_target)
-        hits, notices = partition_hits(hits, expected)
+        if any("sudoers" in h["keys"] for h in hits):
+            context = sudoers_context(a)
+            for h in hits:
+                if "sudoers" in h["keys"]:
+                    h["sudoers_matches_generation"] = context
     except Exception:
         # Could not classify at all: red for the hold, and the checkpoint
         # stays put so this window is classified again once that works.
         start_hold()
         raise
-    for h in notices:
-        _log("NOTICE audit expected sudoers change " + json.dumps(h, sort_keys=True))
     for h in hits:
         _log("ALARM audit " + json.dumps(h, sort_keys=True))
     # A window with an unreadable line may have held a hit: it starts the
