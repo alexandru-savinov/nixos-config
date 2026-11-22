@@ -452,6 +452,17 @@ class BanRule(unittest.TestCase):
             with self.assertRaises(ValueError, msg=text):
                 sva.home_bans(text, f2b(), NEVER_BAN)
 
+    def test_null_nonstring_or_empty_scope_or_value_is_unreadable(self):
+        for scope, value in ((None, "100.64.1.1"), ("Ip", None), (1, "100.64.1.1"), ("Ip", 5),
+                             ("", "100.64.1.1"), ("Ip", ""), ("  ", "x"), ("Ip", "  "),
+                             (["Ip"], "x"), ("Country", None), (None, None)):
+            text = json.dumps([{"decisions": [{"scope": scope, "value": value}]}])
+            with self.assertRaises(ValueError, msg=text):
+                sva.home_bans(text, f2b(), NEVER_BAN)
+
+    def test_non_ip_scope_with_a_string_value_is_still_ignored(self):
+        self.assertEqual(sva.home_bans(decisions(("Country", "RO"), ("AS", "AS123")), f2b(), NEVER_BAN), [])
+
     def test_empty_decision_list_inside_an_alert_is_fine(self):
         self.assertEqual(sva.home_bans('[{"id": 1, "decisions": []}]', f2b(), NEVER_BAN), [])
 

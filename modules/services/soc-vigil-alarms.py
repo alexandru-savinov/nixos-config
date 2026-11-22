@@ -268,7 +268,9 @@ def home_bans(decisions_json: str, fail2ban_status: str, cidrs: list[str]) -> li
         for d in alert["decisions"]:
             if not isinstance(d, dict) or "scope" not in d or "value" not in d:
                 raise ValueError(f"cscli decision without scope/value: {str(d)[:80]}")
-            scope = str(d["scope"]).lower()
+            if not all(isinstance(d[k], str) and d[k].strip() for k in ("scope", "value")):
+                raise ValueError(f"cscli decision with a null, non-string or empty scope/value: {str(d)[:80]}")
+            scope = d["scope"].lower()
             if scope not in ("ip", "range"):
                 continue
             if _in_home(str(d["value"]), nets):
