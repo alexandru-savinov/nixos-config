@@ -9,12 +9,12 @@ for (const fixture of fixtures) test(`shared schema: ${fixture.name}`, () => {
   else assert.throws(() => contract(fixture.source));
 });
 
-// The host contract is not part of the vigil package source, so inside the
-// package build this test is skipped; checks.vigil-soc-audit-label runs it
-// with VIGIL_SOC_AUDIT_CONTRACT set and fails unless it ran and passed.
-const socAudit = process.env.VIGIL_SOC_AUDIT_CONTRACT;
-test('the soc-audit tile never implies health on a quiet window',
-  { skip: socAudit ? false : 'host contract not in this build; see checks.vigil-soc-audit-label' }, () => {
+// The real host contract: handed in by pkgs/vigil.nix's checkPhase (hosts/ is
+// not in the package source), else read relative to the repo checkout.
+const socAudit = process.env.VIGIL_SOC_CONTRACTS_DIR
+  ? `${process.env.VIGIL_SOC_CONTRACTS_DIR}/soc-audit.toml`
+  : new URL('../../hosts/sancta-choir/vigil-contracts/soc-audit.toml', import.meta.url);
+test('the soc-audit tile never implies health on a quiet window', () => {
   const c = contract(fs.readFileSync(socAudit, 'utf8'));
   assert.equal(c.page, false);
   assert.match(c.label, /coverage: partial/);

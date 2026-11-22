@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { run, loadContracts } from './vigil-check.mjs';
@@ -514,18 +515,17 @@ test('a sent open still gets its close when paging stays on', async () => harnes
 }));
 
 // The real SOC contracts, with their stamp path pointed at a temp file. The
-// host directory is not part of the vigil package source, so these tests are
-// skipped inside the package build; checks.vigil-soc-audit-label runs them with
-// VIGIL_SOC_CONTRACTS_DIR set and fails unless every one ran and passed.
-const socDir = process.env.VIGIL_SOC_CONTRACTS_DIR;
-const socSkip = { skip: socDir ? false : 'host contracts not in this build; see checks.vigil-soc-audit-label' };
+// directory is handed in by pkgs/vigil.nix's checkPhase (hosts/ is not in the
+// package source), else read relative to the repo checkout.
+const socDir = process.env.VIGIL_SOC_CONTRACTS_DIR
+  || fileURLToPath(new URL('../../hosts/sancta-choir/vigil-contracts/', import.meta.url));
 const socContract = (file, tinta) => ({
   contract: contractFromToml(fs.readFileSync(path.join(socDir, file), 'utf8')),
   tinta,
 });
 const withStamp = ({ contract: c, tinta }) => ({ contract: { ...c, tinta } });
 
-test('a stale soc-bans stamp reds the PAGING contract; a stale health stamp never pages', socSkip, async () => harness(async h => {
+test('a stale soc-bans stamp reds the PAGING contract; a stale health stamp never pages', async () => harness(async h => {
   const bansStamp = path.join(h.root, 'bans-clean');
   const healthStamp = path.join(h.root, 'bans-health-clean');
   for (const file of [bansStamp, healthStamp]) {
@@ -547,7 +547,7 @@ test('a stale soc-bans stamp reds the PAGING contract; a stale health stamp neve
   assert.match(h.state().contracts['soc-bans-health'].open, /^2026-/, 'but its incident is recorded');
 }));
 
-test('a fresh soc-bans stamp is green and sends nothing', socSkip, async () => harness(async h => {
+test('a fresh soc-bans stamp is green and sends nothing', async () => harness(async h => {
   const stamp = path.join(h.root, 'bans-clean');
   fs.writeFileSync(stamp, '');
   const now = Date.parse('2026-09-20T12:00:00Z');
