@@ -263,6 +263,10 @@ in
           "audit-rules-nixos.service"
           "--hold"
           (toString cfg.auditHold)
+          # Two timer periods (one failed run in between is normal and must not
+          # read as lost coverage) + TimeoutStartSec + AccuracySec + slack.
+          "--max-gap"
+          "900"
           "--disk-warn-bytes"
           (toString (cfg.auditDisk.warnGiB * 1073741824))
           "--disk-fail-bytes"

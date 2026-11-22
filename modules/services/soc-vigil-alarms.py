@@ -462,11 +462,23 @@ def _normalize_rule(line: str) -> str:
     """One `auditctl -l` line with single spaces and permission letters
     sorted, so that only a real difference in the rule changes it."""
     t = line.split()
+
+    def unslash(path: str) -> str:
+        # auditctl lists a watch that resolved to a directory with a trailing
+        # "/" (`-w /run/agenix.d/ …`) whether or not the rule was written with
+        # one; one trailing slash is not a different rule.
+        return path[:-1] if len(path) > 1 and path.endswith("/") else path
+
     for i, tok in enumerate(t):
         if tok == "-p" and i + 1 < len(t):
             t[i + 1] = "".join(sorted(t[i + 1]))
+        elif tok == "-w" and i + 1 < len(t):
+            t[i + 1] = unslash(t[i + 1])
         elif tok == "-F" and i + 1 < len(t) and t[i + 1].startswith("perm="):
             t[i + 1] = "perm=" + "".join(sorted(t[i + 1][5:]))
+        elif tok == "-F" and i + 1 < len(t) and t[i + 1].startswith(("path=", "dir=")):
+            name, _, value = t[i + 1].partition("=")
+            t[i + 1] = f"{name}={unslash(value)}"
     return " ".join(t)
 
 

@@ -48,6 +48,19 @@ elif [ "${EXIT_CODE:-}" = exited ] && [ "${EXIT_STATUS:-}" = 1 ]; then
 elif [ "${EXIT_CODE:-}" = exited ] && [ "${EXIT_STATUS:-}" = 3 ]; then
   stale "$bans"; stale "$health"
 else
-  fresh "$bans"; stale "$health"
+  # The evaluator could not see. Keep the last known ban state: a bans stamp
+  # that is red (epoch + 1s) stays red, so a blind run never clears a ban
+  # that may still be in place; one that is green is freshened.
+  # "red" = mtime older than epoch + 2s, compared against a reference file.
+  ref=$(mktemp) && touch -d @2 -- "$ref" || ref=""
+  if [ -z "$ref" ]; then
+    stale "$bans" # cannot tell: fail towards red on the paging stamp
+  elif [ -e "$bans" ] && [ "$bans" -ot "$ref" ]; then
+    : # red stays red
+  else
+    fresh "$bans"
+  fi
+  [ -n "$ref" ] && rm -f -- "$ref"
+  stale "$health"
 fi
 exit "$failed"

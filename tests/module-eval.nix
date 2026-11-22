@@ -1334,6 +1334,15 @@ let
               { timer = "soc-alarm-bans"; svc = bSvc; contract = bansHealth; }
             ];
 
+          # One failed run between two good ones is normal (picat_dupa = 2 absorbs
+          # it), so the coverage-gap limit must exceed two timer periods plus a
+          # run's timeout, or the run after any failure reads as lost coverage.
+          maxGapAboveTwoPeriods =
+            let m = builtins.match ".*--max-gap ([0-9]+).*" (argv aSvc);
+            in m != null
+              && lib.toInt (builtins.head m) * 1 > 60 * (2 * mins choir.systemd.timers.soc-alarm-audit.timerConfig.OnUnitActiveSec
+              + mins aSvc.serviceConfig.TimeoutStartSec);
+
           # Both run every 5 minutes from timers.target, as root oneshots.
           timers = lib.all
             (n: (choir.systemd.timers.${n}.timerConfig.OnUnitActiveSec or null) == "5min"

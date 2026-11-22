@@ -1399,6 +1399,15 @@ class Runners(unittest.TestCase):
         self.auditctl = self.make_auditctl(rules="-w  /run/agenix   -p rwa -k agenix-secrets\n-w /etc/sudoers -p wa  -k sudoers\n")
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
 
+    def test_a_directory_watch_listed_with_a_trailing_slash_matches(self):
+        # auditctl -l prints a watch that resolved to a directory as `-w DIR/`.
+        self.auditctl = self.make_auditctl(rules="-w /run/agenix/ -p rwa -k agenix-secrets\n-w /etc/sudoers -p wa -k sudoers\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_a_different_path_is_still_an_error_after_slash_normalising(self):
+        self.auditctl = self.make_auditctl(rules="-w /run/agenix.old/ -p rwa -k agenix-secrets\n-w /etc/sudoers -p wa -k sudoers\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+
     def test_permission_letters_in_any_order_match(self):
         self.auditctl = self.make_auditctl(rules="-w /run/agenix -p arw -k agenix-secrets\n-w /etc/sudoers -p aw -k sudoers\n")
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
@@ -1554,6 +1563,18 @@ class BansStampScript(unittest.TestCase):
             self.assertEqual(self.run_it(**kw), 0, kw)
             self.assertTrue(self.fresh(self.bans), kw)
             self.assertEqual(self.mt(self.health), 1, kw)
+
+    def test_an_evaluator_error_after_a_ban_keeps_the_bans_stamp_red(self):
+        # A blind run must not clear a ban that may still be in place.
+        self.assertEqual(self.run_it(result="exit-code", status="1"), 0)
+        self.assertEqual(self.mt(self.bans), 1)
+        for kw in (dict(result="exit-code", status="2"), dict(result="timeout", code="killed", status="TERM")):
+            self.assertEqual(self.run_it(**kw), 0, kw)
+            self.assertEqual(self.mt(self.bans), 1, kw)
+            self.assertEqual(self.mt(self.health), 1, kw)
+        # A clean run afterwards clears it as usual.
+        self.assertEqual(self.run_it(), 0)
+        self.assertTrue(self.fresh(self.bans))
 
     def test_a_failed_write_never_leaves_an_old_fresh_stamp(self):
         for p in (self.bans, self.health):
