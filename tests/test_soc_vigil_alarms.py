@@ -376,6 +376,13 @@ class BanRule(unittest.TestCase):
 QUIET = "exit 1\n"
 
 
+HEALTHY_RULES = (
+    "-w /run/agenix -p rwa -k agenix-secrets\n"
+    "-w /etc/sudoers -p wa -k sudoers\n"
+    "-a always,exit -F arch=b64 -S execve -k root-exec\n"
+)
+
+
 def slurp(path):
     with open(path) as fh:
         return fh.read()
@@ -406,6 +413,7 @@ class Runners(unittest.TestCase):
             with open(os.path.join(self.d, gen, "etc", "sudoers"), "w") as fh:
                 fh.write("root ALL=(ALL) SETENV: ALL\n")
         self.switch("gen1")
+        self.auditctl = self.make_auditctl()
         with open(self.sudoers, "w") as fh:
             fh.write("root ALL=(ALL) SETENV: ALL\n")
 
@@ -419,7 +427,20 @@ class Runners(unittest.TestCase):
         return fake(self.d, "ausearch", f'echo "$@" >> {self.log}\n' + script)
 
     def injected(self):
-        return ["--current-system", self.cs, "--etc-sudoers", self.sudoers]
+        return ["--current-system", self.cs, "--etc-sudoers", self.sudoers,
+                "--auditctl", self.auditctl]
+
+    def make_auditctl(self, *, enabled=1, lost=0, rules=None, status_exit=0, rules_exit=0):
+        rules = HEALTHY_RULES if rules is None else rules
+        return fake(self.d, "auditctl", (
+            f'echo "$@" >> {self.log}.auditctl\n'
+            'case "$1" in\n'
+            f'  -s) [ {status_exit} -ne 0 ] && {{ echo boom >&2; exit {status_exit}; }}\n'
+            f'      printf "enabled {enabled}\\nfailure 1\\npid 1\\nrate_limit 0\\nbacklog_limit 8192\\nlost {lost}\\nbacklog 0\\n";;\n'
+            f'  -l) [ {rules_exit} -ne 0 ] && {{ echo boom >&2; exit {rules_exit}; }}\n'
+            f"      cat <<'E'\n{rules}E\n;;\n"
+            'esac\n'
+        ))
 
     def audit(self, ausearch, hold=900, systemctl_exit=0, inactive=()):
         # Behaves like the real one: with several units it exits 0 if ANY is
@@ -688,6 +709,85 @@ class Runners(unittest.TestCase):
         self.switch("gen2")
         self.assertEqual(self.audit(self.activation_fixture()), 0)
         self.assertEqual(self.audit(self.activation_fixture()), 1)
+
+    # ── trail health: auditctl -s / -l, before a quiet window is accepted ──
+    def test_trail_health_checked_before_a_quiet_window(self):
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertEqual(slurp(self.log + ".auditctl").split(), ["-s", "-l"])
+
+    def test_auditing_disabled_is_an_error(self):
+        self.auditctl = self.make_auditctl(enabled=0)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        self.assertFalse(os.path.exists(self.log), "ausearch must not run on a blind trail")
+
+    def test_enabled_one_and_two_are_healthy(self):
+        for enabled in (1, 2):
+            self.auditctl = self.make_auditctl(enabled=enabled)
+            self.assertEqual(self.audit(self.ausearch(QUIET)), 0, enabled)
+
+    def test_unparseable_status_is_an_error(self):
+        self.auditctl = fake(self.d, "auditctl2", 'echo "something else"\n')
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+
+    def test_auditctl_failure_is_an_error(self):
+        for kw in ({"status_exit": 1}, {"rules_exit": 1}):
+            self.auditctl = self.make_auditctl(**kw)
+            self.assertEqual(self.audit(self.ausearch(QUIET)), 2, kw)
+
+    def test_missing_watch_keys_are_an_error(self):
+        for rules in ("-w /etc/sudoers -p wa -k sudoers\n",
+                      "-w /run/agenix -p rwa -k agenix-secrets\n",
+                      "No rules\n", "",
+                      "-w /run/agenix -p rwa -k agenix-secrets-old\n-w /etc/sudoers -p wa -k sudoers\n"):
+            self.auditctl = self.make_auditctl(rules=rules)
+            self.assertEqual(self.audit(self.ausearch(QUIET)), 2, rules)
+
+    def test_watch_keys_in_filter_form_are_accepted(self):
+        self.auditctl = self.make_auditctl(rules=(
+            "-a always,exit -F arch=b64 -S openat -F path=/etc/sudoers -F key=sudoers\n"
+            "-a always,exit -F arch=b64 -S openat -F dir=/run/agenix -F key=agenix-secrets\n"))
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_first_run_stores_the_lost_counter_without_alarm(self):
+        self.auditctl = self.make_auditctl(lost=7)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "7")
+
+    def test_unchanged_lost_counter_is_clean(self):
+        self.auditctl = self.make_auditctl(lost=7)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_increased_lost_counter_is_an_error_and_holds_red(self):
+        self.auditctl = self.make_auditctl(lost=7)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.auditctl = self.make_auditctl(lost=9)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
+        self.assertTrue(os.path.exists(self.last))
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.last-lost")).strip(), "9")
+        # A single blip must not read clean on the next quiet window ...
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 1)
+        # ... and clears once the hold has elapsed.
+        with open(self.last, "w") as fh:
+            fh.write(f"{time.time() - 901:.0f}\n")
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_lost_counter_reset_is_not_an_alarm(self):
+        self.auditctl = self.make_auditctl(lost=9)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.auditctl = self.make_auditctl(lost=0)  # auditd restarted
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_lost_events_do_not_hide_a_hit_in_the_window(self):
+        self.auditctl = self.make_auditctl(lost=1)
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.auditctl = self.make_auditctl(lost=2)
+        fixture = os.path.join(self.d, "fixture")
+        with open(fixture, "w") as fh:
+            fh.write(login_reads_agenix() + "\n")
+        rc, out = self.run_logged(self.ausearch(f"cat {fixture}\n"))
+        self.assertEqual(rc, 2)
+        self.assertIn("ALARM audit", out)
 
     def test_unresolvable_current_system_is_an_error(self):
         os.unlink(self.cs)

@@ -377,6 +377,61 @@ def expected_sudoers_change(a, target: str, previous: str | None) -> bool:
     return _sha256(a.etc_sudoers) == _sha256(os.path.join(a.current_system, "etc", "sudoers"))
 
 
+_REQUIRED_WATCHES = ("agenix-secrets", "sudoers")
+_RULE_KEY = re.compile(r"(?:^|\s)(?:-k\s+|-F\s+key=)(\S+)")
+
+
+def _auditctl(a, flag: str) -> str:
+    p = subprocess.run([a.auditctl, flag], capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        raise RuntimeError(f"auditctl {flag} exited {p.returncode}: {p.stderr.strip()[:300]}")
+    return p.stdout
+
+
+def audit_status(text: str) -> tuple[int, int]:
+    """PURE. (enabled, lost) from `auditctl -s`. Raises ValueError if either
+    is missing or not a number."""
+    found = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] in ("enabled", "lost"):
+            found[parts[0]] = int(parts[1])
+    if "enabled" not in found or "lost" not in found:
+        raise ValueError("auditctl -s output has no enabled/lost counters")
+    return found["enabled"], found["lost"]
+
+
+def watch_keys(text: str) -> set[str]:
+    """PURE. Every key named by a rule in `auditctl -l` output."""
+    return {m.group(1) for line in text.splitlines() for m in [_RULE_KEY.search(line)] if m}
+
+
+def check_trail(a, last_lost_path: str, start_hold) -> int | None:
+    """Trail health, checked on every evaluation before a quiet window is
+    accepted: auditing enabled, the watch rules loaded, and no events lost
+    since the previous evaluation. Returns the lost-counter increase to
+    report after the window was read (None when there is none); raises when
+    the trail cannot record."""
+    enabled, lost = audit_status(_auditctl(a, "-s"))
+    if enabled not in (1, 2):
+        raise RuntimeError(f"audit trail not recording: auditctl -s enabled={enabled}")
+    loaded = watch_keys(_auditctl(a, "-l"))
+    missing = [k for k in _REQUIRED_WATCHES if k not in loaded]
+    if missing:
+        raise RuntimeError(f"audit watch rule(s) not loaded: {', '.join(missing)}")
+    stored = _read_text(last_lost_path)
+    previous = int(stored) if stored is not None else None
+    increase = lost - previous if previous is not None and lost > previous else None
+    if increase is not None:
+        # Events were dropped since the last evaluation: hold red, then record
+        # the new counter so the hold (not the counter) carries the signal.
+        start_hold()
+    if previous != lost:
+        _write_durably(last_lost_path, f"{lost}\n")
+    return increase
+
+
 def cmd_audit(a) -> int:
     # systemd's StateDirectory= exports STATE_DIRECTORY; tests pass --state-dir.
     if not a.state_dir or not os.path.isdir(a.state_dir):
@@ -405,6 +460,7 @@ def cmd_audit(a) -> int:
     # anything fails before that (a crash, a full disk, a bug), the next run
     # reads the same window again: a repeated ALARM line, never a lost one.
     last_system = os.path.join(a.state_dir, "audit.last-system")
+    last_lost = os.path.join(a.state_dir, "audit.last-lost")
     target = _system_target(a.current_system)
     previous_target = _read_text(last_system)
     staged = checkpoint + ".next"
@@ -412,11 +468,12 @@ def cmd_audit(a) -> int:
         shutil.copyfile(checkpoint, staged)
     elif os.path.exists(staged):
         os.unlink(staged)  # left by a run that died before its first commit
+    def start_hold():
+        _write_durably(last_hit, f"{time.time():.0f}\n")
+
+    lost_increase = check_trail(a, last_lost, start_hold)
     raw = run_ausearch(a.ausearch, staged)
     now = time.time()
-
-    def start_hold():
-        _write_durably(last_hit, f"{now:.0f}\n")
 
     def commit_checkpoint():
         # The target is recorded with the window it was evaluated for, so a
@@ -447,6 +504,8 @@ def cmd_audit(a) -> int:
     if hits or bad:
         start_hold()
     commit_checkpoint()
+    if lost_increase:
+        raise RuntimeError(f"audit trail lost {lost_increase} event(s) since the last evaluation")
     if bad:
         raise ValueError(f"{len(bad)} unparseable line(s); first: {bad[0]}")
     # Stay red for a hold window after the last hit, then clear by itself.
@@ -491,6 +550,7 @@ def main(argv: list[str]) -> int:
     au = sub.add_parser("audit")
     au.add_argument("--ausearch", required=True)
     au.add_argument("--systemctl", required=True)
+    au.add_argument("--auditctl", required=True)
     au.add_argument("--require-active", action="append", default=[])
     au.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
     au.add_argument("--hold", type=int, required=True)

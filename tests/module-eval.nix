@@ -1235,7 +1235,7 @@ let
 
     # The two SOC alarms (modules/services/soc-vigil-alarms.nix) hold only as
     # RELATIONS: contract tinta == module stamp path, the evaluator's argv ==
-    # the facts it filters on (this generation's setup-etc.pl, soc-in-a-box's
+    # the facts it filters on (soc-in-a-box's
     # neverBan), and the absences (no OnFailure, no cmd grant, no pre-made
     # stamp). Each can break while every unit still evaluates and vigil still
     # reports something, so each is pinned here. The rules themselves are
@@ -1300,10 +1300,11 @@ let
             [ "soc-alarm-audit" "soc-alarm-bans" ];
           oneshotRoot = lib.all (svc: svc.serviceConfig.Type == "oneshot" && !(svc.serviceConfig ? User)) [ aSvc bSvc ];
 
-          # The audit evaluator needs no network and no capability; the ban
+          # The audit evaluator needs no network and one capability (CAP_AUDIT_CONTROL,
+          # for auditctl -s/-l); the ban
           # evaluator only loopback (LAPI) and one read capability.
           auditSandbox = (aSvc.serviceConfig.PrivateNetwork or false)
-            && aSvc.serviceConfig.CapabilityBoundingSet == [ "" ]
+            && aSvc.serviceConfig.CapabilityBoundingSet == [ "CAP_AUDIT_CONTROL" ]
             && aSvc.serviceConfig.ProtectSystem == "strict";
           bansSandbox = bSvc.serviceConfig.IPAddressDeny == "any"
             && bSvc.serviceConfig.IPAddressAllow == "localhost"

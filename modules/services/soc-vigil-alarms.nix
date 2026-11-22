@@ -165,6 +165,10 @@ in
           # script, not by requires=, which would START a stopped auditd.
           "--systemctl"
           "${config.systemd.package}/bin/systemctl"
+          # Trail health (auditctl -s / -l): auditing enabled, no events lost
+          # since the last run, and the agenix-secrets and sudoers watches loaded.
+          "--auditctl"
+          "${pkgs.audit}/bin/auditctl"
           "--require-active"
           "auditd.service"
           "--require-active"
@@ -177,10 +181,12 @@ in
         Environment = [
           "SANCTA_DOCTRINE_STAMP=${cfg.auditStampPath}"
         ];
-        # Reads /var/log/audit (root-owned, so owner bits suffice: no caps).
-        CapabilityBoundingSet = [ "" ];
+        # Reads /var/log/audit (root-owned, so owner bits suffice). The one
+        # capability is CAP_AUDIT_CONTROL: auditctl -s / -l query the kernel
+        # audit state over a netlink socket, hence AF_NETLINK.
+        CapabilityBoundingSet = [ "CAP_AUDIT_CONTROL" ];
         PrivateNetwork = true;
-        RestrictAddressFamilies = [ "AF_UNIX" ];
+        RestrictAddressFamilies = [ "AF_UNIX" "AF_NETLINK" ];
       };
     };
 
