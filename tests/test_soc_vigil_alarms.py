@@ -241,6 +241,28 @@ class AuditRule(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sva.audit_hits(ev)
 
+    def test_null_path_name_on_a_watched_key_is_bad(self):
+        for ev in (login_reads_agenix(), service_reads_agenix(),
+                   event(60, key="sudoers", auid="1000", exe=CAT, comm="x", path="/etc/sudoers", argv=["x"])):
+            for form in ("name=(null)", 'name="(null)"'):
+                import re
+                bad = re.sub(r'name="[^"]*"', form, ev, count=1)
+                self.assertEqual(len(self.scan_bad(bad)), 1, (form, ev[:40]))
+                with self.assertRaises(ValueError):
+                    sva.audit_hits(bad)
+
+    def test_null_path_name_on_an_unwatched_key_is_not_bad(self):
+        ev = event(61, key="identity", auid="1000", exe=CAT, comm="x", path="/etc/passwd", argv=["x"])
+        self.assertEqual(self.scan_bad(ev.replace('name="/etc/passwd"', "name=(null)")), [])
+
+    def test_a_named_path_next_to_a_null_one_still_reports_the_null(self):
+        ev = login_reads_agenix() + "\n" + (
+            'type=PATH msg=audit(1762790400.001:1): item=1 name=(null) inode=1 dev=00:1a mode=0')
+        self.assertEqual(len(self.scan_bad(ev)), 1)
+
+    def test_parse_events_is_gone(self):
+        self.assertFalse(hasattr(sva, "parse_events"))
+
     def test_path_without_a_syscall_in_the_event_is_bad(self):
         lines = login_reads_agenix().split("\n")
         orphan = "\n".join(l for l in lines if not l.startswith("type=SYSCALL"))

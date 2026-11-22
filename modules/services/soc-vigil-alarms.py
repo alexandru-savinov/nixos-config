@@ -124,23 +124,12 @@ def _unhex(value: str) -> str | None:
     return value
 
 
-def parse_events(raw_text: str) -> list[dict]:
-    """Group raw audit lines into events by (timestamp, serial), in order.
-
-    Fails CLOSED: a line that is neither a record nor an ausearch separator
-    raises ValueError. If the trail's format ever stops matching (a changed
-    header, a new prefix), parsing nothing would read as a clean window
-    forever; raising makes it an evaluator error instead (exit 2, red).
-    """
-    events, bad = scan_events(raw_text)
-    if bad:
-        raise ValueError(bad[0])
-    return events
-
-
 def scan_events(raw_text: str) -> tuple[list[dict], list[str]]:
-    """Like parse_events, but returns (events, unparseable-line notes) so a
-    single bad line cannot hide the good events around it."""
+    """Group raw audit lines into events by (timestamp, serial), in order.
+    Returns (events, unparseable-line notes) so a single bad line cannot hide
+    the good events around it. A line that is neither a record nor an ausearch
+    separator is a note, never silently dropped: if the trail's format ever
+    stops matching, parsing nothing would read as a clean window forever."""
     events: dict[tuple[str, str], dict] = {}
     bad: list[str] = []
     # split("\n"), NOT splitlines(): str.splitlines() also breaks on GS
@@ -207,7 +196,7 @@ def partition_hits(hits: list[dict], expected_change: bool) -> tuple[list[dict],
 
 def audit_hits(raw_text: str) -> list[dict]:
     """PURE. Apply THE AUDIT RULE (module docstring) to `ausearch --raw` text.
-    Raises ValueError on any unparseable line (see parse_events)."""
+    Raises ValueError on any unparseable or malformed record (see scan_events, audit_scan)."""
     hits, bad = audit_scan(raw_text)
     if bad:
         raise ValueError(bad[0])
@@ -231,6 +220,11 @@ def audit_scan(raw_text: str) -> tuple[list[dict], list[str]]:
         keys = _keys(syscall) & WATCHED_KEYS
         if not keys:
             continue
+        # A PATH whose name is (null) on a watched key says nothing about
+        # which file was touched: the rule cannot be applied, so it is an error.
+        if any(t == "PATH" and "name" in f and _unhex(f["name"]) in (None, "(null)")
+               for t, f in ev["records"]):
+            bad.append(f"{where}: PATH record with name (null) on a watched key")
         auid = syscall.get("auid")
         # A watched SYSCALL record without auid is malformed beyond anything
         # this rule was written for: fire rather than guess it was routine.
