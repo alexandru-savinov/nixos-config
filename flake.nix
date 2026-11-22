@@ -362,6 +362,24 @@
             directories = [ ./hosts/rpi5-full/vigil-contracts ];
           };
 
+          # Runs pkgs/vigil/schema.test.mjs's soc-audit label test against the
+          # real host contract (skipped inside the vigil package build, where
+          # the host directory is not in the source). Fails unless exactly
+          # that test ran and passed.
+          vigil-soc-audit-label = pkgs.runCommand "vigil-soc-audit-label"
+            { nativeBuildInputs = [ pkgs.nodejs ]; }
+            ''
+              cp -r ${./pkgs/vigil} src
+              chmod -R u+w src
+              export VIGIL_SOC_AUDIT_CONTRACT=${./hosts/sancta-choir/vigil-contracts/soc-audit.toml}
+              node --test --test-reporter=tap --test-name-pattern 'soc-audit tile' src/schema.test.mjs > log 2>&1 || { cat log; exit 1; }
+              cat log
+              grep -q '^# pass 1$' log
+              grep -q '^# skipped 0$' log
+              grep -q '^# fail 0$' log
+              cp log "$out"
+            '';
+
           vigil-public-contracts-choir = import ./pkgs/vigil-public-contracts.nix {
             inherit pkgs;
             vigil = self.packages.x86_64-linux.vigil;
