@@ -1522,6 +1522,48 @@ class StampScript(unittest.TestCase):
         self.assertFalse(os.path.exists(self.stamp))
 
 
+# Captured verbatim from sancta-choir (gen 57, 2026-11-22). Real kernel/auditctl
+# output, not hand-built, so the comparison is tested against the true format.
+CHOIR_AUDITCTL_L = """\
+-w /run/agenix.d -p rwa -k agenix-secrets
+-w /etc/sudoers -p wa -k sudoers
+-w /etc/ssh/sshd_config -p wa -k sshd-config
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=-1 -F key=root-exec
+-a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=-1 -F key=root-exec
+"""
+CHOIR_AUDITCTL_S = """\
+enabled 1
+failure 1
+pid 299788
+rate_limit 200
+backlog_limit 8192
+lost 2140
+backlog 0
+backlog_wait_time 60000
+backlog_wait_time_actual 0
+loginuid_immutable 0 unlocked
+"""
+
+
+class RealChoirAuditctl(unittest.TestCase):
+    """The pure parsers against real output captured on the host."""
+
+    def test_the_rendered_expected_watches_match_the_real_listing(self):
+        loaded = sva.loaded_rules(CHOIR_AUDITCTL_L)
+        for spec in ("/run/agenix.d:rwa:agenix-secrets", "/etc/sudoers:wa:sudoers"):
+            self.assertTrue(sva.expected_rule_lines(spec) & loaded, spec)
+
+    def test_a_narrowed_real_rule_does_not_match(self):
+        narrowed = CHOIR_AUDITCTL_L.replace("-w /etc/sudoers -p wa -k sudoers", "-w /etc/sudoers -p w -k sudoers")
+        self.assertFalse(sva.expected_rule_lines("/etc/sudoers:wa:sudoers") & sva.loaded_rules(narrowed))
+
+    def test_the_real_status_parses(self):
+        self.assertEqual(sva.audit_status(CHOIR_AUDITCTL_S), (1, 2140, 299788))
+
+
 class BansStampScript(unittest.TestCase):
     """modules/services/soc-bans-stamp.sh: two mtimes from one exit status."""
 
