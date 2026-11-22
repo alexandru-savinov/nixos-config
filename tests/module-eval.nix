@@ -2499,6 +2499,81 @@ let
       ];
     };
 
+    # ── sancta-choir: named admin + agent accounts over OpenSSH (tailnet) ──
+    # A test-only override supplies dummy keys; the shipped default is empty.
+    sancta-choir-ssh-admin-accounts =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        failed = nixpkgs.lib.filter (c: !c.ok) [
+          { ok = cfg.users.users.alexandru.isNormalUser; what = "alexandru is a normal user"; }
+          { ok = cfg.users.users.alexandru.extraGroups == [ "wheel" ]; what = "alexandru is in wheel only"; }
+          { ok = cfg.users.users.agent.isNormalUser; what = "agent is a normal user"; }
+          { ok = cfg.users.users.agent.extraGroups == [ ]; what = "agent has no extra groups"; }
+          {
+            ok = !(builtins.any (r: builtins.elem "agent" (r.users or [ ])) cfg.security.sudo.extraRules);
+            what = "agent has no sudo rule";
+          }
+          {
+            ok = builtins.any (r: r.users or [ ] == [ "alexandru" ]) cfg.security.sudo.extraRules;
+            what = "alexandru has its scoped sudo rule";
+          }
+          { ok = cfg.sancta-choir.adminKeys.owner == [ ] && cfg.sancta-choir.adminKeys.agent == [ ]; what = "shipped key lists are empty"; }
+        ];
+      in
+      if failed == [ ] then true
+      else builtins.throw "FAIL: sancta-choir ssh admin accounts — failed checks: ${builtins.toJSON (map (c: c.what) failed)}";
+
+    sancta-choir-ssh-admin-from-restriction =
+      let
+        cfg =
+          (self.nixosConfigurations.sancta-choir.extendModules {
+            modules = [
+              {
+                sancta-choir.adminKeys.owner = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM owner-test" ];
+                sancta-choir.adminKeys.agent = [ "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAADUMMY agent-test" ];
+              }
+            ];
+          }).config;
+        want = "from=\"100.64.0.0/10,fd7a:115c:a1e0::/48\" ";
+        rendered = cfg.users.users.alexandru.openssh.authorizedKeys.keys ++ cfg.users.users.agent.openssh.authorizedKeys.keys;
+      in
+      if builtins.length rendered == 2 && nixpkgs.lib.all (k: nixpkgs.lib.hasPrefix want k) rendered then true
+      else builtins.throw "FAIL: sancta-choir admin keys missing from= restriction — rendered: ${builtins.toJSON rendered}";
+
+    sancta-choir-ssh-admin-option-key-rejected = shouldFail "sancta-choir: key already carrying options rejected" {
+      modules = [
+        ../hosts/sancta-choir/ssh-admin.nix
+        {
+          sancta-choir.adminKeys.owner = [ "command=\"/bin/sh\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM evil" ];
+        }
+      ];
+    };
+
+    sancta-choir-ssh-admin-listener =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        extra = nixpkgs.lib.trim cfg.services.openssh.extraConfig;
+        failed = nixpkgs.lib.filter (c: !c.ok) [
+          { ok = !(builtins.elem 2222 cfg.networking.firewall.allowedTCPPorts); what = "2222 not in public allowedTCPPorts"; }
+          { ok = cfg.networking.firewall.allowedTCPPorts == [ 22 ]; what = "allowedTCPPorts unchanged"; }
+          { ok = cfg.services.openssh.ports == [ 22 ]; what = "sshd ports unchanged (22)"; }
+          { ok = cfg.networking.firewall.interfaces ? "eth0" -> !(builtins.elem 2222 cfg.networking.firewall.interfaces.eth0.allowedTCPPorts); what = "2222 not opened on eth0"; }
+          { ok = builtins.elem "tailscale0" cfg.networking.firewall.trustedInterfaces; what = "tailscale0 is trusted"; }
+          { ok = cfg.services.openssh.settings.KbdInteractiveAuthentication == false; what = "KbdInteractiveAuthentication false"; }
+          { ok = cfg.services.openssh.settings.LogLevel == "VERBOSE"; what = "LogLevel VERBOSE"; }
+          { ok = nixpkgs.lib.hasInfix "\nPort 2222\n" "\n${cfg.services.openssh.extraConfig}"; what = "Port 2222 declared"; }
+          # Match must be the last thing in the file and restrict 2222.
+          {
+            ok = nixpkgs.lib.hasSuffix "Match LocalPort 2222\n  AllowUsers alexandru agent\n  PermitRootLogin no" extra;
+            what = "trailing Match LocalPort 2222 block allows only alexandru+agent, no root";
+          }
+          { ok = cfg.services.openssh.settings.PermitRootLogin == "prohibit-password"; what = "port-22 root policy unchanged"; }
+          { ok = builtins.elem "--ssh" cfg.services.tailscale.extraUpFlags; what = "Tailscale SSH still enabled"; }
+        ];
+      in
+      if failed == [ ] then true
+      else builtins.throw "FAIL: sancta-choir ssh listener — failed checks: ${builtins.toJSON (map (c: c.what) failed)}";
+
   };
 
   # ── Build the check derivation ──────────────────────────────────
