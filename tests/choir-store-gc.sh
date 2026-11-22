@@ -19,7 +19,8 @@ printf '#!/bin/sh\necho "$@" > "%s/nixenv.args"\n' "$W" > "$W/bin/nix-env"
 printf '#!/bin/sh\necho ran > "%s/gc.ran"\n' "$W" > "$W/bin/gc"
 chmod +x "$W/bin/nix-env" "$W/bin/gc"
 
-run() { env KEEP=10 PROFILE="$P/system" BOOTED_SYSTEM="$W/booted" NIX_ENV="$W/bin/nix-env" NIX_GC="$W/bin/gc" bash "$GC" 2>&1; }
+ln -s "$W/store/sys-20" "$W/running"
+run() { env KEEP=10 PROFILE="$P/system" BOOTED_SYSTEM="$W/booted" CURRENT_SYSTEM="$W/running" NIX_ENV="$W/bin/nix-env" NIX_GC="$W/bin/gc" bash "$GC" 2>&1; }
 
 out=$(run); sed 's/^/    /' <<<"$out" | grep -E "kept set|delete set|booted"
 args=$(cat "$W/nixenv.args")
@@ -34,6 +35,12 @@ ln -sfn system-3-link "$P/system"; : > "$W/nixenv.args"
 out=$(run); args=$(cat "$W/nixenv.args")
 case " $args " in *" 3 "*) bad "current gen 3 deleted" ;; *) ok "current gen survives" ;; esac
 ln -sfn system-20-link "$P/system"
+
+# the RUNNING system (/run/current-system) differs from the profile, e.g. after a manual rollback: it is protected too
+ln -sfn "$W/store/sys-2" "$W/running"; : > "$W/nixenv.args"
+out=$(run); args=$(cat "$W/nixenv.args")
+case " $args " in *" 2 "*) bad "running gen 2 deleted" ;; *) ok "running gen (not the profile) survives" ;; esac
+ln -sfn "$W/store/sys-20" "$W/running"
 
 # booted system unresolvable => fail closed
 find "$W/nixenv.args" "$W/gc.ran" -delete; ln -sfn "$W/store/gone" "$W/booted"
