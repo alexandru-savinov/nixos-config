@@ -18,6 +18,7 @@ import stat
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.environ.get(
@@ -345,6 +346,116 @@ def council_hits(*events):
     return classify(*events)
 
 
+ALEX = "1000"
+ADMINS = {"alexandru": ALEX, "agent": "1001"}
+
+
+def root_exec(serial, auid, key="root-exec", argv=("sudo", "-n", "id")):
+    """What the root-exec rule logs: execve with euid 0 under a login's auid.
+    Hand-built like the other fixtures, not captured from choir."""
+    stamp = f"msg=audit(1762790500.{serial % 1000:03d}:{serial})"
+    # Several keys arrive hex-encoded and unquoted, as in event() above.
+    keyf = key if key == "(null)" or all(c in "0123456789ABCDEF" for c in key) else f'"{key}"'
+    return "\n".join([
+        f"type=SYSCALL {stamp}: arch=c000003e syscall=59 success=yes exit=0 a0=55d0c2 a1=55d0d2 "
+        f"a2=55d0e2 a3=7ffd items=2 ppid=2201 pid={4000 + serial} auid={auid} uid=0 gid=0 euid=0 "
+        f'suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=4 comm="id" exe="{ID}" '
+        f"subj=unconfined key={keyf}",
+        f'type=EXECVE {stamp}: argc=1 a0="id"',
+        f"type=PROCTITLE {stamp}: proctitle={hexargv(*argv)}",
+    ])
+
+
+ID = f"/nix/store/{H}-coreutils-9.8/bin/id"
+SSHD = f"/nix/store/{'s' * 32}-openssh-10.0p1/bin/sshd"
+
+
+def pam_record(serial, rtype, *, res="success", acct=None, ident=None, auid=ALEX, extra=""):
+    stamp = f"msg=audit(1762790600.{serial % 1000:03d}:{serial})"
+    who = f'acct="{acct}" ' if acct else ""
+    idf = f"id={ident} " if ident else ""
+    return (f"type={rtype} {stamp}: pid={5000 + serial} uid=0 auid={auid} ses=3 "
+            f"subj=unconfined msg='op=login {idf}{who}exe=\"{SSHD}\" hostname=? "
+            f"addr=100.64.0.7 terminal=ssh res={res}'\x1dUID=\"root\" AUID=\"alexandru\"{extra}")
+
+
+class NamedAccountRule(unittest.TestCase):
+    def hits(self, *events, admins=ADMINS):
+        return sva.audit_hits("\n----\n".join(events) + "\n", admins)
+
+    # ── root-exec ──
+    def test_root_exec_by_named_account_fires(self):
+        hits = self.hits(root_exec(10, ALEX))
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["kind"], "admin-root-exec")
+        self.assertEqual(hits[0]["account"], "alexandru")
+        self.assertEqual(hits[0]["exe"], ID)
+        self.assertEqual(hits[0]["comm"], "id")
+        self.assertEqual(hits[0]["proctitle"], "sudo -n id")
+
+    def test_root_exec_by_other_uid_is_not_a_hit(self):
+        self.assertEqual(self.hits(root_exec(11, "993")), [])
+
+    def test_root_exec_with_unset_auid_is_not_a_hit(self):
+        self.assertEqual(self.hits(root_exec(12, UNSET)), [])
+
+    def test_other_key_by_named_uid_is_not_a_root_exec_hit(self):
+        self.assertEqual(self.hits(root_exec(13, ALEX, key="other")), [])
+
+    def test_multi_key_event_with_root_exec_fires(self):
+        keys = "\x01".join(["other", "root-exec"]).encode().hex().upper()
+        hits = self.hits(root_exec(14, ALEX, key=keys))
+        self.assertEqual([h.get("kind") for h in hits], ["admin-root-exec"])
+
+    # ── sessions ──
+    def test_successful_login_by_acct_fires(self):
+        hits = self.hits(pam_record(20, "USER_LOGIN", acct="alexandru"))
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["kind"], "admin-session")
+        self.assertEqual(hits[0]["account"], "alexandru")
+        self.assertEqual(hits[0]["addr"], "100.64.0.7")
+        self.assertEqual(hits[0]["terminal"], "ssh")
+
+    def test_successful_login_by_id_fires(self):
+        # sshd's success form: id=<uid>, no acct=.
+        self.assertEqual(len(self.hits(pam_record(21, "USER_LOGIN", ident="1001", auid="1001"))), 1)
+
+    def test_user_start_fires_and_agent_counts(self):
+        hits = self.hits(pam_record(22, "USER_START", acct="agent", auid="1001"))
+        self.assertEqual([(h["kind"], h["account"]) for h in hits], [("admin-session", "agent")])
+
+    def test_failed_login_is_not_a_hit(self):
+        self.assertEqual(self.hits(pam_record(23, "USER_LOGIN", acct="alexandru", res="failed")), [])
+
+    def test_login_by_other_account_is_not_a_hit(self):
+        self.assertEqual(self.hits(pam_record(24, "USER_LOGIN", acct="www-data", auid="33")), [])
+
+    def test_sudo_session_for_root_is_not_a_session_hit(self):
+        self.assertEqual(self.hits(pam_record(25, "USER_START", acct="root", auid=ALEX)), [])
+
+    def test_other_pam_types_are_ignored(self):
+        self.assertEqual(self.hits(pam_record(26, "USER_AUTH", acct="alexandru")), [])
+
+    def test_session_record_without_res_is_malformed(self):
+        rec = pam_record(27, "USER_LOGIN", acct="alexandru").replace(" res=success", "")
+        with self.assertRaises(ValueError):
+            self.hits(rec)
+
+    def test_empty_account_map_is_inert(self):
+        evs = (root_exec(30, ALEX), pam_record(31, "USER_LOGIN", acct="alexandru"))
+        self.assertEqual(self.hits(*evs, admins={}), [])
+        self.assertEqual(sva.audit_hits("\n----\n".join(evs) + "\n"), [])
+
+    def test_failed_login_logs_a_notice(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.hits(pam_record(32, "USER_LOGIN", acct="alexandru", res="failed"))
+        self.assertIn("NOTICE audit", out.getvalue())
+        self.assertIn("alexandru", out.getvalue())
+
+
 class CouncilKeyRead(unittest.TestCase):
     # Intentional behaviour change: these were the silent arms of rule 4.
     def test_council_key_read_via_symlinked_path_fires(self):
@@ -631,7 +742,7 @@ class Runners(unittest.TestCase):
             'esac\n'
         ))
 
-    def audit(self, ausearch, hold=900, systemctl_exit=0, inactive=()):
+    def audit(self, ausearch, hold=900, systemctl_exit=0, inactive=(), named=()):
         # Behaves like the real one: with several units it exits 0 if ANY is
         # active, so a gate that asks about both at once is caught below.
         dead = " ".join(inactive)
@@ -645,7 +756,8 @@ class Runners(unittest.TestCase):
         return self.stamp_like_execstoppost(
             sva.main(["audit", "--ausearch", ausearch, "--systemctl", systemctl,
                       "--require-active", "auditd.service", "--require-active", "audit-rules-nixos.service",
-                      "--state-dir", self.sd, "--hold", str(hold)] + self.injected()))
+                      "--state-dir", self.sd, "--hold", str(hold)]
+                      + [x for n in named for x in ("--named-account", n)] + self.injected()))
 
     def test_quiet_window_with_dead_trail_is_error(self):
         # auditd stopped / rules unloaded: ausearch is just as silent, so the
@@ -1485,6 +1597,45 @@ class Runners(unittest.TestCase):
         self.assertEqual(self.bans("exit 0\n", f"cat <<'E'\n{status}E\n"), 2)
         self.assertEqual(self.bans("echo '[{}]'\n", f"cat <<'E'\n{status}E\n"), 2)
         self.assertEqual(self.bans("echo '[]'\n", f"cat <<'E'\n{status}E\n"), 0)
+
+
+    # ── named accounts, end to end ──
+    def passwd(self, table):
+        def getpwnam(name):
+            if name not in table:
+                raise KeyError(name)
+            return mock.Mock(pw_uid=table[name])
+        return mock.patch.object(sva.pwd, "getpwnam", getpwnam)
+
+    def test_named_account_session_is_an_alarm_and_red(self):
+        a = self.ausearch(self.fixture_cmd(pam_record(40, "USER_LOGIN", acct="alexandru") + "\n"))
+        with self.passwd({"alexandru": 1000}):
+            self.assertEqual(self.audit(a, named=["alexandru"]), 1)
+
+    def test_named_account_root_exec_is_an_alarm_and_red(self):
+        a = self.ausearch(self.fixture_cmd(root_exec(41, ALEX) + "\n"))
+        with self.passwd({"alexandru": 1000}):
+            self.assertEqual(self.audit(a, named=["alexandru"]), 1)
+
+    def test_unresolvable_named_account_is_an_evaluator_error(self):
+        with self.passwd({}):
+            self.assertEqual(self.audit(self.ausearch(QUIET), named=["alexandru"]), 2)
+        self.assertFalse(os.path.exists(self.log), "ausearch must not run before the names resolve")
+
+    def test_empty_named_accounts_leaves_the_rule_inert(self):
+        a = self.ausearch(self.fixture_cmd(pam_record(42, "USER_LOGIN", acct="alexandru") + "\n"
+                                           + root_exec(43, ALEX) + "\n"))
+        with self.passwd({}):  # nothing may even be looked up
+            self.assertEqual(self.audit(a), 0)
+
+    def test_hit_is_logged_before_the_checkpoint_commits(self):
+        # Same fail-closed order as every other hit: a failing ausearch next
+        # to a session record leaves the window unconsumed.
+        a = self.ausearch(self.fixture_cmd(pam_record(44, "USER_LOGIN", acct="alexandru") + "\n")
+                          .rstrip("\n") + "\necho boom >&2\nexit 1\n")
+        with self.passwd({"alexandru": 1000}):
+            self.assertEqual(self.audit(a, named=["alexandru"]), 2)
+        self.assertFalse(os.path.exists(self.cp))
 
 
 class StampScript(unittest.TestCase):

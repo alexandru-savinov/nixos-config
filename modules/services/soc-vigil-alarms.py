@@ -46,6 +46,26 @@ THE AUDIT RULE (exact):
        own read of jev-openrouter-key; there is no per-key exemption.
   Everything else in the audit log is ignored here.
 
+THE NAMED-ACCOUNT RULE (opt-in: --named-account NAME, repeatable; none = off):
+  For each named account (uid resolved by pwd.getpwnam at the start of every
+  run; a name that does not resolve is an evaluator error), a hit fires on
+    - kind "admin-root-exec": any event whose SYSCALL carries key `root-exec`
+      (euid 0 execve from a login, soc-in-a-box) and whose auid is the
+      account's uid. Logs exe, comm and the decoded proctitle.
+    - kind "admin-session": a USER_LOGIN or USER_START record (what sshd and
+      PAM write) for the account with res=success: acct="NAME", or id=<uid>
+      (sshd's USER_LOGIN success form carries id= rather than acct=), or, for
+      USER_LOGIN only, auid=<uid>. Logs addr, hostname, terminal, exe. A
+      USER_START whose acct is another user (sudo opening root's session) is
+      not a session of the account; the sudo is the root-exec above.
+      One ssh login normally yields both record types, so two hits.
+  A matching record with res=failed is NOT a hit: it logs a NOTICE line only
+  (wrong passwords and scanners make failures noisy; the sshd/fail2ban side
+  already counts them). A matching record with no res is malformed: error.
+  No extra ausearch is needed: run_ausearch has no -k and reads every record
+  type since the checkpoint, so these records are already in the window and
+  share its checkpoint, staging and commit-after-log properties.
+
 EVALUATOR ERRORS (exit 2) on the audit side, besides unparseable lines:
   auditctl -s/-l unhealthy (see check_trail); ausearch exit 1 with stdout,
   exit 0 with stderr, or any other failure (the window is read again, not
@@ -76,6 +96,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import pwd
 import re
 import shutil
 import subprocess
@@ -94,6 +115,8 @@ _FIELD = re.compile(r'([A-Za-z0-9_-]+)=("[^"]*"|\S+)')
 # What every SYSCALL record must carry for the rules to read it. auid is not
 # here: a watched SYSCALL without auid is an existing hit (audit_scan).
 _SYSCALL_REQUIRED = ("arch", "syscall", "success", "exe", "key")
+_INNER = re.compile(r"msg='(.*)'")
+_SESSION_TYPES = frozenset({"USER_LOGIN", "USER_START"})
 _HEX = re.compile(r"^(?:[0-9A-Fa-f]{2})+$")
 
 
@@ -103,7 +126,15 @@ def _fields(body: str) -> dict:
     # ENRICHED log_format appends interpreted fields after a GS (0x1d)
     # separator. Only the kernel's raw half is trusted here.
     raw = body.split("\x1d", 1)[0]
-    return {m.group(1): m.group(2) for m in _FIELD.finditer(raw)}
+    out = {m.group(1): m.group(2) for m in _FIELD.finditer(raw)}
+    # User-space records (USER_LOGIN, USER_START, ...) wrap their payload in
+    # msg='op=... res=success'. Lift those fields; top-level ones win.
+    inner = _INNER.search(raw)
+    if inner:
+        for m in _FIELD.finditer(inner.group(1)):
+            out.setdefault(m.group(1), m.group(2))
+        out["msg"] = inner.group(1)
+    return out
 
 
 def _unhex(value: str) -> str | None:
@@ -163,17 +194,65 @@ def _paths(event: dict) -> list[str]:
 
 
 
-def audit_hits(raw_text: str) -> list[dict]:
+def _admin_scan(events: list[dict], admins: dict[str, str]) -> tuple[list[dict], list[str], list[str]]:
+    """PURE. THE NAMED-ACCOUNT RULE over parsed events. admins: name -> uid
+    (as a string). Returns (hits, bad lines, notices)."""
+    by_uid = {uid: name for name, uid in admins.items()}
+    hits: list[dict] = []
+    bad: list[str] = []
+    notices: list[str] = []
+    for ev in events:
+        where = f"event {ev['ts']}:{ev['serial']}"
+        base = {"ts": ev["ts"], "serial": ev["serial"]}
+        syscall = next((f for t, f in ev["records"] if t == "SYSCALL"), None)
+        if syscall is not None and "root-exec" in _keys(syscall) and syscall.get("auid") in by_uid:
+            title = next((f.get("proctitle") for t, f in ev["records"] if t == "PROCTITLE"), None)
+            decoded = _unhex(title) if title else None
+            hits.append({**base, "kind": "admin-root-exec", "account": by_uid[syscall["auid"]],
+                         "auid": syscall["auid"], "keys": ["root-exec"],
+                         "exe": _unhex(syscall.get("exe", "")) or "?",
+                         "comm": _unhex(syscall.get("comm", "")) or "?",
+                         "proctitle": (decoded or "?").replace("\x00", " ")})
+        for rtype, f in ev["records"]:
+            if rtype not in _SESSION_TYPES:
+                continue
+            acct = _unhex(f["acct"]) if "acct" in f else None
+            who = None
+            if acct in admins:
+                who = acct
+            elif f.get("id") in by_uid:
+                who = by_uid[f["id"]]
+            elif rtype == "USER_LOGIN" and f.get("auid") in by_uid:
+                who = by_uid[f["auid"]]
+            if who is None:
+                continue
+            res = f.get("res", "").strip("'\"")
+            if res in ("success", "1"):
+                hits.append({**base, "kind": "admin-session", "account": who, "record": rtype,
+                             "auid": f.get("auid"),
+                             "addr": f.get("addr"), "hostname": f.get("hostname"),
+                             "terminal": f.get("terminal"),
+                             "exe": _unhex(f.get("exe", "")) or "?", "keys": []})
+            elif res in ("failed", "0"):
+                notices.append(f"{where}: failed {rtype} for {who} addr={f.get('addr')} "
+                               f"terminal={f.get('terminal')}")
+            else:
+                bad.append(f"{where}: {rtype} for {who} without a usable res")
+    return hits, bad, notices
+
+
+def audit_hits(raw_text: str, admins: dict[str, str] | None = None) -> list[dict]:
     """PURE. Apply THE AUDIT RULE (module docstring) to `ausearch --raw` text.
     Raises ValueError on any unparseable or malformed record (see scan_events, audit_scan)."""
-    hits, bad = audit_scan(raw_text)
+    hits, bad = audit_scan(raw_text, admins)
     if bad:
         raise ValueError(bad[0])
     return hits
 
 
-def audit_scan(raw_text: str) -> tuple[list[dict], list[str]]:
-    """PURE. THE AUDIT RULE over every parseable event, plus the bad lines."""
+def audit_scan(raw_text: str, admins: dict[str, str] | None = None) -> tuple[list[dict], list[str]]:
+    """PURE. THE AUDIT RULE over every parseable event, plus the bad lines.
+    `admins` (name -> uid) adds the named-account rule; None or empty = off."""
     events, bad = scan_events(raw_text)
     hits = []
     for ev in events:
@@ -224,6 +303,12 @@ def audit_scan(raw_text: str) -> tuple[list[dict], list[str]]:
             "exe": _unhex(syscall.get("exe", "")) or "?",
             "paths": _paths(ev),
         })
+    if admins:
+        a_hits, a_bad, notices = _admin_scan(events, admins)
+        hits += a_hits
+        bad += a_bad
+        for n in notices:
+            _log("NOTICE audit " + n)
     return hits, bad
 
 
@@ -610,6 +695,14 @@ def cmd_audit(a) -> int:
     # systemd's StateDirectory= exports STATE_DIRECTORY; tests pass --state-dir.
     if not a.state_dir or not os.path.isdir(a.state_dir):
         raise RuntimeError("no state directory (set --state-dir or STATE_DIRECTORY)")
+    # Resolved first, every run: a name that does not resolve is an evaluator
+    # error (KeyError -> exit 2), never a silently inert rule.
+    admins = {}
+    for name in dict.fromkeys(a.named_account):
+        try:
+            admins[name] = str(pwd.getpwnam(name).pw_uid)
+        except KeyError:
+            raise RuntimeError(f"named account {name!r} does not resolve (getpwnam)") from None
     checkpoint = os.path.join(a.state_dir, "audit.checkpoint")
     last_hit = os.path.join(a.state_dir, "audit.last-hit")
     # A quiet window is only evidence when the trail can record. auditd down,
@@ -676,7 +769,7 @@ def cmd_audit(a) -> int:
             _fsync_dir(a.state_dir)
 
     try:
-        hits, bad = audit_scan(raw)
+        hits, bad = audit_scan(raw, admins)
         if any("sudoers" in h["keys"] for h in hits):
             context = sudoers_context(a)
             for h in hits:
@@ -813,6 +906,9 @@ def main(argv: list[str]) -> int:
     au.add_argument("--deploy-flag", default="/run/deploy-deadman-armed")
     # The timer runs every 5 minutes; more than this since the last evaluation
     # means events may have gone unread (reboot, stopped timer, long outage).
+    # Accounts whose root execs and login sessions are hits (NAMED-ACCOUNT
+    # RULE); none given = rule off.
+    au.add_argument("--named-account", action="append", default=[])
     au.add_argument("--max-gap", type=int, default=600)
     au.add_argument("--require-active", action="append", default=[])
     au.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))

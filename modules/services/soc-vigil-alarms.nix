@@ -181,6 +181,23 @@ in
       };
     };
 
+    namedAccounts = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "alexandru" "agent" ];
+      description = ''
+        User names whose activity the audit evaluator reports as soc-audit
+        hits: every root exec by the account (audit key root-exec, matched on
+        the login uid) and every successful login session (USER_LOGIN or
+        USER_START records). Names, not uids: the evaluator resolves them with
+        getpwnam on every run, and a name that does not resolve is an
+        evaluator error. Empty (the default) turns the rule off. Report-only
+        like the rest of soc-audit while paging.audit is false. The change
+        that adds the named OpenSSH accounts (PR #664) sets this to
+        [ "alexandru" "agent" ].
+      '';
+    };
+
     auditHold = mkOption {
       type = types.ints.between 600 3600;
       default = 900;
@@ -273,7 +290,8 @@ in
           (toString (cfg.auditDisk.failGiB * 1073741824))
           "--inode-fail-percent"
           (toString cfg.auditDisk.inodeFailPercent)
-        ] ++ lib.concatMap (w: [ "--expect-watch" w ]) expectedWatches);
+        ] ++ lib.concatMap (w: [ "--expect-watch" w ]) expectedWatches
+        ++ lib.concatMap (n: [ "--named-account" n ]) cfg.namedAccounts);
         # The checkpoint and last-hit files live in $STATE_DIRECTORY (set by
         # StateDirectory=), so no off-store path appears in ExecStart.
         Environment = [
