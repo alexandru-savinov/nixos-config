@@ -430,6 +430,10 @@
   # or CrowdSec decision on a tailnet/LAN address). The exact rules are in
   # modules/services/soc-vigil-alarms.py; nothing here notifies anyone else.
   services.soc-vigil-alarms.enable = true;
+  # Every root exec and every login session of the named OpenSSH accounts
+  # (hosts/sancta-choir/ssh-admin.nix) is a soc-audit hit, report-only like
+  # the rest of soc-audit.
+  services.soc-vigil-alarms.namedAccounts = [ "alexandru" "agent" ];
 
   # Named owner account for OpenSSH on the tailnet (hosts/sancta-choir/ssh-admin.nix).
   # A hardware-backed key (Secure Enclave, touch required by default):

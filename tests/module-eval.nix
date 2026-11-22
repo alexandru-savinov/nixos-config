@@ -2558,6 +2558,22 @@ let
       then true
       else builtins.throw "FAIL: sancta-choir owner key: ${builtins.toJSON owner} agent: ${builtins.toJSON agent}";
 
+    # The named OpenSSH accounts are watched by soc-audit from the same deploy
+    # that creates them (rendered as --named-account args).
+    sancta-choir-ssh-admin-accounts-watched =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        argv = cfg.systemd.services.soc-alarm-audit.serviceConfig.ExecStart;
+      in
+      if cfg.services.soc-vigil-alarms.namedAccounts == [ "alexandru" "agent" ]
+        && nixpkgs.lib.hasInfix "--named-account alexandru" argv
+        && nixpkgs.lib.hasInfix "--named-account agent" argv
+        # NOPASSWD condition (advisor): the owner account runs nothing long-lived.
+        && !(cfg.users.users.alexandru.linger or false)
+        && !(cfg.users.users.agent.linger or false)
+      then true
+      else builtins.throw "FAIL: sancta-choir named accounts not watched by soc-audit";
+
     sancta-choir-ssh-admin-multiline-key-rejected = shouldFail "sancta-choir: a key string carrying a second line rejected" {
       modules = [
         ../hosts/sancta-choir/ssh-admin.nix
