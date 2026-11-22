@@ -15,26 +15,33 @@
 # token must arrive TOGETHER or not at all, and a refused page must never
 # replace a served one. Hence:
 #
-#   1. soc.mjs writes into a private stage directory INSIDE the out dir. It
-#      writes two pages there: soc.html and soc-decide.html, which soc.html
-#      links to. Why inside, although that is the served tree:
+#   1. soc.mjs writes into a private WORK directory OUTSIDE the out dir (under
+#      $TMPDIR, which the unit's PrivateTmp makes a per-run /tmp). Nothing
+#      ungated is ever written under the gallery tree: the soul mirror archives
+#      index/ recursively as the same user and a stage inside the gallery would
+#      let unreviewed bytes reach the archive.
+#      It writes two pages there: soc.html and soc-decide.html, which soc.html
+#      links to.
+#   2. publish.mjs gates each page in the work dir; its token names only the
+#      basename and the sha256, so a token is valid after the copy.
+#   3. Any non-zero exit (generator fails closed on a broken repo read, gate
+#      FAIL (1) or gate CLOSED (2)) exits with that code before step 4: the
+#      previous pages and tokens are untouched, the work dir is removed, the
+#      unit goes red.
+#   4. Only when BOTH pages passed: copy pages and tokens into a gate-passed
+#      stage directory INSIDE the out dir, verify each copy's sha256 equals the
+#      gated sha256 in its token, then rename page, then token, for each.
+#      Why the final stage is inside the out dir:
 #        - rename(2) must stay on ONE MOUNT, not merely one filesystem. The
 #          unit's ReadWritePaths bind-mounts gallery/ on its own; a stage in
 #          index/ would sit on a different (read-only) mount point, and
-#          rename(2) across mount points fails EXDEV even when the same
-#          filesystem is mounted at both (rename(2), ERRORS).
-#        - The stage is never servable, gated or not: gallery/link-rule.mjs
-#          cleanPath() refuses any dot-led path segment with 404 before the
-#          .passed rule is even consulted. Probed live on choir 2026-11-10:
-#          /.soc-stage.probe/soc.html answered 404 both before and after a
-#          PASS token was written beside it.
-#   2. publish.mjs gates each staged page; its token names only the basename
-#      and the sha256, so a token written in the stage is valid after the move.
-#   3. Any non-zero exit — generator (fails closed on a broken repo read),
-#      gate FAIL (1) or gate CLOSED (2) — exits with that code before step 4:
-#      the previous pages and tokens are untouched, the stage is removed, the
-#      unit goes red.
-#   4. Only when BOTH pages passed: rename page, then token, for each.
+#          rename(2) across mount points fails EXDEV (rename(2), ERRORS), as
+#          would one from the private /tmp.
+#        - It holds only bytes that already passed the gate. It is also never
+#          servable: gallery/link-rule.mjs cleanPath() refuses any dot-led
+#          path segment with 404 before the .passed rule is consulted (probed
+#          live on choir 2026-11-10). The soul mirror additionally excludes
+#          index/gallery/.soc-stage.* so an orphan is never archived.
 #
 # Between the two renames of one page, bytes and token disagree for a moment;
 # the gallery then answers 404 for that page — dark, never unpassed bytes. A
@@ -67,14 +74,15 @@ flock -w 300 9 || {
 # accumulate in the served tree either.
 rm -rf -- "$out_dir"/.soc-stage.*
 
-stage="$(mktemp -d "$out_dir/.soc-stage.XXXXXX")"
-trap 'rm -rf -- "$stage"' EXIT
+work="$(mktemp -d "${TMPDIR:-/tmp}/soc-work.XXXXXX")"
+stage=""
+trap 'rm -rf -- "$work" ${stage:+"$stage"}' EXIT
 
 cd "$index"
-node gallery/soc.mjs --out "$stage/soc.html"
+node gallery/soc.mjs --out "$work/soc.html"
 
 for p in "${pages[@]}"; do
-  [ -s "$stage/$p" ] || {
+  [ -s "$work/$p" ] || {
     echo "soc-page: generator produced no $p; nothing promoted" >&2
     exit 2
   }
@@ -82,14 +90,27 @@ done
 
 for p in "${pages[@]}"; do
   rc=0
-  node gallery/publish.mjs "$stage/$p" || rc=$?
+  node gallery/publish.mjs "$work/$p" || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "soc-page: gate refused $p (exit $rc); previous published pages left untouched" >&2
     exit "$rc"
   fi
-  [ -s "$stage/$p.passed" ] || {
+  [ -s "$work/$p.passed" ] || {
     echo "soc-page: gate exited 0 but wrote no $p.passed; nothing promoted" >&2
     exit 2
+  }
+done
+
+# Both pages passed: only now do bytes enter the gallery tree.
+stage="$(mktemp -d "$out_dir/.soc-stage.XXXXXX")"
+for p in "${pages[@]}"; do
+  gated="$(jq -r .sha256 "$work/$p.passed")"
+  cp -- "$work/$p" "$stage/$p"
+  cp -- "$work/$p.passed" "$stage/$p.passed"
+  have="$(sha256sum "$stage/$p" | cut -d' ' -f1)"
+  [ "$gated" = "$have" ] || {
+    echo "soc-page: copied $p does not match the gated sha256; nothing promoted" >&2
+    exit 1
   }
 done
 

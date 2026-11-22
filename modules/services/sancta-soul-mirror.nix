@@ -210,6 +210,9 @@ in
         "index/gallery/*.png"
         "index/gallery/*.gif"
         "index/gallery/*-preview.txt"
+        # An in-flight or orphaned soc-page promotion stage (gate-passed bytes
+        # only, but never archived regardless).
+        "index/gallery/.soc-stage.*"
         "index/painter/raw"
         "index/painter/*.png"
         "index/painter/*/*.png"

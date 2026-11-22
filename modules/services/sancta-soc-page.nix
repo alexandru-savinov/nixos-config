@@ -163,7 +163,8 @@ in
         ProtectSystem = "strict";
         ProtectHome = false;
         # THE WRITABLE SET, read off soc.mjs + the wrapper:
-        #   gallery/ — the stage dir, the two pages, their .passed tokens. A
+        #   gallery/ — the gate-passed stage dir, the two pages, their .passed
+        #     tokens (generation and gating happen in the private /tmp). A
         #     DIRECTORY grant because promotion is rename(2) into it. This is
         #     the gallery's whole served tree; the wrapper writes only the four
         #     names it promotes plus its own .soc-stage.* directory.
