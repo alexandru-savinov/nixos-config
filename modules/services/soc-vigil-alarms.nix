@@ -1,4 +1,4 @@
-# soc-vigil-alarms — the two SOC alarms that need root, reported to vigil
+# soc-vigil-alarms — the SOC alarms that need root, reported to vigil
 # without granting vigil anything.
 #
 # The SOC plan: "Vigil fires only on: a CrowdSec ban on a tailnet/LAN address,
@@ -7,15 +7,28 @@
 # the audit log is root-only, cscli/fail2ban-client need the engines'
 # credentials, and vigil on sancta-choir executes no commands (cmdAllow = []).
 #
-# So this is the doctrine-guard pattern, twice: a root oneshot on a 5-minute
-# timer evaluates one rule (soc-vigil-alarms.py, where THE RULES are written
-# out exactly and unit-tested from fixtures in tests/test_soc_vigil_alarms.py)
-# and the shared stamp script (sancta-doctrine-guard-stamp.sh, reused, not
-# copied) turns the exit status into one file mtime: now when clean, epoch+1s
-# otherwise. vigil reads that with its file `age` check — a stat, nothing more.
+# So this is the doctrine-guard pattern: a root oneshot on a 5-minute timer
+# evaluates one rule (soc-vigil-alarms.py, where THE RULES are written out
+# exactly and unit-tested from fixtures in tests/test_soc_vigil_alarms.py)
+# and a stamp script run as ExecStopPost turns the exit status into file
+# mtimes: now when clean, epoch+1s otherwise. vigil reads them with its file
+# `age` check — a stat, nothing more. The evaluators never write a stamp; the
+# freshening touch is the last action of a clean run, and an unclean one
+# (including a timeout, SIGKILL or OOM) is invalidated by the same hook.
 #
-#   soc-alarm-audit  -> auditStampPath -> vigil-contracts/soc-audit.toml
-#   soc-alarm-bans   -> bansStampPath  -> vigil-contracts/soc-bans.toml
+#   soc-alarm-audit  -> auditStampPath      -> vigil-contracts/soc-audit.toml
+#                       (sancta-doctrine-guard-stamp.sh, reused: any non-clean
+#                       exit, a hit or an error, turns it red)
+#   soc-alarm-bans   -> bansStampPath       -> vigil-contracts/soc-bans.toml
+#                    -> bansHealthStampPath -> vigil-contracts/soc-bans-health.toml
+#                       (soc-bans-stamp.sh, two stamps: a ban, exit 1, reds the
+#                       paging bans stamp; an evaluator error, exit 2, reds only
+#                       the health stamp; both together, exit 3, red both)
+#
+# Paging is per contract (`page` in the TOML, mirrored by the paging.* options
+# and pinned by tests/module-eval.nix). In the initial report-only rollout the
+# audit and bans-health contracts are recorded and shown on the dashboard but
+# not sent; bans hits are sent.
 #
 # NOISE IS THE DESIGN CONSTRAINT. Two choices carry it, both in the script:
 #
@@ -38,9 +51,12 @@
 #     address is banned/decided and clears when the ban expires or is lifted.
 #
 # Fail-closed: an engine that cannot be read (ausearch/cscli/fail2ban error)
-# exits 2 and the stamp goes red too. picat_dupa = 2 absorbs one bad run
-# (e.g. crowdsec restarting under a deploy); a detector that stays blind for
-# two vigil ticks is reported, never trusted.
+# exits 2 and the audit stamp (or, for bans, the health stamp) goes red.
+# picat_dupa = 2 absorbs one bad run (e.g. crowdsec restarting under a
+# deploy); a detector that stays blind for two vigil ticks is reported, never
+# trusted. A stamp that could not be written at all ages out: timer interval
+# plus TimeoutStartSec stay under the contracts' 20 minute threshold
+# (tests/module-eval.nix).
 #
 # Zero other notifications: no OnFailure= here. The only paths out are the
 # vigil contracts and the status bar's unit list (configuration.nix).
