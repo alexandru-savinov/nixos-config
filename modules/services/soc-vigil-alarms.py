@@ -37,18 +37,18 @@ THE AUDIT RULE (exact):
        incubator does NOT hand to login(1) gets no auid from this host's
        PAM stacks and is NOT covered by this rule: an open gap, for the
        owner to measure (the PR's post-deploy check).
-    3. it is NOT the NixOS activation's /etc writer: key `sudoers`, exe a
-       /nix/store perl, argv (PROCTITLE) exactly
-       `<perl> <setup-etc.pl of THIS generation> /nix/store/<hash>-etc/etc`
-       (three words, the script in second place, so no perl option or
-       inline code can come before it; when the kernel's 128-byte PROCTITLE
-       cut falls past the script, the third word may be a prefix of that
-       shape or gone, see _etc_tree_word), and every PATH record one of
-       /etc, /etc/sudoers, /etc/sudoers.tmp. That is the only routine writer
-       of /etc/sudoers, and it only carries a login auid when someone runs
-       switch-to-configuration by hand instead of through nixos-rebuild.
-       Not covered: the store path of the etc tree is matched by shape, not
-       pinned to this generation.
+    3. it is NOT an expected activation change. An event on key `sudoers`
+       from a /nix/store perl whose PATH records are all /etc, /etc/sudoers
+       or /etc/sudoers.tmp is only a CANDIDATE (the shape of the activation's
+       /etc writer); argv/PROCTITLE is not consulted. A candidate is an
+       expected change, logged as a NOTICE and not a hit, only when BOTH
+       hold at evaluation time:
+         (a) sha256 of the live /etc/sudoers equals sha256 of the sudoers
+             file in the etc tree of /run/current-system, and
+         (b) the /run/current-system target differs from the one recorded by
+             the previous evaluation (kept in the state directory; with no
+             recorded target nothing is expected).
+       Otherwise every candidate is a hit.
        A login's read of any agenix key fires, including the council user's
        own read of jev-openrouter-key; there is no per-key exemption.
   Everything else in the audit log is ignored here.
@@ -69,6 +69,7 @@ THE BAN RULE (exact):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import ipaddress
 import json
 import os
@@ -156,17 +157,6 @@ def _keys(syscall: dict) -> set[str]:
     return {k for k in decoded.split("\x01") if k}
 
 
-def _proctitle(event: dict) -> str:
-    for rtype, f in event["records"]:
-        if rtype == "PROCTITLE" and "proctitle" in f:
-            return _unhex(f["proctitle"]) or ""
-    return ""
-
-
-def _argv(event: dict) -> list[str]:
-    return [a for a in _proctitle(event).split("\x00") if a]
-
-
 def _paths(event: dict) -> list[str]:
     out = []
     for rtype, f in event["records"]:
@@ -177,64 +167,41 @@ def _paths(event: dict) -> list[str]:
     return out
 
 
-_STORE_ETC = re.compile(r"^/nix/store/[0-9a-z]{32}-etc/etc$")
-_STORE_ETC_FILL = f"/nix/store/{'0' * 32}-etc/etc"
-# kernel/auditsc.c MAX_PROCTITLE_AUDIT_LEN: PROCTITLE holds the first 128
-# bytes of argv, then trailing non-printables (the NUL at a cut) are trimmed.
-_PROCTITLE_MAX = 128
-
-
-def _etc_tree_word(argv: list[str], title: str) -> bool:
-    """argv[2] is the store etc tree, or what is left of it after the cut.
-
-    The real call is ~177 bytes (perl-env 68 + script 56 + tree 52 + NULs),
-    so on a live host the third word arrives as "/n". EXECVE would carry the
-    whole argv but is not an option: it is logged only for execve(2), and
-    this event is the rename/openat on /etc/sudoers. So the cut is accepted
-    as a cut: only when the title is at the kernel limit, the script word
-    is whole, and the stub is a prefix of the tree's shape. What the cut
-    hides (the tree, and anything after it) is not matched; exe, script and
-    PATH records carry the exemption there.
-    """
-    if len(argv) == 3 and _STORE_ETC.match(argv[2]):
-        return True
-    if len(title.encode("utf-8", "replace")) < _PROCTITLE_MAX - 1:
-        return False  # not truncated: the whole argv had to be there
-    if len(argv) == 2:
-        return title.endswith(argv[1])  # cut on the NUL after the script
-    stub = argv[2]
-    return len(stub) < len(_STORE_ETC_FILL) and _STORE_ETC.match(stub + _STORE_ETC_FILL[len(stub) :]) is not None
 _ACTIVATION_PATHS = frozenset({"/etc", "/etc/", "/etc/sudoers", "/etc/sudoers.tmp"})
 
 
-def is_activation_writer(event: dict, syscall: dict, keys: set[str], setup_etc: str) -> bool:
+def is_activation_candidate(event: dict, syscall: dict, keys: set[str]) -> bool:
+    """Shape of the activation's /etc writer, from kernel-supplied fields only
+    (exe and PATH records). Whether it is expected is decided by the runner
+    (see partition_hits)."""
     exe = _unhex(syscall.get("exe", "")) or ""
-    title = _proctitle(event)
-    argv = _argv(event)
     paths = _paths(event)
     return (
         keys == {"sudoers"}
-        and bool(setup_etc)
         and _STORE_PERL.match(exe) is not None
-        # Positional, not membership: the script must be what perl runs.
-        and len(argv) in (2, 3)
-        and argv[1] == setup_etc
-        and _etc_tree_word(argv, title)
         and bool(paths)
         and all(p in _ACTIVATION_PATHS for p in paths)
     )
 
 
-def audit_hits(raw_text: str, setup_etc: str) -> list[dict]:
+def partition_hits(hits: list[dict], expected_change: bool) -> tuple[list[dict], list[dict]]:
+    """PURE. Split audit_scan's hits into (hits, expected-change notices)."""
+    if not expected_change:
+        return hits, []
+    return ([h for h in hits if not h.get("activation_candidate")],
+            [h for h in hits if h.get("activation_candidate")])
+
+
+def audit_hits(raw_text: str) -> list[dict]:
     """PURE. Apply THE AUDIT RULE (module docstring) to `ausearch --raw` text.
     Raises ValueError on any unparseable line (see parse_events)."""
-    hits, bad = audit_scan(raw_text, setup_etc)
+    hits, bad = audit_scan(raw_text)
     if bad:
         raise ValueError(bad[0])
     return hits
 
 
-def audit_scan(raw_text: str, setup_etc: str) -> tuple[list[dict], list[str]]:
+def audit_scan(raw_text: str) -> tuple[list[dict], list[str]]:
     """PURE. THE AUDIT RULE over every parseable event, plus the bad lines."""
     events, bad = scan_events(raw_text)
     hits = []
@@ -250,8 +217,6 @@ def audit_scan(raw_text: str, setup_etc: str) -> tuple[list[dict], list[str]]:
         # this rule was written for: fire rather than guess it was routine.
         if auid is not None and auid in UNSET_AUID:
             continue
-        if is_activation_writer(ev, syscall, keys, setup_etc):
-            continue
         hits.append({
             "ts": ev["ts"],
             "serial": ev["serial"],
@@ -260,6 +225,7 @@ def audit_scan(raw_text: str, setup_etc: str) -> tuple[list[dict], list[str]]:
             "success": syscall.get("success"),
             "exe": _unhex(syscall.get("exe", "")) or "?",
             "paths": _paths(ev),
+            "activation_candidate": is_activation_candidate(ev, syscall, keys),
         })
     return hits, bad
 
@@ -380,6 +346,37 @@ def _write_durably(path: str, text: str) -> None:
     _fsync_dir(os.path.dirname(path))
 
 
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _system_target(current_system: str) -> str:
+    target = os.path.realpath(current_system)
+    if not os.path.isdir(target):
+        raise RuntimeError(f"{current_system} does not resolve to a system directory")
+    return target
+
+
+def _read_text(path: str) -> str | None:
+    try:
+        with open(path) as fh:
+            return fh.read().strip()
+    except FileNotFoundError:
+        return None
+
+
+def expected_sudoers_change(a, target: str, previous: str | None) -> bool:
+    """Rule 3 (module docstring): live /etc/sudoers equals the one in the
+    current system's etc tree, and the system target moved since last run."""
+    if previous is None or previous == target:
+        return False
+    return _sha256(a.etc_sudoers) == _sha256(os.path.join(a.current_system, "etc", "sudoers"))
+
+
 def cmd_audit(a) -> int:
     # systemd's StateDirectory= exports STATE_DIRECTORY; tests pass --state-dir.
     if not a.state_dir or not os.path.isdir(a.state_dir):
@@ -407,6 +404,9 @@ def cmd_audit(a) -> int:
     # replaced only AFTER every hit is logged and the hold is on disk. If
     # anything fails before that (a crash, a full disk, a bug), the next run
     # reads the same window again: a repeated ALARM line, never a lost one.
+    last_system = os.path.join(a.state_dir, "audit.last-system")
+    target = _system_target(a.current_system)
+    previous_target = _read_text(last_system)
     staged = checkpoint + ".next"
     if os.path.exists(checkpoint):
         shutil.copyfile(checkpoint, staged)
@@ -419,6 +419,9 @@ def cmd_audit(a) -> int:
         _write_durably(last_hit, f"{now:.0f}\n")
 
     def commit_checkpoint():
+        # The target is recorded with the window it was evaluated for, so a
+        # window that is read again is judged against the same previous value.
+        _write_durably(last_system, target + "\n")
         if os.path.exists(staged):
             with open(staged, "rb") as fh:
                 os.fsync(fh.fileno())
@@ -426,12 +429,17 @@ def cmd_audit(a) -> int:
             _fsync_dir(a.state_dir)
 
     try:
-        hits, bad = audit_scan(raw, a.setup_etc)
+        hits, bad = audit_scan(raw)
+        candidates = [h for h in hits if h["activation_candidate"]]
+        expected = bool(candidates) and expected_sudoers_change(a, target, previous_target)
+        hits, notices = partition_hits(hits, expected)
     except Exception:
         # Could not classify at all: red for the hold, and the checkpoint
         # stays put so this window is classified again once that works.
         start_hold()
         raise
+    for h in notices:
+        _log("NOTICE audit expected sudoers change " + json.dumps(h, sort_keys=True))
     for h in hits:
         _log("ALARM audit " + json.dumps(h, sort_keys=True))
     # A window with an unreadable line may have held a hit: it starts the
@@ -486,7 +494,9 @@ def main(argv: list[str]) -> int:
     au.add_argument("--require-active", action="append", default=[])
     au.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
     au.add_argument("--hold", type=int, required=True)
-    au.add_argument("--setup-etc", required=True)
+    # Injectable for tests; the defaults are the live paths.
+    au.add_argument("--current-system", default="/run/current-system")
+    au.add_argument("--etc-sudoers", default="/etc/sudoers")
     bn = sub.add_parser("bans")
     bn.add_argument("--cscli", required=True)
     bn.add_argument("--fail2ban-client", required=True)

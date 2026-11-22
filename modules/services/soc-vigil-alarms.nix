@@ -19,10 +19,12 @@
 #
 # NOISE IS THE DESIGN CONSTRAINT. Two choices carry it, both in the script:
 #
-#   * Audit fires only for a LOGIN auid, and never for this generation's
-#     setup-etc.pl rewriting /etc/sudoers. Services reading their agenix
+#   * Audit fires only for a LOGIN auid. Services reading their agenix
 #     secrets at start (auid unset) and nixos-rebuild's activation (run via
-#     systemd-run, auid unset) stay silent by construction.
+#     systemd-run, auid unset) stay silent by construction. A sudoers write
+#     by the activation's perl with a login auid is logged as a NOTICE, not a
+#     hit, only when /etc/sudoers matches the new generation's copy and
+#     /run/current-system changed since the last run.
 #
 #   * Audit is "since the last run" (ausearch --checkpoint): one event raises
 #     the stamp red for `auditHold`, then it clears BY ITSELF. Not "red until
@@ -43,7 +45,7 @@
 #
 # Zero other notifications: no OnFailure= here. The only paths out are the
 # vigil contracts and the status bar's unit list (configuration.nix).
-{ config, lib, pkgs, modulesPath, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   inherit (lib) mkEnableOption mkIf mkOption types;
@@ -52,19 +54,6 @@ let
   script = ./soc-vigil-alarms.py;
   stampScript = ./sancta-doctrine-guard-stamp.sh;
   python = "${pkgs.python3}/bin/python3";
-
-  # The activation's /etc writer for THIS generation. Copying the same nixpkgs
-  # file under the same name yields the same content-addressed store path that
-  # nixos/modules/system/etc/etc.nix (`${./setup-etc.pl}`) puts in the
-  # activation script; (modulesPath alone is the nixpkgs source path, which
-  # is NOT what argv shows);
-  # tests/module-eval.nix pins that equality, so a nixpkgs that moves or
-  # renames the file fails CI instead of turning every hand-run activation
-  # into an incident.
-  setupEtc = "${builtins.path {
-    path = "${modulesPath}/system/etc/setup-etc.pl";
-    name = "setup-etc.pl";
-  }}";
 
   # The nixpkgs crowdsec module's wrapper (it adds -c=<its generated config>).
   cscli = lib.findFirst (p: (p.name or "") == "cscli") null config.environment.systemPackages;
@@ -182,8 +171,6 @@ in
           "audit-rules-nixos.service"
           "--hold"
           (toString cfg.auditHold)
-          "--setup-etc"
-          setupEtc
         ];
         # The checkpoint and last-hit files live in $STATE_DIRECTORY (set by
         # StateDirectory=), so no off-store path appears in ExecStart.

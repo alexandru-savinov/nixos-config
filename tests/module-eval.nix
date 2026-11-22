@@ -1252,8 +1252,6 @@ let
         bSvc = choir.systemd.services.soc-alarm-bans;
         argv = svc: svc.serviceConfig.ExecStart;
         envOf = svc: svc.serviceConfig.Environment or [ ];
-        setupEtc = builtins.match ".*(/nix/store/[a-z0-9]{32}-setup-etc[.]pl).*"
-          choir.system.activationScripts.etc.text;
         whitelist = (builtins.head choir.services.crowdsec.localConfig.parsers.s02Enrich).whitelist.cidr;
         ignoreIP = choir.services.fail2ban.ignoreIP;
         shape = c: path: c.verifica == "age" && c.tinta == path && c.nivel == "incident"
@@ -1275,12 +1273,6 @@ let
             && builtins.elem "disk-root" names;
           auditStamp = stampWired aSvc alarms.auditStampPath;
           bansStamp = stampWired bSvc alarms.bansStampPath;
-
-          # The activation exemption names exactly the setup-etc.pl that this
-          # generation's activation runs. Drift (nixpkgs moves the file) would
-          # turn every hand-run activation into an incident: fail here first.
-          activationPinMatches = setupEtc != null
-            && lib.hasInfix "--setup-etc ${builtins.head setupEtc}" (argv aSvc);
 
           # No audit exemption for any key read: the council options, flags
           # and secrets-path environment are gone.
