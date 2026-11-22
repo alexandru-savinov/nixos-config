@@ -31,12 +31,15 @@ export function validate(document) {
   if (Object.hasOwn(document, 'recuperare')) throw new Error('recuperare: plan 2');
   keys(document, ['contract', 'spune'], ['contract', 'spune']);
   const c = document.contract;
-  keys(c, ['nume', 'ce', 'verifica', 'tinta', 'astept', 'prag', 'picat_dupa', 'peer', 'dimension', 'driver'], ['nume', 'ce', 'verifica', 'tinta', 'picat_dupa']);
+  keys(c, ['nume', 'ce', 'verifica', 'tinta', 'astept', 'prag', 'picat_dupa', 'peer', 'dimension', 'driver', 'page'], ['nume', 'ce', 'verifica', 'tinta', 'picat_dupa']);
   keys(document.spune, ['nivel'], ['nivel']);
   if (!NAME.test(c.nume) || c.nume === 'vigil' || c.nume.startsWith('invalid-')) fail();
   if (!text(c.ce) || c.ce.length > 200 || !TYPES.includes(c.verifica)) fail();
   if (!Number.isInteger(c.picat_dupa) || c.picat_dupa < 1 || c.picat_dupa > 12) fail();
   if (c.peer !== undefined && typeof c.peer !== 'boolean') fail();
+  // `page = false` suppresses only the Telegram send; the incident is still
+  // recorded, journaled and shown on the dashboard. Default: page.
+  if (c.page !== undefined && typeof c.page !== 'boolean') fail();
   if (c.dimension !== undefined && !DIMENSIONS.includes(c.dimension)) fail();
   if (c.driver !== undefined && !DRIVERS.includes(c.driver)) fail();
   if (!['nota', 'incident'].includes(document.spune.nivel)) fail();

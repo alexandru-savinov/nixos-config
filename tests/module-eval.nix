@@ -1271,6 +1271,11 @@ let
           bansContract = shape bans alarms.bansStampPath;
           publicNames = builtins.elem "soc-audit" names && builtins.elem "soc-bans" names
             && builtins.elem "disk-root" names;
+          # Paging: the option is the declared intent, the contract carries it.
+          # Initial report-only rollout: audit off, bans on.
+          pagingPinned = (audit.page or true) == alarms.paging.audit
+            && (bans.page or true) == alarms.paging.bans
+            && alarms.paging.audit == false && alarms.paging.bans == true;
           auditStamp = stampWired aSvc alarms.auditStampPath;
           bansStamp = stampWired bSvc alarms.bansStampPath;
 

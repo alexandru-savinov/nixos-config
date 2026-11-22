@@ -6,6 +6,10 @@ verifica = "age"
 tinta = "/var/lib/soc-vigil-alarms/audit-clean"
 picat_dupa = 2
 prag = "20m"
+# Initial report-only rollout: hits and evaluator errors are recorded, journaled
+# and shown on the dashboard, but not sent to Telegram. Pinned to
+# services.soc-vigil-alarms.paging.audit by tests/module-eval.nix.
+page = false
 
 [spune]
 nivel = "incident"

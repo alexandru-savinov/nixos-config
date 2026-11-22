@@ -50,7 +50,7 @@ export function writeDashboard(root, entries, results, store, counts, env) {
       reason: reasons.has(results[index].motiv) ? results[index].motiv : 'check-unreadable',
       consecutive: state.consecutive, threshold: c.picat_dupa,
       incident: state.open ? state.verdict === 'verde' ? 'recovering' : 'open' : 'none',
-      delivery: env.VIGIL_SAY === '0' ? 'disabled' : pending.length ? 'pending'
+      delivery: env.VIGIL_SAY === '0' ? 'disabled' : c.page === false ? 'suppressed' : pending.length ? 'pending'
         : state.openDelivered || state.notaDelivered ? 'confirmed' : 'none',
       pending,
       green_since: state.greenSince === null ? null : iso(state.greenSince),
@@ -76,7 +76,7 @@ export function dashboardCheck(root, name, counts, now, env) {
     || !Number.isSafeInteger(c.threshold) || c.threshold < 1 || !Number.isSafeInteger(c.consecutive)
     || c.consecutive < 1 || c.consecutive > c.threshold
     || !['none', 'open', 'recovering'].includes(c.incident)
-    || !['disabled', 'pending', 'confirmed', 'none'].includes(c.delivery)
+    || !['disabled', 'pending', 'confirmed', 'none', 'suppressed'].includes(c.delivery)
     || !Array.isArray(c.pending) || c.pending.length > 1000 || c.pending.some(p => !['open', 'close', 'nota'].includes(p))
     || !nullableTime(c.green_since) || !nullableTime(c.close_not_before)) throw new Error('dashboard-invalid');
   const age = now - Date.parse(counts.la);

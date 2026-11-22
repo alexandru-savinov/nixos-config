@@ -105,6 +105,29 @@ in
   options.services.soc-vigil-alarms = {
     enable = mkEnableOption "SOC alarms for vigil: login access to secrets/sudoers, bans on home addresses";
 
+    paging = {
+      audit = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether a red soc-audit contract (rule hits and evaluator errors)
+          is sent to Telegram. Initial report-only rollout: off, so those
+          land in the journal and on the dashboard only. The switch itself is
+          `page` in hosts/sancta-choir/vigil-contracts/soc-audit.toml (vigil
+          contracts are static files); tests/module-eval.nix fails if the two
+          disagree.
+        '';
+      };
+      bans = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Whether a red soc-bans contract is sent to Telegram. Mirrors
+          `page` in vigil-contracts/soc-bans.toml (pinned by module-eval).
+        '';
+      };
+    };
+
     auditHold = mkOption {
       type = types.ints.between 600 3600;
       default = 900;

@@ -146,7 +146,17 @@ export async function run(entries, options = {}) {
   }
 
   if (enabled) {
-    store.queue.push(...events);
+    // `page = false` contracts: the incident, row and dashboard are recorded,
+    // but nothing is queued for Telegram. The event counts as handled so the
+    // open/nota is not re-created on every tick.
+    const unpaged = new Set(entries.filter(({ contract: c }) => c.page === false).map(({ contract: c }) => c.nume));
+    for (const event of events) {
+      if (!unpaged.has(event.nume)) continue;
+      const state = store.contracts[event.nume];
+      if (event.tranzitie === 'open' && state?.open === event.incident_id) state.openDelivered = true;
+      if (event.tranzitie === 'nota' && state?.nota === event.incident_id) state.notaDelivered = true;
+    }
+    store.queue.push(...events.filter(event => !unpaged.has(event.nume)));
     if (expireHistory(store, now)) summary('vigil-check: history-expired');
   } else store.queue = [];
   saveStore(root, store);

@@ -416,3 +416,43 @@ test('unmatched preserved identities consume acknowledgements durably without lo
   assert.equal(h.sent.some(event => event.nume === 'fixture' && event.tranzitie === 'nota'), false);
   assert.equal(h.state().contracts.fixture.open, incident);
 }));
+
+test('page = false records the incident and row but sends nothing; page default still sends', async () => harness(async h => {
+  const entries = [
+    { contract: { ...base, nume: 'quiet', page: false } },
+    { contract: { ...base, nume: 'loud' } },
+  ];
+  const red = { ...h.options, inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }) };
+  await run(entries, red);
+  h.time(300000);
+  await run(entries, red);
+  const state = h.state();
+  assert.match(state.contracts.quiet.open, /^2026-/, 'incident is recorded');
+  assert.equal(state.contracts.quiet.openDelivered, true);
+  assert.deepEqual(state.queue, []);
+  assert.deepEqual(h.sent.map(e => e.nume), ['loud'], 'only the default contract is paged');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(h.root, 'rows', 'quiet.json'), 'utf8')).stare, 'picat');
+  // Further red ticks neither re-create nor send the event.
+  h.time(300000);
+  await run(entries, red);
+  assert.deepEqual(h.sent.map(e => e.nume), ['loud']);
+  // Recovery is silent too, and the incident still closes by itself.
+  const green = { ...h.options, inspect: async () => ({ verdict: 'verde', motiv: 'ok' }) };
+  await run(entries, green);
+  h.time(300000);
+  await run(entries, green);
+  h.time(31 * 60000);
+  await run(entries, green);
+  assert.equal(h.state().contracts.quiet.open, null);
+  assert.deepEqual(h.sent.filter(e => e.nume === 'quiet'), []);
+  assert.deepEqual(h.sent.map(e => e.tranzitie), ['open', 'close']);
+}));
+
+test('page = true is the same as no page field', async () => harness(async h => {
+  const entries = [{ contract: { ...base, nume: 'explicit', page: true } }];
+  const red = { ...h.options, inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }) };
+  await run(entries, red);
+  h.time(300000);
+  await run(entries, red);
+  assert.deepEqual(h.sent.map(e => e.nume), ['explicit']);
+}));
