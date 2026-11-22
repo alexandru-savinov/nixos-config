@@ -456,3 +456,58 @@ test('page = true is the same as no page field', async () => harness(async h => 
   await run(entries, red);
   assert.deepEqual(h.sent.map(e => e.nume), ['explicit']);
 }));
+
+const redRun = (h, entries) => run(entries, { ...h.options, inspect: async () => ({ verdict: 'picat', motiv: 'fixture' }) });
+const greenRun = (h, entries) => run(entries, { ...h.options, inspect: async () => ({ verdict: 'verde', motiv: 'ok' }) });
+
+test('an open queued before the page switch never sends, and does not hold up other contracts', async () => harness(async h => {
+  const both = page => [{ contract: { ...base, nume: 'quiet', ...(page === undefined ? {} : { page }) } }, { contract: { ...base, nume: 'loud' } }];
+  h.network(false);
+  await redRun(h, both());
+  h.time(300000);
+  await redRun(h, both());
+  assert.deepEqual(h.state().queue.map(e => `${e.nume}/${e.tranzitie}`), ['quiet/open', 'loud/open']);
+  assert.deepEqual(h.sent, []);
+  h.network(true);
+  h.time(300000);
+  await redRun(h, both(false)); // the switch
+  assert.deepEqual(h.sent.map(e => e.nume), ['loud'], 'only the paged contract sends');
+  assert.deepEqual(h.state().queue, []);
+  assert.equal(h.state().contracts.quiet.openSuppressed, true);
+}));
+
+test('re-enabling paging mid-incident sends no orphan close and a fresh open next time', async () => harness(async h => {
+  const entries = page => [{ contract: { ...base, nume: 'flip', page } }];
+  await redRun(h, entries(false));
+  h.time(300000);
+  await redRun(h, entries(false));
+  assert.match(h.state().contracts.flip.open, /^2026-/);
+  assert.deepEqual(h.sent, []);
+  // Paging comes back while the incident is open; the incident then recovers.
+  await greenRun(h, entries(true));
+  h.time(300000);
+  await greenRun(h, entries(true));
+  h.time(31 * 60000);
+  await greenRun(h, entries(true));
+  assert.equal(h.state().contracts.flip.open, null);
+  assert.deepEqual(h.sent, [], 'no close without a sent open');
+  assert.deepEqual(h.state().queue, []);
+  // The next incident is a normal one: its open is sent.
+  await redRun(h, entries(true));
+  h.time(300000);
+  await redRun(h, entries(true));
+  assert.deepEqual(h.sent.map(e => e.tranzitie), ['open']);
+}));
+
+test('a sent open still gets its close when paging stays on', async () => harness(async h => {
+  const entries = [{ contract: { ...base, nume: 'normal' } }];
+  await redRun(h, entries);
+  h.time(300000);
+  await redRun(h, entries);
+  await greenRun(h, entries);
+  h.time(300000);
+  await greenRun(h, entries);
+  h.time(31 * 60000);
+  await greenRun(h, entries);
+  assert.deepEqual(h.sent.map(e => e.tranzitie), ['open', 'close']);
+}));

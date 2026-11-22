@@ -50,7 +50,7 @@ export function writeDashboard(root, entries, results, store, counts, env) {
       reason: reasons.has(results[index].motiv) ? results[index].motiv : 'check-unreadable',
       consecutive: state.consecutive, threshold: c.picat_dupa,
       incident: state.open ? state.verdict === 'verde' ? 'recovering' : 'open' : 'none',
-      delivery: env.VIGIL_SAY === '0' ? 'disabled' : c.page === false ? 'suppressed' : pending.length ? 'pending'
+      delivery: env.VIGIL_SAY === '0' ? 'disabled' : c.page === false || state.openSuppressed ? 'suppressed' : pending.length ? 'pending'
         : state.openDelivered || state.notaDelivered ? 'confirmed' : 'none',
       pending,
       green_since: state.greenSince === null ? null : iso(state.greenSince),
