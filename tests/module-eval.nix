@@ -1248,6 +1248,7 @@ let
         schema = import ../modules/services/vigil-schema.nix { inherit lib; };
         audit = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-audit.toml;
         bans = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-bans.toml;
+        bansHealth = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-bans-health.toml;
         aSvc = choir.systemd.services.soc-alarm-audit;
         bSvc = choir.systemd.services.soc-alarm-bans;
         argv = svc: svc.serviceConfig.ExecStart;
@@ -1256,8 +1257,8 @@ let
         ignoreIP = choir.services.fail2ban.ignoreIP;
         shape = c: path: c.verifica == "age" && c.tinta == path && c.nivel == "incident"
           && c.picat_dupa == 2 && c.prag == "20m";
-        stampWired = svc: path:
-          lib.hasSuffix "sancta-doctrine-guard-stamp.sh" (svc.serviceConfig.ExecStopPost or "")
+        stampWired = svc: path: stampScript:
+          lib.hasSuffix stampScript (svc.serviceConfig.ExecStopPost or "")
           && builtins.elem "SANCTA_DOCTRINE_STAMP=${path}" (envOf svc)
           && lib.hasPrefix "/var/lib/${svc.serviceConfig.StateDirectory or "<none>"}/" path
           && (svc.serviceConfig.StateDirectoryMode or null) == "0755"
@@ -1270,6 +1271,7 @@ let
           auditContract = shape audit alarms.auditStampPath;
           bansContract = shape bans alarms.bansStampPath;
           publicNames = builtins.elem "soc-audit" names && builtins.elem "soc-bans" names
+            && builtins.elem "soc-bans-health" names
             && builtins.elem "disk-root" names;
           # Paging: the option is the declared intent, the contract carries it.
           # Initial report-only rollout: audit off, bans on; the audit tile
@@ -1278,8 +1280,14 @@ let
             && (bans.page or true) == alarms.paging.bans
             && alarms.paging.audit == false && alarms.paging.bans == true;
           auditLabel = (audit.label or "") == "coverage: partial; quiet = unverified" && !(bans ? label);
-          auditStamp = stampWired aSvc alarms.auditStampPath;
-          bansStamp = stampWired bSvc alarms.bansStampPath;
+          auditStamp = stampWired aSvc alarms.auditStampPath "sancta-doctrine-guard-stamp.sh";
+          bansStamp = stampWired bSvc alarms.bansStampPath "soc-bans-stamp.sh"
+            && builtins.elem "SOC_HEALTH_STAMP=${alarms.bansHealthStampPath}" (envOf bSvc);
+          # Bans errors must not page: their own contract, page = false, on
+          # its own stamp; a ban still pages through soc-bans.
+          bansHealthContract = shape bansHealth alarms.bansHealthStampPath && bansHealth.page == false
+            && alarms.paging.bansHealth == false
+            && lib.hasPrefix "/var/lib/${bSvc.serviceConfig.StateDirectory}/" alarms.bansHealthStampPath;
 
           # No audit exemption for any key read: the council options, flags
           # and secrets-path environment are gone.
@@ -2202,7 +2210,7 @@ let
             !off.sancta.studio.n8n.enable
             && !off.services.n8n-tailscale.enable
             && !off.services.n8n.enable
-            && off.services.vigil.expectedContracts == 12
+            && off.services.vigil.expectedContracts == 13
             && !(builtins.elem "n8n" (builtins.fromJSON off.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES));
           wallsPresentWhileOff = holds off modelWall && holds off bindWall;
 
@@ -2219,7 +2227,7 @@ let
             && n8nCfg.communityPackages == [ ]
             && n8nCfg.allowBuiltinModules == [ ]
             && n8nCfg.blockEnvAccessInCode
-            && onCfg.services.vigil.expectedContracts == 13
+            && onCfg.services.vigil.expectedContracts == 14
             && builtins.elem "n8n" (builtins.fromJSON onCfg.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES)
             && holds onCfg modelWall && holds onCfg bindWall && holds onCfg keyGate;
 

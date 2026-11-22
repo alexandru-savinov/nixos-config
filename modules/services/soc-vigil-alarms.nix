@@ -52,6 +52,7 @@ let
   stateDir = "soc-vigil-alarms";
   script = ./soc-vigil-alarms.py;
   stampScript = ./sancta-doctrine-guard-stamp.sh;
+  bansStampScript = ./soc-bans-stamp.sh;
   python = "${pkgs.python3}/bin/python3";
 
   # The nixpkgs crowdsec module's wrapper (it adds -c=<its generated config>).
@@ -127,6 +128,15 @@ in
           disagree.
         '';
       };
+      bansHealth = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether a red soc-bans-health contract (the bans evaluator could not
+          evaluate) is sent to Telegram. Initial report-only rollout: off.
+          Mirrors `page` in vigil-contracts/soc-bans-health.toml.
+        '';
+      };
       bans = mkOption {
         type = types.bool;
         default = true;
@@ -151,6 +161,13 @@ in
       readOnly = true;
       default = "/var/lib/${stateDir}/audit-clean";
       description = "Audit alarm outcome as one mtime; read by vigil-contracts/soc-audit.toml (module-eval pins the equality).";
+    };
+
+    bansHealthStampPath = mkOption {
+      type = types.str;
+      readOnly = true;
+      default = "/var/lib/${stateDir}/bans-health-clean";
+      description = "Ban evaluator health as one mtime; read by vigil-contracts/soc-bans-health.toml (module-eval pins the equality).";
     };
 
     bansStampPath = mkOption {
@@ -231,6 +248,9 @@ in
       description = "SOC alarm: CrowdSec decision or fail2ban ban on a home address";
       after = [ "crowdsec.service" "fail2ban.service" ];
       serviceConfig = common // {
+        # Two stamps: a ban turns soc-bans red (pages); an evaluator error
+        # turns soc-bans-health red (journal and dashboard only).
+        ExecStopPost = "${pkgs.bash}/bin/bash ${bansStampScript}";
         ExecStart = lib.escapeShellArgs [
           python
           "${script}"
@@ -244,6 +264,7 @@ in
         ];
         Environment = [
           "SANCTA_DOCTRINE_STAMP=${cfg.bansStampPath}"
+          "SOC_HEALTH_STAMP=${cfg.bansHealthStampPath}"
           # The nixpkgs cscli wrapper re-execs itself through sudo unless
           # $USER is the crowdsec user. Root needs no sudo (and a sudo every
           # 5 minutes would be journal noise), and without User= systemd sets

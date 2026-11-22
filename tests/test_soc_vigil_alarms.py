@@ -515,6 +515,37 @@ def fake(dirpath, name, body):
     return path
 
 
+STAMP_SCRIPT = os.environ.get(
+    "SOC_STAMP_SCRIPT",
+    os.path.join(HERE, "..", "modules", "services", "sancta-doctrine-guard-stamp.sh"),
+)
+BANS_STAMP_SCRIPT = os.environ.get(
+    "SOC_BANS_STAMP_SCRIPT",
+    os.path.join(HERE, "..", "modules", "services", "soc-bans-stamp.sh"),
+)
+
+
+def fake_touch(bindir):
+    """A stand-in `touch` (BSD touch has no -d @N) that sets the mtime of its
+    LAST argument. STAMP_TOUCH_FAIL = all | plain | epoch makes those calls
+    fail (plain = `touch FILE`, epoch = `touch -d @N FILE`)."""
+    py = os.path.realpath(__import__("sys").executable)
+    fake(bindir, "touch", (
+        'mode=plain; [ "$1" = -d ] && mode=epoch\n'
+        'case "$STAMP_TOUCH_FAIL" in all) exit 1;; "$mode") exit 1;; esac\n'
+        'for last; do :; done\n'
+        'if [ "$mode" = epoch ]; then t=${2#@}; else t=$(date +%s); fi\n'
+        f'exec {py} -c "import os,sys; open(sys.argv[2],\'a\').close(); os.utime(sys.argv[2],(int(sys.argv[1]),)*2)" "$t" "$last"\n'
+    ))
+
+
+def run_script(script, stamps, *, result="success", code="exited", status="0", fail="none", bindir=None):
+    import subprocess
+    env = {"PATH": f"{bindir}:/usr/bin:/bin", "STAMP_TOUCH_FAIL": fail,
+           "SERVICE_RESULT": result, "EXIT_CODE": code, "EXIT_STATUS": status, **stamps}
+    return subprocess.run(["bash", script], env=env, capture_output=True, text=True).returncode
+
+
 class Runners(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -528,6 +559,10 @@ class Runners(unittest.TestCase):
         self.sudoers = os.path.join(self.d, "sudoers")
         self.last_system = os.path.join(self.sd, "audit.last-system")
         self.stamp = os.path.join(self.d, "stamp")
+        self.health = os.path.join(self.d, "health")
+        self.fbin = os.path.join(self.d, "fbin")
+        os.mkdir(self.fbin)
+        fake_touch(self.fbin)
         self.bootid = os.path.join(self.d, "boot_id")
         self.set_boot("boot-A")
         for gen in ("gen1", "gen2"):
@@ -729,10 +764,65 @@ class Runners(unittest.TestCase):
         status = f2b("203.0.113.9").replace("\t", " ")
         ok = (f"echo null\n", f"cat <<'E'\n{status}E\n")
         self.assertEqual(self.bans(*ok), 0)
-        os.unlink(self.stamp)
-        self.assertEqual(self.bans(*ok), 2)
-        self.assertEqual(int(os.stat(self.stamp).st_mtime), 1)
+        for victim in (self.stamp, self.health):
+            os.unlink(victim)
+            self.assertEqual(self.bans(*ok), 2, victim)
+            self.assertEqual(self.bans(*ok), 0, victim)
+
+    # ── bans: hits page, evaluator errors do not (two stamps) ──
+    def stamps(self):
+        return self.mtime_of(self.stamp), self.mtime_of(self.health)
+
+    @staticmethod
+    def mtime_of(path):
+        return int(os.stat(path).st_mtime)
+
+    def fresh(self, t):
+        return abs(time.time() - t) < 60
+
+    def test_clean_bans_run_freshens_both_stamps(self):
+        status = f2b("203.0.113.9").replace("\t", " ")
+        self.assertEqual(self.bans("echo null\n", f"cat <<'E'\n{status}E\n"), 0)
+        self.assertTrue(all(self.fresh(t) for t in self.stamps()))
+
+    def test_a_ban_turns_only_the_bans_stamp_red(self):
+        status = f2b("203.0.113.9").replace("\t", " ")
+        self.assertEqual(self.bans(f"cat <<'E'\n{decisions(('Ip', '100.64.1.1'))}\nE\n", f"cat <<'E'\n{status}E\n"), 1)
+        bans, health = self.stamps()
+        self.assertEqual(bans, 1)
+        self.assertTrue(self.fresh(health))
+
+    def test_evaluator_errors_turn_only_the_health_stamp_red(self):
+        status = f2b("203.0.113.9").replace("\t", " ")
+        good_f2b = f"cat <<'E'\n{status}E\n"
+        for cscli, f2b_body in (("exit 0\n", good_f2b),                       # empty cscli output
+                                ("echo '[{}]'\n", good_f2b),                  # field-less entry
+                                ('echo \'[{"decisions":[{"scope":null,"value":"x"}]}]\'\n', good_f2b),
+                                ("echo null\n", "exit 255\n"),                # fail2ban unreadable
+                                ("echo boom >&2; exit 1\n", good_f2b)):       # cscli failed
+            self.assertEqual(self.bans(cscli, f2b_body), 2, cscli)
+            bans, health = self.stamps()
+            self.assertTrue(self.fresh(bans), f"an error must not page: {cscli}")
+            self.assertEqual(health, 1, cscli)
+
+    def test_health_recovers_on_the_next_clean_run(self):
+        status = f2b("203.0.113.9").replace("\t", " ")
+        ok = ("echo null\n", f"cat <<'E'\n{status}E\n")
+        self.assertEqual(self.bans("exit 0\n", ok[1]), 2)
         self.assertEqual(self.bans(*ok), 0)
+        self.assertTrue(all(self.fresh(t) for t in self.stamps()))
+
+    def test_bans_evaluator_invalidates_both_stamps_before_running(self):
+        for p in (self.stamp, self.health):
+            with open(p, "w"):
+                pass
+        status = f2b("203.0.113.9").replace("\t", " ")
+        rc = sva.main(["bans", "--cscli", fake(self.d, "cscli", "echo null\n"),
+                       "--fail2ban-client", fake(self.d, "f2b", f"cat <<'E'\n{status}E\n"),
+                       "--cidrs", ",".join(NEVER_BAN), "--state-dir", self.sd,
+                       "--stamp", self.stamp, "--health-stamp", self.health])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.stamps(), (1, 1), "only the stamp writer makes them fresh")
 
     # ── ausearch edge cases: each is an evaluator error ──
     def fixture_cmd(self, text):
@@ -1200,11 +1290,14 @@ class Runners(unittest.TestCase):
 
     def bans(self, cscli_body, f2b_body):
         guard = 'case " $* " in *" --limit 0 "*) ;; *) echo "default limit 100" >&2; exit 3;; esac\n'
-        return self.stamp_like_execstoppost(
-            sva.main(["bans", "--cscli", fake(self.d, "cscli", guard + cscli_body),
-                      "--fail2ban-client", fake(self.d, "f2b", f2b_body),
-                      "--cidrs", ",".join(NEVER_BAN),
-                      "--state-dir", self.sd, "--stamp", self.stamp]))
+        rc = sva.main(["bans", "--cscli", fake(self.d, "cscli", guard + cscli_body),
+                       "--fail2ban-client", fake(self.d, "f2b", f2b_body),
+                       "--cidrs", ",".join(NEVER_BAN),
+                       "--state-dir", self.sd, "--stamp", self.stamp, "--health-stamp", self.health])
+        # What the unit's ExecStopPost (soc-bans-stamp.sh) does with the status.
+        run_script(BANS_STAMP_SCRIPT, {"SANCTA_DOCTRINE_STAMP": self.stamp, "SOC_HEALTH_STAMP": self.health},
+                   result="success" if rc == 0 else "exit-code", status=str(rc), bindir=self.fbin)
+        return rc
 
     def test_bans_runner_arms(self):
         status = f2b("203.0.113.9").replace("\t", " ")
@@ -1220,12 +1313,6 @@ class Runners(unittest.TestCase):
         self.assertEqual(self.bans("echo '[]'\n", f"cat <<'E'\n{status}E\n"), 0)
 
 
-STAMP_SCRIPT = os.environ.get(
-    "SOC_STAMP_SCRIPT",
-    os.path.join(HERE, "..", "modules", "services", "sancta-doctrine-guard-stamp.sh"),
-)
-
-
 class StampScript(unittest.TestCase):
     """modules/services/sancta-doctrine-guard-stamp.sh, run for real with a
     stand-in `touch` that can be made to fail (BSD touch has no -d @N)."""
@@ -1235,21 +1322,11 @@ class StampScript(unittest.TestCase):
         self.bin = os.path.join(self.d, "bin")
         os.mkdir(self.bin)
         self.stamp = os.path.join(self.d, "stamp")
-        py = os.path.realpath(__import__("sys").executable)
-        # fail=all|plain|none: which touch calls fail. `-d @N` sets mtime N.
-        fake(self.bin, "touch", (
-            'mode=plain; [ "$1" = -d ] && mode=epoch\n'
-            'case "$STAMP_TOUCH_FAIL" in all) exit 1;; "$mode") exit 1;; esac\n'
-            f'if [ "$mode" = epoch ]; then t=${{2#@}}; else t=$(date +%s); fi\n'
-            f'exec {py} -c "import os,sys; open(sys.argv[2],\'a\').close(); os.utime(sys.argv[2],(int(sys.argv[1]),)*2)" "$t" "$stamp_path"\n'
-        ).replace('"$stamp_path"', '"$STAMP_PATH"'))
+        fake_touch(self.bin)
 
     def run_stamp(self, *, result="success", code="exited", status="0", fail="none"):
-        env = {"PATH": self.bin + ":/usr/bin:/bin", "SANCTA_DOCTRINE_STAMP": self.stamp,
-               "STAMP_PATH": self.stamp, "STAMP_TOUCH_FAIL": fail,
-               "SERVICE_RESULT": result, "EXIT_CODE": code, "EXIT_STATUS": status}
-        import subprocess
-        return subprocess.run(["bash", STAMP_SCRIPT], env=env, capture_output=True, text=True).returncode
+        return run_script(STAMP_SCRIPT, {"SANCTA_DOCTRINE_STAMP": self.stamp}, result=result, code=code,
+                          status=status, fail=fail, bindir=self.bin)
 
     def mtime(self):
         return int(os.stat(self.stamp).st_mtime)
@@ -1282,6 +1359,64 @@ class StampScript(unittest.TestCase):
         self.green()
         self.assertNotEqual(self.run_stamp(result="exit-code", status="2", fail="all"), 0)
         self.assertFalse(os.path.exists(self.stamp))
+
+
+class BansStampScript(unittest.TestCase):
+    """modules/services/soc-bans-stamp.sh: two mtimes from one exit status."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.bin = os.path.join(self.d, "bin")
+        os.mkdir(self.bin)
+        fake_touch(self.bin)
+        self.bans = os.path.join(self.d, "bans")
+        self.health = os.path.join(self.d, "health")
+
+    def run_it(self, **kw):
+        return run_script(BANS_STAMP_SCRIPT, {"SANCTA_DOCTRINE_STAMP": self.bans, "SOC_HEALTH_STAMP": self.health},
+                          bindir=self.bin, **kw)
+
+    def mt(self, path):
+        return int(os.stat(path).st_mtime)
+
+    def fresh(self, path):
+        return abs(time.time() - self.mt(path)) < 60
+
+    def test_clean_run_freshens_both(self):
+        self.assertEqual(self.run_it(), 0)
+        self.assertTrue(self.fresh(self.bans) and self.fresh(self.health))
+
+    def test_exit_one_is_a_ban_and_only_the_bans_stamp_goes_red(self):
+        self.assertEqual(self.run_it(result="exit-code", status="1"), 0)
+        self.assertEqual(self.mt(self.bans), 1)
+        self.assertTrue(self.fresh(self.health))
+
+    def test_exit_two_crash_timeout_and_signal_only_turn_health_red(self):
+        for kw in (dict(result="exit-code", status="2"), dict(result="exit-code", status="137"),
+                   dict(result="timeout", code="killed", status="TERM"), dict(result="signal", code="killed", status="SEGV"),
+                   dict(result="", code="", status="")):
+            self.assertEqual(self.run_it(**kw), 0, kw)
+            self.assertTrue(self.fresh(self.bans), kw)
+            self.assertEqual(self.mt(self.health), 1, kw)
+
+    def test_a_failed_write_never_leaves_an_old_fresh_stamp(self):
+        for p in (self.bans, self.health):
+            with open(p, "w"):
+                pass
+        self.assertNotEqual(self.run_it(fail="plain"), 0)
+        self.assertEqual((self.mt(self.bans), self.mt(self.health)), (1, 1))
+
+    def test_double_failure_removes_the_stamps_and_fails(self):
+        for p in (self.bans, self.health):
+            with open(p, "w"):
+                pass
+        self.assertNotEqual(self.run_it(fail="all"), 0)
+        self.assertFalse(os.path.exists(self.bans) or os.path.exists(self.health))
+
+    def test_missing_variables_fail_loudly(self):
+        import subprocess
+        r = subprocess.run(["bash", BANS_STAMP_SCRIPT], env={"PATH": "/usr/bin:/bin"}, capture_output=True)
+        self.assertNotEqual(r.returncode, 0)
 
 
 if __name__ == "__main__":

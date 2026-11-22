@@ -11,6 +11,7 @@ pkgs.runCommand "soc-vigil-alarms-tests"
     set -euo pipefail
     export SOC_VIGIL_ALARMS=${../modules/services/soc-vigil-alarms.py}
     export SOC_STAMP_SCRIPT=${../modules/services/sancta-doctrine-guard-stamp.sh}
+    export SOC_BANS_STAMP_SCRIPT=${../modules/services/soc-bans-stamp.sh}
     python3 -W error::ResourceWarning ${./test_soc_vigil_alarms.py} 2>&1 | tee "$TMPDIR/log"
     status=''${PIPESTATUS[0]}
     if [ "$status" -ne 0 ]; then exit "$status"; fi

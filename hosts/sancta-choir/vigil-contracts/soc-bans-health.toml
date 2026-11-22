@@ -1,0 +1,15 @@
+[contract]
+nume = "soc-bans-health"
+ce = "Security: ban evaluator health"
+driver = "operational"
+verifica = "age"
+tinta = "/var/lib/soc-vigil-alarms/bans-health-clean"
+picat_dupa = 2
+prag = "20m"
+# Initial report-only rollout: an evaluator that could not evaluate is shown
+# on the dashboard and in the journal, not paged. Pinned to
+# services.soc-vigil-alarms.paging.bansHealth by tests/module-eval.nix.
+page = false
+
+[spune]
+nivel = "incident"

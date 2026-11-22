@@ -507,24 +507,27 @@ def check_trail(a, last_lost_path: str, start_hold) -> str | None:
     return problem
 
 
-def check_stamp(a, ran_marker: str) -> None:
+def check_stamp(a, ran_marker: str, stamps: list[str] | None = None) -> None:
     """The stamp is the only thing vigil reads. Once a run has completed here
     (`ran_marker`), a missing stamp is an evaluator error: this run exits 2,
     the stamp script writes the stamp already invalid, and vigil reads red
     instead of an absent file (which it reads as unreadable, a note)."""
-    if not a.stamp:
-        raise RuntimeError("no stamp path (set --stamp or SANCTA_DOCTRINE_STAMP)")
-    if os.path.exists(ran_marker) and not os.path.lexists(a.stamp):
-        raise RuntimeError(f"outcome stamp {a.stamp} is missing after an earlier run")
+    stamps = stamps if stamps is not None else [a.stamp]
+    if not all(stamps):
+        raise RuntimeError("no stamp path (set --stamp / SANCTA_DOCTRINE_STAMP, and --health-stamp / SOC_HEALTH_STAMP for bans)")
+    for stamp in stamps:
+        if os.path.exists(ran_marker) and not os.path.lexists(stamp):
+            raise RuntimeError(f"outcome stamp {stamp} is missing after an earlier run")
     # Invalidate BEFORE evaluating (epoch + 1s). Only a clean run's stamp
     # script makes it fresh again, so a run that dies, or whose stamp writer
     # fails (even to remove the file), can never leave an earlier fresh stamp
     # behind. If even this cannot be done the run is an error.
-    if os.path.lexists(a.stamp):
-        try:
-            os.utime(a.stamp, (1, 1))
-        except OSError as e:
-            raise RuntimeError(f"cannot invalidate outcome stamp {a.stamp}: {e}") from e
+    for stamp in stamps:
+        if os.path.lexists(stamp):
+            try:
+                os.utime(stamp, (1, 1))
+            except OSError as e:
+                raise RuntimeError(f"cannot invalidate outcome stamp {stamp}: {e}") from e
 
 
 def mark_ran(ran_marker: str) -> None:
@@ -662,7 +665,7 @@ def cmd_bans(a) -> int:
     if not a.state_dir or not os.path.isdir(a.state_dir):
         raise RuntimeError("no state directory (set --state-dir or STATE_DIRECTORY)")
     ran_marker = os.path.join(a.state_dir, "bans.ran")
-    check_stamp(a, ran_marker)
+    check_stamp(a, ran_marker, [a.stamp, a.health_stamp])
     # --limit 0: cscli returns only the newest 100 alerts by default
     # (clidecision/decisions.go, crowdsec 1.7.2); a home decision past the
     # first hundred would otherwise read clean.
@@ -711,6 +714,9 @@ def main(argv: list[str]) -> int:
     bn.add_argument("--cidrs", required=True)
     bn.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
     bn.add_argument("--stamp", default=os.environ.get("SANCTA_DOCTRINE_STAMP"))
+    # The second outcome: an evaluator that could not evaluate (exit 2) is
+    # reported here, not on the bans stamp (see soc-bans-stamp.sh).
+    bn.add_argument("--health-stamp", default=os.environ.get("SOC_HEALTH_STAMP"))
     a = ap.parse_args(argv)
     try:
         return cmd_audit(a) if a.cmd == "audit" else cmd_bans(a)

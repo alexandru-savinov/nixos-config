@@ -486,11 +486,12 @@
     # mtime = now after a clean run, epoch + 1s after any other outcome, so a
     # failed run reads picat on the next tick and a guard that stops running
     # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
-    # soc-audit.toml and soc-bans.toml are the same pattern over
-    # soc-vigil-alarms' two stamps (its auditStampPath / bansStampPath).
+    # soc-audit.toml, soc-bans.toml and soc-bans-health.toml are the same
+    # pattern over soc-vigil-alarms' stamps (its auditStampPath, bansStampPath
+    # and bansHealthStampPath).
     # +1 for vigil-contracts-n8n/n8n.toml, which ./n8n.nix adds to
     # contractsDirs only while the studio n8n exists.
-    expectedContracts = 12 + (if config.sancta.studio.n8n.enable then 1 else 0);
+    expectedContracts = 13 + (if config.sancta.studio.n8n.enable then 1 else 0);
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };
