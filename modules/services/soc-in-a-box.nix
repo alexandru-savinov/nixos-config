@@ -53,9 +53,15 @@ in
     enable = true;
     # On audit subsystem errors, log to the kernel ring buffer; never panic.
     failureMode = "printk";
-    backlogLimit = 8192;
-    # Messages per second before the failure mode applies.
-    rateLimit = 200;
+    # Records the kernel queues for auditd before it starts dropping. One
+    # execve is several records, and bursts (builds, deploys) arrive at once;
+    # 32768 is a few tens of MB at worst. A full backlog makes the syscalling
+    # process wait (backlog_wait_time) instead of dropping straight away.
+    backlogLimit = 32768;
+    # No per-second record limit: a rate limit drops records silently (they
+    # only show up in the `lost` counter). The size of the trail on disk is
+    # bounded by auditd's rotation above, not here.
+    rateLimit = 0;
     rules = [
       # 1. agenix-decrypted secrets: any read, write or attribute change.
       #    /run/agenix is a symlink into this directory; watch the real tree.
