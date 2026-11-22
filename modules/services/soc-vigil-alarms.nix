@@ -319,6 +319,12 @@ in
         # Read-only: ProtectSystem=strict leaves cscli no write anywhere, so
         # it can list decisions but not add or delete one.
         CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
+        # cscli embeds a WebAssembly runtime (wazero) whose compiler maps
+        # executable memory; with MemoryDenyWriteExecute it panics
+        # ("mmapExecutable: permission denied") and the evaluator can never
+        # read decisions. Off for this unit only; every other line of the
+        # shared hardening stays, and soc-alarm-audit keeps it on.
+        MemoryDenyWriteExecute = false;
         # fail2ban's control socket (AF_UNIX) and CrowdSec's LAPI on loopback.
         RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
         IPAddressDeny = "any";
