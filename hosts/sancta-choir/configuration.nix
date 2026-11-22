@@ -32,7 +32,30 @@
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
       "claude-code.cachix.org-1:p3pMxGi7K+xT7I3dLghdlrUijD8s+wfQlmWp8gQ/TJA="
     ];
+    # Disk pressure: start a GC when free space < 5 GiB, stop at 15 GiB (bytes).
+    min-free = 5 * 1024 * 1024 * 1024;
+    max-free = 15 * 1024 * 1024 * 1024;
   };
+
+  # Disk policy. Scheduled GC is choir-store-gc (modules/services/choir-store-gc.nix),
+  # which replaces nix.gc, so the stock timer stays off.
+  nix.gc.automatic = false;
+  boot.loader.grub.configurationLimit = 10;
+
+  # Weekly hard-link dedup of the store. Sun 01:00 keeps it clear of the 02:30
+  # choir-store-gc run and the 03:50/04:20 soul jobs. The first run walks the
+  # whole store and can be slow and I/O heavy: trigger it by hand off-hours
+  # (`systemctl start nix-optimise.service`) rather than waiting for the timer.
+  nix.optimise = {
+    automatic = true;
+    dates = [ "Sun 01:00" ];
+  };
+
+  # Cap the journal so it cannot eat the disk.
+  services.journald.extraConfig = ''
+    SystemMaxUse=2G
+    SystemKeepFree=4G
+  '';
 
   imports = [
     ./hardware-configuration.nix
@@ -41,6 +64,7 @@
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
+    ../../modules/services/choir-store-gc.nix # generation-count GC (replaces nix.gc)
     ../../modules/services/soc-in-a-box.nix # auditd trail + CrowdSec (sshd), all local
     ../../modules/services/soc-vigil-alarms.nix # the two root-only SOC alarms, as vigil stamps
     ../../modules/users/root.nix
