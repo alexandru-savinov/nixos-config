@@ -477,8 +477,13 @@
     "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBGC1r/qeEQmR39fQdJzssoglt+pAlXWxIZ7bF+Czfk5SDkkwqTpc04fHxtbQJfoVXiTsiwzp/F3kVj3uGrh6uRoAAAAEc3NoOg== owner-se-ssh"
   ];
 
-  # Stage 3a: the workstation's tailnet addresses and the poll command. The
-  # sanctaPoll / sanctaSession key lists stay empty until the public keys are added.
+  # Stage 3a: the workstation's tailnet addresses, the poll command and the two
+  # public keys (rendered only into /etc/ssh/authorized_keys.sancta-2222, read
+  # for sancta on port 2222 alone):
+  #   poll    SHA256:TK2zx9stmYxzb1KvKdDVxDWw8Z2L7VRDSFGl9XXpPf8
+  #   session SHA256:3bLfqD/NpHleKjpQ43pCW6l6pCNVfJ5kK8T6Hgzeanw
+  sancta-choir.adminKeys.sanctaPoll = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICZpuLu/RYwbo22wqFFEHzUdySSgGSo6e8dBNXoJzAzx sancta-status-poll@mac" ];
+  sancta-choir.adminKeys.sanctaSession = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEqOcF4Euea78mZnq3Yb7hQpfmiQpeOHRxONojQvHaPT sancta-attach@mac" ];
   sancta-choir.adminKeys.macAddresses = [ "100.77.178.43" "fd7a:115c:a1e0::a73a:b22b" ];
   sancta-choir.adminKeys.sanctaPollCommand = "/var/lib/sancta/.claude/index/bin/sancta-status-line";
 

@@ -2805,8 +2805,8 @@ let
         sessKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISESSSESSSESSSESSSESSSESSSESSSESSSESSSESSS sess-test";
         cfg = (self.nixosConfigurations.sancta-choir.extendModules {
           modules = [{
-            sancta-choir.adminKeys.sanctaPoll = [ pollKey ];
-            sancta-choir.adminKeys.sanctaSession = [ sessKey ];
+            sancta-choir.adminKeys.sanctaPoll = nixpkgs.lib.mkForce [ pollKey ];
+            sancta-choir.adminKeys.sanctaSession = nixpkgs.lib.mkForce [ sessKey ];
             sancta-choir.adminKeys.macAddresses = nixpkgs.lib.mkForce [ "100.64.0.9" "fd7a:115c:a1e0::9" ];
           }];
         }).config;
@@ -2893,29 +2893,31 @@ let
       ];
     };
 
-    # As shipped: the real addresses and poll command are set, key lists empty.
-    sancta-choir-ssh-sancta-shipped-settings =
+    # As shipped: the real addresses, poll command and the two public keys; the
+    # 2222 key file holds exactly those two lines, and the global sancta key
+    # file is still only the rrsync key.
+    sancta-choir-ssh-sancta-shipped-keyfile =
       let
-        k = self.nixosConfigurations.sancta-choir.config.sancta-choir.adminKeys;
-        rendered = (self.nixosConfigurations.sancta-choir.extendModules {
-          modules = [{ sancta-choir.adminKeys.sanctaSession = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM s" ]; }];
-        }).config.environment.etc."ssh/authorized_keys.sancta-2222".text;
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        k = cfg.sancta-choir.adminKeys;
+        e = cfg.environment.etc."ssh/authorized_keys.sancta-2222";
+        from = "from=\"100.77.178.43,fd7a:115c:a1e0::a73a:b22b\"";
+        lines = nixpkgs.lib.splitString "\n" (nixpkgs.lib.removeSuffix "\n" e.text);
+        global = cfg.users.users.sancta.openssh.authorizedKeys.keys;
       in
       if k.macAddresses == [ "100.77.178.43" "fd7a:115c:a1e0::a73a:b22b" ]
         && k.sanctaPollCommand == "/var/lib/sancta/.claude/index/bin/sancta-status-line"
-        && k.sanctaPoll == [ ] && k.sanctaSession == [ ]
-        && nixpkgs.lib.hasInfix "from=\"100.77.178.43,fd7a:115c:a1e0::a73a:b22b\" ssh-ed25519" rendered
+        && lines == [
+        "restrict,command=\"/var/lib/sancta/.claude/index/bin/sancta-status-line\",${from} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICZpuLu/RYwbo22wqFFEHzUdySSgGSo6e8dBNXoJzAzx sancta-status-poll@mac"
+        "restrict,pty,port-forwarding,permitlisten=\"127.0.0.1:*\",${from} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEqOcF4Euea78mZnq3Yb7hQpfmiQpeOHRxONojQvHaPT sancta-attach@mac"
+      ]
+        && e.mode == "0444" && e.user == "root"
+        && builtins.length global == 1
+        && nixpkgs.lib.hasInfix "rpi5 -> sancta-choir soul-mirror pull" (builtins.head global)
+        && !(nixpkgs.lib.hasInfix "sancta-attach@mac" (builtins.head global))
+        && !(nixpkgs.lib.hasInfix "sancta-status-poll@mac" (builtins.head global))
       then true
-      else builtins.throw "FAIL: shipped sancta settings: ${builtins.toJSON k}";
-
-    # As shipped (no keys): the 2222 key file is ABSENT, so nothing new can log in.
-    sancta-choir-ssh-sancta-shipped-inert =
-      let cfg = self.nixosConfigurations.sancta-choir.config;
-      in
-      if !(cfg.environment.etc ? "ssh/authorized_keys.sancta-2222")
-        || !(cfg.environment.etc."ssh/authorized_keys.sancta-2222".enable)
-      then true
-      else builtins.throw "FAIL: sancta-2222 key file present while no keys are configured";
+      else builtins.throw "FAIL: shipped sancta 2222 key file: ${builtins.toJSON lines}";
 
   };
 
