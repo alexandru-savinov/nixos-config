@@ -2798,6 +2798,7 @@ let
             what = "trailing Match LocalPort 2222 block allows only alexandru+agent+sancta+diag, no root";
           }
           { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n" extra; what = "alexandru+agent read only the declarative key file"; }
+          { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n  AllowTcpForwarding no\n  AllowStreamLocalForwarding no\n" extra; what = "alexandru+agent: no TCP or stream-local forwarding"; }
           { ok = nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent diag\n" extra; what = "alexandru+agent+diag denied on port 22"; }
           # Root never logs in over OpenSSH, and has no OpenSSH keys.
           { ok = cfg.services.openssh.settings.PermitRootLogin == "no"; what = "PermitRootLogin no globally"; }
