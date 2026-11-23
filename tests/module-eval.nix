@@ -751,6 +751,10 @@ let
           noRootDelete = nixpkgs.lib.hasInfix "setpriv --reuid" cfg.choirTmpReaper.scriptText;
           # While dry-run, stock /tmp aging stays in force for claude trees;
           # the exemption comes only with an armed reaper.
+          # The script resolves homes and groups with getent; it is glibc's own
+          # `getent` output, not part of glibc.bin (the first live dry-run
+          # logged "getent: command not found" and could never reap).
+          getentOnPath = nixpkgs.lib.hasInfix (builtins.unsafeDiscardStringContext "${self.nixosConfigurations.sancta-choir.pkgs.getent}/bin") (builtins.unsafeDiscardStringContext cfg.choirTmpReaper.scriptText);
           agingExemptOnlyWhenArmed = !(builtins.elem "x /tmp/claude-*" cfg.systemd.tmpfiles.rules)
             && builtins.elem "x /tmp/claude-*"
             (self.nixosConfigurations.sancta-choir.extendModules {
