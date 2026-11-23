@@ -2794,6 +2794,7 @@ let
           # Root never logs in over OpenSSH, and has no OpenSSH keys.
           { ok = cfg.services.openssh.settings.PermitRootLogin == "no"; what = "PermitRootLogin no globally"; }
           { ok = cfg.users.users.root.openssh.authorizedKeys.keys == [ ] && cfg.users.users.root.openssh.authorizedKeys.keyFiles == [ ]; what = "root has no OpenSSH keys"; }
+          { ok = cfg.users.users.herdr.openssh.authorizedKeys.keys == [ ]; what = "herdr has no OpenSSH keys (explicit, not inherited from root)"; }
           { ok = builtins.elem "--ssh" cfg.services.tailscale.extraUpFlags; what = "Tailscale SSH still enabled"; }
         ];
       in

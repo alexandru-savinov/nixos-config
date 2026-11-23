@@ -751,6 +751,12 @@
 
   networking.hostName = "sancta-choir";
 
+  # herdr's authorizedKeys default to root's (modules/services/herdr.nix), so
+  # make the result explicit: no OpenSSH key for herdr either. The 7-day
+  # session inventory (2026-11-23) showed no herdr logins; a future remote
+  # attach gets its own key on the 2222 listener, not root's.
+  customModules.herdr.authorizedKeys = [ ];
+
   # No OpenSSH keys for root. Admin access is the named `alexandru` account on
   # the tailnet-only 2222 listener (hosts/sancta-choir/ssh-admin.nix); rescue
   # is the Hetzner console/rescue system.
