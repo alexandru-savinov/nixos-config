@@ -2786,8 +2786,8 @@ let
           { ok = nixpkgs.lib.hasInfix "\nPort 2222\n" "\n${cfg.services.openssh.extraConfig}"; what = "Port 2222 declared"; }
           # Match must be the last thing in the file and restrict 2222.
           {
-            ok = nixpkgs.lib.hasSuffix "Match LocalPort 2222\n  AllowUsers alexandru agent\n  PermitRootLogin no" extra;
-            what = "trailing Match LocalPort 2222 block allows only alexandru+agent, no root";
+            ok = nixpkgs.lib.hasSuffix "Match LocalPort 2222\n  AllowUsers alexandru agent sancta\n  PermitRootLogin no" extra;
+            what = "trailing Match LocalPort 2222 block allows only alexandru+agent+sancta, no root";
           }
           { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n" extra; what = "alexandru+agent read only the declarative key file"; }
           { ok = nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent\n" extra; what = "alexandru+agent denied on port 22"; }
@@ -2797,6 +2797,127 @@ let
       in
       if failed == [ ] then true
       else builtins.throw "FAIL: sancta-choir ssh listener — failed checks: ${builtins.toJSON (map (c: c.what) failed)}";
+
+    # ── stage 3a: sancta keys on 2222 only ──
+    sancta-choir-ssh-sancta-keyfile =
+      let
+        pollKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPOLLPOLLPOLLPOLLPOLLPOLLPOLLPOLLPOLLPOLL poll-test";
+        sessKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISESSSESSSESSSESSSESSSESSSESSSESSSESSSESSS sess-test";
+        cfg = (self.nixosConfigurations.sancta-choir.extendModules {
+          modules = [{
+            sancta-choir.adminKeys.sanctaPoll = nixpkgs.lib.mkForce [ pollKey ];
+            sancta-choir.adminKeys.sanctaSession = nixpkgs.lib.mkForce [ sessKey ];
+            sancta-choir.adminKeys.macAddresses = nixpkgs.lib.mkForce [ "100.64.0.9" "fd7a:115c:a1e0::9" ];
+          }];
+        }).config;
+        e = cfg.environment.etc."ssh/authorized_keys.sancta-2222";
+        text = e.text;
+        lines = nixpkgs.lib.splitString "\n" (nixpkgs.lib.removeSuffix "\n" text);
+        from = "from=\"100.64.0.9,fd7a:115c:a1e0::9\"";
+      in
+      if lines == [
+        "restrict,command=\"/var/lib/sancta/.claude/index/bin/sancta-status-line\",${from} ${pollKey}"
+        "restrict,pty,port-forwarding,permitlisten=\"127.0.0.1:*\",${from} ${sessKey}"
+      ] && e.mode == "0444" && e.user == "root" && !(nixpkgs.lib.hasInfix "permitopen" text)
+      then true
+      else builtins.throw "FAIL: sancta-2222 key file: ${builtins.toJSON lines}";
+
+    sancta-choir-ssh-sancta-global-file-unchanged =
+      let
+        mk = c: c.users.users.sancta.openssh.authorizedKeys.keys;
+        shipped = mk self.nixosConfigurations.sancta-choir.config;
+        withKeys = mk (self.nixosConfigurations.sancta-choir.extendModules {
+          modules = [{
+            sancta-choir.adminKeys.sanctaSession = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISESSSESSSESSSESSSESSSESSSESSSESSSESSSESSS sess-test" ];
+            sancta-choir.adminKeys.macAddresses = [ "100.64.0.9" ];
+          }];
+        }).config;
+      in
+      if shipped == withKeys && builtins.length shipped == 1
+        && nixpkgs.lib.hasInfix "rpi5 -> sancta-choir soul-mirror pull" (builtins.head shipped)
+        && !(nixpkgs.lib.hasInfix "sess-test" (builtins.head shipped))
+      then true
+      else builtins.throw "FAIL: global sancta key file changed: ${builtins.toJSON shipped} vs ${builtins.toJSON withKeys}";
+
+    sancta-choir-ssh-sancta-match-block =
+      let
+        extra = self.nixosConfigurations.sancta-choir.config.services.openssh.extraConfig;
+        block = "Match User sancta LocalPort 2222\n  AuthorizedKeysFile /etc/ssh/authorized_keys.sancta-2222\n  AllowTcpForwarding remote\n  AllowStreamLocalForwarding no\n  GatewayPorts no\n  PermitListen 127.0.0.1:*\n";
+        before = builtins.head (nixpkgs.lib.splitString "Match User sancta LocalPort 2222" extra);
+        afterParts = nixpkgs.lib.splitString "\nMatch LocalPort 2222\n" extra;
+      in
+      if nixpkgs.lib.hasInfix block extra
+        && !(nixpkgs.lib.hasInfix "Match LocalPort 2222" before)
+        && builtins.length afterParts == 2
+        # Match blocks stay last: nothing but indented lines follows the first Match.
+        && nixpkgs.lib.hasInfix "Match LocalPort 2222\n  AllowUsers alexandru agent sancta\n  PermitRootLogin no" extra
+      then true
+      else builtins.throw "FAIL: sancta Match block missing/misordered:\n${extra}";
+
+    sancta-choir-ssh-sancta-allowusers =
+      let
+        extra = self.nixosConfigurations.sancta-choir.config.services.openssh.extraConfig;
+        allow = builtins.filter (l: nixpkgs.lib.hasPrefix "  AllowUsers" l) (nixpkgs.lib.splitString "\n" extra);
+        words = nixpkgs.lib.splitString " " (nixpkgs.lib.removePrefix "  AllowUsers " (builtins.head allow));
+      in
+      if builtins.length allow == 1 && builtins.elem "sancta" words && !(builtins.elem "root" words)
+      then true
+      else builtins.throw "FAIL: 2222 AllowUsers: ${builtins.toJSON allow}";
+
+    sancta-choir-ssh-sancta-nonplain-key-rejected = shouldFail "sancta-choir: option-bearing sancta key rejected" {
+      modules = [
+        ../hosts/sancta-choir/ssh-admin.nix
+        {
+          sancta-choir.adminKeys.sanctaSession = [ "command=\"/bin/sh\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM evil" ];
+          sancta-choir.adminKeys.macAddresses = [ "100.64.0.9" ];
+        }
+      ];
+    };
+
+    sancta-choir-ssh-sancta-poll-multiline-rejected = shouldFail "sancta-choir: multiline sancta poll key rejected" {
+      modules = [
+        ../hosts/sancta-choir/ssh-admin.nix
+        {
+          sancta-choir.adminKeys.sanctaPoll = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM a\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM b" ];
+          sancta-choir.adminKeys.macAddresses = [ "100.64.0.9" ];
+        }
+      ];
+    };
+
+    sancta-choir-ssh-sancta-no-addresses-rejected = shouldFail "sancta-choir: sancta keys without macAddresses rejected" {
+      modules = [
+        ../hosts/sancta-choir/ssh-admin.nix
+        {
+          sancta-choir.adminKeys.sanctaPoll = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM a" ];
+        }
+      ];
+    };
+
+    # As shipped: the real addresses, poll command and the two public keys; the
+    # 2222 key file holds exactly those two lines, and the global sancta key
+    # file is still only the rrsync key.
+    sancta-choir-ssh-sancta-shipped-keyfile =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        k = cfg.sancta-choir.adminKeys;
+        e = cfg.environment.etc."ssh/authorized_keys.sancta-2222";
+        from = "from=\"100.77.178.43,fd7a:115c:a1e0::a73a:b22b\"";
+        lines = nixpkgs.lib.splitString "\n" (nixpkgs.lib.removeSuffix "\n" e.text);
+        global = cfg.users.users.sancta.openssh.authorizedKeys.keys;
+      in
+      if k.macAddresses == [ "100.77.178.43" "fd7a:115c:a1e0::a73a:b22b" ]
+        && k.sanctaPollCommand == "/var/lib/sancta/.claude/index/bin/sancta-status-line"
+        && lines == [
+        "restrict,command=\"/var/lib/sancta/.claude/index/bin/sancta-status-line\",${from} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICZpuLu/RYwbo22wqFFEHzUdySSgGSo6e8dBNXoJzAzx sancta-status-poll@mac"
+        "restrict,pty,port-forwarding,permitlisten=\"127.0.0.1:*\",${from} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEqOcF4Euea78mZnq3Yb7hQpfmiQpeOHRxONojQvHaPT sancta-attach@mac"
+      ]
+        && e.mode == "0444" && e.user == "root"
+        && builtins.length global == 1
+        && nixpkgs.lib.hasInfix "rpi5 -> sancta-choir soul-mirror pull" (builtins.head global)
+        && !(nixpkgs.lib.hasInfix "sancta-attach@mac" (builtins.head global))
+        && !(nixpkgs.lib.hasInfix "sancta-status-poll@mac" (builtins.head global))
+      then true
+      else builtins.throw "FAIL: shipped sancta 2222 key file: ${builtins.toJSON lines}";
 
   };
 
