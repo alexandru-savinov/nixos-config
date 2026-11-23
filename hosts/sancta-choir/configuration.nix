@@ -74,7 +74,6 @@
     ../../modules/services/codex.nix
     ../../modules/services/vigil.nix
     ../../modules/services/claude-shared.nix
-    ../../modules/services/herdr.nix
     ../../modules/services/tailscale.nix
     ../../modules/services/sancta-session-scope.nix
     ../../modules/services/open-webui.nix
@@ -103,14 +102,11 @@
   customModules.codex.enable = true;
   customModules.claudeShared = {
     enable = true;
-    # `herdr` is included so the dedicated herdr user (which runs the herdr
-    # server + agent panes) gets the full Claude Code stack — claude CLI, skills,
-    # agents, commands — under /var/lib/herdr/.claude, not just root.
     # `sancta` is included so the soul volume's skills/agents/commands are
     # built and owned by THIS host's home-manager (clone at
     # /var/lib/sancta/.claude-shared), replacing the 2026-07-21 hand-copied
     # rpi5 store paths that seeded the migrated soul.
-    users = [ "root" "herdr" "sancta" ];
+    users = [ "root" "sancta" ];
   };
 
   # The claude-shared settings activation rewrites ~/.claude/settings.json
@@ -120,7 +116,7 @@
   #
   # spinnerTipsEnabled lives HERE, not in services.claudeCodeManagedSettings
   # (2026-08-20, PR #569 finding P1): that module is machine-wide (root,
-  # herdr, sancta all read the same /etc file), and this key is a PREFERENCE
+  # sancta all read the same /etc file), and this key is a PREFERENCE
   # — a single JSON literal there cannot be scoped to sancta only the way the
   # module's two script-backed commands were (a plain boolean has no runtime
   # identity check available to it). Its loss on a harness rewrite is
@@ -149,7 +145,7 @@
   # step (install, or jq-merge) can outlast. See the module's own header for
   # the full evidence, the 2026-08-26 re-litigation of what may live there,
   # and the P1 CROSS-USER SAFETY section (every soul-volume command is guarded
-  # to the sancta identity; herdr/root get an instant no-op, not a permission
+  # to the sancta identity; root gets an instant no-op, not a permission
   # error, from the 0700 soul volume).
   services.claudeCodeManagedSettings.enable = true;
 
@@ -171,8 +167,7 @@
       toString config.services.sancta-soul-volume.mountPoint;
   };
 
-  # Agent tooling on the system PATH so herdr panes (which inherit the
-  # herdr-server unit's PATH, not a login shell's) can find + launch them.
+  # Agent tooling on the system PATH, for non-login sessions and units.
   #
   # The `sancta` alias is the ONLY pointer from `sancta` / `sancta-session` /
   # `sessions attach sancta` to the live backend, and it is deliberately declarative
@@ -263,28 +258,8 @@
   # Pinned by module-eval `vulnix-nightly-choir-shape`.
   users.users.sancta.extraGroups = [ "vulnix" ];
 
-  # home-manager rewrites herdr's ~/.claude/settings.json on EVERY activation,
-  # which clobbers the claude agent-state hook that `herdr integration install`
-  # wires into it — and a no-change `nixos-rebuild switch` re-runs HM but does
-  # NOT restart herdr-server, so its ExecStartPost wouldn't re-add the hook.
-  # Re-install both integrations at the END of herdr's HM activation (after the
-  # settings file is written), so the hook is present after every deploy, even
-  # no-change ones. (codex stores its hook in its own hooks.json, which HM does
-  # not touch, but we re-run it too for symmetry/idempotence.)
-  home-manager.users.herdr = { lib, ... }: {
-    home.activation.herdrIntegrations = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      export PATH="/etc/profiles/per-user/herdr/bin:/run/current-system/sw/bin:$PATH"
-      herdr integration install claude || true
-      herdr integration install codex || true
-    '';
-  };
-
-  # herdr — always-on terminal workspace server for AI coding agents. The server
-  # lives here so long-running sessions survive the Mac sleeping; it runs as a
-  # dedicated unprivileged `herdr` user whose only sudo is a fixed-flake deploy
-  # wrapper (`herdr-deploy`) + GC — no raw nixos-rebuild/systemctl. Attach with
-  # `herdr --remote herdr@sancta-choir-1.tail4249a9.ts.net`.
-  customModules.herdr.enable = true;
+  # herdr (terminal workspace server + its sudo deploy wrapper) was retired
+  # 2026-11-23: unused. Its user's files under /var/lib/herdr are left on disk.
 
   # Agenix secrets (defaults: owner=root, group=root, mode=0400)
   age.secrets =
@@ -756,12 +731,6 @@
   ];
 
   networking.hostName = "sancta-choir";
-
-  # herdr's authorizedKeys default to root's (modules/services/herdr.nix), so
-  # make the result explicit: no OpenSSH key for herdr either. The 7-day
-  # session inventory (2026-11-23) showed no herdr logins; a future remote
-  # attach gets its own key on the 2222 listener, not root's.
-  customModules.herdr.authorizedKeys = [ ];
 
   # No OpenSSH keys for root. Admin access is the named `alexandru` account on
   # the tailnet-only 2222 listener (hosts/sancta-choir/ssh-admin.nix); rescue

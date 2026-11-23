@@ -2802,7 +2802,12 @@ let
           # Root never logs in over OpenSSH, and has no OpenSSH keys.
           { ok = cfg.services.openssh.settings.PermitRootLogin == "no"; what = "PermitRootLogin no globally"; }
           { ok = cfg.users.users.root.openssh.authorizedKeys.keys == [ ] && cfg.users.users.root.openssh.authorizedKeys.keyFiles == [ ]; what = "root has no OpenSSH keys"; }
-          { ok = cfg.users.users.herdr.openssh.authorizedKeys.keys == [ ]; what = "herdr has no OpenSSH keys (explicit, not inherited from root)"; }
+          # herdr is retired: no user, no unit, no sudo rule for it.
+          { ok = !(cfg.users.users ? herdr); what = "no herdr user"; }
+          { ok = !(cfg.systemd.services ? herdr-server); what = "no herdr-server unit"; }
+          { ok = !(builtins.any (r: builtins.elem "herdr" (r.users or [ ])) cfg.security.sudo.extraRules); what = "no sudo rule for herdr"; }
+          { ok = !(nixpkgs.lib.hasInfix "herdr" cfg.security.sudo.extraConfig); what = "no herdr in sudoers extraConfig"; }
+          { ok = !(builtins.elem "herdr" cfg.customModules.claudeShared.users); what = "claude-shared not installed for herdr"; }
           { ok = builtins.elem "--ssh" cfg.services.tailscale.extraUpFlags; what = "Tailscale SSH still enabled"; }
         ];
       in

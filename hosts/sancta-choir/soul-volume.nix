@@ -2,7 +2,7 @@
 #
 # ══════════════════════════════════════════════════════════════════════════
 # STAGING NOTE (Sancta→sancta-choir migration): AUTHORED first, deployed via
-# the normal PR → CI → main → herdr-deploy path. Merging the PR is fine and
+# the normal PR → CI → main → deploy path. Merging the PR is fine and
 # expected; what must NOT happen from this repo alone is ARMING — the loopback
 # image is created by hand and the module stays a no-op until it exists
 # (ConditionPathExists). No real key material is written by this repo.
