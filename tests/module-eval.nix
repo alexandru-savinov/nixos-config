@@ -2932,6 +2932,21 @@ let
 
 
     # ── diag: read-only forced-command account on 2222 ──
+    # The vscode-server watcher user unit runs only for root and the owner,
+    # never in a diag/agent/sancta user manager.
+    sancta-choir-vscode-user-unit-scoped =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        u = cfg.systemd.user.services.auto-fix-vscode-server;
+        unit = cfg.systemd.user.units."auto-fix-vscode-server.service".text;
+      in
+      if u.unitConfig.ConditionUser == [ "|root" "|alexandru" ]
+        && nixpkgs.lib.hasInfix "ConditionUser=|root\n" unit
+        && nixpkgs.lib.hasInfix "ConditionUser=|alexandru\n" unit
+        && builtins.length (builtins.filter (nixpkgs.lib.hasPrefix "ConditionUser=") (nixpkgs.lib.splitString "\n" unit)) == 2
+      then true
+      else builtins.throw "FAIL: auto-fix-vscode-server not scoped:\n${unit}";
+
     sancta-choir-ssh-diag-account =
       let
         cfg = self.nixosConfigurations.sancta-choir.config;

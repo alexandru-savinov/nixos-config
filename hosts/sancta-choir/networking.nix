@@ -77,6 +77,11 @@
 
   # VSCode Server support
   services.vscode-server.enable = true;
+  # The module installs its watcher as a user unit for EVERY user manager. Only
+  # the accounts that run VS Code Remote get it; service and forced-command
+  # accounts (diag, agent, sancta, ...) never run it on login. `|` makes the
+  # conditions an OR.
+  systemd.user.services.auto-fix-vscode-server.unitConfig.ConditionUser = [ "|root" "|alexandru" ];
 
   # Time zone
   time.timeZone = "Europe/Chisinau";
