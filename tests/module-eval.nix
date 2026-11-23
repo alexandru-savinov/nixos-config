@@ -2786,11 +2786,11 @@ let
           { ok = nixpkgs.lib.hasInfix "\nPort 2222\n" "\n${cfg.services.openssh.extraConfig}"; what = "Port 2222 declared"; }
           # Match must be the last thing in the file and restrict 2222.
           {
-            ok = nixpkgs.lib.hasSuffix "Match LocalPort 2222\n  AllowUsers alexandru agent sancta\n  PermitRootLogin no" extra;
-            what = "trailing Match LocalPort 2222 block allows only alexandru+agent+sancta, no root";
+            ok = nixpkgs.lib.hasSuffix "Match LocalPort 2222\n  AllowUsers alexandru agent sancta diag\n  PermitRootLogin no" extra;
+            what = "trailing Match LocalPort 2222 block allows only alexandru+agent+sancta+diag, no root";
           }
           { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n" extra; what = "alexandru+agent read only the declarative key file"; }
-          { ok = nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent\n" extra; what = "alexandru+agent denied on port 22"; }
+          { ok = nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent diag\n" extra; what = "alexandru+agent+diag denied on port 22"; }
           # Root never logs in over OpenSSH, and has no OpenSSH keys.
           { ok = cfg.services.openssh.settings.PermitRootLogin == "no"; what = "PermitRootLogin no globally"; }
           { ok = cfg.users.users.root.openssh.authorizedKeys.keys == [ ] && cfg.users.users.root.openssh.authorizedKeys.keyFiles == [ ]; what = "root has no OpenSSH keys"; }
@@ -2853,7 +2853,7 @@ let
         && !(nixpkgs.lib.hasInfix "Match LocalPort 2222" before)
         && builtins.length afterParts == 2
         # Match blocks stay last: nothing but indented lines follows the first Match.
-        && nixpkgs.lib.hasInfix "Match LocalPort 2222\n  AllowUsers alexandru agent sancta\n  PermitRootLogin no" extra
+        && nixpkgs.lib.hasInfix "Match LocalPort 2222\n  AllowUsers alexandru agent sancta diag\n  PermitRootLogin no" extra
       then true
       else builtins.throw "FAIL: sancta Match block missing/misordered:\n${extra}";
 
@@ -2921,6 +2921,99 @@ let
         && !(nixpkgs.lib.hasInfix "sancta-status-poll@mac" (builtins.head global))
       then true
       else builtins.throw "FAIL: shipped sancta 2222 key file: ${builtins.toJSON lines}";
+
+
+    # ── diag: read-only forced-command account on 2222 ──
+    sancta-choir-ssh-diag-account =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        u = cfg.users.users.diag;
+        failed = nixpkgs.lib.filter (c: !c.ok) [
+          { ok = u.isNormalUser; what = "diag is a normal user"; }
+          { ok = u.extraGroups == [ "systemd-journal" ]; what = "diag is in systemd-journal only (no wheel)"; }
+          { ok = !(builtins.any (r: builtins.elem "diag" (r.users or [ ]) || builtins.elem "diag" (r.groups or [ ])) cfg.security.sudo.extraRules); what = "diag has no sudo rule"; }
+          { ok = (u.linger or null) != true; what = "diag has no linger"; }
+          { ok = u.password == null && u.hashedPassword == null && u.hashedPasswordFile == null && u.initialPassword == null && u.initialHashedPassword == null; what = "diag has no password"; }
+          { ok = !(builtins.elem "diag" cfg.services.soc-vigil-alarms.namedAccounts); what = "diag is not a soc-audit named account"; }
+        ];
+      in
+      if failed == [ ] then true
+      else builtins.throw "FAIL: diag account — failed checks: ${builtins.toJSON (map (c: c.what) failed)}";
+
+    sancta-choir-ssh-diag-keyfile =
+      let
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIAGDIAGDIAGDIAGDIAGDIAGDIAGDIAGDIAGDIAG diag-test";
+        cfg = (self.nixosConfigurations.sancta-choir.extendModules {
+          modules = [{
+            sancta-choir.adminKeys.diag = nixpkgs.lib.mkForce [ key ];
+            sancta-choir.adminKeys.macAddresses = nixpkgs.lib.mkForce [ "100.64.0.9" "fd7a:115c:a1e0::9" ];
+          }];
+        }).config;
+        e = cfg.environment.etc."ssh/authorized_keys.diag-2222";
+        lines = nixpkgs.lib.splitString "\n" (nixpkgs.lib.removeSuffix "\n" e.text);
+        line = builtins.head lines;
+        prefix = "restrict,command=\"";
+        suffix = "/bin/choir-diag\",from=\"100.64.0.9,fd7a:115c:a1e0::9\" ${key}";
+        mid = nixpkgs.lib.removeSuffix suffix (nixpkgs.lib.removePrefix prefix line);
+      in
+      if builtins.length lines == 1
+        && nixpkgs.lib.hasPrefix prefix line && nixpkgs.lib.hasSuffix suffix line
+        && nixpkgs.lib.hasPrefix "/nix/store/" mid && nixpkgs.lib.hasSuffix "-choir-diag" mid
+        && !(nixpkgs.lib.hasInfix "/" (nixpkgs.lib.removePrefix "/nix/store/" mid))
+        && e.mode == "0444" && e.user == "root" && e.group == "root"
+        # The key is not also in the global (port 22) key file.
+        && cfg.users.users.diag.openssh.authorizedKeys.keys == [ ]
+        && !(cfg.environment.etc ? "ssh/authorized_keys.d/diag" && nixpkgs.lib.hasInfix "diag-test" (cfg.environment.etc."ssh/authorized_keys.d/diag".text or ""))
+      then true
+      else builtins.throw "FAIL: diag key file: ${builtins.toJSON lines}";
+
+    sancta-choir-ssh-diag-match-block =
+      let
+        extra = self.nixosConfigurations.sancta-choir.config.services.openssh.extraConfig;
+        block = "Match User diag LocalPort 2222\n  AuthorizedKeysFile /etc/ssh/authorized_keys.diag-2222\n  AllowTcpForwarding no\n  AllowStreamLocalForwarding no\n  AllowAgentForwarding no\n  PermitTTY no\n  X11Forwarding no\n";
+        before = builtins.head (nixpkgs.lib.splitString "Match User diag LocalPort 2222" extra);
+        allow = builtins.filter (l: nixpkgs.lib.hasPrefix "  AllowUsers" l) (nixpkgs.lib.splitString "\n" extra);
+        words = nixpkgs.lib.splitString " " (nixpkgs.lib.removePrefix "  AllowUsers " (builtins.head allow));
+      in
+      if nixpkgs.lib.hasInfix block extra
+        && !(nixpkgs.lib.hasInfix "Match LocalPort 2222" before)
+        && builtins.length (nixpkgs.lib.splitString "\nMatch LocalPort 2222\n" extra) == 2
+        && builtins.length allow == 1 && builtins.elem "diag" words && !(builtins.elem "root" words)
+        && nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent diag\n" extra
+        # diag is not named in the alexandru,agent block that reads authorized_keys.d.
+        && nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n" extra
+      then true
+      else builtins.throw "FAIL: diag Match block missing/misordered:\n${extra}";
+
+    # As shipped: no diag key, so no key file and an empty global key list.
+    sancta-choir-ssh-diag-shipped-absent =
+      let cfg = self.nixosConfigurations.sancta-choir.config;
+      in if cfg.sancta-choir.adminKeys.diag == [ ]
+        && !(cfg.environment.etc ? "ssh/authorized_keys.diag-2222")
+        && cfg.users.users.diag.openssh.authorizedKeys.keys == [ ]
+        && cfg.users.users.diag.openssh.authorizedKeys.keyFiles == [ ]
+        && !(cfg.environment.etc ? "ssh/authorized_keys.d/diag")
+      then true
+      else builtins.throw "FAIL: diag key material present as shipped";
+
+    sancta-choir-ssh-diag-nonplain-key-rejected = shouldFail "sancta-choir: option-bearing diag key rejected" {
+      modules = [
+        ../hosts/sancta-choir/ssh-admin.nix
+        {
+          sancta-choir.adminKeys.diag = [ "command=\"/bin/sh\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM evil" ];
+          sancta-choir.adminKeys.macAddresses = [ "100.64.0.9" ];
+        }
+      ];
+    };
+
+    sancta-choir-ssh-diag-no-addresses-rejected = shouldFail "sancta-choir: diag keys without macAddresses rejected" {
+      modules = [
+        ../hosts/sancta-choir/ssh-admin.nix
+        {
+          sancta-choir.adminKeys.diag = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM a" ];
+        }
+      ];
+    };
 
   };
 

@@ -396,6 +396,9 @@
           # Session-aware /tmp reaper: live/resumable kept, stale removed, symlinks not followed.
           choir-tmp-session-reaper = import ./tests/choir-tmp-session-reaper.nix { inherit pkgs; };
 
+          # Read-only diag account dispatcher: fixed verbs, validated args, no eval.
+          choir-diag = import ./tests/choir-diag.nix { inherit pkgs; };
+
           # The report must come from successful schema-validated action output.
           claude-review-report = import ./tests/claude-review-report.nix { inherit pkgs; };
 

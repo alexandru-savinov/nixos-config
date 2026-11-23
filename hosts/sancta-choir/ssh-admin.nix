@@ -1,9 +1,9 @@
 # sancta-choir: named admin and agent accounts over OpenSSH on the tailnet.
 #
-# Adds two normal accounts and a second sshd listener (port 2222) that is
-# reachable only through tailscale0. Nothing existing is changed or turned
-# off: port 22 (public, used by the soul-mirror pull), Tailscale SSH and the
-# root/herdr/sancta key files stay exactly as they were.
+# Named accounts (alexandru, agent, diag) plus sancta's workstation keys on a
+# second sshd listener (port 2222) reachable only through tailscale0. Port 22
+# (public) serves only the soul-mirror pull (sancta, forced command); root has
+# no OpenSSH keys and PermitRootLogin is no (configuration.nix/networking.nix).
 #
 # Keys come from the options below; every key is rendered with a `from=`
 # source restriction to the tailnet ranges; callers pass plain public keys
@@ -12,7 +12,7 @@
 # tailnet policy's `ssh` rules (outside this repo), which must admit only
 # principals that already have root on this host. Stage 4 of the cutover
 # removes Tailscale SSH and those rules.
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.sancta-choir.adminKeys;
@@ -34,6 +34,17 @@ let
   macFrom = lib.concatStringsSep "," cfg.macAddresses;
   pollLine = key: "restrict,command=\"${cfg.sanctaPollCommand}\",from=\"${macFrom}\" ${key}";
   sessionLine = key: "restrict,pty,port-forwarding,permitlisten=\"127.0.0.1:*\",from=\"${macFrom}\" ${key}";
+
+  # Read-only diagnostics account. Its keys live in a SEPARATE file read only
+  # for `diag` on the second listener; every key is forced into the dispatcher.
+  diagKeyFile = "/etc/ssh/authorized_keys.diag-2222";
+  choirDiag = pkgs.writeShellApplication {
+    name = "choir-diag";
+    runtimeInputs = with pkgs; [ coreutils systemd iproute2 util-linux tailscale procps ];
+    text = builtins.readFile ./choir-diag.sh;
+  };
+  diagLine = key: "restrict,command=\"${lib.getExe choirDiag}\",from=\"${macFrom}\" ${key}";
+  diagLines = map diagLine cfg.diag;
   sanctaLines = map pollLine cfg.sanctaPoll ++ map sessionLine cfg.sanctaSession;
 in
 {
@@ -63,6 +74,11 @@ in
       default = [ ];
       description = "Plain public keys for interactive `sancta` sessions (key file ~/.ssh/id_ed25519_sancta_attach, comment sancta-attach@mac) (pty, remote forwarding to loopback only; port 2222 only).";
     };
+    diag = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Plain public keys for the read-only `diag` account (forced command choir-diag, no pty, no forwarding; port 2222 only).";
+    };
     macAddresses = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -73,12 +89,12 @@ in
   config = {
     assertions = [
       {
-        assertion = lib.all isPlainKey (cfg.owner ++ cfg.agent ++ cfg.sanctaPoll ++ cfg.sanctaSession);
+        assertion = lib.all isPlainKey (cfg.owner ++ cfg.agent ++ cfg.sanctaPoll ++ cfg.sanctaSession ++ cfg.diag);
         message = "sancta-choir.adminKeys: every key must be a plain public key (key type first, no options); the module prepends the from= restriction itself.";
       }
       {
-        assertion = (cfg.sanctaPoll ++ cfg.sanctaSession) == [ ] || cfg.macAddresses != [ ];
-        message = "sancta-choir.adminKeys: macAddresses must be non-empty when sanctaPoll or sanctaSession has keys (from= is mandatory).";
+        assertion = (cfg.sanctaPoll ++ cfg.sanctaSession ++ cfg.diag) == [ ] || cfg.macAddresses != [ ];
+        message = "sancta-choir.adminKeys: macAddresses must be non-empty when sanctaPoll, sanctaSession or diag has keys (from= is mandatory).";
       }
     ];
 
@@ -86,6 +102,13 @@ in
     # log in until keys are supplied.
     environment.etc."ssh/authorized_keys.sancta-2222" = lib.mkIf (sanctaLines != [ ]) {
       text = lib.concatStringsSep "\n" sanctaLines + "\n";
+      mode = "0444";
+      user = "root";
+      group = "root";
+    };
+
+    environment.etc."ssh/authorized_keys.diag-2222" = lib.mkIf (diagLines != [ ]) {
+      text = lib.concatStringsSep "\n" diagLines + "\n";
       mode = "0444";
       user = "root";
       group = "root";
@@ -126,6 +149,15 @@ in
       openssh.authorizedKeys.keys = map restrict cfg.agent;
     };
 
+    # Read-only diagnostics account: no wheel, no sudo rule, no password, no
+    # linger. systemd-journal gives journal read access. It has no global key
+    # file entry, so it can never authenticate on port 22.
+    users.users.diag = {
+      isNormalUser = true;
+      description = "Diagnostics (read-only, forced-command account)";
+      extraGroups = [ "systemd-journal" ];
+    };
+
     services.openssh = {
       settings = {
         LogLevel = "VERBOSE";
@@ -145,7 +177,7 @@ in
           AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
 
         Match LocalPort 22
-          DenyUsers alexandru agent
+          DenyUsers alexandru agent diag
 
         # Must precede the generic 2222 block: the first match wins per keyword.
         Match User sancta LocalPort ${toString listenerPort}
@@ -155,8 +187,17 @@ in
           GatewayPorts no
           PermitListen 127.0.0.1:*
 
+        # Must also precede the generic block. Forced command comes from the key file.
+        Match User diag LocalPort ${toString listenerPort}
+          AuthorizedKeysFile ${diagKeyFile}
+          AllowTcpForwarding no
+          AllowStreamLocalForwarding no
+          AllowAgentForwarding no
+          PermitTTY no
+          X11Forwarding no
+
         Match LocalPort ${toString listenerPort}
-          AllowUsers alexandru agent sancta
+          AllowUsers alexandru agent sancta diag
           PermitRootLogin no
       '';
     };
