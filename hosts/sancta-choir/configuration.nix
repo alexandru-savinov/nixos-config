@@ -466,6 +466,8 @@
   # Every root exec and every login session of the named OpenSSH accounts
   # (hosts/sancta-choir/ssh-admin.nix) is a soc-audit hit, report-only like
   # the rest of soc-audit.
+  # `diag` is deliberately not listed: its sessions are frequent and read-only,
+  # and the root-exec rule already covers anything that runs as root.
   services.soc-vigil-alarms.namedAccounts = [ "alexandru" "agent" ];
 
   # Named owner account for OpenSSH on the tailnet (hosts/sancta-choir/ssh-admin.nix).
