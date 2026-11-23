@@ -172,9 +172,12 @@ in
 
         # These two accounts: only the declarative, from=-restricted key file
         # (never a self-added ~/.ssh/authorized_keys), and never the public
-        # port-22 listener.
+        # port-22 listener. No TCP/stream-local forwarding for them (none in use,
+        # 2026-11-23); if the owner needs it later, delete those two lines.
         Match User alexandru,agent
           AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
+          AllowTcpForwarding no
+          AllowStreamLocalForwarding no
 
         Match LocalPort 22
           DenyUsers alexandru agent diag

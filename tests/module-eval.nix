@@ -2798,16 +2798,31 @@ let
             what = "trailing Match LocalPort 2222 block allows only alexandru+agent+sancta+diag, no root";
           }
           { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n" extra; what = "alexandru+agent read only the declarative key file"; }
+          { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n  AllowTcpForwarding no\n  AllowStreamLocalForwarding no\n" extra; what = "alexandru+agent: no TCP or stream-local forwarding"; }
           { ok = nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent diag\n" extra; what = "alexandru+agent+diag denied on port 22"; }
           # Root never logs in over OpenSSH, and has no OpenSSH keys.
           { ok = cfg.services.openssh.settings.PermitRootLogin == "no"; what = "PermitRootLogin no globally"; }
           { ok = cfg.users.users.root.openssh.authorizedKeys.keys == [ ] && cfg.users.users.root.openssh.authorizedKeys.keyFiles == [ ]; what = "root has no OpenSSH keys"; }
           { ok = cfg.users.users.herdr.openssh.authorizedKeys.keys == [ ]; what = "herdr has no OpenSSH keys (explicit, not inherited from root)"; }
-          { ok = builtins.elem "--ssh" cfg.services.tailscale.extraUpFlags; what = "Tailscale SSH still enabled"; }
+          # Stage 4: Tailscale SSH is off on choir, also when a pref was left on.
+          { ok = !(builtins.elem "--ssh" cfg.services.tailscale.extraUpFlags); what = "no --ssh in extraUpFlags"; }
+          { ok = cfg.services.tailscale.extraSetFlags == [ "--ssh=false" ]; what = "extraSetFlags = [ --ssh=false ]"; }
         ];
       in
       if failed == [ ] then true
       else builtins.throw "FAIL: sancta-choir ssh listener — failed checks: ${builtins.toJSON (map (c: c.what) failed)}";
+
+    # Only choir turns Tailscale SSH off; the rpi5 hosts keep the module default.
+    tailscale-ssh-off-choir-only =
+      let
+        ts = h: self.nixosConfigurations.${h}.config.services.tailscale;
+        on = h: builtins.elem "--ssh" (ts h).extraUpFlags && (ts h).extraSetFlags == [ ];
+        choir = ts "sancta-choir";
+      in
+      if on "rpi5" && on "rpi5-full"
+        && choir.extraUpFlags == [ "--accept-routes" ] && choir.extraSetFlags == [ "--ssh=false" ]
+      then true
+      else builtins.throw "FAIL: tailscale ssh flags: ${builtins.toJSON (map (h: { inherit h; up = (ts h).extraUpFlags; set = (ts h).extraSetFlags; }) [ "sancta-choir" "rpi5" "rpi5-full" ])}";
 
     # ── stage 3a: sancta keys on 2222 only ──
     sancta-choir-ssh-sancta-keyfile =
