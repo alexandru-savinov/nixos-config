@@ -751,11 +751,15 @@
 
   networking.hostName = "sancta-choir";
 
-  # SSH authorized keys for remote access
-  users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
-  ];
+  # herdr's authorizedKeys default to root's (modules/services/herdr.nix), so
+  # make the result explicit: no OpenSSH key for herdr either. The 7-day
+  # session inventory (2026-11-23) showed no herdr logins; a future remote
+  # attach gets its own key on the 2222 listener, not root's.
+  customModules.herdr.authorizedKeys = [ ];
+
+  # No OpenSSH keys for root. Admin access is the named `alexandru` account on
+  # the tailnet-only 2222 listener (hosts/sancta-choir/ssh-admin.nix); rescue
+  # is the Hetzner console/rescue system.
 
   # Fresh install — NixOS 25.05
   system.stateVersion = "25.05";
