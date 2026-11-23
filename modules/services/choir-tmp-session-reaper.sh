@@ -95,8 +95,10 @@ for udir in "$TMP_ROOT"/claude-*; do
     sid=${sdir##*/}
     proj=${sdir%/*}; proj=${proj##*/}
     if excluded "$sid"; then log "keep $sdir: excluded by configuration"; continue; fi
-    kb=$(du -sk --one-file-system "$sdir" 2>/dev/null | cut -f1)
-    kb=${kb:-0}
+    # du exits 1 when an entry vanishes mid-walk (normal on a busy live tree):
+    # never let that abort the run under pipefail.
+    kb=$( { du -sk --one-file-system "$sdir" 2>/dev/null || true; } | cut -f1)
+    case "$kb" in '' | *[!0-9]*) kb=0 ;; esac
     if [ "$kb" -gt $((ALERT_GIB * 1024 * 1024)) ]; then
       warn "$sdir is $((kb / 1024 / 1024)) GiB (alert threshold ${ALERT_GIB} GiB)"
     fi
@@ -112,11 +114,11 @@ for udir in "$TMP_ROOT"/claude-*; do
     if [ -n "$recent" ]; then log "keep $sdir: tree modified within ${IDLE_DAYS}d"; continue; fi
     tx="$home/.claude/projects/$proj/$sid.jsonl"
     if [ -e "$tx" ]; then
-      tm=$(stat -c %Y "$tx")
+      tm=$(stat -c %Y "$tx" 2>/dev/null) || tm=$NOW # vanished between -e and stat: treat as fresh (keep)
       if [ "$tm" -ge "$cutoff" ]; then log "keep $sdir: transcript fresh (resumable)"; continue; fi
     fi
 
-    size=$(du -sh --one-file-system "$sdir" 2>/dev/null | cut -f1)
+    size=$( { du -sh --one-file-system "$sdir" 2>/dev/null || true; } | cut -f1)
     if [ "$DRY_RUN" = "1" ]; then
       log "DRY-RUN would remove $sdir ($size)"
     else

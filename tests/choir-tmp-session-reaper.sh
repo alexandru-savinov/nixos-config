@@ -117,4 +117,12 @@ grep -q "WARN could not fully remove $T/zfail" <<<"$out" && ok "failed delete is
 [ ! -e "$T/big" ] && ok "later session still processed after a failed delete" || bad "run stopped at the failed delete"
 [ "$rcf" != 0 ] && ok "unit exits non-zero after a failed delete" || bad "failed delete left exit 0"
 
+# du that prints a size and exits 1 (an entry vanished mid-walk) must not abort the run
+mk dufail; touch -d "$old" "$W/home/$uid/.claude/projects/proj/dufail.jsonl"; touch -d "$old" "$T/dufail"
+mk zzafter; touch -d "$old" "$W/home/$uid/.claude/projects/proj/zzafter.jsonl"; touch -d "$old" "$T/zzafter"
+printf '#!/bin/sh\necho "123\t$3"\nexit 1\n' > "$W/fakebin2du"; mkdir -p "$W/fakebin2"; mv "$W/fakebin2du" "$W/fakebin2/du"; chmod +x "$W/fakebin2/du"
+rcd=0; out=$(PATH="$W/fakebin2:$PATH" run DRY_RUN=1) || rcd=$?
+[ "$rcd" = 0 ] && ok "du exiting 1 does not abort the run" || bad "run aborted on du exit 1 (rc=$rcd)"
+grep -q "DRY-RUN would remove $T/zzafter " <<<"$out" && ok "sessions after a du failure are still processed" || bad "later session skipped after du failure"
+
 [ "$fails" = 0 ] && echo "ALL PASS" || { echo "$fails FAILED"; exit 1; }
