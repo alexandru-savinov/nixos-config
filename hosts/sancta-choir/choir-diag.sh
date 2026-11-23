@@ -32,7 +32,10 @@ refuse() {
 
 raw="${SSH_ORIGINAL_COMMAND:-}"
 # Log every request, control characters replaced so a client cannot forge lines.
-logger -t choir-diag "${raw//[^[:print:]]/?}"
+# `--` ends logger's options (a request starting with `-` must stay message
+# text: -f<file>, -s, -t, --server would otherwise be honoured), and stdin is
+# closed so logger can never read message lines from the client.
+logger -t choir-diag -- "${raw//[^[:print:]]/?}" </dev/null
 
 # `read` consumes one line only; a multi-line command must not pass as its first line.
 if [[ "$raw" == *$'\n'* || "$raw" == *$'\r'* ]]; then

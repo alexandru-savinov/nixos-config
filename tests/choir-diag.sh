@@ -13,8 +13,10 @@ export LOG="$work/argv.log"
 export MARKER="$work/pwned"
 
 for t in systemctl journalctl ss df free uptime tailscale logger; do
-  cat >"$fake/$t" <<'FAKE'
-#!/usr/bin/env bash
+  # Resolved interpreter, not /usr/bin/env: the Nix build sandbox has no
+  # /usr/bin/env, and a stub that cannot execute fails every case.
+  printf '#!%s\n' "$(command -v bash)" >"$fake/$t"
+  cat >>"$fake/$t" <<'FAKE'
 { printf '%s' "$(basename "$0")"; for a in "$@"; do printf ' [%s]' "$a"; done; echo; } >>"$LOG"
 FAKE
   chmod +x "$fake/$t"
@@ -38,7 +40,7 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 run() {
   : >"$LOG"
   rm -f "$MARKER"
-  out=$(SSH_ORIGINAL_COMMAND="$1" PATH="$fake:/usr/bin:/bin" bash "$script" 2>&1)
+  out=$(SSH_ORIGINAL_COMMAND="$1" PATH="$fake:$PATH" bash "$script" 2>&1)
   rc=$?
   log=$(cat "$LOG")
 }
@@ -46,7 +48,7 @@ run() {
 # allow <cmd> <expected tool line>
 allow() {
   run "$1"
-  local want="logger [-t] [choir-diag] [$1]"$'\n'"$2"
+  local want="logger [-t] [choir-diag] [--] [$1]"$'\n'"$2"
   if [ "$rc" -eq 0 ] && [ "$log" = "$want" ]; then ok "allow: $1"; else
     bad "allow: $1 (rc=$rc)"; echo "  want: $want"; echo "  got:  $log"
   fi
@@ -55,7 +57,7 @@ allow() {
 # refuse <cmd> [expected-output]
 refuse() {
   run "$1"
-  local want="logger [-t] [choir-diag] [$(printf '%s' "$1" | tr -c '[:print:]' '?')]"
+  local want="logger [-t] [choir-diag] [--] [$(printf '%s' "$1" | tr -c '[:print:]' '?')]"
   if [ "$rc" -eq 2 ] && [ "$out" = "${2:-refused}" ] && [ "$log" = "$want" ] && [ ! -e "$MARKER" ]; then
     ok "refuse: $1"
   else
@@ -84,7 +86,7 @@ allow "tailscale" "tailscale [status]"
 # generations: no tool is called except logger; check output text.
 run "generations"
 want_gen="system-1-link -> $work/store/sys-1"$'\n'"system-2-link -> $work/store/sys-2"$'\n'"current: $work/store/sys-2"$'\n'"booted: $work/store/sys-1"
-if [ "$rc" -eq 0 ] && [ "$out" = "$want_gen" ] && [ "$log" = "logger [-t] [choir-diag] [generations]" ]; then ok "allow: generations"; else
+if [ "$rc" -eq 0 ] && [ "$out" = "$want_gen" ] && [ "$log" = "logger [-t] [choir-diag] [--] [generations]" ]; then ok "allow: generations"; else
   bad "allow: generations"; echo "  out: $out"; echo "  log: $log"
 fi
 
@@ -117,12 +119,18 @@ refuse 'failed extra'
 refuse 'df -h'
 refuse 'is-active'
 refuse $'failed\nrm -rf /'
+# option-shaped requests must reach logger as message text after `--`
+refuse "-tsshd"
+refuse "--server=example.invalid"
+refuse "-f/etc/passwd"
+refuse "-sf/etc/passwd"
+refuse "-n 127.0.0.1"
 refuse "status $(printf 'a%.0s' $(seq 1 129)).service"
 allow "status $(printf 'a%.0s' $(seq 1 120)).service" "systemctl [--no-pager] [status] [$(printf 'a%.0s' $(seq 1 120)).service]"
 
 # empty command: usage, exit 2
 run ""
-if [ "$rc" -eq 2 ] && [[ "$out" == usage:* ]] && [ "$log" = "logger [-t] [choir-diag] []" ]; then ok "empty command prints usage, exit 2"; else bad "empty command (rc=$rc)"; fi
+if [ "$rc" -eq 2 ] && [[ "$out" == usage:* ]] && [ "$log" = "logger [-t] [choir-diag] [--] []" ]; then ok "empty command prints usage, exit 2"; else bad "empty command (rc=$rc)"; fi
 run "   "
 if [ "$rc" -eq 2 ] && [[ "$out" == usage:* ]]; then ok "blank command prints usage, exit 2"; else bad "blank command (rc=$rc)"; fi
 

@@ -1,9 +1,9 @@
 # sancta-choir: named admin and agent accounts over OpenSSH on the tailnet.
 #
-# Adds two normal accounts and a second sshd listener (port 2222) that is
-# reachable only through tailscale0. Nothing existing is changed or turned
-# off: port 22 (public, used by the soul-mirror pull), Tailscale SSH and the
-# root/herdr/sancta key files stay exactly as they were.
+# Named accounts (alexandru, agent, diag) plus sancta's workstation keys on a
+# second sshd listener (port 2222) reachable only through tailscale0. Port 22
+# (public) serves only the soul-mirror pull (sancta, forced command); root has
+# no OpenSSH keys and PermitRootLogin is no (configuration.nix/networking.nix).
 #
 # Keys come from the options below; every key is rendered with a `from=`
 # source restriction to the tailnet ranges; callers pass plain public keys
