@@ -25,6 +25,9 @@ ts() { "$TIMEOUT" "$limit" "$TS" "$@"; }
 
 log() { "$LOGGER" -t choir-ssh-revert -- "$*" </dev/null; }
 
+# "Up" means BackendState Running: `status` also exits 0 while Starting.
+running() { ts status --json --peers=false 2>/dev/null | "$JQ" -e '.BackendState == "Running"' >/dev/null 2>&1; }
+
 run_ssh() { ts debug prefs 2>/dev/null | "$JQ" -r '.RunSSH' 2>/dev/null; }
 
 i=1
@@ -41,7 +44,7 @@ while [ "$i" -le "$tries" ]; do
   ts set --ssh=true || log "attempt $i: tailscale set --ssh=true failed"
   # Success needs the backend up AND the pref on: a pref set against a
   # stopped or logged-out backend restores nothing.
-  if ts status >/dev/null 2>&1 && [ "$(run_ssh)" = "true" ]; then
+  if running && [ "$(run_ssh)" = "true" ]; then
     log "attempt $i: RunSSH=true, Tailscale SSH restored"
     exit 0
   fi
