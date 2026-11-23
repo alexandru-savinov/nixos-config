@@ -486,6 +486,10 @@
   #   session SHA256:3bLfqD/NpHleKjpQ43pCW6l6pCNVfJ5kK8T6Hgzeanw
   sancta-choir.adminKeys.sanctaPoll = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICZpuLu/RYwbo22wqFFEHzUdySSgGSo6e8dBNXoJzAzx sancta-status-poll@mac" ];
   sancta-choir.adminKeys.sanctaSession = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEqOcF4Euea78mZnq3Yb7hQpfmiQpeOHRxONojQvHaPT sancta-attach@mac" ];
+  # Read-only diag account (forced command choir-diag; port 2222 only).
+  # Owner-generated Mac file key ~/.ssh/id_ed25519_choir_diag:
+  #   diag    SHA256:5MHOvpKfR9Upkbwl+9cZVRQWJMpDw7MSauSagjgQ1r8
+  sancta-choir.adminKeys.diag = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG8d4J9izfwux3wlYMohSatSbH+jEuOSa3EJhpS44LWz choir-diag@mac" ];
   sancta-choir.adminKeys.macAddresses = [ "100.77.178.43" "fd7a:115c:a1e0::a73a:b22b" ];
   sancta-choir.adminKeys.sanctaPollCommand = "/var/lib/sancta/.claude/index/bin/sancta-status-line";
 

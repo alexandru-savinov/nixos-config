@@ -2993,16 +2993,26 @@ let
       then true
       else builtins.throw "FAIL: diag Match block missing/misordered:\n${extra}";
 
-    # As shipped: no diag key, so no key file and an empty global key list.
-    sancta-choir-ssh-diag-shipped-absent =
-      let cfg = self.nixosConfigurations.sancta-choir.config;
-      in if cfg.sancta-choir.adminKeys.diag == [ ]
-        && !(cfg.environment.etc ? "ssh/authorized_keys.diag-2222")
+    # As shipped: exactly the owner's Mac diag key, rendered only into the
+    # 2222-only key file with the forced dispatcher and the Mac's tailnet
+    # addresses; nothing for diag in the global (port 22) key files.
+    sancta-choir-ssh-diag-shipped =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG8d4J9izfwux3wlYMohSatSbH+jEuOSa3EJhpS44LWz choir-diag@mac";
+        e = cfg.environment.etc."ssh/authorized_keys.diag-2222";
+        lines = nixpkgs.lib.splitString "\n" (nixpkgs.lib.removeSuffix "\n" e.text);
+        line = builtins.head lines;
+      in
+      if cfg.sancta-choir.adminKeys.diag == [ key ]
+        && builtins.length lines == 1
+        && nixpkgs.lib.hasPrefix "restrict,command=\"/nix/store/" line
+        && nixpkgs.lib.hasSuffix "-choir-diag/bin/choir-diag\",from=\"100.77.178.43,fd7a:115c:a1e0::a73a:b22b\" ${key}" line
         && cfg.users.users.diag.openssh.authorizedKeys.keys == [ ]
         && cfg.users.users.diag.openssh.authorizedKeys.keyFiles == [ ]
         && !(cfg.environment.etc ? "ssh/authorized_keys.d/diag")
       then true
-      else builtins.throw "FAIL: diag key material present as shipped";
+      else builtins.throw "FAIL: shipped diag key file: ${builtins.toJSON (e.text or null)}";
 
     sancta-choir-ssh-diag-nonplain-key-rejected = shouldFail "sancta-choir: option-bearing diag key rejected" {
       modules = [
