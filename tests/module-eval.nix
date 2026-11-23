@@ -819,6 +819,14 @@ let
       then true
       else builtins.throw "FAIL: sancta-choir root-exec audit rules must filter on auid!=unset only: ${builtins.toJSON rootExec}";
 
+    # sancta-choir records its flake revision, so a deployed generation can be
+    # traced to a commit (nixos-version --configuration-revision, GC log).
+    sancta-choir-configuration-revision =
+      let rev = self.nixosConfigurations.sancta-choir.config.system.configurationRevision;
+      in
+      if rev != null && rev == (self.rev or self.dirtyRev or null) then true
+      else builtins.throw "FAIL: sancta-choir configurationRevision is ${builtins.toJSON rev}";
+
     # An empty `units` list makes a host with dead services render identically
     # to a healthy one: the bar's "down" field can never populate. That is the
     # exact silent-pass this module family exists to prevent, so it must fail at

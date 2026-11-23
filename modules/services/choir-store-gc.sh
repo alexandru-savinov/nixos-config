@@ -34,7 +34,10 @@ for n in $nums; do
   idx=$((idx + 1))
   link=$PROFILE-$n-link
   top=$(readlink -f "$link" || echo "?")
-  rev=$(cat "$top/configuration-revision" 2>/dev/null || echo "n/a")
+  # The same source `nixos-rebuild list-generations` uses (there is no
+  # configuration-revision file in the toplevel).
+  rev=$("$top/sw/bin/nixos-version" --configuration-revision 2>/dev/null) || rev=""
+  [ -n "$rev" ] || rev="n/a"
   why=""
   if [ $((total - idx)) -lt "$KEEP" ]; then why="newest"; fi
   if [ "$top" = "$booted" ]; then why="$why booted"; fi

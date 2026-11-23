@@ -10,7 +10,9 @@ bad() { echo "FAIL - $1"; fails=$((fails + 1)); }
 
 P=$W/profiles; mkdir -p "$P" "$W/store" "$W/bin"
 for n in $(seq 1 20); do
-  mkdir -p "$W/store/sys-$n"; echo "rev$n" > "$W/store/sys-$n/configuration-revision"
+  mkdir -p "$W/store/sys-$n/sw/bin"
+  printf '#!/bin/sh\n[ "$1" = --configuration-revision ] && echo rev%s\n' "$n" > "$W/store/sys-$n/sw/bin/nixos-version"
+  chmod +x "$W/store/sys-$n/sw/bin/nixos-version"
   ln -s "$W/store/sys-$n" "$P/system-$n-link"
 done
 ln -s system-20-link "$P/system"

@@ -196,6 +196,10 @@
           };
           modules = [
             ./hosts/sancta-choir/configuration.nix
+            # Record the flake revision in the system closure
+            # (`nixos-version --configuration-revision`, and the store GC's
+            # generation log). A dirty tree records its dirtyRev.
+            { system.configurationRevision = self.rev or self.dirtyRev or null; }
             home-manager.nixosModules.home-manager
             vscode-server.nixosModules.default
             agenix.nixosModules.default
