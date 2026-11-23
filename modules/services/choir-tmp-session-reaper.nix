@@ -9,7 +9,7 @@
 let
   cfg = config.choirTmpReaper;
   scriptText = ''
-    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.util-linux pkgs.glibc.bin ]}
+    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.util-linux pkgs.getent ]}
     export DRY_RUN=${if cfg.dryRun then "1" else "0"}
     export IDLE_DAYS=${toString cfg.idleDays}
     export ALERT_GIB=${toString cfg.alertGiB}
