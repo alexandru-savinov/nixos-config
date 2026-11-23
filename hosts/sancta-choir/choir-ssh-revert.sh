@@ -1,7 +1,8 @@
 # choir-ssh-revert: stage-4 dead-man. Turns Tailscale SSH back ON and proves it.
 #
 # Armed by hand during the stage-4 window as a transient timer:
-#   systemd-run --on-active=30min --unit=choir-ssh-revert /run/current-system/sw/bin/choir-ssh-revert
+#   systemd-run --collect --on-active=30min --unit=choir-ssh-revert /run/current-system/sw/bin/choir-ssh-revert
+# (--collect: a failed run is garbage-collected, so the same command re-arms).
 # and stopped (and proven gone) once the OpenSSH path is proven.
 #
 # Every tool comes from an absolute store path that the Nix wrapper sets; the
@@ -27,11 +28,13 @@ while [ "$i" -le "$tries" ]; do
     done
   fi
   "$TS" set --ssh=true || log "attempt $i: tailscale set --ssh=true failed"
-  if [ "$(run_ssh)" = "true" ]; then
+  # Success needs the backend up AND the pref on: a pref set against a
+  # stopped or logged-out backend restores nothing.
+  if "$TS" status >/dev/null 2>&1 && [ "$(run_ssh)" = "true" ]; then
     log "attempt $i: RunSSH=true, Tailscale SSH restored"
     exit 0
   fi
-  log "attempt $i: RunSSH not true yet; retrying"
+  log "attempt $i: backend not running or RunSSH not true; retrying"
   "$SLEEP" 15
   i=$((i + 1))
 done
