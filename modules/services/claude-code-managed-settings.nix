@@ -251,6 +251,9 @@
 #                      here (same public-repo reason as key 9).
 #
 # HERDR COLLISION — WHY SessionStart/SessionEnd ARE NOT HERE
+# (herdr was retired from sancta-choir on 2026-11-23. The reasoning below is
+# kept as history; whether SessionStart/SessionEnd may now be claimed here
+# is a separate decision, not made by that removal.)
 # ------------------------------------------------------------
 # (2026-08-26, PR #584 review finding MEDIUM.) This file is machine-wide, and
 # widening it from 3 hook events to nearly every event type raises a question
