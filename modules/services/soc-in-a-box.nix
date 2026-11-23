@@ -39,8 +39,11 @@ in
       max_log_file_action = "rotate";
       # Low-disk behaviour (MiB of free space on /var/log/audit's filesystem):
       # warn to syslog first, then stop writing audit records. Never halt or
-      # drop to single-user mode.
-      space_left = 1024;
+      # drop to single-user mode: on a headless VPS that is an outage that
+      # needs the console (halt/single are deliberately not used).
+      # space_left is 4096 MiB so the syslog warning fires well before the
+      # 512 MiB suspend threshold below.
+      space_left = 4096;
       space_left_action = "syslog";
       admin_space_left = 512;
       admin_space_left_action = "suspend";

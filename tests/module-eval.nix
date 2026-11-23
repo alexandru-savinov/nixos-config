@@ -698,6 +698,67 @@ let
       then true
       else builtins.throw "FAIL: sancta-choir has a crowdsec-firewall-bouncer unit (or crowdsec is off); bans wait for a council-gated step";
 
+    # Disk-pressure policy on sancta-choir: generation-count GC (not nix.gc),
+    # min/max-free, weekly optimise, journald caps, auditd margin.
+    choir-disk-policy =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        svc = cfg.systemd.services.choir-store-gc;
+        gib = n: n * 1024 * 1024 * 1024;
+        checks = {
+          timerExists = cfg.systemd.timers ? choir-store-gc;
+          timerDaily0230 = (cfg.systemd.timers.choir-store-gc.timerConfig.OnCalendar or "") == "*-*-* 02:30:00";
+          deadmanCondition = (svc.unitConfig.ConditionPathExists or "") == "!/run/deploy-deadman-armed";
+          keepsTen = cfg.choirStoreGc.keepGenerations == 10;
+          scriptKeepsTen = nixpkgs.lib.hasInfix "export KEEP=10\n" cfg.choirStoreGc.scriptText;
+          scriptProtectsBooted = nixpkgs.lib.hasInfix "/run/booted-system" cfg.choirStoreGc.scriptText
+            && nixpkgs.lib.hasInfix "--delete-generations $del" cfg.choirStoreGc.scriptText
+            && !(nixpkgs.lib.hasInfix "+$KEEP" cfg.choirStoreGc.scriptText);
+          execIsGcScript = nixpkgs.lib.hasSuffix "-choir-store-gc" (toString svc.serviceConfig.ExecStart);
+          scriptCollects = nixpkgs.lib.hasInfix "\n$NIX_GC\n" cfg.choirStoreGc.scriptText;
+          gcAutomaticOff = cfg.nix.gc.automatic == false;
+          minFree = cfg.nix.settings.min-free == gib 5;
+          maxFree = cfg.nix.settings.max-free == gib 15;
+          optimiseOn = cfg.nix.optimise.automatic == true;
+          journaldMax = nixpkgs.lib.hasInfix "SystemMaxUse=2G" cfg.services.journald.extraConfig;
+          journaldFree = nixpkgs.lib.hasInfix "SystemKeepFree=4G" cfg.services.journald.extraConfig;
+          auditSpaceLeft = cfg.security.auditd.settings.space_left == 4096;
+          auditSpaceLeftAction = cfg.security.auditd.settings.space_left_action == "syslog";
+          auditAdminSuspend = cfg.security.auditd.settings.admin_space_left_action == "suspend";
+        };
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then true
+      else builtins.throw "FAIL: sancta-choir disk policy — failed checks: ${builtins.toJSON failed}";
+
+    # /tmp policy on sancta-choir: the session-aware reaper ships in dry-run
+    # mode, runs on its own timer, and /tmp/claude-* is exempt from file aging.
+    choir-tmp-reaper =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        checks = {
+          timerExists = cfg.systemd.timers ? choir-tmp-session-reaper;
+          timerDaily0145 = (cfg.systemd.timers.choir-tmp-session-reaper.timerConfig.OnCalendar or "") == "*-*-* 01:45:00";
+          dryRunDefault = cfg.choirTmpReaper.dryRun == true;
+          excludesSession = cfg.choirTmpReaper.excludeSessions == [ "666bcb25" ];
+          excludePassed = nixpkgs.lib.hasInfix "export EXCLUDE_SESSIONS=666bcb25\n" cfg.choirTmpReaper.scriptText;
+          noRmRf = !(nixpkgs.lib.hasInfix "rm -rf" cfg.choirTmpReaper.scriptText);
+          deletesWithFind = nixpkgs.lib.hasInfix "-xdev -delete" cfg.choirTmpReaper.scriptText;
+          scriptDry = nixpkgs.lib.hasInfix "export DRY_RUN=1\n" cfg.choirTmpReaper.scriptText;
+          noRootDelete = nixpkgs.lib.hasInfix "setpriv --reuid" cfg.choirTmpReaper.scriptText;
+          # While dry-run, stock /tmp aging stays in force for claude trees;
+          # the exemption comes only with an armed reaper.
+          agingExemptOnlyWhenArmed = !(builtins.elem "x /tmp/claude-*" cfg.systemd.tmpfiles.rules)
+            && builtins.elem "x /tmp/claude-*"
+            (self.nixosConfigurations.sancta-choir.extendModules {
+              modules = [{ choirTmpReaper.dryRun = false; }];
+            }).config.systemd.tmpfiles.rules;
+        };
+        failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
+      in
+      if failed == [ ] then true
+      else builtins.throw "FAIL: sancta-choir tmp reaper — failed checks: ${builtins.toJSON failed}";
+
     # vulnix nightly (modules/services/vulnix-nightly.nix, SOC layer 2). The
     # SOC page asks `systemctl is-active vulnix.timer`, so the unit names are
     # a contract; the report must stay group-only (sancta reads it through
