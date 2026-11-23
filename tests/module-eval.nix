@@ -2952,6 +2952,19 @@ let
       then true
       else builtins.throw "FAIL: auto-fix-vscode-server not scoped:\n${unit}";
 
+    # The stage-4 dead-man is installed with absolute tool paths and never
+    # scheduled by the config (it is armed by hand as a transient timer).
+    sancta-choir-ssh-revert-installed =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        pkg = nixpkgs.lib.findFirst (p: (p.name or "") == "choir-ssh-revert") null cfg.environment.systemPackages;
+        names = builtins.attrNames cfg.systemd.services ++ builtins.attrNames cfg.systemd.timers;
+      in
+      if pkg != null
+        && !(builtins.any (n: nixpkgs.lib.hasInfix "ssh-revert" n) names)
+      then true
+      else builtins.throw "FAIL: choir-ssh-revert missing, or scheduled by the config";
+
     sancta-choir-ssh-diag-account =
       let
         cfg = self.nixosConfigurations.sancta-choir.config;

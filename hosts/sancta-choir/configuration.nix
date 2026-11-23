@@ -63,6 +63,7 @@
     ./hardware-configuration.nix
     ./networking.nix
     ./ssh-admin.nix # named admin + agent accounts, tailnet-only sshd listener
+    ./choir-ssh-revert.nix # stage-4 dead-man (installed, armed only by hand)
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)

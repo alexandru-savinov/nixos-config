@@ -403,6 +403,9 @@
           # Read-only diag account dispatcher: fixed verbs, validated args, no eval.
           choir-diag = import ./tests/choir-diag.nix { inherit pkgs; };
 
+          # Stage-4 dead-man: restores Tailscale SSH, restarting tailscaled if it is down.
+          choir-ssh-revert = import ./tests/choir-ssh-revert.nix { inherit pkgs; };
+
           # The report must come from successful schema-validated action output.
           claude-review-report = import ./tests/claude-review-report.nix { inherit pkgs; };
 
