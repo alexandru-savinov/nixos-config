@@ -37,6 +37,7 @@
   imports = [
     ./hardware-configuration.nix
     ./networking.nix
+    ./ssh-admin.nix # named admin + agent accounts, tailnet-only sshd listener
     ../common.nix
     ../../modules/system/dev-tools.nix
     ../../modules/system/cache-trust.nix # trusted-public-keys allow-list (sq099)
@@ -429,6 +430,19 @@
   # or CrowdSec decision on a tailnet/LAN address). The exact rules are in
   # modules/services/soc-vigil-alarms.py; nothing here notifies anyone else.
   services.soc-vigil-alarms.enable = true;
+  # Every root exec and every login session of the named OpenSSH accounts
+  # (hosts/sancta-choir/ssh-admin.nix) is a soc-audit hit, report-only like
+  # the rest of soc-audit.
+  services.soc-vigil-alarms.namedAccounts = [ "alexandru" "agent" ];
+
+  # Named owner account for OpenSSH on the tailnet (hosts/sancta-choir/ssh-admin.nix).
+  # A hardware-backed key (Secure Enclave, touch required by default):
+  # SHA256:iphq52yTZyoNzXRbOvweUyxSezFwbvwBHuFuf3s+k3g. The module prepends the
+  # tailnet `from=` restriction. Fallback if this key is unavailable: the Hetzner
+  # console (rescue runbook), not a second software key.
+  sancta-choir.adminKeys.owner = [
+    "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBGC1r/qeEQmR39fQdJzssoglt+pAlXWxIZ7bF+Czfk5SDkkwqTpc04fHxtbQJfoVXiTsiwzp/F3kVj3uGrh6uRoAAAAEc3NoOg== owner-se-ssh"
+  ];
 
   # The work queue's heartbeat. Its handlers are what keep the rest of this
   # honest — soul-mirror health, MEMORY.md parity, witness requests rotting past
