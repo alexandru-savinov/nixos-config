@@ -2967,6 +2967,7 @@ let
       in
       if pkg != null
         && builtins.all absolute [ "TS" "SYSTEMCTL" "JQ" "LOGGER" "SLEEP" "TIMEOUT" ]
+        && nixpkgs.lib.hasInfix "\nexport TRIES=10\n" pkg.text && nixpkgs.lib.hasInfix "\nexport TS_LIMIT=20\n" pkg.text
         && !(builtins.any (n: nixpkgs.lib.hasInfix "ssh-revert" n) names)
         && !(builtins.any runsIt (builtins.attrNames cfg.systemd.services))
       then true

@@ -11,6 +11,7 @@ let
     export SLEEP=${pkgs.coreutils}/bin/sleep
     export TIMEOUT=${pkgs.coreutils}/bin/timeout
     export TRIES=10
+    export TS_LIMIT=20
     exec ${pkgs.bash}/bin/bash ${./choir-ssh-revert.sh}
   '';
 in

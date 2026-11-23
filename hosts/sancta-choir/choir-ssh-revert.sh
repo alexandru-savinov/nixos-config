@@ -1,9 +1,11 @@
 # choir-ssh-revert: stage-4 dead-man. Turns Tailscale SSH back ON and proves it.
 #
 # Armed by hand during the stage-4 window as a transient timer:
-#   systemd-run --collect --on-active=30min --property=RuntimeMaxSec=30min \
+#   systemd-run --collect --on-active=30min --property=RuntimeMaxSec=90min \
 #     --unit=choir-ssh-revert /run/current-system/sw/bin/choir-ssh-revert
-# (--collect: a failed run is garbage-collected, so the same command re-arms).
+# (--collect: a failed run is garbage-collected, so the same command re-arms.
+# RuntimeMaxSec covers the worst case: 10 attempts of ~7.5 min with a hung
+# daemon, so the final FAILED line is always logged.)
 # and stopped (and proven gone) once the OpenSSH path is proven.
 #
 # Every tool comes from an absolute store path that the Nix wrapper sets; the
