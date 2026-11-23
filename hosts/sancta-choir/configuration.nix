@@ -763,6 +763,11 @@
   # attach gets its own key on the 2222 listener, not root's.
   customModules.herdr.authorizedKeys = [ ];
 
+  # SSH cutover stage 4: no Tailscale SSH on choir. Logins are OpenSSH only
+  # (2222 on the tailnet; public 22 for the soul-mirror pull); break-glass is the
+  # Hetzner console. rpi5 keeps the module default.
+  customModules.tailscale.ssh = false;
+
   # No OpenSSH keys for root. Admin access is the named `alexandru` account on
   # the tailnet-only 2222 listener (hosts/sancta-choir/ssh-admin.nix); rescue
   # is the Hetzner console/rescue system.

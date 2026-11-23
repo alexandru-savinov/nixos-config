@@ -6,8 +6,20 @@
 
 let
   cfg = config.services.tailscale-dns-watchdog;
+  sshOn = config.customModules.tailscale.ssh;
 in
 {
+  options.customModules.tailscale.ssh = lib.mkOption {
+    type = lib.types.bool;
+    default = true;
+    description = ''
+      Run Tailscale SSH on this host. When false, `--ssh` is not passed to
+      `tailscale up` and `tailscale set --ssh=false` is applied at every
+      tailscaled start (extraSetFlags), so a pref left on by hand or by an
+      older generation is turned off again.
+    '';
+  };
+
   options.services.tailscale-dns-watchdog = {
     telegramEnvFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
@@ -29,10 +41,8 @@ in
       useRoutingFeatures = "client";
       openFirewall = true;
       authKeyFile = config.age.secrets.tailscale-auth-key.path;
-      extraUpFlags = [
-        "--ssh"
-        "--accept-routes"
-      ];
+      extraUpFlags = lib.optional sshOn "--ssh" ++ [ "--accept-routes" ];
+      extraSetFlags = lib.optional (!sshOn) "--ssh=false";
     };
 
     # Trust the Tailscale interface
