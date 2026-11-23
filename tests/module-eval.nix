@@ -2952,6 +2952,27 @@ let
       then true
       else builtins.throw "FAIL: auto-fix-vscode-server not scoped:\n${unit}";
 
+    # The stage-4 dead-man is installed, its wrapper sets every tool as an
+    # absolute store path, and the config never schedules it (no unit or timer
+    # by name, and no service runs it); it is armed by hand as a transient timer.
+    sancta-choir-ssh-revert-installed =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        pkg = nixpkgs.lib.findFirst (p: (p.name or "") == "choir-ssh-revert") null cfg.environment.systemPackages;
+        names = builtins.attrNames cfg.systemd.services ++ builtins.attrNames cfg.systemd.timers;
+        absolute = v: nixpkgs.lib.hasInfix "\nexport ${v}=/nix/store/" "\n${pkg.text}";
+        runsIt = n:
+          let s = cfg.systemd.services.${n}; in
+          nixpkgs.lib.hasInfix "choir-ssh-revert" ((s.script or "") + toString (s.serviceConfig.ExecStart or ""));
+      in
+      if pkg != null
+        && builtins.all absolute [ "TS" "SYSTEMCTL" "JQ" "LOGGER" "SLEEP" "TIMEOUT" ]
+        && nixpkgs.lib.hasInfix "\nexport TRIES=10\n" pkg.text && nixpkgs.lib.hasInfix "\nexport TS_LIMIT=20\n" pkg.text
+        && !(builtins.any (n: nixpkgs.lib.hasInfix "ssh-revert" n) names)
+        && !(builtins.any runsIt (builtins.attrNames cfg.systemd.services))
+      then true
+      else builtins.throw "FAIL: choir-ssh-revert missing, a tool path not absolute, or scheduled by the config";
+
     sancta-choir-ssh-diag-account =
       let
         cfg = self.nixosConfigurations.sancta-choir.config;
