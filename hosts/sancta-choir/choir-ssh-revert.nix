@@ -9,6 +9,7 @@ let
     export JQ=${pkgs.jq}/bin/jq
     export LOGGER=${pkgs.util-linux}/bin/logger
     export SLEEP=${pkgs.coreutils}/bin/sleep
+    export TIMEOUT=${pkgs.coreutils}/bin/timeout
     export TRIES=10
     exec ${pkgs.bash}/bin/bash ${./choir-ssh-revert.sh}
   '';

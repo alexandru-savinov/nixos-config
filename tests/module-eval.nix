@@ -2966,7 +2966,7 @@ let
           nixpkgs.lib.hasInfix "choir-ssh-revert" ((s.script or "") + toString (s.serviceConfig.ExecStart or ""));
       in
       if pkg != null
-        && builtins.all absolute [ "TS" "SYSTEMCTL" "JQ" "LOGGER" "SLEEP" ]
+        && builtins.all absolute [ "TS" "SYSTEMCTL" "JQ" "LOGGER" "SLEEP" "TIMEOUT" ]
         && !(builtins.any (n: nixpkgs.lib.hasInfix "ssh-revert" n) names)
         && !(builtins.any runsIt (builtins.attrNames cfg.systemd.services))
       then true
