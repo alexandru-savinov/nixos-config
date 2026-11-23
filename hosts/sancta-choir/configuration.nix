@@ -751,11 +751,9 @@
 
   networking.hostName = "sancta-choir";
 
-  # SSH authorized keys for remote access
-  users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2btaYomBlcKG+snrIrBuTXcEaBKEGQoAaF59YWwkal nixos@rpi5"
-  ];
+  # No OpenSSH keys for root. Admin access is the named `alexandru` account on
+  # the tailnet-only 2222 listener (hosts/sancta-choir/ssh-admin.nix); rescue
+  # is the Hetzner console/rescue system.
 
   # Fresh install — NixOS 25.05
   system.stateVersion = "25.05";

@@ -2791,7 +2791,9 @@ let
           }
           { ok = nixpkgs.lib.hasInfix "Match User alexandru,agent\n  AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n" extra; what = "alexandru+agent read only the declarative key file"; }
           { ok = nixpkgs.lib.hasInfix "Match LocalPort 22\n  DenyUsers alexandru agent\n" extra; what = "alexandru+agent denied on port 22"; }
-          { ok = cfg.services.openssh.settings.PermitRootLogin == "prohibit-password"; what = "port-22 root policy unchanged"; }
+          # Root never logs in over OpenSSH, and has no OpenSSH keys.
+          { ok = cfg.services.openssh.settings.PermitRootLogin == "no"; what = "PermitRootLogin no globally"; }
+          { ok = cfg.users.users.root.openssh.authorizedKeys.keys == [ ] && cfg.users.users.root.openssh.authorizedKeys.keyFiles == [ ]; what = "root has no OpenSSH keys"; }
           { ok = builtins.elem "--ssh" cfg.services.tailscale.extraUpFlags; what = "Tailscale SSH still enabled"; }
         ];
       in

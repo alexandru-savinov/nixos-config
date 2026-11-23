@@ -68,15 +68,12 @@
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = "prohibit-password";
+      # Root never logs in over OpenSSH (any port); see ssh-admin.nix.
+      PermitRootLogin = "no";
       PasswordAuthentication = false;
     };
   };
 
-  # Users - SSH key
-  users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPw5RFrFfZQUWlyfGSU1Q8BlEHnvIdBtcnCn+uYtEzal nixos-sancta-choir"
-  ];
 
   # VSCode Server support
   services.vscode-server.enable = true;
