@@ -51,7 +51,7 @@ in
     sanctaPoll = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
-      description = "Plain public keys for the read-only status poll as `sancta` (forced command, no pty, no forwarding; port 2222 only).";
+      description = "Plain public keys for the read-only status poll as `sancta` (key file ~/.ssh/id_ed25519_sancta_poll, comment sancta-status-poll@mac) (forced command, no pty, no forwarding; port 2222 only).";
     };
     sanctaPollCommand = lib.mkOption {
       type = lib.types.str;
@@ -61,7 +61,7 @@ in
     sanctaSession = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
-      description = "Plain public keys for interactive `sancta` sessions (pty, remote forwarding to loopback only; port 2222 only).";
+      description = "Plain public keys for interactive `sancta` sessions (key file ~/.ssh/id_ed25519_sancta_attach, comment sancta-attach@mac) (pty, remote forwarding to loopback only; port 2222 only).";
     };
     macAddresses = lib.mkOption {
       type = lib.types.listOf lib.types.str;

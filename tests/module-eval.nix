@@ -2807,7 +2807,7 @@ let
           modules = [{
             sancta-choir.adminKeys.sanctaPoll = [ pollKey ];
             sancta-choir.adminKeys.sanctaSession = [ sessKey ];
-            sancta-choir.adminKeys.macAddresses = [ "100.64.0.9" "fd7a:115c:a1e0::9" ];
+            sancta-choir.adminKeys.macAddresses = nixpkgs.lib.mkForce [ "100.64.0.9" "fd7a:115c:a1e0::9" ];
           }];
         }).config;
         e = cfg.environment.etc."ssh/authorized_keys.sancta-2222";
@@ -2892,6 +2892,21 @@ let
         }
       ];
     };
+
+    # As shipped: the real addresses and poll command are set, key lists empty.
+    sancta-choir-ssh-sancta-shipped-settings =
+      let
+        k = self.nixosConfigurations.sancta-choir.config.sancta-choir.adminKeys;
+        rendered = (self.nixosConfigurations.sancta-choir.extendModules {
+          modules = [{ sancta-choir.adminKeys.sanctaSession = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMM s" ]; }];
+        }).config.environment.etc."ssh/authorized_keys.sancta-2222".text;
+      in
+      if k.macAddresses == [ "100.77.178.43" "fd7a:115c:a1e0::a73a:b22b" ]
+        && k.sanctaPollCommand == "/var/lib/sancta/.claude/index/bin/sancta-status-line"
+        && k.sanctaPoll == [ ] && k.sanctaSession == [ ]
+        && nixpkgs.lib.hasInfix "from=\"100.77.178.43,fd7a:115c:a1e0::a73a:b22b\" ssh-ed25519" rendered
+      then true
+      else builtins.throw "FAIL: shipped sancta settings: ${builtins.toJSON k}";
 
     # As shipped (no keys): the 2222 key file is ABSENT, so nothing new can log in.
     sancta-choir-ssh-sancta-shipped-inert =

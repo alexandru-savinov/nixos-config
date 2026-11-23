@@ -477,6 +477,11 @@
     "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBGC1r/qeEQmR39fQdJzssoglt+pAlXWxIZ7bF+Czfk5SDkkwqTpc04fHxtbQJfoVXiTsiwzp/F3kVj3uGrh6uRoAAAAEc3NoOg== owner-se-ssh"
   ];
 
+  # Stage 3a: the workstation's tailnet addresses and the poll command. The
+  # sanctaPoll / sanctaSession key lists stay empty until the public keys are added.
+  sancta-choir.adminKeys.macAddresses = [ "100.77.178.43" "fd7a:115c:a1e0::a73a:b22b" ];
+  sancta-choir.adminKeys.sanctaPollCommand = "/var/lib/sancta/.claude/index/bin/sancta-status-line";
+
   # Rebuild the private SOC page (gallery/soc.html + soc-decide.html) every
   # morning and promote it only through the PII gate. Until now it was rebuilt
   # only when a live session happened to run soc.mjs by hand.
