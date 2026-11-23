@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2155
 # Harness for hosts/sancta-choir/choir-diag.sh with fake tools on PATH.
 # Every fake logs its exact argv; the harness compares that to the expected argv.
 # Usage: choir-diag.sh <choir-diag.sh>
