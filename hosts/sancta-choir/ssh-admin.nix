@@ -26,6 +26,15 @@ let
   isPlainKey = key: builtins.match keyTypePattern key != null && !(lib.hasInfix "\n" key) && !(lib.hasInfix "\r" key);
 
   listenerPort = 2222;
+
+  # Stage 3a: keys for the `sancta` account used from one workstation. They
+  # live in a SEPARATE file that sshd reads only for `sancta` on the second
+  # listener, so they authenticate nowhere else (fail closed on port 22).
+  sanctaKeyFile = "/etc/ssh/authorized_keys.sancta-2222";
+  macFrom = lib.concatStringsSep "," cfg.macAddresses;
+  pollLine = key: "restrict,command=\"${cfg.sanctaPollCommand}\",from=\"${macFrom}\" ${key}";
+  sessionLine = key: "restrict,pty,port-forwarding,permitlisten=\"127.0.0.1:*\",from=\"${macFrom}\" ${key}";
+  sanctaLines = map pollLine cfg.sanctaPoll ++ map sessionLine cfg.sanctaSession;
 in
 {
   options.sancta-choir.adminKeys = {
@@ -39,15 +48,48 @@ in
       default = [ ];
       description = "Plain public keys for the unprivileged `agent` account (from= is added by this module).";
     };
+    sanctaPoll = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Plain public keys for the read-only status poll as `sancta` (forced command, no pty, no forwarding; port 2222 only).";
+    };
+    sanctaPollCommand = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/lib/sancta/.claude/index/bin/sancta-status-line";
+      description = "The one command the poll key may run (forced; the client's own command is ignored).";
+    };
+    sanctaSession = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Plain public keys for interactive `sancta` sessions (pty, remote forwarding to loopback only; port 2222 only).";
+    };
+    macAddresses = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Tailnet addresses (IPv4 and IPv6) the workstation connects from; required when any sancta key is set.";
+    };
   };
 
   config = {
     assertions = [
       {
-        assertion = lib.all isPlainKey (cfg.owner ++ cfg.agent);
+        assertion = lib.all isPlainKey (cfg.owner ++ cfg.agent ++ cfg.sanctaPoll ++ cfg.sanctaSession);
         message = "sancta-choir.adminKeys: every key must be a plain public key (key type first, no options); the module prepends the from= restriction itself.";
       }
+      {
+        assertion = (cfg.sanctaPoll ++ cfg.sanctaSession) == [ ] || cfg.macAddresses != [ ];
+        message = "sancta-choir.adminKeys: macAddresses must be non-empty when sanctaPoll or sanctaSession has keys (from= is mandatory).";
+      }
     ];
+
+    # Absent (not empty) while no sancta key is configured: nothing new can
+    # log in until keys are supplied.
+    environment.etc."ssh/authorized_keys.sancta-2222" = lib.mkIf (sanctaLines != [ ]) {
+      text = lib.concatStringsSep "\n" sanctaLines + "\n";
+      mode = "0444";
+      user = "root";
+      group = "root";
+    };
 
     users.users.alexandru = {
       isNormalUser = true;
@@ -105,8 +147,16 @@ in
         Match LocalPort 22
           DenyUsers alexandru agent
 
+        # Must precede the generic 2222 block: the first match wins per keyword.
+        Match User sancta LocalPort ${toString listenerPort}
+          AuthorizedKeysFile ${sanctaKeyFile}
+          AllowTcpForwarding remote
+          AllowStreamLocalForwarding no
+          GatewayPorts no
+          PermitListen 127.0.0.1:*
+
         Match LocalPort ${toString listenerPort}
-          AllowUsers alexandru agent
+          AllowUsers alexandru agent sancta
           PermitRootLogin no
       '';
     };
