@@ -746,7 +746,13 @@ let
           deletesWithFind = nixpkgs.lib.hasInfix "-xdev -delete" cfg.choirTmpReaper.scriptText;
           scriptDry = nixpkgs.lib.hasInfix "export DRY_RUN=1\n" cfg.choirTmpReaper.scriptText;
           noRootDelete = nixpkgs.lib.hasInfix "setpriv --reuid" cfg.choirTmpReaper.scriptText;
-          claudeTreesExemptFromAging = builtins.elem "x /tmp/claude-*" cfg.systemd.tmpfiles.rules;
+          # While dry-run, stock /tmp aging stays in force for claude trees;
+          # the exemption comes only with an armed reaper.
+          agingExemptOnlyWhenArmed = !(builtins.elem "x /tmp/claude-*" cfg.systemd.tmpfiles.rules)
+            && builtins.elem "x /tmp/claude-*"
+            (self.nixosConfigurations.sancta-choir.extendModules {
+              modules = [{ choirTmpReaper.dryRun = false; }];
+            }).config.systemd.tmpfiles.rules;
         };
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
       in

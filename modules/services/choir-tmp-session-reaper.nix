@@ -34,11 +34,14 @@ in
   };
 
   config = {
-    # Exempt Claude session trees from systemd's stock /tmp file aging
-    # (tmp.conf: `q /tmp … 10d`), which would otherwise delete individual old
-    # files inside live or resumable sessions. Whole-tree removal is this
-    # reaper's job alone. `x` only stops deletion; it adds no aging.
-    systemd.tmpfiles.rules = [ "x /tmp/claude-*" ];
+    # Once the reaper really deletes (dryRun = false), exempt Claude session
+    # trees from systemd's stock /tmp file aging (tmp.conf: `q /tmp … 10d`),
+    # which would otherwise delete individual old files inside live or
+    # resumable sessions; whole-tree removal then is this reaper's job alone.
+    # While it only logs, stock aging stays in place, so this module changes
+    # nothing about what is deleted. The arming change must also decide on the
+    # trees the reaper refuses (claude-0, unknown uids, other depths).
+    systemd.tmpfiles.rules = lib.mkIf (!cfg.dryRun) [ "x /tmp/claude-*" ];
 
     systemd.services.choir-tmp-session-reaper = {
       description = "Remove dead, idle Claude session trees from /tmp";
