@@ -89,4 +89,32 @@ mkdir -p "$W/fakebin"; printf '#!/bin/sh\necho "20971520\t$3"\n' > "$W/fakebin/d
 out=$(PATH="$W/fakebin:$PATH" run DRY_RUN=1 ALERT_GIB=10)
 grep -q "^<4>choir-tmp-session-reaper: WARN .* 20 GiB" <<<"$out" && ok "size alert emitted at WARN priority" || bad "no size alert"
 
+# large stale tree (thousands of entries): the run must not abort (the old
+# `sort | head -1` under pipefail died with EPIPE/SIGPIPE here)
+mk big; mkdir -p "$T/big/d"; for i in $(seq 1 6000); do : > "$T/big/d/f$i"; done
+find "$T/big" -exec touch -h -d "$old" {} +
+touch -d "$old" "$W/home/$uid/.claude/projects/proj/big.jsonl"
+rcb=0; out=$(run DRY_RUN=1) || rcb=$?
+grep -q "DRY-RUN would remove $T/big " <<<"$out" && ok "large stale tree is processed (no pipefail abort)" || bad "large tree not processed (rc=$rcb)"
+
+# kernel-thread-like process (empty cmdline, no cwd) does not make everything live
+mkdir -p "$W/proc3/2/fd"; : > "$W/proc3/2/cmdline"; : > "$W/proc3/2/environ"   # no cwd link
+mkdir -p "$W/proc3/1/fd"; printf init > "$W/proc3/1/cmdline"; printf 'PATH=/bin' > "$W/proc3/1/environ"; ln -sfn / "$W/proc3/1/cwd"
+out=$(run DRY_RUN=1 PROC_ROOT="$W/proc3")
+grep -q "DRY-RUN would remove $T/big " <<<"$out" && ok "kernel thread (no cwd, empty cmdline) is ignored" || bad "kernel thread made sessions live"
+
+# unknown uid directory: must not abort the run, and must not be reaped
+mkdir -p "$W/tmp/claude-99999/proj/ghost"; touch -d "$old" "$W/tmp/claude-99999/proj/ghost"
+rcu=0; out=$(env -u HOMES_ROOT EXCLUDE_SESSIONS="666bcb25" TMP_ROOT="$W/tmp" PROC_ROOT="$W/proc" IDLE_DAYS=7 DRY_RUN=1 bash "$REAPER" 2>&1) || rcu=$?
+grep -q "would remove $W/tmp/claude-99999" <<<"$out" && bad "unknown uid tree was a candidate" || ok "unknown uid tree kept"
+[ "$rcu" = 0 ] && ok "unknown uid does not abort the run" || bad "run aborted on unknown uid (rc=$rcu)"
+
+# a failing delete warns, continues with the next session, and fails the unit at the end
+mk zfail; touch -d "$old" "$W/home/$uid/.claude/projects/proj/zfail.jsonl"; touch -d "$old" "$T/zfail"
+printf '#!/bin/sh\ncase "$2" in *zfail*) exit 1;; esac\nexec "$@"\n' > "$W/fakebin/failrun"; chmod +x "$W/fakebin/failrun"
+rcf=0; out=$(run DRY_RUN=0 RUN_AS="$W/fakebin/failrun") || rcf=$?
+grep -q "WARN could not fully remove $T/zfail" <<<"$out" && ok "failed delete is reported" || bad "failed delete not reported"
+[ ! -e "$T/big" ] && ok "later session still processed after a failed delete" || bad "run stopped at the failed delete"
+[ "$rcf" != 0 ] && ok "unit exits non-zero after a failed delete" || bad "failed delete left exit 0"
+
 [ "$fails" = 0 ] && echo "ALL PASS" || { echo "$fails FAILED"; exit 1; }

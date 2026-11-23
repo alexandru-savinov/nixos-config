@@ -25,6 +25,7 @@ IDLE_DAYS=${IDLE_DAYS:-7}
 ALERT_GIB=${ALERT_GIB:-10}
 NOW=${NOW:-$(date +%s)}
 cutoff=$((NOW - IDLE_DAYS * 86400))
+rc=0
 
 log() { echo "choir-tmp-session-reaper: $*"; }
 warn() { echo "<4>choir-tmp-session-reaper: WARN $*"; }
@@ -52,6 +53,9 @@ is_live() {
       po=$(stat -c %u "$p" 2>/dev/null) || return 0
       [ "$po" = "$uid" ] && return 0
     fi
+    # Kernel threads (and zombies) have an empty cmdline and no cwd; they can
+    # hold nothing under the tree, so they are not "unreadable", just absent.
+    if [ -r "$p/cmdline" ] && [ ! -s "$p/cmdline" ] && ! readlink "$p/cwd" >/dev/null 2>&1; then continue; fi
     t=$(readlink "$p/cwd" 2>/dev/null) || return 0
     case "$t" in "$dir" | "$dir"/*) return 0 ;; esac
     [ -r "$p/fd" ] || return 0
@@ -72,8 +76,10 @@ excluded() { # session id -> 0 when it matches an EXCLUDE_SESSIONS prefix
   return 1
 }
 
-newest_mtime() { # never follows symlinks (find -P is the default)
-  find "$1" -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1
+recent_entry() { # any entry modified after the cutoff (never follows symlinks)
+  # `-print -quit` ends find itself, so there is no early-closing reader in a
+  # pipeline (which under pipefail aborted the run on large trees).
+  find "$1" -newermt "@$cutoff" -print -quit 2>/dev/null
 }
 
 for udir in "$TMP_ROOT"/claude-*; do
@@ -81,7 +87,7 @@ for udir in "$TMP_ROOT"/claude-*; do
   uid=${udir##*/claude-}
   case "$uid" in '' | *[!0-9]*) continue ;; esac
   [ "$uid" -gt 0 ] || { log "skip $udir: refusing uid 0"; continue; }
-  home=$(home_of "$uid")
+  home=$(home_of "$uid") || home="" # unknown uid: the per-session check below keeps everything
   for sdir in "$udir"/*/*/; do
     sdir=${sdir%/}
     [ -d "$sdir" ] && [ ! -L "$sdir" ] || continue
@@ -102,8 +108,8 @@ for udir in "$TMP_ROOT"/claude-*; do
     if [ -z "$home" ] || [ ! -d "$home/.claude/projects" ]; then
       log "keep $sdir: cannot see $home/.claude/projects"; continue
     fi
-    newest=$(newest_mtime "$sdir")
-    if [ -z "$newest" ] || [ "$newest" -ge "$cutoff" ]; then log "keep $sdir: tree modified within ${IDLE_DAYS}d"; continue; fi
+    recent=$(recent_entry "$sdir") || recent="?"
+    if [ -n "$recent" ]; then log "keep $sdir: tree modified within ${IDLE_DAYS}d"; continue; fi
     tx="$home/.claude/projects/$proj/$sid.jsonl"
     if [ -e "$tx" ]; then
       tm=$(stat -c %Y "$tx")
@@ -115,13 +121,17 @@ for udir in "$TMP_ROOT"/claude-*; do
       log "DRY-RUN would remove $sdir ($size)"
     else
       log "removing $sdir ($size) as uid $uid"
+      gid=$(gid_of "$uid") || gid=""
       if [ -n "${RUN_AS:-}" ]; then
         # shellcheck disable=SC2086
-        $RUN_AS find "$sdir" -xdev -delete
-      else
-        setpriv --reuid="$uid" --regid="$(gid_of "$uid")" --init-groups -- \
-          find "$sdir" -xdev -delete
+        if ! $RUN_AS find "$sdir" -xdev -delete; then warn "could not fully remove $sdir"; rc=1; fi
+      elif [ -z "$gid" ]; then
+        warn "no group for uid $uid; not removing $sdir"; rc=1
+      elif ! setpriv --reuid="$uid" --regid="$gid" --init-groups -- \
+        find "$sdir" -xdev -delete; then
+        warn "could not fully remove $sdir"; rc=1
       fi
     fi
   done
 done
+exit "$rc"

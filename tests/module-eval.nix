@@ -746,6 +746,7 @@ let
           deletesWithFind = nixpkgs.lib.hasInfix "-xdev -delete" cfg.choirTmpReaper.scriptText;
           scriptDry = nixpkgs.lib.hasInfix "export DRY_RUN=1\n" cfg.choirTmpReaper.scriptText;
           noRootDelete = nixpkgs.lib.hasInfix "setpriv --reuid" cfg.choirTmpReaper.scriptText;
+          claudeTreesExemptFromAging = builtins.elem "x /tmp/claude-*" cfg.systemd.tmpfiles.rules;
         };
         failed = builtins.attrNames (nixpkgs.lib.filterAttrs (_: v: !v) checks);
       in
