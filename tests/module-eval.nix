@@ -754,7 +754,7 @@ let
           # The script resolves homes and groups with getent; it is glibc's own
           # `getent` output, not part of glibc.bin (the first live dry-run
           # logged "getent: command not found" and could never reap).
-          getentOnPath = nixpkgs.lib.hasInfix (builtins.unsafeDiscardStringContext "${pkgs.getent}/bin") (builtins.unsafeDiscardStringContext cfg.choirTmpReaper.scriptText);
+          getentOnPath = nixpkgs.lib.hasInfix (builtins.unsafeDiscardStringContext "${self.nixosConfigurations.sancta-choir.pkgs.getent}/bin") (builtins.unsafeDiscardStringContext cfg.choirTmpReaper.scriptText);
           agingExemptOnlyWhenArmed = !(builtins.elem "x /tmp/claude-*" cfg.systemd.tmpfiles.rules)
             && builtins.elem "x /tmp/claude-*"
             (self.nixosConfigurations.sancta-choir.extendModules {
