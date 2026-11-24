@@ -351,3 +351,8 @@ sudo -u service-user cat /run/agenix/secret-name
 - NixOS Wiki: https://nixos.wiki/wiki/Agenix
 - Tailscale Auth Keys: https://login.tailscale.com/admin/settings/keys
 - OpenRouter API Keys: https://openrouter.ai/keys
+
+## Commit-scan exception log
+
+- 2026-11-24 `357728d4d57391fa5803e2f8bd1abb933a5727ea:s1-canary-fixture.txt:telegram-bot-token-shape:2`: invented test value, never a credential
+- 2026-11-24 `357728d4d57391fa5803e2f8bd1abb933a5727ea:s1-canary-fixture.txt:bare-hex64-key:3`: invented test value, never a credential
