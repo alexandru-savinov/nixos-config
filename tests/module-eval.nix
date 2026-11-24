@@ -3037,9 +3037,12 @@ let
     # The Sancta agent commits under a declared noreply identity.
     sancta-choir-git-identity =
       let
-        git = self.nixosConfigurations.sancta-choir.config.home-manager.users.sancta.programs.git;
+        hm = self.nixosConfigurations.sancta-choir.config.home-manager.users.sancta;
+        git = hm.programs.git;
+        text = hm.xdg.configFile."git/config".text;
       in
       if git.enable
+        && !(nixpkgs.lib.hasInfix "[gpg" text)
         && git.settings.user.name == "Sancta"
         && git.settings.user.email == "249759755+sanioc-code@users.noreply.github.com"
       then true

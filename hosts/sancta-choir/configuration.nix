@@ -142,6 +142,8 @@
   # to the Sancta machine account.
   home-manager.users.sancta.programs.git = {
     enable = true;
+    # No signing defaults: this file should carry only the identity.
+    signing.format = null;
     settings.user = {
       name = "Sancta";
       email = "249759755+sanioc-code@users.noreply.github.com";
