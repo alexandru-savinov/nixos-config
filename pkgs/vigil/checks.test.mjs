@@ -101,6 +101,30 @@ test('HTTP requires exact status, body and valid freshness independently', async
   assert.equal(await inspect('{"la":"2026-09-20T12:01:00Z"}'), 'NECITIT');
 });
 
+test('HTTP freshness reads the clock after the response, so a tick written mid-fetch is fresh', async t => {
+  const c = { verifica: 'http', tinta: 'http://127.0.0.1/', astept: { status: 200, prospetime: '15m' } };
+  let clock = now;
+  t.mock.method(Date, 'now', () => clock);
+  const tick = (la, after) => async () => { clock = after; return { status: 200, body: JSON.stringify({ la: new Date(la).toISOString() }) }; };
+  // The peer writes its tick while the request is in flight: `la` is after the
+  // clock read at the start of the check, but before the response arrives.
+  assert.equal(await verdict(c, { request: tick(now + 400, now + 800) }), 'verde');
+  // Staleness is measured against the post-response clock too.
+  clock = now;
+  assert.equal(await verdict(c, { request: tick(now + 1000 - 900000, now + 1000) }), 'picat');
+  // A small cross-host clock skew is tolerated for a peer only; a tick well in the future is not.
+  const at = (la, contract = { ...c, peer: true }) => verdict(contract, { now, request: response(200, JSON.stringify({ la: new Date(la).toISOString() })) });
+  assert.equal(await at(now + 5000), 'verde');
+  assert.equal(await at(now + 5001), 'NECITIT');
+  assert.equal(await at(now + 1, c), 'NECITIT');
+  // A clock that does not read as a finite number fails closed.
+  const fresh = response(200, JSON.stringify({ la: new Date(now - 1000).toISOString() }));
+  for (const broken of [() => undefined, () => NaN, () => new Date(now)]) {
+    assert.equal(await verdict(c, { clock: broken, request: fresh }), 'NECITIT');
+  }
+  assert.equal(await verdict({ verifica: 'age', tinta: '/', prag: '1h' }, { clock: () => undefined }), 'NECITIT');
+});
+
 test('regular expression backtracking has a bounded worker lifetime', async () => {
   assert.equal(await matches('ready', 'ready'), true);
   assert.equal(await matches('ready', 'absent'), false);

@@ -89,7 +89,7 @@ export async function run(entries, options = {}) {
     } catch (error) { if (error.code !== 'ENOENT') throw new Error('channel-state-unreadable'); }
     if (due) await (options.probe || (() => invokeSay(['--chataction'], null, env)))();
   }
-  const results = await mapChecks(entries, options.inspect || (c => check(c, { env, now: clock() })));
+  const results = await mapChecks(entries, options.inspect || (c => check(c, { env, clock })));
   const now = clock();
   const events = [];
   const counts = { verde: 0, picat: 0, necitit: 0 };
