@@ -277,7 +277,6 @@ Recovery key: age identity (NOT SSH host key)
 | Secret | Runtime Path |
 |--------|-------------|
 | CalDAV iCloud | `/run/agenix/kuzea-caldav-credentials` |
-| GitHub PAT | `/run/agenix/kuzea-github-token` |
 | Todoist API | `/run/agenix/kuzea-todoist-credentials` |
 | Airtable PAT | `/run/agenix/kuzea-airtable-credentials` |
 | Tailscale auth | `/run/agenix/tailscale-auth-key` |
