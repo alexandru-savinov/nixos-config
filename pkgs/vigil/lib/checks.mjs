@@ -109,6 +109,8 @@ export function mounted(source, target) {
   return lines.some(line => decode(line.split(' ')[4]) === target) ? green() : failed('mount-absent');
 }
 
+const PEER_SKEW = 5000;
+
 function age(timestamp, limit, now) {
   // `now` is a whole-millisecond clock (Date.now() floors real time), while a file's
   // mtimeMs can carry sub-millisecond precision (multigrain timestamps, Linux >= 6.13).
@@ -121,7 +123,9 @@ function age(timestamp, limit, now) {
 export async function check(c, options = {}) {
   const started = performance.now();
   const env = options.env || process.env;
-  const now = options.now ?? Date.now();
+  // Read the clock again after each probe: a timestamp written while the probe was
+  // in flight is fresh, not from the future.
+  const clock = () => options.now ?? Date.now();
   const run = options.command || command;
   const get = options.request || request;
   const io = options.fs || fs;
@@ -141,8 +145,10 @@ export async function check(c, options = {}) {
         if (c.astept.prospetime !== undefined) {
           let body;
           try { body = JSON.parse(response.body); } catch { return unreadable('http-freshness'); }
-          if (!body || !validTime(body.la) || Date.parse(body.la) > now) return unreadable('http-freshness');
-          if (now - Date.parse(body.la) >= duration(c.astept.prospetime)) return failed('http-stale');
+          // `la` comes from the peer's clock: allow a small skew between the two hosts.
+          const seen = clock();
+          if (!body || !validTime(body.la) || Date.parse(body.la) > seen + PEER_SKEW) return unreadable('http-freshness');
+          if (seen - Date.parse(body.la) >= duration(c.astept.prospetime)) return failed('http-stale');
         }
         return green();
       }
@@ -150,7 +156,7 @@ export async function check(c, options = {}) {
       case 'age': {
         if (c.verifica === 'age' && !c.tinta.startsWith('unit:')) {
           const stat = await read(() => io.stat(c.tinta));
-          return age(stat.mtimeMs, duration(c.prag), now);
+          return age(stat.mtimeMs, duration(c.prag), clock());
         }
         const unit = c.verifica === 'unit' ? c.tinta : c.tinta.slice(5);
         const result = await run([env.VIGIL_SYSTEMCTL || 'systemctl', 'show', unit,
@@ -167,7 +173,7 @@ export async function check(c, options = {}) {
           return properties.ActiveState === 'active' ? green() : failed('unit-inactive');
         }
         if (properties.Result !== 'success') return unreadable('unit-result');
-        return age(Date.parse(properties.ExecMainExitTimestamp), duration(c.prag), now);
+        return age(Date.parse(properties.ExecMainExitTimestamp), duration(c.prag), clock());
       }
       case 'disk': {
         const stat = await read(() => io.statfs(c.tinta));
