@@ -63,6 +63,57 @@ jobs:
             - name: Check agenix secret recipients
               run: bash scripts/check-secret-recipients.sh secrets
 
+    secret-scan:
+        name: Secret Scan (all commits)
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+              with:
+                  extra_nix_config: |
+                      experimental-features = nix-command flakes
+
+            - name: Setup Cachix
+              uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
+              with:
+                  name: nix-community
+
+            # Self-test first: the scanner must still catch an added-then-removed
+            # value before its verdict on this range is trusted.
+            - name: Test commit scanner
+              run: nix shell --inputs-from . nixpkgs#gitleaks nixpkgs#git -c bash tests/gitleaks-commits-test.sh
+
+            # Scans every commit in the range, not only the final tree.
+            - name: Scan all commits in range
+              env:
+                  EVENT_NAME: ${{ github.event_name }}
+                  PR_BASE: ${{ github.event.pull_request.base.sha }}
+                  PR_HEAD: ${{ github.event.pull_request.head.sha }}
+                  PUSH_BEFORE: ${{ github.event.before }}
+                  PUSH_SHA: ${{ github.sha }}
+              run: |
+                  case "$EVENT_NAME" in
+                      pull_request)
+                          base="$PR_BASE"
+                          head="$PR_HEAD"
+                          ;;
+                      push)
+                          base="$PUSH_BEFORE"
+                          head="$PUSH_SHA"
+                          ;;
+                      *)
+                          git fetch --no-tags origin main
+                          base="$(git merge-base origin/main HEAD)"
+                          head="$(git rev-parse HEAD)"
+                          ;;
+                  esac
+                  # An all-zero base (new branch) makes the script scan just HEAD.
+                  nix shell --inputs-from . nixpkgs#gitleaks -c bash scripts/ci/gitleaks-commits.sh "$base" "$head"
+
     build-x86:
         name: Build x86_64 Configs
         runs-on: ubuntu-latest

@@ -65,6 +65,21 @@ Then remove `hermes-env.age` from `KNOWN_PENDING_DRIFT` in the guard script.
 **Do not** run this from a host (like a darwin laptop) that cannot decrypt the
 file — that is exactly the fail-open trap above.
 
+## Commit-scan exceptions (`.gitleaksignore`)
+
+CI runs `scripts/ci/gitleaks-commits.sh` over every commit of a change, so a
+value that is added and later removed is still reported. A reported finding can
+be accepted only through `.gitleaksignore` (one gitleaks fingerprint per line,
+`#` for comments), and each fingerprint must also appear in this file on a line
+that carries an ISO date (`YYYY-MM-DD`). Without that line the scan fails and
+names the fingerprint.
+
+Format of the dated line (a plain list entry anywhere in this file):
+
+```
+- 2026-01-02 `<fingerprint>`: rotated; old value revoked
+```
+
 ## Prerequisites
 - SSH access to the host machine
 - SSH key authorized in `secrets/secrets.nix`

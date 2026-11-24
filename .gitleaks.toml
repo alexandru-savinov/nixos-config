@@ -1,0 +1,24 @@
+# gitleaks configuration for scripts/ci/gitleaks-commits.sh.
+# Default rules plus the extra rules below.
+[extend]
+useDefault = true
+
+# Shapes the default rules do not reliably cover.
+
+[[rules]]
+id = "telegram-bot-token-shape"
+description = "Telegram bot token: 8-10 digits, colon, 35 URL-safe characters"
+regex = '''\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b'''
+keywords = [":"]
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API key: sk-or-v1- followed by 64 hex characters"
+regex = '''sk-or-v1-[0-9a-f]{64}'''
+keywords = ["sk-or-v1-"]
+
+[[rules]]
+id = "bare-hex64-key"
+description = "64-hex value assigned to a key/secret/token-named variable"
+regex = '''(?i)(?:api[_-]?key|secret|token|password)[a-z0-9_-]*["']?\s*[:=]\s*["']?[0-9a-f]{64}\b'''
+keywords = ["key", "secret", "token", "password"]

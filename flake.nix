@@ -400,6 +400,9 @@
           # Session-aware /tmp reaper: live/resumable kept, stale removed, symlinks not followed.
           choir-tmp-session-reaper = import ./tests/choir-tmp-session-reaper.nix { inherit pkgs; };
 
+          # Commit-range secret scanner: catches a value added then removed in one range.
+          gitleaks-commits = import ./tests/gitleaks-commits.nix { inherit pkgs; };
+
           # Read-only diag account dispatcher: fixed verbs, validated args, no eval.
           choir-diag = import ./tests/choir-diag.nix { inherit pkgs; };
 
