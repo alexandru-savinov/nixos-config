@@ -18,7 +18,7 @@ This is a migration of an existing host, not a fresh deploy. Only the applicatio
 - Agenix decryption works from rpi5: `sudo agenix -d <file>.age -i /root/dr/recovery-sancta-claw.key` (must run from `secrets/` dir)
 - Recovery key present at `/root/dr/recovery-hermes-claw.key`
 - `tests/module-eval.nix` has `hermes-claw-rendered` test asserting on old oci-containers structure (`system.build.hermesAgentEnvBody`, `system.build.hermesConfigYamlBody`, image digest, container volumes, ExecStartPre). Needs full rewrite — new test must also receive hermes-agent flake input for module resolution.
-- Preserved: hostname, disko, hardware-config, firewall (port 22 only), model config (`tencent/hy3-preview:free` on OpenRouter), Telegram chat ID `364749075`, existing agenix secrets
+- Preserved: hostname, disko, hardware-config, firewall (port 22 only), model config (`tencent/hy3-preview:free` on OpenRouter), Telegram chat ID `<owner chat id>`, existing agenix secrets
 - Security tradeoff: dropping `--cap-drop=ALL` in exchange for self-modification capability; compensating with `--security-opt=no-new-privileges`, memory/CPU caps, namespace isolation, no inbound ports
 - Networking change: old setup used podman bridge networking with explicit port mapping (`127.0.0.1:8642:8642`). New upstream module hardcodes `--network=host`. Agent API still loopback-only (hermes binds to 127.0.0.1 by default); firewall still blocks all inbound except SSH.
 - Adopted from: inline migration specification (free-form markdown)
@@ -112,7 +112,7 @@ This is a migration of an existing host, not a fresh deploy. Only the applicatio
 - [x] Set `container.extraOptions`: `--security-opt=no-new-privileges`, `--memory=4g`, `--cpus=2.0`
 - [x] Configure `settings` attrset: model (`tencent/hy3-preview:free`, provider openrouter, base_url), auxiliary tasks (title_generation, compression, session_search, web_extract all on openrouter), toolsets, memory, terminal
 - [x] Set `environmentFiles = [ config.age.secrets.hermes-env.path ]`
-- [x] Set `environment` with `TELEGRAM_ALLOWED_USERS = "364749075"` and `HERMES_DASHBOARD = "0"`
+- [x] Set `environment` with `TELEGRAM_ALLOWED_USERS = "<owner chat id>"` and `HERMES_DASHBOARD = "0"`
 - [x] Set `extraPackages` with git, ripgrep, jq, curl
 - [x] Remove old `system.build.hermesAgentEnvBody` and `system.build.hermesConfigYamlBody` exports
 - [x] Remove old `users.users.hermes` / `users.groups.hermes` / `systemd.tmpfiles.rules` (upstream module creates these)
@@ -159,7 +159,7 @@ This is a migration of an existing host, not a fresh deploy. Only the applicatio
 - [x] Verify `hermes config` shows `provider: openrouter` and model `tencent/hy3-preview:free` (NOT anthropic/claude)
 - [x] Test self-modification: `podman exec hermes-agent apt-get update -qq && podman exec hermes-agent apt-get install -y -qq fortune-mod`
 - [x] Test persistence: `systemctl restart hermes-agent && sleep 10 && podman exec hermes-agent /usr/games/fortune` (extra wait for entrypoint)
-- [x] Send `/start` to Telegram bot from chat ID 364749075 and confirm reply
+- [x] Send `/start` to Telegram bot from chat ID <owner chat id> and confirm reply
 - [x] Record hermes-agent flake input revision: `nix flake metadata --json | jq '.locks.nodes."hermes-agent".locked'`
 - [x] Record disk usage delta: `df -h /` after vs before (from Task 6)
 - [x] Verify no unexpected listening ports: `ss -tlnp | grep -v 127.0.0.1 | grep -v ::1`
