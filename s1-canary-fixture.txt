@@ -1,0 +1,3 @@
+# Invented values for a scanner test. Not credentials.
+BOT_TOKEN=1234567890:CANARY_FAKE_TOKEN_NOT_REAL_00000000
+api_key = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
