@@ -125,7 +125,14 @@ export async function check(c, options = {}) {
   const env = options.env || process.env;
   // Read the clock again after each probe: a timestamp written while the probe was
   // in flight is fresh, not from the future.
-  const clock = options.now !== undefined ? () => options.now : options.clock || Date.now;
+  const fixed = options.now;
+  const source = fixed != null ? () => fixed : options.clock || Date.now;
+  // A clock that is not a finite number makes every comparison below false; fail closed.
+  const clock = () => {
+    const value = source();
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('clock-unreadable');
+    return value;
+  };
   const run = options.command || command;
   const get = options.request || request;
   const io = options.fs || fs;

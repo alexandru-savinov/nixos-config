@@ -9,7 +9,7 @@ const mutations = [
   ['premature-self-rearm', 'vigil-check.mjs', "  atomicWrite(statePath(root, 'tick.counts.json'),", "  remove(namedPath(root, 'nota-sent', 'vigil'));\n  atomicWrite(statePath(root, 'tick.counts.json'),"],
   ['public-gate-bypassed', 'lib/public-contracts.mjs', 'report(`vigil: invalid public contract ${file}`);\n          return 2;', 'report(`vigil: invalid public contract ${file}`);\n          return 0;'],
   ['missing-file-green', 'lib/checks.mjs', 'const stat = await read(() => io.stat(c.tinta));', 'const stat = await read(() => io.stat(c.tinta)).catch(() => ({ mtimeMs: clock() }));'],
-  ['clock-read-before-fetch', 'lib/checks.mjs', 'const clock = options.now !== undefined ? () => options.now : options.clock || Date.now;', 'const fixed = options.now ?? (options.clock || Date.now)(); const clock = () => fixed;'],
+  ['clock-read-before-fetch', 'lib/checks.mjs', 'const source = fixed != null ? () => fixed : options.clock || Date.now;', 'const frozen = fixed ?? (options.clock || Date.now)(); const source = () => frozen;'],
   ['runner-frozen-clock', 'vigil-check.mjs', 'check(c, { env, clock })', 'check(c, { env, now: clock() })'],
   ['peer-skew-unbounded', 'lib/checks.mjs', 'const PEER_SKEW = 5000;', 'const PEER_SKEW = Infinity;'],
   ['no-hold-down', 'lib/incident.mjs', 'HOLD_DOWN = 30 * 60 * 1000', 'HOLD_DOWN = 0'],

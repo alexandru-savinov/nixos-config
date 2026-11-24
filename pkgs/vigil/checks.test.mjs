@@ -117,6 +117,12 @@ test('HTTP freshness reads the clock after the response, so a tick written mid-f
   assert.equal(await at(now + 5000), 'verde');
   assert.equal(await at(now + 5001), 'NECITIT');
   assert.equal(await at(now + 1, c), 'NECITIT');
+  // A clock that does not read as a finite number fails closed.
+  const fresh = response(200, JSON.stringify({ la: new Date(now - 1000).toISOString() }));
+  for (const broken of [() => undefined, () => NaN, () => new Date(now)]) {
+    assert.equal(await verdict(c, { clock: broken, request: fresh }), 'NECITIT');
+  }
+  assert.equal(await verdict({ verifica: 'age', tinta: '/', prag: '1h' }, { clock: () => undefined }), 'NECITIT');
 });
 
 test('regular expression backtracking has a bounded worker lifetime', async () => {
