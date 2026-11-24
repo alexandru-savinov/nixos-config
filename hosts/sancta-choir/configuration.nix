@@ -136,6 +136,20 @@
     spinnerTipsEnabled = false;
   };
 
+  # The commit identity of the Sancta agent, declared once for the account
+  # (~/.config/git/config). Repo-local [user] entries override this, so none
+  # should be kept in Sancta's checkouts. GitHub attributes the noreply address
+  # to the Sancta machine account.
+  home-manager.users.sancta.programs.git = {
+    enable = true;
+    # No signing defaults: this file should carry only the identity.
+    signing.format = null;
+    settings.user = {
+      name = "Sancta";
+      email = "249759755+sanioc-code@users.noreply.github.com";
+    };
+  };
+
   # The status bar and the WHOLE hook registry, in the one layer the
   # interactive harness cannot silently erase. Sancta's hooks are deliberately
   # NOT in extraSettings above: on 2026-08-26 they were found erased again,
