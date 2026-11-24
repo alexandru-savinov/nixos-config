@@ -112,10 +112,11 @@ test('HTTP freshness reads the clock after the response, so a tick written mid-f
   // Staleness is measured against the post-response clock too.
   clock = now;
   assert.equal(await verdict(c, { request: tick(now + 1000 - 900000, now + 1000) }), 'picat');
-  // A small cross-host clock skew is tolerated; a tick well in the future is not.
-  const at = la => verdict(c, { now, request: response(200, JSON.stringify({ la: new Date(la).toISOString() })) });
+  // A small cross-host clock skew is tolerated for a peer only; a tick well in the future is not.
+  const at = (la, contract = { ...c, peer: true }) => verdict(contract, { now, request: response(200, JSON.stringify({ la: new Date(la).toISOString() })) });
   assert.equal(await at(now + 5000), 'verde');
   assert.equal(await at(now + 5001), 'NECITIT');
+  assert.equal(await at(now + 1, c), 'NECITIT');
 });
 
 test('regular expression backtracking has a bounded worker lifetime', async () => {

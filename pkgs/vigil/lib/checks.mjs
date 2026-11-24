@@ -125,7 +125,7 @@ export async function check(c, options = {}) {
   const env = options.env || process.env;
   // Read the clock again after each probe: a timestamp written while the probe was
   // in flight is fresh, not from the future.
-  const clock = () => options.now ?? Date.now();
+  const clock = options.now !== undefined ? () => options.now : options.clock || Date.now;
   const run = options.command || command;
   const get = options.request || request;
   const io = options.fs || fs;
@@ -145,9 +145,10 @@ export async function check(c, options = {}) {
         if (c.astept.prospetime !== undefined) {
           let body;
           try { body = JSON.parse(response.body); } catch { return unreadable('http-freshness'); }
-          // `la` comes from the peer's clock: allow a small skew between the two hosts.
+          // A peer's `la` comes from its own clock: allow a small skew between the two hosts.
           const seen = clock();
-          if (!body || !validTime(body.la) || Date.parse(body.la) > seen + PEER_SKEW) return unreadable('http-freshness');
+          const skew = c.peer === true ? PEER_SKEW : 0;
+          if (!body || !validTime(body.la) || Date.parse(body.la) > seen + skew) return unreadable('http-freshness');
           if (seen - Date.parse(body.la) >= duration(c.astept.prospetime)) return failed('http-stale');
         }
         return green();

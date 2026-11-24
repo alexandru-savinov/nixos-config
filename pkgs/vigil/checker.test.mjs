@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import http from 'node:http';
 import { run, loadContracts } from './vigil-check.mjs';
 import { contract as contractFromToml } from './lib/schema.mjs';
 import { say } from './vigil-say.mjs';
@@ -64,6 +65,31 @@ async function harness(fn) {
     state: () => loadStore(root),
   }); } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
+
+test('the runner hands checks a live clock: a peer tick written mid-fetch is fresh, one that ages past the limit mid-fetch is stale', async () => harness(async h => {
+  let la;
+  let delay;
+  const server = http.createServer((_req, res) => {
+    h.time(delay);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ la }));
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  try {
+    const start = h.options.clock();
+    const contract = { ...base, nume: 'peer-tick', verifica: 'http', tinta: `http://127.0.0.1:${server.address().port}/`,
+      astept: { status: 200, prospetime: '15m' } };
+    la = new Date(start + 400).toISOString(); delay = 800;
+    await run([{ contract }], h.options);
+    const second = h.options.clock();
+    la = new Date(second - 900000 + 500).toISOString(); delay = 1000;
+    await run([{ contract }], h.options);
+    assert.deepEqual(h.lines.map(line => [line.verdict, line.motiv]), [['verde', 'ok'], ['picat', 'http-stale']]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+}));
 
 test('borrowed vocabulary labels reach the run line only when declared', async () => harness(async h => {
   await run([
