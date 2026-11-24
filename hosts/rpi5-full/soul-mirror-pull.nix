@@ -133,8 +133,8 @@ let
       echo "$msg" | ${pkgs.systemd}/bin/systemd-cat -t soul-mirror-staleness -p err
       ${cu}/printf '%s %s\n' "$(${cu}/date -Iseconds)" "$msg" > "$STAMP" || true
       TOKEN=$(${pkgs.jq}/bin/jq -r '.channels.telegram.botToken // empty' "$OC_CONFIG" 2>/dev/null || true)
-      CHAT_ID=$(${pkgs.jq}/bin/jq -r '.channels.telegram.chatId // "364749075"' "$OC_CONFIG" 2>/dev/null || echo 364749075)
-      if [ -n "$TOKEN" ]; then
+      CHAT_ID=$(${pkgs.jq}/bin/jq -r '.channels.telegram.chatId // empty' "$OC_CONFIG" 2>/dev/null || true)
+      if [ -n "$TOKEN" ] && [ -n "$CHAT_ID" ]; then
         ${pkgs.curl}/bin/curl -sf -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
           -d "chat_id=$CHAT_ID" -d "text=🔴 [rpi5] $msg" --max-time 10 || true
       fi
