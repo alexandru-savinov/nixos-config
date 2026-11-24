@@ -7,6 +7,7 @@ pkgs.runCommand "gitleaks-commits-tests"
   mkdir -p repo/tests repo/scripts/ci
   cp ${./gitleaks-commits-test.sh} repo/tests/gitleaks-commits-test.sh
   cp ${../scripts/ci/gitleaks-commits.sh} repo/scripts/ci/gitleaks-commits.sh
+  cp ${../scripts/ci/gitleaks-trusted-inputs.sh} repo/scripts/ci/gitleaks-trusted-inputs.sh
   cp ${../.gitleaks.toml} repo/.gitleaks.toml
   export HOME=$TMPDIR
   bash repo/tests/gitleaks-commits-test.sh

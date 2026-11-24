@@ -89,7 +89,9 @@ jobs:
 
             # Scans every commit in the range, not only the final tree. The
             # scanner and its config are read from the trusted base ref, so a
-            # change cannot weaken the scan that judges it.
+            # change cannot weaken the scan that judges it. This job runs on
+            # pull_request, on push to main (before..after) and on
+            # workflow_dispatch; every ambiguity below fails the job.
             - name: Scan all commits in range
               env:
                   EVENT_NAME: ${{ github.event_name }}
@@ -98,6 +100,7 @@ jobs:
                   PUSH_BEFORE: ${{ github.event.before }}
                   PUSH_SHA: ${{ github.sha }}
               run: |
+                  set -euo pipefail
                   case "$EVENT_NAME" in
                       pull_request)
                           base="$PR_BASE"
@@ -105,31 +108,26 @@ jobs:
                           trusted="$PR_BASE"
                           ;;
                       push)
-                          # `before` exists for pushes to main; an all-zero or
-                          # unknown value makes the scanner exit 2 (no trusted
-                          # lower bound) instead of scanning less.
+                          # A missing or all-zero `before` is not a lower bound:
+                          # the trusted-input and scanner steps exit non-zero.
                           base="$PUSH_BEFORE"
                           head="$PUSH_SHA"
                           trusted="$PUSH_BEFORE"
                           ;;
                       *)
-                          git fetch --no-tags origin main
-                          base="$(git merge-base origin/main HEAD)"
+                          git fetch --no-tags --prune --unshallow origin main 2>/dev/null ||
+                              git fetch --no-tags --prune origin main
+                          base="$(git merge-base origin/main HEAD)" || {
+                              echo "::error::cannot determine a merge-base with origin/main"
+                              exit 1
+                          }
                           head="$(git rev-parse HEAD)"
                           trusted="origin/main"
                           ;;
                   esac
                   scanner="$RUNNER_TEMP/gitleaks-commits.sh"
                   cfg="$RUNNER_TEMP/gitleaks.toml"
-                  if git cat-file -e "$trusted:scripts/ci/gitleaks-commits.sh" 2>/dev/null &&
-                      git cat-file -e "$trusted:.gitleaks.toml" 2>/dev/null; then
-                      git show "$trusted:scripts/ci/gitleaks-commits.sh" > "$scanner"
-                      git show "$trusted:.gitleaks.toml" > "$cfg"
-                  else
-                      echo "NOTICE: the base ref does not contain the scanner yet; using the copy from this checkout (bootstrap)."
-                      cp scripts/ci/gitleaks-commits.sh "$scanner"
-                      cp .gitleaks.toml "$cfg"
-                  fi
+                  bash scripts/ci/gitleaks-trusted-inputs.sh "$trusted" "$scanner" "$cfg"
                   nix shell --inputs-from . nixpkgs#gitleaks -c bash "$scanner" "$base" "$head" "$cfg"
 
     build-x86:

@@ -71,17 +71,27 @@ CI runs `scripts/ci/gitleaks-commits.sh` over every commit of a change, so a
 value that is added and later removed is still reported. The scanner and its
 config are taken from the base branch, not from the change under review.
 
+**The scan is detective only.** A finding means the value must be rotated:
+deleting it from the tree or adding a fingerprint does not close the finding,
+because the value is already public once it is pushed. Exceptions are only for
+reviewed false positives, or for values that have already been rotated.
+
 A reported finding can be accepted only through `.gitleaksignore`: one
 commit-scoped gitleaks fingerprint per line (`<40-hex commit>:<path>:<rule-id>:<line>`,
 `#` for comments). Each fingerprint must also appear in this file as a line of
-exactly this form, with an ISO date:
+exactly this form:
 
 ```
 - YYYY-MM-DD `<fingerprint>` optional note
 ```
 
-Otherwise the scan fails and reports the `.gitleaksignore` line number. The job
-log always prints how many exceptions are active.
+The line must start at column 0, must not sit inside an HTML comment, and the
+date must be a real calendar date that is not in the future. Both files must be
+regular files, not symlinks. Otherwise the scan fails and reports the
+`.gitleaksignore` line number. The job log always prints how many exceptions
+are active, and a change that touches the exception list, the scanner, its
+config, the workflow or this file raises a warning and a job summary listing
+the active entries.
 
 ## Prerequisites
 - SSH access to the host machine

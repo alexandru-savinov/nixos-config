@@ -73,26 +73,27 @@ newrepo() {
     printf '%s' "$d"
 }
 
-# scan SCRIPT REPO BASE HEAD -> exit status; output $work/out, report $work/report.json
+# scan SCRIPT REPO BASE HEAD -> exit status; combined output in $work/out
 scan() {
-    find "$work/report.json" -xdev -delete 2>/dev/null
-    (cd "$2" && bash "$1" "$3" "$4" "$config" "$work/report.json") >"$work/out" 2>&1
+    (cd "$2" && "$BASH" "$1" "$3" "$4" "$config") >"$work/out" 2>&1
 }
 
-# expect_caught LABEL RULE VALUE: last scan must have failed with RULE in the
-# report, and neither report nor output may carry the value.
+# expect_caught LABEL RULE VALUE RC: the last scan must have exited 1 with RULE
+# named in its output, and the output may carry neither the value nor the
+# commit message sentinel.
 expect_caught() {
     local label=$1 rule=$2 value=$3 rc=$4 good=1
     [ "$rc" -eq 1 ] || good=0
-    grep -q "\"RuleID\": \"$rule\"" "$work/report.json" 2>/dev/null || good=0
-    if grep -qF -- "$value" "$work/report.json" "$work/out" 2>/dev/null; then good=0; fi
+    grep -q "finding: rule=$rule " "$work/out" || good=0
+    if grep -qF -- "$value" "$work/out"; then good=0; fi
+    if grep -qF -- "msg-sentinel" "$work/out"; then good=0; fi
     if [ "$good" -eq 1 ]; then ok "$label (exit 1, rule $rule, redacted)"; else bad "$label (exit $rc, rule $rule)"; fi
 }
 
 add_then_remove() {
     printf '%s\n' "$LINE" >"$1/app.conf"
     git -C "$1" add -A
-    git -C "$1" commit -q -m add
+    git -C "$1" commit -q -m "msg-sentinel add"
     git -C "$1" rm -q app.conf
     git -C "$1" commit -q -m remove
 }
@@ -111,8 +112,8 @@ make_merge_repo() {
     git -C "$1" commit -q -m merge
 }
 
-# case_a SCRIPT: 0 if the scanner caught every shape (silent)
-caught_all() {
+# all_exit SCRIPT CODE: 0 if every shape ends with exactly exit CODE
+all_exit() {
     local sc=$1 s r b
     for s in $shapes; do
         emit "$s"
@@ -120,18 +121,18 @@ caught_all() {
         b=$(git -C "$r" rev-parse HEAD)
         add_then_remove "$r"
         scan "$sc" "$r" "$b" HEAD
-        [ "$?" -eq 1 ] || return 1
+        [ "$?" -eq "$2" ] || return 1
     done
 }
 
-caught_merge() {
+merge_exit() {
     local r b
     emit openrouter
     r=$(newrepo)
     b=$(git -C "$r" rev-parse HEAD)
     make_merge_repo "$r"
     scan "$1" "$r" "$b" HEAD
-    [ "$?" -eq 1 ]
+    [ "$?" -eq "$2" ]
 }
 
 echo "== (a) add then remove inside the range"
@@ -197,7 +198,7 @@ r=$(newrepo)
 b=$(git -C "$r" rev-parse HEAD)
 add_then_remove "$r"
 scan "$script" "$r" "$b" HEAD
-fp=$(grep -o '"Fingerprint": *"[^"]*"' "$work/report.json" | head -1 | sed 's/^[^:]*: *"//; s/"$//')
+fp=$(sed -n 's/.*fingerprint=\([^ ]*\)$/\1/p' "$work/out" | head -1)
 [ -n "$fp" ] || bad "c/d: no fingerprint obtained"
 
 printf '# exceptions\n%s\n' "$fp" >"$r/.gitleaksignore"
@@ -228,19 +229,85 @@ printf '%s\n' "${fp#*:}" >"$r/.gitleaksignore"
 scan "$script" "$r" "$b" HEAD
 [ "$?" -ne 0 ] && ok "d: commit-less fingerprint rejected" || bad "d: commit-less fingerprint accepted"
 
+echo "== (c2) exception line validation"
+doc_case() { # LABEL EXPECT(pass|fail) ; SECRETS-ROTATION.md already written
+    printf '%s\n' "$fp" >"$r/.gitleaksignore"
+    scan "$script" "$r" "$b" HEAD
+    local rc=$?
+    if [ "$2" = pass ] && [ "$rc" -eq 0 ]; then ok "c2/$1"
+    elif [ "$2" = fail ] && [ "$rc" -ne 0 ] && ! grep -qF -- "$fp" "$work/out"; then ok "c2/$1 rejected"
+    else bad "c2/$1 (rc=$rc, expected $2)"; fi
+}
+printf '<!--\n- 2026-01-02 `%s`\n-->\n' "$fp" >"$r/SECRETS-ROTATION.md"
+doc_case "multi-line html comment" fail
+printf '<!-- note -->\n- 2026-01-02 `%s`\n' "$fp" >"$r/SECRETS-ROTATION.md"
+doc_case "line after a closed comment" pass
+printf ' - 2026-01-02 `%s`\n' "$fp" >"$r/SECRETS-ROTATION.md"
+doc_case "indented line" fail
+printf -- '- 2999-01-01 `%s`\n' "$fp" >"$r/SECRETS-ROTATION.md"
+doc_case "future date" fail
+printf -- '- 2026-02-30 `%s`\n' "$fp" >"$r/SECRETS-ROTATION.md"
+doc_case "impossible date" fail
+printf -- '- 2026-01-02 `%s`\n' "$fp" >"$work/real-doc"
+find "$r/SECRETS-ROTATION.md" -xdev -delete
+ln -s "$work/real-doc" "$r/SECRETS-ROTATION.md"
+doc_case "symlinked rotation doc" fail
+find "$r/SECRETS-ROTATION.md" -xdev -delete
+printf -- '- 2026-01-02 `%s`\n' "$fp" >"$r/SECRETS-ROTATION.md"
+
+echo "== (t) tripwire, summary and commit count"
+git -C "$r" add -A && git -C "$r" commit -q -m exceptions
+printf '%s\n' "$fp" >"$r/.gitleaksignore"
+GITHUB_STEP_SUMMARY=$work/summary scan "$script" "$r" "$b" HEAD
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^::warning::' "$work/out" && grep -q 'commits to scan: 3' "$work/out" \
+    && grep -q '.gitleaksignore' "$work/summary" && grep -qF -- "- 2026-01-02" "$work/summary"; then
+    ok "t: warning, commit count and summary present"
+else bad "t: tripwire (rc=$rc)"; fi
+scan "$script" "$r" HEAD HEAD
+[ "$?" -eq 2 ] && ok "t: empty range exits 2" || bad "t: empty range"
+
+echo "== (s) trusted inputs selection"
+ti=$root/scripts/ci/gitleaks-trusted-inputs.sh
+tr_repo=$(newrepo)
+mkdir -p "$tr_repo/scripts/ci"
+printf 'S\n' >"$tr_repo/scripts/ci/gitleaks-commits.sh"
+printf 'C\n' >"$tr_repo/.gitleaks.toml"
+git -C "$tr_repo" add -A && git -C "$tr_repo" commit -q -m both
+both=$(git -C "$tr_repo" rev-parse HEAD)
+none=$(git -C "$tr_repo" rev-parse HEAD~1)
+git -C "$tr_repo" rm -q .gitleaks.toml && git -C "$tr_repo" commit -q -m one
+one=$(git -C "$tr_repo" rev-parse HEAD)
+printf 'WORKTREE-S\n' >"$tr_repo/scripts/ci/gitleaks-commits.sh"
+printf 'WORKTREE-C\n' >"$tr_repo/.gitleaks.toml"
+ti_run() { (cd "$tr_repo" && "$BASH" "$ti" "$1" "$work/ti-s" "$work/ti-c") >"$work/out" 2>&1; }
+ti_run "$both"
+if [ "$?" -eq 0 ] && grep -qx 'S' "$work/ti-s" && grep -qx 'C' "$work/ti-c"; then ok "s: both present -> trusted copies"; else bad "s: both present"; fi
+ti_run "$none"
+if [ "$?" -eq 0 ] && grep -q NOTICE "$work/out" && grep -qx 'WORKTREE-S' "$work/ti-s"; then ok "s: both absent -> bootstrap with notice"; else bad "s: bootstrap"; fi
+ti_run "$one"
+[ "$?" -ne 0 ] && ok "s: exactly one file at trusted ref fails" || bad "s: one file passed"
+ti_run 0000000000000000000000000000000000000000
+[ "$?" -ne 0 ] && ok "s: all-zero trusted ref fails" || bad "s: zero ref passed"
+ti_run ""
+[ "$?" -ne 0 ] && ok "s: empty trusted ref fails" || bad "s: empty ref passed"
+ti_run 1111111111111111111111111111111111111111
+[ "$?" -ne 0 ] && ok "s: unreadable trusted ref fails" || bad "s: unreadable ref passed"
+
 echo "== (e) mutants"
 mut=$work/mutant-tree.sh
 sed 's|git --log-opts="\$log_opts"|dir .|' "$script" >"$mut"
 if cmp -s "$script" "$mut"; then bad "e: tree-only mutant did not apply"
-elif caught_all "$mut"; then bad "e: tree-only mutant was NOT detected"
-else ok "e: tree-only mutant lets a removed canary through; test detects it"; fi
+elif ! all_exit "$script" 1; then bad "e: real script misses a shape"
+elif all_exit "$mut" 0; then ok "e: tree-only mutant exits 0 on a removed canary (real miss); test detects it"
+else bad "e: tree-only mutant did not exit 0 everywhere"; fi
 
 mut2=$work/mutant-nomerge.sh
 sed 's| --diff-merges=first-parent||' "$script" >"$mut2"
 if cmp -s "$script" "$mut2"; then bad "e: no-merge mutant did not apply"
-elif ! caught_merge "$script"; then bad "e: real script misses merge case"
-elif caught_merge "$mut2"; then bad "e: no-merge mutant was NOT detected"
-else ok "e: no-merge mutant misses the merge-only value; test detects it"; fi
+elif ! merge_exit "$script" 1; then bad "e: real script misses merge case"
+elif merge_exit "$mut2" 0; then ok "e: no-merge mutant exits 0 on a merge-only value (real miss); test detects it"
+else bad "e: no-merge mutant did not exit 0"; fi
 
 echo
 echo "passed=$pass failed=$fail"
