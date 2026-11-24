@@ -3034,6 +3034,17 @@ let
       then true
       else builtins.throw "FAIL: diag Match block missing/misordered:\n${extra}";
 
+    # The Sancta agent commits under a declared noreply identity.
+    sancta-choir-git-identity =
+      let
+        git = self.nixosConfigurations.sancta-choir.config.home-manager.users.sancta.programs.git;
+      in
+      if git.enable
+        && git.settings.user.name == "Sancta"
+        && git.settings.user.email == "249759755+sanioc-code@users.noreply.github.com"
+      then true
+      else builtins.throw "FAIL: Sancta's git identity: ${builtins.toJSON git.settings.user}";
+
     # As shipped: exactly the owner's Mac diag key, rendered only into the
     # 2222-only key file with the forced dispatcher and the Mac's tailnet
     # addresses; nothing for diag in the global (port 22) key files.
