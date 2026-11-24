@@ -9,7 +9,9 @@ Multi-machine NixOS configuration with shared modules. Deploy locally or remotel
 | `sancta-choir` | x86_64-linux | Primary VPS server (Hetzner Cloud) |
 | `rpi5` | aarch64-linux | Raspberry Pi 5 |
 
-## Quick Start
+## How I deploy
+
+> **These commands apply my own hosts' configuration. Do not run them on your machine.**
 
 ### Fresh System Installation
 
