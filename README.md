@@ -2,6 +2,8 @@
 
 Multi-machine NixOS configuration with shared modules. Deploy locally or remotely via `nix run` from GitHub.
 
+> **The commands in this README apply my own hosts' configuration. Do not run them on your machine.**
+
 ## Hosts
 
 | Host | Architecture | Description |
@@ -9,7 +11,7 @@ Multi-machine NixOS configuration with shared modules. Deploy locally or remotel
 | `sancta-choir` | x86_64-linux | Primary VPS server (Hetzner Cloud) |
 | `rpi5` | aarch64-linux | Raspberry Pi 5 |
 
-## Quick Start
+## How I deploy
 
 ### Fresh System Installation
 
