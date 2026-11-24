@@ -87,7 +87,9 @@ jobs:
             - name: Test commit scanner
               run: nix shell --inputs-from . nixpkgs#gitleaks nixpkgs#git -c bash tests/gitleaks-commits-test.sh
 
-            # Scans every commit in the range, not only the final tree.
+            # Scans every commit in the range, not only the final tree. The
+            # scanner and its config are read from the trusted base ref, so a
+            # change cannot weaken the scan that judges it.
             - name: Scan all commits in range
               env:
                   EVENT_NAME: ${{ github.event_name }}
@@ -100,19 +102,35 @@ jobs:
                       pull_request)
                           base="$PR_BASE"
                           head="$PR_HEAD"
+                          trusted="$PR_BASE"
                           ;;
                       push)
+                          # `before` exists for pushes to main; an all-zero or
+                          # unknown value makes the scanner exit 2 (no trusted
+                          # lower bound) instead of scanning less.
                           base="$PUSH_BEFORE"
                           head="$PUSH_SHA"
+                          trusted="$PUSH_BEFORE"
                           ;;
                       *)
                           git fetch --no-tags origin main
                           base="$(git merge-base origin/main HEAD)"
                           head="$(git rev-parse HEAD)"
+                          trusted="origin/main"
                           ;;
                   esac
-                  # An all-zero base (new branch) makes the script scan just HEAD.
-                  nix shell --inputs-from . nixpkgs#gitleaks -c bash scripts/ci/gitleaks-commits.sh "$base" "$head"
+                  scanner="$RUNNER_TEMP/gitleaks-commits.sh"
+                  cfg="$RUNNER_TEMP/gitleaks.toml"
+                  if git cat-file -e "$trusted:scripts/ci/gitleaks-commits.sh" 2>/dev/null &&
+                      git cat-file -e "$trusted:.gitleaks.toml" 2>/dev/null; then
+                      git show "$trusted:scripts/ci/gitleaks-commits.sh" > "$scanner"
+                      git show "$trusted:.gitleaks.toml" > "$cfg"
+                  else
+                      echo "NOTICE: the base ref does not contain the scanner yet; using the copy from this checkout (bootstrap)."
+                      cp scripts/ci/gitleaks-commits.sh "$scanner"
+                      cp .gitleaks.toml "$cfg"
+                  fi
+                  nix shell --inputs-from . nixpkgs#gitleaks -c bash "$scanner" "$base" "$head" "$cfg"
 
     build-x86:
         name: Build x86_64 Configs

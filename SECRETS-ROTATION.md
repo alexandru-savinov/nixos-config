@@ -68,17 +68,20 @@ file — that is exactly the fail-open trap above.
 ## Commit-scan exceptions (`.gitleaksignore`)
 
 CI runs `scripts/ci/gitleaks-commits.sh` over every commit of a change, so a
-value that is added and later removed is still reported. A reported finding can
-be accepted only through `.gitleaksignore` (one gitleaks fingerprint per line,
-`#` for comments), and each fingerprint must also appear in this file on a line
-that carries an ISO date (`YYYY-MM-DD`). Without that line the scan fails and
-names the fingerprint.
+value that is added and later removed is still reported. The scanner and its
+config are taken from the base branch, not from the change under review.
 
-Format of the dated line (a plain list entry anywhere in this file):
+A reported finding can be accepted only through `.gitleaksignore`: one
+commit-scoped gitleaks fingerprint per line (`<40-hex commit>:<path>:<rule-id>:<line>`,
+`#` for comments). Each fingerprint must also appear in this file as a line of
+exactly this form, with an ISO date:
 
 ```
-- 2026-01-02 `<fingerprint>`: rotated; old value revoked
+- YYYY-MM-DD `<fingerprint>` optional note
 ```
+
+Otherwise the scan fails and reports the `.gitleaksignore` line number. The job
+log always prints how many exceptions are active.
 
 ## Prerequisites
 - SSH access to the host machine
