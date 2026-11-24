@@ -57,10 +57,6 @@ in
   # Format: CALDAV_USER=apple-id@example.com\nCALDAV_PASSWORD=xxxx-xxxx-xxxx-xxxx
   "kuzea-caldav-credentials.age".publicKeys = clawKeys;
 
-  # GitHub fine-grained PAT (Contents+PR read/write on nixos-config only)
-  # Generate: github.com/settings/personal-access-tokens
-  "kuzea-github-token.age".publicKeys = clawKeys;
-
   # Todoist API token for todoist-natural-language skill (PR #295)
   "kuzea-todoist-credentials.age".publicKeys = clawKeys;
 
