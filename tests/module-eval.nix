@@ -2953,6 +2953,7 @@ let
       else builtins.throw "FAIL: auto-fix-vscode-server not scoped:\n${unit}";
 
     # The pinned-file service on choir: boot run clears first and stays loaded,
+    # stopping it clears the service, both runs share one lock,
     # a timer re-verifies, both run the reviewed script with the pin, failure
     # alerts, and nothing couples it to tailscaled's lifecycle (no Requires,
     # BindsTo or PartOf), so a failed check never stops tailscaled or blocks it.
@@ -2969,6 +2970,8 @@ let
         && nixpkgs.lib.hasSuffix " boot" b.serviceConfig.ExecStart
         && nixpkgs.lib.hasSuffix " verify" v.serviceConfig.ExecStart
         && b.serviceConfig.RemainAfterExit
+        && nixpkgs.lib.hasSuffix " stop" b.serviceConfig.ExecStop
+        && b.environment.LOCK == v.environment.LOCK
         && b.environment.SHA == g.sha256 && b.environment.LEN == toString g.length
         && v.environment.SHA == g.sha256
         && nixpkgs.lib.hasPrefix "/nix/store/" b.environment.TS

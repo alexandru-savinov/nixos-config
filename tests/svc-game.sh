@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for hosts/sancta-choir/svc-game.sh with a fake tailscale that logs its calls.
+# Runs inside the Nix sandbox: the fake's shebang is the resolved bash, not /usr/bin/env.
 set -u
 SCRIPT=$1
 T=$(mktemp -d); trap 'chmod -R u+w "$T"; find "$T" -xdev -delete' EXIT
@@ -7,58 +8,83 @@ pass=0; failn=0
 ok() { pass=$((pass+1)); }
 bad() { echo "FAIL: $1"; failn=$((failn+1)); }
 mkdir -p "$T/bin" "$T/game"
-cat > "$T/bin/tailscale" <<'F'
-#!/usr/bin/env bash
+{ printf '#!%s\n' "$(command -v bash)"; cat <<'F'
+case "${1:-} ${2:-}" in
+  "status --json") if [ "${FAKE_NOT_RUNNING:-}" = 1 ]; then echo '{"BackendState":"Starting"}'; else echo '{"BackendState":"Running"}'; fi; exit 0;;
+esac
 echo "$*" >> "$LOG"
-[ "${FAKE_SERVE_FAIL:-}" = 1 ] && [ "${1:-}" = serve ] && [ "${2:-}" != clear ] && exit 1
+[ "${1:-} ${2:-}" = "serve clear" ] && { [ "${FAKE_CLEAR_FAIL:-}" = 1 ] && exit 1; exit 0; }
+[ "${FAKE_SERVE_FAIL:-}" = 1 ] && [ "${1:-}" = serve ] && exit 1
 exit 0
 F
+} > "$T/bin/tailscale"
 chmod +x "$T/bin/tailscale"
 printf 'hello game\n' > "$T/content"
 SHA=$(sha256sum "$T/content" | cut -d' ' -f1); LEN=$(stat -c %s "$T/content")
-run() { # run <mode> ; sets rc and log
+run() { # run <mode>; sets rc, log, err
   : > "$T/log"
   env LOG="$T/log" TS="$T/bin/tailscale" SVC=svc:game DIR="$T/game" SHA="${PSHA:-$SHA}" LEN="${PLEN:-$LEN}" \
-    FAKE_SERVE_FAIL="${FAKE_SERVE_FAIL:-}" bash "$SCRIPT" "$1" >/dev/null 2>&1
-  rc=$?; log=$(cat "$T/log")
+    LOCK="$T/lock" WAIT="${PWAIT:-3}" EXPECT_OWNER="$(id -u)" FAKE_SERVE_FAIL="${FAKE_SERVE_FAIL:-}" \
+    FAKE_CLEAR_FAIL="${FAKE_CLEAR_FAIL:-}" FAKE_NOT_RUNNING="${FAKE_NOT_RUNNING:-}" \
+    bash "$SCRIPT" "$1" >/dev/null 2>"$T/err"
+  rc=$?; log=$(cat "$T/log"); err=$(cat "$T/err")
 }
-place() { rm -f "$T/game/"*; cp "$T/content" "$T/game/$SHA.html"; }
-never_reset() { case "$log" in *reset*) bad "$1: called serve reset";; *) ok;; esac; }
+place() { chmod -R u+w "$T/game"; rm -f "$T/game/"*; cp "$T/content" "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; }
+SERVE="serve --service=svc:game --https=443 --yes $T/game/$SHA.html"
+CLR="serve clear svc:game"
 
 place; run verify
-[ $rc -eq 0 ] && ok || bad "verify valid rc=$rc"
-[ "$log" = "serve --service=svc:game --https=443 --yes $T/game/$SHA.html" ] && ok || bad "verify valid log: $log"
+[ $rc -eq 0 ] && [ "$log" = "$SERVE" ] && ok || bad "verify valid: rc=$rc log=$log err=$err"
 
 run boot
-[ $rc -eq 0 ] && ok || bad "boot valid rc=$rc"
-[ "$(printf '%s\n' "$log" | head -1)" = "serve clear svc:game" ] && ok || bad "boot must clear first: $log"
-[ "$(printf '%s\n' "$log" | sed -n 2p)" = "serve --service=svc:game --https=443 --yes $T/game/$SHA.html" ] && ok || bad "boot then serve: $log"
+[ $rc -eq 0 ] && [ "$log" = "$CLR"$'\n'"$SERVE" ] && ok || bad "boot: clear then serve: rc=$rc log=$log"
 
-rm -f "$T/game/"*; run verify
-[ $rc -ne 0 ] && ok || bad "missing file must fail"
-[ "$log" = "serve clear svc:game" ] && ok || bad "missing: clear only: $log"
+run stop
+[ $rc -eq 0 ] && [ "$log" = "$CLR" ] && ok || bad "stop clears only: rc=$rc log=$log"
+FAKE_NOT_RUNNING=1 run stop
+[ $rc -eq 0 ] && [ "$log" = "$CLR" ] && ok || bad "stop does not wait for Running: rc=$rc log=$log"
+FAKE_CLEAR_FAIL=1 run stop
+[ $rc -ne 0 ] && ok || bad "stop with a failed clear must fail"
 
-place; printf 'X' >> "$T/game/$SHA.html"; run verify
-[ $rc -ne 0 ] && [ "$log" = "serve clear svc:game" ] && ok || bad "length change: rc=$rc log=$log"
+chmod -R u+w "$T/game"; rm -f "$T/game/"*; run verify
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "missing: rc=$rc log=$log"
 
-place; printf 'jello game\n' > "$T/game/$SHA.html"; run verify   # same length, one byte flipped
-[ $rc -ne 0 ] && [ "$log" = "serve clear svc:game" ] && ok || bad "byte flip: rc=$rc log=$log"
+place; chmod u+w "$T/game/$SHA.html"; printf 'X' >> "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; run verify
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "length change: rc=$rc log=$log"
 
-rm -f "$T/game/"*; ln -s "$T/content" "$T/game/$SHA.html"; run verify
-[ $rc -ne 0 ] && [ "$log" = "serve clear svc:game" ] && ok || bad "symlink: rc=$rc log=$log"
+place; chmod u+w "$T/game/$SHA.html"; printf 'jello game\n' > "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; run verify
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "byte flip: rc=$rc log=$log"
+
+chmod -R u+w "$T/game"; rm -f "$T/game/"*; ln -s "$T/content" "$T/game/$SHA.html"; run verify
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "symlink: rc=$rc log=$log"
+
+place; chmod 0444 "$T/game/$SHA.html"; run verify
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && case "$err" in *"mode 0400"*) true;; *) false;; esac && ok || bad "mode 0444 refused: rc=$rc log=$log err=$err"
 
 place; FAKE_SERVE_FAIL=1 run verify
-[ $rc -ne 0 ] && ok || bad "serve failure must fail"
-case "$log" in *"serve clear svc:game"*) ok;; *) bad "serve failure must clear: $log";; esac
+[ $rc -ne 0 ] && case "$log" in *"$CLR"*) true;; *) false;; esac && ok || bad "serve failure clears: rc=$rc log=$log"
+
+place; chmod u+w "$T/game/$SHA.html"; printf 'jello game\n' > "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; FAKE_CLEAR_FAIL=1 run verify
+[ $rc -ne 0 ] && case "$err" in *"CLEAR FAILED"*) true;; *) false;; esac && case "$err" in *"cleared"*) false;; *) true;; esac && ok \
+  || bad "failed clear is reported, not claimed: rc=$rc err=$err"
+
+place; FAKE_NOT_RUNNING=1 PWAIT=2 run boot
+[ $rc -ne 0 ] && [ -z "$log" ] && ok || bad "not Running: no Serve write, fail: rc=$rc log=$log"
 
 place; PSHA=abc run verify
-[ $rc -ne 0 ] && [ "$log" = "serve clear svc:game" ] && ok || bad "short pin: rc=$rc log=$log"
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "short pin: rc=$rc log=$log"
 place; PSHA=$(printf '%s' "$SHA" | tr 'a-f' 'A-F') run verify
 [ $rc -ne 0 ] && ok || bad "uppercase pin must be refused"
 
 place; run bogus
 [ $rc -eq 2 ] && [ -z "$log" ] && ok || bad "unknown mode: rc=$rc log=$log"
 
-for m in verify boot; do place; run $m; never_reset $m; done
+# the lock serialises writers: a held lock makes a run wait, then give up
+place; exec 8>"$T/lock"; flock 8
+( sleep 2; flock -u 8 ) & run verify; wait
+[ $rc -eq 0 ] && ok || bad "run waits for the lock: rc=$rc err=$err"
+exec 8>&-
+
+for m in verify boot stop; do place; run $m; case "$log" in *reset*) bad "$m called a reset";; *) ok;; esac; done
 echo "svc-game tests: $pass passed, $failn failed"
 [ $failn -eq 0 ]

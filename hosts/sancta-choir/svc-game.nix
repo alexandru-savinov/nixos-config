@@ -11,7 +11,9 @@
 # The unit verifies length and sha256 before serving, and touches only its own
 # service (`serve clear <svc>`, never a whole-config reset). On a mismatch or a missing
 # file it clears the service and fails, so the alert unit fires. tailscaled keeps
-# Serve config across reboots, so the boot run clears first; a timer re-verifies.
+# Serve config across reboots, so the boot run clears first; a timer re-verifies;
+# stopping the boot unit clears the service. Both runs share a lock and wait for
+# tailscaled to be Running before any Serve write.
 # The host must be approved for the service by hand in the admin console; the
 # tailnet policy has no services auto-approver on purpose.
 { config, lib, pkgs, ... }:
@@ -23,17 +25,18 @@ let
     DIR = cfg.dir;
     SHA = cfg.sha256;
     LEN = toString cfg.length;
+    LOCK = "/run/svc-game.lock";
   };
   script = mode: "${pkgs.bash}/bin/bash ${./svc-game.sh} ${mode}";
   common = {
     after = [ "tailscaled.service" ];
     wants = [ "tailscaled.service" ];
     environment = env;
-    path = [ pkgs.coreutils ];
+    path = [ pkgs.coreutils pkgs.jq pkgs.util-linux ];
     onFailure = lib.optional (cfg.onFailureUnit != null) cfg.onFailureUnit;
     serviceConfig = {
       Type = "oneshot";
-      TimeoutStartSec = "60s";
+      TimeoutStartSec = "300s";
     };
   };
 in
@@ -82,6 +85,9 @@ in
       serviceConfig = common.serviceConfig // {
         RemainAfterExit = true;
         ExecStart = script "boot";
+        # Stopping the unit (module disabled, rollback, unit removed) removes the mapping,
+        # so an old file never stays reachable without checks.
+        ExecStop = script "stop";
       };
     };
 
