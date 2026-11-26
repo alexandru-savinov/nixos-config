@@ -406,6 +406,9 @@
           # Stage-4 dead-man: restores Tailscale SSH, restarting tailscaled if it is down.
           choir-ssh-revert = import ./tests/choir-ssh-revert.nix { inherit pkgs; };
 
+          # Pinned-file Tailscale Service: serves only matching bytes, clears only its own service.
+          svc-game = import ./tests/svc-game.nix { inherit pkgs; };
+
           # The report must come from successful schema-validated action output.
           claude-review-report = import ./tests/claude-review-report.nix { inherit pkgs; };
 
