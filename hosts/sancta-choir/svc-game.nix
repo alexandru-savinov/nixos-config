@@ -14,6 +14,7 @@
 # clears first. A timer re-verifies the file and any existing mapping. The boot
 # unit clears the mapping on stop or failed start. Boot and verify share a lock,
 # and boot waits for tailscaled to be Running before checking the file.
+# Repeated Serve status failures trigger the verify alert without clearing the mapping.
 #
 # Accepted residuals
 # Bytes changed after a check are served until the next check (root-only path).
@@ -78,6 +79,11 @@ in
       default = "15min";
       description = "How often the timer re-verifies the file and its Serve mapping.";
     };
+    verifyStatusFailureThreshold = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 3;
+      description = "Number of consecutive verification runs with unavailable Serve status before failing the verify unit.";
+    };
     onFailureUnit = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -102,6 +108,8 @@ in
       };
       serviceConfig = common.serviceConfig // {
         RemainAfterExit = true;
+        # Allow the 120s lock wait and three bounded clear attempts at shutdown.
+        TimeoutStopSec = "200s";
         ExecStart = script "boot";
         ExecStop = script "stop";
         ExecStopPost = script "stop-post";
@@ -112,7 +120,15 @@ in
 
     systemd.services.svc-game-verify = common // {
       description = "Re-verify the pinned file behind ${cfg.service}";
-      serviceConfig = common.serviceConfig // { ExecStart = script "verify"; };
+      environment = env // {
+        VERIFY_STATUS_FAILURE_THRESHOLD = toString cfg.verifyStatusFailureThreshold;
+      };
+      serviceConfig = common.serviceConfig // {
+        ExecStart = script "verify";
+        RuntimeDirectory = "svc-game-verify";
+        RuntimeDirectoryMode = "0700";
+        RuntimeDirectoryPreserve = "yes";
+      };
     };
     systemd.timers.svc-game-verify = {
       wantedBy = [ "timers.target" ];
