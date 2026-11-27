@@ -2,17 +2,30 @@
 # Tests for hosts/sancta-choir/svc-game.sh with a fake tailscale that logs its calls.
 # Runs inside the Nix sandbox: the fake's shebang is the resolved bash, not /usr/bin/env.
 set -u
+unset SERVICE_RESULT VERIFY_STATUS_FAILURE_THRESHOLD
 SCRIPT=$1
 T=$(mktemp -d); trap 'chmod -R u+w "$T"; find "$T" -xdev -delete' EXIT
 pass=0; failn=0
 ok() { pass=$((pass+1)); }
 bad() { echo "FAIL: $1"; failn=$((failn+1)); }
-mkdir -p "$T/bin" "$T/game"
+mkdir -p "$T/bin" "$T/game" "$T/run"
 chmod 0700 "$T/game"
+REAL_TIMEOUT=$(command -v timeout)
+export REAL_TIMEOUT
+{ printf '#!%s\n' "$(command -v bash)"; cat <<'F'
+if [[ $1 == -k && $2 == 1 && $3 =~ ^([1-9]|1[0-9]|20)$ ]]; then
+  export TIMED_TAILSCALE=1
+fi
+exec "$REAL_TIMEOUT" "$@"
+F
+} > "$T/bin/timeout"
 { printf '#!%s\n' "$(command -v bash)"; cat <<'F'
 printf '%s\n' "$*" >> "$CALL_LOG"
+[ "${TIMED_TAILSCALE:-}" = 1 ] || printf '%s\n' "$*" >> "$UNTIMED_LOG"
 case "$*" in
-  "status --json --peers=false") if [ "${FAKE_NOT_RUNNING:-}" = 1 ]; then echo '{"BackendState":"Starting"}'; else echo '{"BackendState":"Running"}'; fi; exit 0;;
+  "status --json --peers=false")
+    if [ "${FAKE_NOT_RUNNING:-}" = 1 ]; then echo '{"BackendState":"Starting"}'; else echo '{"BackendState":"Running","CurrentTailnet":{"MagicDNSSuffix":"example.ts.net"}}'; fi
+    exit 0;;
   "serve status --json")
     [ "${FAKE_SERVE_STATUS_FAIL:-}" = 1 ] && exit 1
     printf '%s\n' "$FAKE_SERVE_STATUS_JSON"
@@ -24,19 +37,21 @@ echo "$*" >> "$LOG"
 exit 0
 F
 } > "$T/bin/tailscale"
-chmod +x "$T/bin/tailscale"
+chmod +x "$T/bin/tailscale" "$T/bin/timeout"
 printf 'hello game\n' > "$T/content"
 SHA=$(sha256sum "$T/content" | cut -d' ' -f1); LEN=$(stat -c %s "$T/content")
-run() { # run <mode>; sets rc, log, err
+run() { # run <mode>; sets rc, log, out, err
   : > "$T/log"
   : > "$T/calls"
-  env LOG="$T/log" CALL_LOG="$T/calls" TS="$T/bin/tailscale" SVC=svc:game DIR="${PDIR:-$T/game}" SHA="${PSHA:-$SHA}" LEN="${PLEN:-$LEN}" \
+  : > "$T/untimed"
+  env PATH="$T/bin:$PATH" LOG="$T/log" CALL_LOG="$T/calls" UNTIMED_LOG="$T/untimed" TS="$T/bin/tailscale" SVC=svc:game DIR="${PDIR:-$T/game}" SHA="${PSHA:-$SHA}" LEN="${PLEN:-$LEN}" \
     LOCK="$T/lock" WAIT="${PWAIT:-3}" LOCKWAIT="${PLOCKWAIT:-120}" RETRY_SLEEP=0 EXPECT_OWNER="$(id -u)" FAKE_SERVE_FAIL="${FAKE_SERVE_FAIL:-}" \
     FAKE_CLEAR_FAIL="${FAKE_CLEAR_FAIL:-}" FAKE_NOT_RUNNING="${FAKE_NOT_RUNNING:-}" \
     FAKE_SERVE_STATUS_JSON="${FAKE_SERVE_STATUS_JSON-"{}"}" FAKE_SERVE_STATUS_FAIL="${FAKE_SERVE_STATUS_FAIL:-}" \
-    SERVICE_RESULT="${SERVICE_RESULT:-}" \
-    bash "$SCRIPT" "$1" >/dev/null 2>"$T/err"
-  rc=$?; log=$(cat "$T/log"); err=$(cat "$T/err")
+    RUNTIME_DIRECTORY="$T/run" \
+    bash "$SCRIPT" "$1" >"$T/out" 2>"$T/err"
+  rc=$?; log=$(cat "$T/log"); err=$(cat "$T/err"); out=$(cat "$T/out")
+  [ ! -s "$T/untimed" ] || bad "$1 made tailscale calls without a timeout: $(cat "$T/untimed")"
 }
 place() { chmod -R u+w "$T/game"; rm -f "$T/game/"*; cp "$T/content" "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; }
 SERVE="serve --service=svc:game --https=443 --yes $T/game/$SHA.html"
@@ -48,16 +63,39 @@ place; run verify
 FAKE_SERVE_STATUS_JSON='{"Services":{"svc:game":null}}' run verify
 [ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify null service: rc=$rc log=$log err=$err"
 
+FAKE_SERVE_STATUS_JSON=null run verify
+[ $rc -eq 0 ] && [ -z "$log" ] && [[ "$out" == *"verify ok"* ]] && ok || bad "verify null Serve config: rc=$rc log=$log err=$err"
+
 serve_status() {
   jq -cn --argjson handler "$1" \
     '{Services: {"svc:game": {TCP: {"443": {HTTPS: true}}, Web: {"game.example.ts.net:443": {Handlers: {"/": $handler}}}}}}'
 }
 game_status=$(serve_status "$(jq -cn --arg path "$T/game/$SHA.html" '{Path: $path}')")
 FAKE_SERVE_STATUS_JSON="$game_status" run verify
-[ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify pinned mapping: rc=$rc log=$log err=$err"
+[ $rc -eq 0 ] && [ -z "$log" ] && [[ "$out" == *"verify ok"* ]] && ok || bad "verify pinned mapping: rc=$rc log=$log err=$err"
 
 PDIR="$T/game/" FAKE_SERVE_STATUS_JSON="$game_status" run verify
 [ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify directory with trailing slash: rc=$rc log=$log err=$err"
+
+FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON="$game_status" run verify
+[ $rc -eq 1 ] && [ -z "$log" ] && [[ "$err" == *"tailnet DNS suffix is unavailable"* ]] && ok \
+  || bad "verify with no tailnet DNS suffix: rc=$rc log=$log err=$err"
+
+expected_calls="serve status --json"$'\n'"$CLR"
+FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].TCP["443"] = {HTTP: true}' <<< "$game_status") run verify
+calls=$(cat "$T/calls")
+[ $rc -eq 1 ] && [ "$calls" = "$expected_calls" ] && ok \
+  || bad "verify plain HTTP without DNS suffix: rc=$rc calls=$calls err=$err"
+
+FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON=$(serve_status '{"Path":"/another.html"}') run verify
+calls=$(cat "$T/calls")
+[ $rc -eq 1 ] && [ "$calls" = "$expected_calls" ] && ok \
+  || bad "verify wrong file without DNS suffix: rc=$rc calls=$calls err=$err"
+
+FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web |= with_entries(.key = "game.example.ts.net:8443")' <<< "$game_status") run verify
+calls=$(cat "$T/calls")
+[ $rc -eq 1 ] && [ "$calls" = "$expected_calls" ] && ok \
+  || bad "verify wrong Web port without DNS suffix: rc=$rc calls=$calls err=$err"
 
 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].TCP["8443"] = {HTTPS: true}' <<< "$game_status") run verify
 [ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify extra TCP port: rc=$rc log=$log err=$err"
@@ -77,11 +115,40 @@ FAKE_SERVE_STATUS_JSON=$(serve_status '{"Text":"hello"}') run verify
 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web = []' <<< "$game_status") run verify
 [ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify malformed mapping: rc=$rc log=$log err=$err"
 
-FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web["other.example.ts.net:443"].Handlers["/"].Path = "/another.html"' <<< "$game_status") run verify
-[ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify extra wrong mapping: rc=$rc log=$log err=$err"
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web |= with_entries(.key = "game.other.ts.net:443")' <<< "$game_status") run verify
+[ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify wrong service host: rc=$rc log=$log err=$err"
 
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web |= . + {"other.example.ts.net:443": .["game.example.ts.net:443"]}' <<< "$game_status") run verify
+[ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify additional host with the pinned file: rc=$rc log=$log err=$err"
+
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Tun = true' <<< "$game_status") run verify
+[ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify unexpected Tun field: rc=$rc log=$log err=$err"
+
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web["game.example.ts.net:443"].Extra = true' <<< "$game_status") run verify
+[ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify unexpected Web field: rc=$rc log=$log err=$err"
+
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:other"] = {Tun: true}' <<< "$game_status") run verify
+[ $rc -eq 0 ] && [ -z "$log" ] && [[ "$out" == *"verify ok"* ]] && ok || bad "verify ignores other services: rc=$rc log=$log err=$err"
+
+for miss in 1 2; do
+  FAKE_SERVE_STATUS_FAIL=1 run verify
+  [ $rc -eq 0 ] && [ -z "$log" ] && [[ "$out" == *"Serve status unavailable"* ]] && ok \
+    || bad "verify status miss $miss: rc=$rc log=$log out=$out err=$err"
+done
+for miss in 3 4; do
+  FAKE_SERVE_STATUS_FAIL=1 run verify
+  [ $rc -eq 1 ] && [ -z "$log" ] && [[ "$err" == *"Serve status unavailable"* ]] && ok \
+    || bad "verify status miss $miss must alert without clearing: rc=$rc log=$log err=$err"
+done
+FAKE_SERVE_STATUS_JSON="$game_status" run verify
+[ $rc -eq 0 ] && [ -z "$log" ] && [[ "$out" == *"verify ok"* ]] && ok || bad "verify recovers: rc=$rc log=$log err=$err"
 FAKE_SERVE_STATUS_FAIL=1 run verify
-[ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify Serve status unavailable: rc=$rc log=$log err=$err"
+[ $rc -eq 0 ] && [ -z "$log" ] && [[ "$out" == *"Serve status unavailable"* ]] && ok \
+  || bad "verify first miss after recovery: rc=$rc log=$log out=$out err=$err"
+FAKE_SERVE_STATUS_JSON=null run verify
+VERIFY_STATUS_FAILURE_THRESHOLD=1 FAKE_SERVE_STATUS_JSON='' run verify
+[ $rc -eq 1 ] && [ -z "$log" ] && [[ "$err" == *"Serve status unavailable"* ]] && ok \
+  || bad "verify custom threshold with empty status: rc=$rc log=$log err=$err"
 
 run boot
 [ $rc -eq 0 ] && [ "$log" = "$CLR"$'\n'"$SERVE" ] && ok || bad "boot: clear then serve: rc=$rc log=$log"
@@ -97,6 +164,11 @@ SERVICE_RESULT=success run stop-post
 [ $rc -eq 0 ] && [ ! -s "$T/calls" ] && ok || bad "stop-post after success: rc=$rc calls=$(cat "$T/calls") err=$err"
 SERVICE_RESULT=exit-code run stop-post
 [ $rc -eq 0 ] && [ "$log" = "$CLR" ] && ok || bad "stop-post after failure: rc=$rc log=$log err=$err"
+run stop-post
+[ $rc -eq 0 ] && [ "$log" = "$CLR" ] && ok || bad "stop-post with SERVICE_RESULT unset: rc=$rc log=$log err=$err"
+SERVICE_RESULT=exit-code FAKE_CLEAR_FAIL=1 run stop-post
+[ $rc -ne 0 ] && [ "$log" = "$CLR"$'\n'"$CLR"$'\n'"$CLR" ] && [[ "$err" == *"CLEAR FAILED"* ]] && ok \
+  || bad "stop-post after a failed clear: rc=$rc log=$log err=$err"
 
 chmod -R u+w "$T/game"; rm -f "$T/game/"*; run verify
 [ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "missing: rc=$rc log=$log"
