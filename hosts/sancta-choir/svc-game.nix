@@ -8,12 +8,19 @@
 # route. The name is content-addressed, so a re-pin is a new name and a rollback
 # is the old pin.
 #
-# The unit verifies length and sha256 before serving, and touches only its own
-# service (`serve clear <svc>`, never a whole-config reset). On a mismatch or a missing
-# file it clears the service and fails, so the alert unit fires. tailscaled keeps
-# Serve config across reboots, so the boot run clears first; a timer re-verifies;
-# stopping the boot unit clears the service. Both runs share a lock and wait for
-# tailscaled to be Running before any Serve write.
+# The unit verifies length and sha256 before serving and uses `serve clear <svc>`
+# to remove its own mapping. On a mismatch or a missing file it tries to clear
+# the mapping and fails. tailscaled persists Serve config across reboots, so boot
+# clears first. A timer re-verifies, and stopping a successfully started boot
+# unit clears the mapping. Boot and verify share a lock and wait for tailscaled
+# to be Running before checking the file.
+#
+# Accepted residuals
+# Bytes changed after a check are served until the next check (root-only path).
+# A mapping left by an unclean shutdown can be reachable briefly at boot before the boot clear.
+# Serve writers on this host share one config ETag, so a concurrent write elsewhere can fail once (game writes retry 3x).
+# ExecStop is skipped if the boot run never started successfully. After rollback,
+# `tailscale serve status` must show no svc:game (the deploy handoff checks this).
 # The host must be approved for the service by hand in the admin console; the
 # tailnet policy has no services auto-approver on purpose.
 { config, lib, pkgs, ... }:
@@ -82,12 +89,16 @@ in
       description = "Serve the pinned file as ${cfg.service} (boot run)";
       wantedBy = [ "multi-user.target" ];
       restartTriggers = [ cfg.sha256 (toString cfg.length) ./svc-game.sh ];
+      unitConfig = {
+        StartLimitIntervalSec = 3600;
+        StartLimitBurst = 5;
+      };
       serviceConfig = common.serviceConfig // {
         RemainAfterExit = true;
         ExecStart = script "boot";
-        # Stopping the unit (module disabled, rollback, unit removed) removes the mapping,
-        # so an old file never stays reachable without checks.
         ExecStop = script "stop";
+        Restart = "on-failure";
+        RestartSec = "60s";
       };
     };
 

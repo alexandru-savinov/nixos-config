@@ -2952,9 +2952,9 @@ let
       then true
       else builtins.throw "FAIL: auto-fix-vscode-server not scoped:\n${unit}";
 
-    # The pinned-file service on choir: boot run clears first and stays loaded,
-    # stopping it clears the service, both runs share one lock,
-    # a timer re-verifies, both run the reviewed script with the pin, failure
+    # The pinned-file service on choir clears first, retries on failure, and stays
+    # loaded on success. Stopping it then clears the service. Boot and verify share
+    # one lock and run the reviewed script with the pin. A timer re-verifies, failure
     # alerts, and nothing couples it to tailscaled's lifecycle (no Requires,
     # BindsTo or PartOf), so a failed check never stops tailscaled or blocks it.
     sancta-choir-svc-game =
@@ -2970,6 +2970,7 @@ let
         && nixpkgs.lib.hasSuffix " boot" b.serviceConfig.ExecStart
         && nixpkgs.lib.hasSuffix " verify" v.serviceConfig.ExecStart
         && b.serviceConfig.RemainAfterExit
+        && b.serviceConfig.Restart == "on-failure"
         && nixpkgs.lib.hasSuffix " stop" b.serviceConfig.ExecStop
         && b.environment.LOCK == v.environment.LOCK
         && b.environment.SHA == g.sha256 && b.environment.LEN == toString g.length

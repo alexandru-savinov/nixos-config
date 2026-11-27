@@ -5,7 +5,7 @@
 # WAIT (seconds to wait for tailscaled to be Running; default 90), LOCKWAIT (default 120).
 # Argument: boot | verify | stop.
 #   boot    clear the service first (tailscaled persists Serve config across reboots), then verify and serve.
-#           Only this mode ever adds the mapping, so its unit's ExecStop always owns the removal.
+#           Only this mode adds the mapping, and its unit's ExecStop clears it after a successful start.
 #   verify  verify only; on any mismatch clear the service and fail. It never re-adds the mapping,
 #           so it cannot undo a manual clear or a `serve drain`.
 #   stop    clear the service (unit stop, module disabled, rollback)
@@ -42,8 +42,12 @@ fail() {
 }
 # stop: one clear attempt, no readiness wait (it may run at shutdown); boot clears again anyway.
 if [ "$mode" = stop ]; then clear_svc || exit 1; echo "svc-game: $SVC cleared (stop)"; exit 0; fi
-# Not Running: still try one clear (a clear can succeed while Starting), then fail.
-ready || { clear_svc >/dev/null 2>&1; echo "svc-game: tailscaled not Running after ${WAIT:-90}s" >&2; exit 1; }
+# Not Running: boot still tries to clear (a clear can succeed while Starting). verify does not:
+# a tailscaled hiccup must not take a valid, already-checked game offline until someone restarts it.
+if ! ready; then
+  [ "$mode" = boot ] && fail "tailscaled not Running after ${WAIT:-90}s"
+  echo "svc-game: tailscaled not Running after ${WAIT:-90}s (verify: nothing changed)" >&2; exit 1
+fi
 case "$SHA" in *[!0-9a-f]*|"") fail "pin is not a sha256";; esac
 [ ${#SHA} -eq 64 ] || fail "pin is not a sha256"
 if [ "$mode" = boot ]; then clear_svc || exit 1; fi

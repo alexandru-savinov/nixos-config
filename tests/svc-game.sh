@@ -62,7 +62,7 @@ place; chmod 0444 "$T/game/$SHA.html"; run verify
 [ $rc -ne 0 ] && [ "$log" = "$CLR" ] && case "$err" in *"mode 0400"*) true;; *) false;; esac && ok || bad "mode 0444 refused: rc=$rc log=$log err=$err"
 
 place; FAKE_SERVE_FAIL=1 run boot
-[ $rc -ne 0 ] && [ "$(printf '%s\n' "$log" | grep -c -- "--service=svc:game")" = 3 ] && case "$log" in *"$CLR"*) true;; *) false;; esac && ok \
+[ $rc -ne 0 ] && [ "$log" = "$CLR"$'\n'"$SERVE"$'\n'"$SERVE"$'\n'"$SERVE"$'\n'"$CLR" ] && ok \
   || bad "serve failure: 3 attempts, then clear: rc=$rc log=$log"
 
 place; chmod u+w "$T/game/$SHA.html"; printf 'jello game\n' > "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; FAKE_CLEAR_FAIL=1 run verify
@@ -70,8 +70,12 @@ place; chmod u+w "$T/game/$SHA.html"; printf 'jello game\n' > "$T/game/$SHA.html
   || bad "failed clear is reported, not claimed: rc=$rc err=$err"
 
 place; FAKE_NOT_RUNNING=1 PWAIT=2 run boot
-[ $rc -ne 0 ] && case "$log" in *"--service"*) false;; *) true;; esac && case "$log" in *"$CLR"*) true;; *) false;; esac && ok \
-  || bad "not Running: never serves, still tries a clear, fails: rc=$rc log=$log"
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && case "$err" in *"svc:game cleared"*) true;; *) false;; esac && ok \
+  || bad "not Running: never serves, clears, fails: rc=$rc log=$log err=$err"
+
+FAKE_CLEAR_FAIL=1 FAKE_NOT_RUNNING=1 PWAIT=1 run boot
+[ $rc -ne 0 ] && case "$err" in *"CLEAR FAILED"*) true;; *) false;; esac && ok \
+  || bad "not Running: failed clear is reported: rc=$rc err=$err"
 
 place; PSHA=abc run verify
 [ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "short pin: rc=$rc log=$log"
@@ -80,6 +84,9 @@ place; PSHA=$(printf '%s' "$SHA" | tr 'a-f' 'A-F') run verify
 
 place; run bogus
 [ $rc -eq 2 ] && [ -z "$log" ] && ok || bad "unknown mode: rc=$rc log=$log"
+
+place; FAKE_NOT_RUNNING=1 PWAIT=2 run verify
+[ $rc -ne 0 ] && [ -z "$log" ] && ok || bad "verify while not Running changes nothing: rc=$rc log=$log"
 
 # the lock serialises writers: while it is held a run never reaches tailscale, and gives up
 place; exec 8>"$T/lock"; flock 8
