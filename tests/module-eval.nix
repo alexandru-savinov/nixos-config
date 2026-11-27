@@ -1336,9 +1336,38 @@ let
         audit = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-audit.toml;
         bans = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-bans.toml;
         bansHealth = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-bans-health.toml;
+        watchdog = choir.systemd.services.soc-audit-watchdog;
+        watchdogTimer = choir.systemd.timers.soc-audit-watchdog;
+        auditTimer = choir.systemd.timers.soc-alarm-audit.timerConfig;
+        auditBootGrace = seconds auditTimer.OnBootSec + seconds auditTimer.AccuracySec
+          + seconds aSvc.serviceConfig.TimeoutStartSec;
+        publicContracts = lib.concatMap
+          (dir: map (name: schema.parse (dir + "/${name}"))
+            (lib.filter (lib.hasSuffix ".toml") (builtins.attrNames (builtins.readDir dir))))
+          (lib.filter builtins.isPath choir.services.vigil.contractsDirs);
+        contracts = lib.listToAttrs (map (c: lib.nameValuePair c.nume c) publicContracts);
+        reportOnly = lib.filterAttrs (_: c: (c.page or true) == false) contracts;
+        watchdogContract = name: stamp:
+          let c = contracts.${name};
+          in c.verifica == "age" && c.tinta == "/var/lib/${watchdog.serviceConfig.StateDirectory}/${stamp}"
+            && c.nivel == "incident" && c.page && c.picat_dupa == 1 && c.prag == "15m";
+        # Every report-only contract needs an explicit evaluator-to-pager
+        # mapping. Adding another suppressed row must extend this wiring.
+        pagingHealth = {
+          soc-audit = audit.tinta == alarms.auditStampPath
+            && lib.hasSuffix " audit-stamp" aSvc.serviceConfig.ExecStopPost
+            && lib.hasSuffix " audit-watchdog --boot-grace-seconds ${toString auditBootGrace}" watchdog.serviceConfig.ExecStart
+            && watchdogContract "soc-audit-deadman" "audit-deadman-clean"
+            && builtins.elem "timers.target" watchdogTimer.wantedBy
+            && !(watchdogTimer.timerConfig ? Unit)
+            && watchdogTimer.timerConfig.OnUnitActiveSec == "5min"
+            && watchdog.requires == [ ] && watchdog.wants == [ ]
+            && watchdog.bindsTo == [ ] && watchdog.partOf == [ ];
+        };
         aSvc = choir.systemd.services.soc-alarm-audit;
         bSvc = choir.systemd.services.soc-alarm-bans;
         argv = svc: svc.serviceConfig.ExecStart;
+        chattr = builtins.unsafeDiscardStringContext "${self.nixosConfigurations.sancta-choir.pkgs.e2fsprogs}/bin/chattr";
         envOf = svc: svc.serviceConfig.Environment or [ ];
         whitelist = (builtins.head choir.services.crowdsec.localConfig.parsers.s02Enrich).whitelist.cidr;
         ignoreIP = choir.services.fail2ban.ignoreIP;
@@ -1351,8 +1380,14 @@ let
           && (svc.serviceConfig.StateDirectoryMode or null) == "0755"
           && (svc.serviceConfig.UMask or null) == "0077";
         names = builtins.fromJSON choir.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES;
-        # "5min" / "2m" / "20m" -> minutes.
-        mins = str: lib.toInt (builtins.head (builtins.match "([0-9]+) ?(min|m)" str));
+        # "5min" / "2m" / "30s" -> seconds.
+        seconds = str:
+          let parts = builtins.match "([0-9]+) ?(min|m|s)" str;
+          in lib.toInt (builtins.elemAt parts 0) * (if builtins.elemAt parts 1 == "s" then 1 else 60);
+        startBound = timerName: svc:
+          let t = choir.systemd.timers.${timerName}.timerConfig;
+          in lib.max (seconds t.OnUnitActiveSec) (seconds svc.serviceConfig.TimeoutStartSec)
+            + seconds t.AccuracySec;
         units = choir.services.sancta-statusline-refresh.units;
 
         checks = {
@@ -1369,13 +1404,20 @@ let
             && (bans.page or true) == alarms.paging.bans
             && alarms.paging.audit == false && alarms.paging.bans == true;
           auditLabel = (audit.label or "") == "coverage: partial; quiet = unverified" && !(bans ? label);
-          auditStamp = stampWired aSvc alarms.auditStampPath "sancta-doctrine-guard-stamp.sh";
+          auditStamp = stampWired aSvc alarms.auditStampPath " audit-stamp";
+          reportOnlyHealthPages = choir.systemd.services.vigil.environment.VIGIL_SAY == "1"
+            && lib.all (name: pagingHealth.${name} or false) (builtins.attrNames reportOnly);
+          coverageAndRetentionPage =
+            watchdogContract "soc-audit-coverage-gap" "audit-gap-clean"
+            && watchdogContract "soc-audit-retention" "audit-retention-clean";
+          watchdogBeforeVigil = builtins.elem "vigil.service" watchdog.wantedBy
+            && builtins.elem "vigil.service" watchdog.before;
+          auditRetention = with choir.security.auditd.settings;
+            max_log_file == 64 && num_logs == 8 && max_log_file_action == "ROTATE"
+            && space_left == 4096 && space_left_action == "syslog" && admin_space_left_action == "suspend";
           bansStamp = stampWired bSvc alarms.bansStampPath "soc-bans-stamp.sh"
             && builtins.elem "SOC_HEALTH_STAMP=${alarms.bansHealthStampPath}" (envOf bSvc);
-          # Bans errors must not page: their own contract, page = false, on
-          # its own stamp; a ban still pages through soc-bans.
-          bansHealthContract = shape bansHealth alarms.bansHealthStampPath && bansHealth.page == false
-            && alarms.paging.bansHealth == false
+          bansHealthContract = shape bansHealth alarms.bansHealthStampPath && bansHealth.page
             && lib.hasPrefix "/var/lib/${bSvc.serviceConfig.StateDirectory}/" alarms.bansHealthStampPath;
 
           # No audit exemption for any key read: the council options, flags
@@ -1410,11 +1452,10 @@ let
 
           # A stamp is freshened only by a clean run's ExecStopPost and nothing
           # invalidates it before a run, so a hung or failing writer is bounded by
-          # age alone: timer interval + TimeoutStartSec must stay under each
-          # contract's threshold, or one slow run would flap the stamp.
+          # age alone. Allow for a full run and the longest interval between
+          # two starts, including the timer's accuracy window.
           stampAgeBound = lib.all
-            (u: mins choir.systemd.timers.${u.timer}.timerConfig.OnUnitActiveSec
-              + mins u.svc.serviceConfig.TimeoutStartSec < mins u.contract.prag)
+            (u: startBound u.timer u.svc + seconds u.svc.serviceConfig.TimeoutStartSec < seconds u.contract.prag)
             [
               { timer = "soc-alarm-audit"; svc = aSvc; contract = audit; }
               { timer = "soc-alarm-bans"; svc = bSvc; contract = bans; }
@@ -1422,13 +1463,12 @@ let
             ];
 
           # One failed run between two good ones is normal (picat_dupa = 2 absorbs
-          # it), so the coverage-gap limit must exceed two timer periods plus a
-          # run's timeout, or the run after any failure reads as lost coverage.
+          # it), so the coverage-gap limit must exceed two start intervals,
+          # including when a timeout overruns the scheduled tick.
           maxGapAboveTwoPeriods =
             let m = builtins.match ".*--max-gap ([0-9]+).*" (argv aSvc);
             in m != null
-              && lib.toInt (builtins.head m) * 1 > 60 * (2 * mins choir.systemd.timers.soc-alarm-audit.timerConfig.OnUnitActiveSec
-              + mins aSvc.serviceConfig.TimeoutStartSec);
+              && lib.toInt (builtins.head m) > 2 * startBound "soc-alarm-audit" aSvc;
 
           # Both run every 5 minutes from timers.target, as root oneshots.
           timers = lib.all
@@ -1441,11 +1481,11 @@ let
           mdweScoped = aSvc.serviceConfig.MemoryDenyWriteExecute == true
             && bSvc.serviceConfig.MemoryDenyWriteExecute == false;
 
-          # The audit evaluator needs no network and one capability (CAP_AUDIT_CONTROL,
-          # for auditctl -s/-l); the ban
+          # The audit evaluator needs no network. The ban
           # evaluator only loopback (LAPI) and one read capability.
           auditSandbox = (aSvc.serviceConfig.PrivateNetwork or false)
-            && aSvc.serviceConfig.CapabilityBoundingSet == [ "CAP_AUDIT_CONTROL" ]
+            && lib.hasInfix "--chattr ${chattr}" (argv aSvc)
+            && aSvc.serviceConfig.CapabilityBoundingSet == [ "CAP_AUDIT_CONTROL" "CAP_DAC_OVERRIDE" "CAP_LINUX_IMMUTABLE" ]
             && aSvc.serviceConfig.ProtectSystem == "strict";
           bansSandbox = bSvc.serviceConfig.IPAddressDeny == "any"
             && bSvc.serviceConfig.IPAddressAllow == "localhost"
@@ -2459,7 +2499,7 @@ let
             !off.sancta.studio.n8n.enable
             && !off.services.n8n-tailscale.enable
             && !off.services.n8n.enable
-            && off.services.vigil.expectedContracts == 13
+            && off.services.vigil.expectedContracts == 16
             && !(builtins.elem "n8n" (builtins.fromJSON off.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES));
           wallsPresentWhileOff = holds off modelWall && holds off bindWall;
 
@@ -2476,7 +2516,7 @@ let
             && n8nCfg.communityPackages == [ ]
             && n8nCfg.allowBuiltinModules == [ ]
             && n8nCfg.blockEnvAccessInCode
-            && onCfg.services.vigil.expectedContracts == 14
+            && onCfg.services.vigil.expectedContracts == 17
             && builtins.elem "n8n" (builtins.fromJSON onCfg.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES)
             && holds onCfg modelWall && holds onCfg bindWall && holds onCfg keyGate;
 

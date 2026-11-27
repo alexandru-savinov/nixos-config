@@ -447,12 +447,18 @@
     "sancta-soc-page.service"
   ];
 
-  # The two SOC alarms vigil cannot compute itself (the third, disk, is the
-  # plain vigil-contracts/disk-root.toml). Root oneshots every 5 minutes, each
-  # reporting through ONE stamp mtime that vigil stats: soc-audit.toml (a
-  # login touched agenix secrets or /etc/sudoers) and soc-bans.toml (a ban
-  # or CrowdSec decision on a tailnet/LAN address). The exact rules are in
-  # modules/services/soc-vigil-alarms.py; nothing here notifies anyone else.
+  security.auditd.settings = {
+    # F15: ~4.4 days at the observed ~115 MiB/day. The watchdog checks the
+    # actual oldest record because rotation is size-based.
+    max_log_file = lib.mkForce 64;
+    num_logs = lib.mkForce 8;
+    max_log_file_action = lib.mkForce "ROTATE";
+    space_left = 4096;
+    space_left_action = "syslog";
+    admin_space_left_action = "suspend";
+  };
+
+  # Root evaluators and the audit watchdog publish stamps for Vigil.
   services.soc-vigil-alarms.enable = true;
   # Every root exec and every login session of the named OpenSSH accounts
   # (hosts/sancta-choir/ssh-admin.nix) is a soc-audit hit, report-only like
@@ -545,12 +551,10 @@
     # mtime = now after a clean run, epoch + 1s after any other outcome, so a
     # failed run reads picat on the next tick and a guard that stops running
     # reads picat after 26h. vigil only stats a file; cmdAllow stays empty.
-    # soc-audit.toml, soc-bans.toml and soc-bans-health.toml are the same
-    # pattern over soc-vigil-alarms' stamps (its auditStampPath, bansStampPath
-    # and bansHealthStampPath).
+    # The SOC contracts read the evaluator and independent watchdog stamps.
     # +1 for vigil-contracts-n8n/n8n.toml, which ./n8n.nix adds to
     # contractsDirs only while the studio n8n exists.
-    expectedContracts = 13 + (if config.sancta.studio.n8n.enable then 1 else 0);
+    expectedContracts = 16 + (if config.sancta.studio.n8n.enable then 1 else 0);
     telegramEnvFile = config.age.secrets.backup-telegram-env.path;
     listenAddress = "100.94.191.54";
   };

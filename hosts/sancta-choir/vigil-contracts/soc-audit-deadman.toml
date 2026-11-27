@@ -1,0 +1,12 @@
+[contract]
+nume = "soc-audit-deadman"
+ce = "Security: auditd stopped recording or the evaluator has no successful run in 30 minutes"
+driver = "operational"
+verifica = "age"
+tinta = "/var/lib/soc-vigil-alarms/audit-deadman-clean"
+picat_dupa = 1
+prag = "15m"
+page = true
+
+[spune]
+nivel = "incident"

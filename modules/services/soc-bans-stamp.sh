@@ -12,10 +12,8 @@
 #   anything else (exit 2, a     now               epoch + 1s
 #   crash, a timeout, a signal)
 #
-# A ban pages (soc-bans.toml); an evaluator that could not evaluate only
-# turns the health contract red (soc-bans-health.toml, page = false), so
-# errors reach the journal and dashboard without a page. The health stamp
-# carries the failure, so the bans stamp is not left to go stale and page.
+# A ban pages through soc-bans.toml. Evaluator errors page separately through
+# soc-bans-health.toml. An engine failure preserves the last known ban state.
 #
 # Whatever happens, no earlier fresh mtime may outlive a run that did not
 # stamp it: a stamp that cannot be written is set to epoch + 1s, and if that

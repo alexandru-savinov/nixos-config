@@ -1,0 +1,12 @@
+[contract]
+nume = "soc-audit-coverage-gap"
+ce = "Security: audit coverage gap awaits operator acknowledgement"
+driver = "operational"
+verifica = "age"
+tinta = "/var/lib/soc-vigil-alarms/audit-gap-clean"
+picat_dupa = 1
+prag = "15m"
+page = true
+
+[spune]
+nivel = "incident"
