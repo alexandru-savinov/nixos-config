@@ -87,6 +87,13 @@ running_status() {
     jq -esc 'select(length == 1) | .[0] | select(.BackendState == "Running")' 2>/dev/null
 }
 
+node_fqdn() {
+  jq -er '.Self.DNSName | strings | rtrimstr(".") | select(length > 0)' || {
+    echo "rpi5-serve-$mode: cannot determine the node DNS name" >&2
+    return 1
+  }
+}
+
 wait_running() {
   local attempt
   for ((attempt = 0; attempt < ${WAIT:-90}; attempt++)); do
@@ -177,17 +184,7 @@ tidy_port() {
 
 if [[ "$mode" == tidy ]]; then
   backend=$(wait_running) || exit 1
-elif ! backend=$(running_status); then
-  echo "rpi5-serve-allowlist: tailscaled is not Running or backend status is unreadable" >&2
-  exit 1
-fi
-
-if ! fqdn=$(jq -er '.Self.DNSName | strings | rtrimstr(".") | select(length > 0)' <<< "$backend"); then
-  echo "rpi5-serve-$mode: cannot determine the node DNS name" >&2
-  exit 1
-fi
-
-if [[ "$mode" == tidy ]]; then
+  fqdn=$(node_fqdn <<< "$backend") || exit 1
   if ! read_serve_config; then
     echo "rpi5-serve-tidy: cannot read initial Serve config for node port 6333" >&2
     exit 1
@@ -205,19 +202,41 @@ if [[ "$mode" == tidy ]]; then
   exit "$result"
 fi
 
-if ! status=$("$TS" serve status --json); then
-  echo "rpi5-serve: cannot read Serve status" >&2
+settle=${SETTLE:-15}
+SECONDS=0
+while :; do
+  if ! backend=$(running_status); then
+    echo "rpi5-serve-allowlist: tailscaled is not Running or backend status is unreadable" >&2
+    exit 1
+  fi
+  fqdn=$(node_fqdn <<< "$backend") || exit 1
+  if ! status=$("$TS" serve status --json); then
+    echo "rpi5-serve: cannot read Serve status" >&2
+    exit 1
+  fi
+  inventory=$(parse_inventory <<< "$status") || exit 1
+  check=$(jq -r --argjson ports "$ALLOWED_PORTS" --argjson services "$ALLOWED_SERVICES" '
+    ($ports | map(tostring)) as $expected
+    | [((.ports - $expected)[] | "unexpected node port \(.)"),
+       ((.services - $services)[] | "unexpected Service \(.)")] as $unexpected
+    | [($expected - .ports)[] | "missing required node port \(.)"] as $missing
+    | if ($unexpected | length) > 0 then "unexpected", $unexpected[], $missing[]
+      elif ($missing | length) > 0 then "missing", $missing[]
+      else "ok" end
+  ' <<< "$inventory") || exit 1
+  case "${check%%$'\n'*}" in
+    ok)
+      echo "rpi5-serve-allowlist: ok"
+      exit 0
+      ;;
+    missing)
+      # tailscaled can briefly omit required entries while applying tidy's write.
+      if ((SECONDS < settle)); then
+        sleep 1 || exit 1
+        continue
+      fi
+      ;;
+  esac
+  printf 'rpi5-serve-allowlist:\n%s\n' "${check#*$'\n'}" >&2
   exit 1
-fi
-inventory=$(parse_inventory <<< "$status") || exit 1
-violations=$(jq -r --argjson ports "$ALLOWED_PORTS" --argjson services "$ALLOWED_SERVICES" '
-  ($ports | map(tostring)) as $expected
-  | ((.ports - $expected)[] | "unexpected node port \(.)"),
-  (($expected - .ports)[] | "missing required node port \(.)"),
-  ((.services - $services)[] | "unexpected Service \(.)")
-' <<< "$inventory") || exit 1
-if [[ -n "$violations" ]]; then
-  printf 'rpi5-serve-allowlist:\n%s\n' "$violations" >&2
-  exit 1
-fi
-echo "rpi5-serve-allowlist: ok"
+done

@@ -9,27 +9,36 @@ export ALLOWED_PORTS='[3001,5678,8123]' ALLOWED_SERVICES='[]'
 export WAIT=3 POLL_SLEEP=0 RETRY_SLEEP=0
 
 # The Nix sandbox has no /usr/bin/env: give the fake the resolved bash as its shebang.
-{ printf '#!%s\n' "$(command -v bash)"; cat <<'FAKE'
+bash_path=$(command -v bash)
+{ printf '#!%s\n' "$bash_path"; cat <<'FAKE'
 set -euo pipefail
 printf '%s\n' "$*" >> "$CALLS"
 case "$*" in
   'status --json --peers=false')
-    case "${BACKEND:-Running}" in
+    backend=${BACKEND:-Running}
+    if [[ -n "${BACKEND_AFTER_SERVE:-}" ]] && grep -Fxq 'serve status --json' "$CALLS"; then
+      backend=$BACKEND_AFTER_SERVE
+    fi
+    case "$backend" in
       delayed)
         if [[ -f "$STATUS.polled" ]]; then echo '{"BackendState":"Running","Self":{"DNSName":"rpi5.example."}}'
         else touch "$STATUS.polled"; echo '{"BackendState":"Starting"}'; fi
         ;;
-      *) jq -nc --arg state "${BACKEND:-Running}" --arg dns "${SELF_DNS_NAME-rpi5.example.}" \
+      *) jq -nc --arg state "$backend" --arg dns "${SELF_DNS_NAME-rpi5.example.}" \
            '{BackendState: $state, Self: {DNSName: $dns}}' ;;
     esac
     ;;
-  'serve status --json') cat "$STATUS" ;;
+  'serve status --json')
+    read_number=$(grep -Fxc 'serve status --json' "$CALLS")
+    if [[ -f "$STATUS.$read_number" ]]; then cat "$STATUS.$read_number"
+    else cat "$STATUS"; fi
+    ;;
   *) echo "unexpected tailscale command: $*" >&2; exit 99 ;;
 esac
 FAKE
 } > "$TS"
 
-{ printf '#!%s\n' "$(command -v bash)"; cat <<'FAKE'
+{ printf '#!%s\n' "$bash_path"; cat <<'FAKE'
 set -euo pipefail
 [[ "${*:1:9}" == "--disable --silent --show-error --noproxy * --max-time 5 --unix-socket $TS_SOCKET" ]]
 [[ "${!#}" == 'http://local-tailscaled.sock/localapi/v0/serve-config' ]]
@@ -211,9 +220,16 @@ BACKEND=Starting run 1 tidy 'tailscaled did not reach Running'
 printf '%s\n' 'status --json --peers=false'{,,} | diff -u - "$CALLS"
 echo 'PASS tidy makes no Serve calls before Running (exit 1)'
 
+assert_allowlist_reads() {
+  local read_number
+  for ((read_number = 0; read_number < $1; read_number++)); do
+    printf '%s\n' 'status --json --peers=false' 'serve status --json'
+  done | diff -u - "$CALLS"
+}
+
 check_allowlist() {
   run "$1" allowlist "$2"
-  printf '%s\n' 'status --json --peers=false' 'serve status --json' | diff -u - "$CALLS"
+  assert_allowlist_reads "${4:-1}"
   echo "PASS allowlist $3 (exit $1)"
 }
 
@@ -235,19 +251,34 @@ BACKEND=NeedsLogin run 1 allowlist 'tailscaled is not Running'
 printf '%s\n' 'status --json --peers=false' | diff -u - "$CALLS"
 echo 'PASS allowlist fails when tailscaled needs login (exit 1)'
 echo 'null' > "$STATUS"
-check_allowlist 1 'missing required node port 3001' 'rejects null Serve config'
+SETTLE=0 check_allowlist 1 'missing required node port 3001' 'rejects null Serve config with no settle window'
 echo '{}' > "$STATUS"
-check_allowlist 1 'missing required node port 8123' 'rejects empty Serve config'
-fixture 3001 8123 > "$STATUS"
-check_allowlist 1 'missing required node port 5678' 'rejects a single missing required port'
+SETTLE=0 check_allowlist 1 'missing required node port 8123' 'rejects empty Serve config with no settle window'
+fixture 5678 8123 > "$STATUS"
+fixture "${live[@]}" > "$STATUS.4"
+check_allowlist 0 'allowlist: ok' 'accepts the required port when it appears on the third poll' 4
+rm "$STATUS.4"
+SETTLE=2 check_allowlist 1 'missing required node port 3001' 'fails after settling when a required port never appears' 3
+
+fixture 5678 8123 9443 > "$STATUS"
+check_allowlist 1 'unexpected node port 9443' 'rejects an extra port immediately even when a required port is missing'
+fixture 5678 8123 9443 > "$STATUS.2"
+fixture 5678 8123 > "$STATUS"
+fixture "${live[@]}" > "$STATUS.3"
+check_allowlist 1 'unexpected node port 9443' 'rejects an extra port that appears during settling' 2
+rm "$STATUS.2" "$STATUS.3"
+BACKEND_AFTER_SERVE=NeedsLogin run 1 allowlist 'tailscaled is not Running'
+printf '%s\n' 'status --json --peers=false' 'serve status --json' 'status --json --peers=false' | diff -u - "$CALLS"
+echo 'PASS allowlist fails when tailscaled stops Running during settling (exit 1)'
+
 echo '{"TCP":{"3001":false}}' > "$STATUS"
 check_allowlist 1 'malformed TCP handler on port 3001' 'rejects a non-object TCP entry'
 fixture "${live[@]}" | jq 'del(.Web["rpi5.example:3001"].Handlers)' > "$STATUS"
 check_allowlist 1 'malformed Web handler at rpi5.example:3001' 'rejects a Web entry without Handlers'
 fixture "${live[@]}" | jq 'del(.Web["rpi5.example:3001"])' > "$STATUS"
 check_allowlist 1 'malformed TCP handler on port 3001' 'rejects an HTTPS port without a Web entry'
-fixture "${live[@]}" | jq '.AllowFunnel["rpi5.example:3001"] = true' > "$STATUS"
-check_allowlist 1 'Funnel enabled at rpi5.example:3001' 'rejects Funnel on an approved port'
+fixture 5678 8123 | jq '.AllowFunnel["rpi5.example:5678"] = true' > "$STATUS"
+check_allowlist 1 'Funnel enabled at rpi5.example:5678' 'rejects Funnel immediately even when a required port is missing'
 fixture "${live[@]}" | jq '.AllowFunnel["rpi5.example:3001"] = false' > "$STATUS"
 check_allowlist 0 'allowlist: ok' 'accepts an explicitly disabled Funnel entry'
 fixture "${live[@]}" | jq '.Foreground.fixture.AllowFunnel["rpi5.example:443"] = true' > "$STATUS"
@@ -260,8 +291,10 @@ fixture "${live[@]}" 9443 | jq 'del(.TCP["9443"])' > "$STATUS"
 check_allowlist 1 'malformed Web handler at rpi5.example:9443' 'rejects a Web entry without TCP'
 fixture "${live[@]}" | jq '.Foreground.fixture.TCP["9443"] = {TCPForward: "127.0.0.1:9443"}' > "$STATUS"
 check_allowlist 1 'unexpected node port 9443' 'rejects an extra foreground port'
-fixture "${live[@]}" | jq '.Services["svc:nixframe"].TCP["443"] = {TCPForward: "127.0.0.1:443"}' > "$STATUS"
-check_allowlist 1 'unexpected Service svc:nixframe' 'rejects an undeclared Service'
+add_service='.Services["svc:nixframe"].TCP["443"] = {TCPForward: "127.0.0.1:443"}'
+fixture 5678 8123 | jq "$add_service" > "$STATUS"
+check_allowlist 1 'unexpected Service svc:nixframe' 'rejects an undeclared Service immediately even when a required port is missing'
+fixture "${live[@]}" | jq "$add_service" > "$STATUS"
 ALLOWED_SERVICES='["svc:nixframe"]' check_allowlist 0 'allowlist: ok' 'accepts declared Service with its own port'
 fixture "${live[@]}" | jq '.Services["svc:nixframe"] = {
   TCP: {"443": {HTTPS: true}}, Web: {"nixframe.example:443": {Handlers: {"/": {Text: "ok"}}}}
