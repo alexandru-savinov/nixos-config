@@ -4,7 +4,7 @@ set -euo pipefail
 script=${1:-$(dirname "$0")/../hosts/rpi5-full/rpi5-serve.sh}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-export TS="$tmp/tailscale" CALLS="$tmp/calls" STATUS="$tmp/status.json"
+export TS="$tmp/tailscale" TS_SOCKET="$tmp/tailscaled.sock" CALLS="$tmp/calls" STATUS="$tmp/status.json"
 export ALLOWED_PORTS='[3001,5678,8123]' ALLOWED_SERVICES='[]'
 export WAIT=3 POLL_SLEEP=0 RETRY_SLEEP=0
 
@@ -24,29 +24,69 @@ case "$*" in
     esac
     ;;
   'serve status --json') cat "$STATUS" ;;
-  'serve --https='*' off'|'serve --http='*' off'|'serve --tcp='*' off')
-    port=${2#*=}
-    [[ "${FAIL_PORT:-}" != "$port" ]] || exit 1
-    if [[ "${RETRY_PORT:-}" == "$port" && ! -f "$STATUS.retried" ]]; then
-      touch "$STATUS.retried"
-      exit 1
-    fi
-    jq -e --arg port "$port" --arg flag "${2%%=*}" '
-      .TCP[$port] as $tcp
-      | if $flag == "--tcp" then $tcp != null and $tcp.HTTP != true and $tcp.HTTPS != true
-        else ($tcp.HTTP == true or $tcp.HTTPS == true) and (.Web["rpi5.example:" + $port].Handlers | length > 0)
-        end
-    ' "$STATUS" >/dev/null
-    jq --arg port "$port" --arg flag "${2%%=*}" '
-      del(.TCP[$port]) | if $flag == "--tcp" then . else del(.Web["rpi5.example:" + $port]) end
-    ' "$STATUS" > "$STATUS.next"
-    mv "$STATUS.next" "$STATUS"
-    ;;
   *) echo "unexpected tailscale command: $*" >&2; exit 99 ;;
 esac
 FAKE
 } > "$TS"
-chmod +x "$TS"
+
+{ printf '#!%s\n' "$(command -v bash)"; cat <<'FAKE'
+set -euo pipefail
+[[ "${*:1:9}" == "--disable --silent --show-error --noproxy * --max-time 5 --unix-socket $TS_SOCKET" ]]
+[[ "${!#}" == 'http://local-tailscaled.sock/localapi/v0/serve-config' ]]
+shift 9
+
+etag() {
+  local digest
+  digest=$(sha256sum "$STATUS")
+  printf '%s' "${digest%% *}"
+}
+
+add_mount() {
+  jq --arg port "$1" '
+    .Web["rpi5.example:" + $port].Handlers["/concurrent"] = {Text: "new"}
+  ' "$STATUS" > "$STATUS.changed"
+  mv "$STATUS.changed" "$STATUS"
+}
+
+if [[ "$1" == --fail ]]; then
+  [[ $# == 4 && "$2" == --write-out && "$3" == $'\n%header{etag}' ]]
+  echo 'localapi GET' >> "$CALLS"
+  cat "$STATUS"
+  printf '\n'
+  if [[ "${MISSING_ETAG:-}" != 1 ]]; then etag; fi
+  if [[ -n "${ADD_AFTER_FIRST_READ:-}" && ! -f "$STATUS.changed-on-read" ]]; then
+    touch "$STATUS.changed-on-read"
+    add_mount "$ADD_AFTER_FIRST_READ"
+  fi
+  exit 0
+fi
+
+[[ $# == 11 && "${*:1:5}" == '--output /dev/null --write-out %{http_code} --header' ]]
+[[ "$6" == 'If-Match: '* && "$7" == --header && "$8" == 'Content-Type: application/json' ]]
+[[ "$9" == --data-binary && "${10}" == @- ]]
+cat > "$STATUS.next"
+port=$(jq -sre '
+  ((.[0].TCP // {} | keys) - (.[1].TCP // {} | keys))
+  | if length == 1 then .[0] else error("expected exactly one retired TCP key to disappear") end
+' "$STATUS" "$STATUS.next")
+echo "localapi POST $port" >> "$CALLS"
+if [[ "${ADD_BEFORE_WRITE:-}" == "$port" ]]; then add_mount "$port"; fi
+if [[ "$6" != "If-Match: $(etag)" ]]; then
+  echo 412
+elif [[ "${FAIL_PORT:-}" == "$port" ]]; then
+  echo 500
+elif [[ "${RETRY_PORT:-}" == "$port" && ! -f "$STATUS.retried" ]]; then
+  touch "$STATUS.retried"
+  echo 500
+else
+  mv "$STATUS.next" "$STATUS"
+  if [[ "${CHANGE_AFTER_WRITE:-}" == "$port" ]]; then add_mount 3001; fi
+  echo 200
+fi
+FAKE
+} > "$tmp/curl"
+chmod +x "$TS" "$tmp/curl"
+export PATH="$tmp:$PATH"
 
 fixture() {
   jq -n --args '
@@ -70,13 +110,13 @@ run() {
 
 assert_writes() {
   # Compare every non-read command, so this also catches an attempted reset.
-  local target
-  for target in "$@"; do
-    [[ "$target" == *=* ]] || target="https=$target"
-    printf 'serve --%s off\n' "$target"
-  done > "$tmp/expected"
-  awk '$0 != "status --json --peers=false" && $0 != "serve status --json"' "$CALLS" > "$tmp/writes"
+  if (($#)); then printf 'localapi POST %s\n' "$@"; fi > "$tmp/expected"
+  awk '$0 != "status --json --peers=false" && $0 != "serve status --json" && $0 != "localapi GET"' "$CALLS" > "$tmp/writes"
   diff -u "$tmp/expected" "$tmp/writes"
+}
+
+assert_config() {
+  jq -S . "$1" | diff -u - <(jq -S . "$STATUS")
 }
 
 live=(3001 5678 8123)
@@ -90,25 +130,31 @@ cp "$tmp/full" "$STATUS"
 BACKEND=delayed run 0 tidy 'removed node HTTPS port 8744'
 assert_writes "${dead[@]}"
 head -n 2 "$CALLS" | diff -u - <(printf '%s\n' 'status --json --peers=false' 'status --json --peers=false')
-diff -u "$tmp/kept" "$STATUS"
+assert_config "$tmp/kept"
 echo 'PASS tidy waits for Running and removes exactly five node ports (exit 0)'
 
 run 0 tidy ''
 assert_writes
-diff -u "$tmp/kept" "$STATUS"
+assert_config "$tmp/kept"
 echo 'PASS tidy rerun is idempotent (exit 0)'
 
 fixture "${live[@]}" 6333 | jq '.TCP["6333"] = {HTTP: true}' > "$STATUS"
 run 0 tidy 'removed node HTTP port 6333'
-assert_writes http=6333
-fixture "${live[@]}" | diff -u - "$STATUS"
+assert_writes 6333
+fixture "${live[@]}" | assert_config -
 echo 'PASS tidy uses HTTP removal for a plain-HTTP handler (exit 0)'
 
 fixture "${live[@]}" | jq '.TCP["6333"] = {TCPForward: "127.0.0.1:6333"}' > "$STATUS"
 run 0 tidy 'removed node TCP port 6333'
-assert_writes tcp=6333
-fixture "${live[@]}" | diff -u - "$STATUS"
+assert_writes 6333
+fixture "${live[@]}" | assert_config -
 echo 'PASS tidy uses TCP removal for a TCP-only forward (exit 0)'
+
+fixture 6333 | jq '.AllowFunnel["rpi5.example:6333"] = true' > "$STATUS"
+run 0 tidy 'removed node HTTPS port 6333'
+assert_writes 6333
+echo '{}' | assert_config -
+echo 'PASS tidy clears the last Web port and its Funnel entry (exit 0)'
 
 fixture "${live[@]}" 6333 | jq 'del(.Web["rpi5.example:6333"])' > "$STATUS"
 cp "$STATUS" "$tmp/ambiguous"
@@ -127,14 +173,39 @@ echo 'PASS tidy preserves a Web handler for a different hostname (exit 1)'
 cp "$tmp/full" "$STATUS"
 RETRY_PORT=6333 run 0 tidy 'removed node HTTPS port 6333'
 assert_writes 6333 "${dead[@]}"
-diff -u "$tmp/kept" "$STATUS"
+assert_config "$tmp/kept"
 echo 'PASS tidy retries a transient write failure (exit 0)'
 
 cp "$tmp/full" "$STATUS"
 FAIL_PORT=6333 run 1 tidy 'could not clear node port 6333 after 3 attempts'
 assert_writes 6333 6333 "${dead[@]}"
-fixture "${live[@]}" 6333 | jq -S "$keep" | diff -u - <(jq -S . "$STATUS")
+fixture "${live[@]}" 6333 | jq "$keep" | assert_config -
 echo 'PASS tidy caps retries and still clears the other ports (exit 1)'
+
+cp "$tmp/full" "$STATUS"
+ADD_AFTER_FIRST_READ=6333 run 1 tidy 'Serve config changed before removing node port 6333'
+assert_writes
+jq '.Web["rpi5.example:6333"].Handlers["/concurrent"] = {Text: "new"}' "$tmp/full" | assert_config -
+echo 'PASS tidy revalidates the snapshot before issuing a write (exit 1)'
+
+cp "$tmp/full" "$STATUS"
+ADD_BEFORE_WRITE=6333 run 1 tidy 'Serve config changed before removing node port 6333'
+assert_writes 6333
+jq '.Web["rpi5.example:6333"].Handlers["/concurrent"] = {Text: "new"}' "$tmp/full" | assert_config -
+echo 'PASS tidy leaves a concurrently added mount in place and stops (exit 1)'
+
+cp "$tmp/full" "$STATUS"
+CHANGE_AFTER_WRITE=6333 run 1 tidy 'unexpected Serve config after removing node port 6333'
+assert_writes 6333
+jq 'del(.TCP["6333"], .Web["rpi5.example:6333"])
+    | .Web["rpi5.example:3001"].Handlers["/concurrent"] = {Text: "new"}' "$tmp/full" | assert_config -
+echo 'PASS tidy detects an unrelated change on read-back and stops (exit 1)'
+
+cp "$tmp/full" "$STATUS"
+MISSING_ETAG=1 run 1 tidy 'cannot read initial Serve config for node port 6333'
+assert_writes
+assert_config "$tmp/full"
+echo 'PASS tidy refuses to write without a config ETag (exit 1)'
 
 BACKEND=Starting run 1 tidy 'tailscaled did not reach Running'
 printf '%s\n' 'status --json --peers=false'{,,} | diff -u - "$CALLS"

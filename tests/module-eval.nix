@@ -2997,6 +2997,21 @@ let
       then true
       else builtins.throw "FAIL: svc-game dir type accepts a non-canonical path";
 
+    rpi5-serve-alert-identity =
+      let
+        units = self.nixosConfigurations.rpi5-full.config.systemd.services;
+        reset = units.rpi5-serve-allowlist.serviceConfig.ExecStartPost;
+        inherit (nixpkgs.lib) hasInfix hasSuffix;
+      in
+      if units.rpi5-serve-allowlist.onFailure == [ "vigil-failed@rpi5-serve-allowlist.service" ]
+        && units.vigil.onFailure == [ "vigil-failed.service" ]
+        && hasSuffix "/bin/vigil failed %i" units."vigil-failed@".serviceConfig.ExecStart
+        && hasSuffix "/bin/vigil failed" units.vigil-failed.serviceConfig.ExecStart
+        && hasInfix "/bin/setpriv --reuid vigil --regid vigil --clear-groups -- " reset
+        && hasSuffix "/bin/rm -f /var/lib/vigil/nota-sent/rpi5-serve-allowlist" reset
+      then true
+      else builtins.throw "FAIL: rpi5 Serve allowlist must use a distinct alert identity from Vigil";
+
     rpi5-serve-and-kindle =
       let
         base = self.nixosConfigurations.rpi5-full;
@@ -3022,7 +3037,6 @@ let
         && hasSuffix " allowlist" allowlist.serviceConfig.ExecStart
         && allowlist.environment.ALLOWED_PORTS == "[3001,5678,8123]"
         && allowlist.environment.ALLOWED_SERVICES == "[]"
-        && allowlist.onFailure == [ "vigil-failed.service" ] && services ? vigil-failed
         && builtins.elem "rpi5-serve-tidy.service" allowlist.after
         && builtins.elem "timers.target" timers.rpi5-serve-allowlist.wantedBy
         && timers.rpi5-serve-allowlist.timerConfig.OnUnitActiveSec == "15min"

@@ -55,6 +55,14 @@ let
   } // lib.optionalAttrs (cfg.telegramEnvFile != null) {
     EnvironmentFile = cfg.telegramEnvFile;
   };
+  failure = {
+    inherit environment;
+    serviceConfig = writable // {
+      Type = "oneshot";
+      ExecStart = "${package}/bin/vigil failed";
+      TimeoutStartSec = "30s";
+    };
+  };
 in
 {
   options.services.vigil = {
@@ -103,14 +111,12 @@ in
         SuccessExitStatus = "1 2";
       };
     };
-    systemd.services.vigil-failed = {
+    systemd.services.vigil-failed = failure // {
       description = "Vigil internal failure notification";
-      inherit environment;
-      serviceConfig = writable // {
-        Type = "oneshot";
-        ExecStart = "${package}/bin/vigil failed";
-        TimeoutStartSec = "30s";
-      };
+    };
+    systemd.services."vigil-failed@" = failure // {
+      description = "Vigil failure notification for %i";
+      serviceConfig = failure.serviceConfig // { ExecStart = "${package}/bin/vigil failed %i"; };
     };
     systemd.timers.vigil = {
       wantedBy = [ "timers.target" ];

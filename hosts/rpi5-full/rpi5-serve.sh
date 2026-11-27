@@ -9,13 +9,7 @@ case "$mode" in
   *) echo "Usage: rpi5-serve.sh tidy|allowlist" >&2; exit 2 ;;
 esac
 
-read_inventory() {
-  local status
-  if ! status=$("$TS" serve status --json); then
-    echo "rpi5-serve: cannot read Serve status" >&2
-    return 1
-  fi
-
+parse_inventory() {
   jq -escr --arg mode "$mode" --arg port "${1:-}" --arg fqdn "$fqdn" '
     def object:
       if type == "object" then . else error("expected object") end;
@@ -40,8 +34,7 @@ read_inventory() {
           and ([.Path, .Proxy, .Text] | map(select(. != null and . != ""))
             | length == 1 and all(.[]; nonempty_string)))));
 
-    # Tidy only looks at the persisted node config. A web removal acts on
-    # the current DNS name and removes the port, so reject ambiguous entries.
+    # Tidy only looks at the persisted node config. Reject ambiguous Web entries.
     def tidy_kind:
       (.TCP | config_map) as $tcp
       | (.Web | config_map | with_entries(select(.key | endswith(":" + $port)))) as $web
@@ -83,7 +76,7 @@ read_inventory() {
         | {ports: ([$nodes[] | checked_ports($fqdn)[]] | unique),
            services: ([$services[].key] | unique)}
       end
-  ' <<< "$status" || {
+  ' || {
     echo "rpi5-serve: invalid Serve status JSON" >&2
     return 1
   }
@@ -106,26 +99,75 @@ wait_running() {
   return 1
 }
 
+serve_api() {
+  curl --disable --silent --show-error --noproxy '*' --max-time 5 \
+    --unix-socket "${TS_SOCKET:-/run/tailscale/tailscaled.sock}" "$@" \
+    http://local-tailscaled.sock/localapi/v0/serve-config
+}
+
+read_serve_config() {
+  local response
+  response=$(serve_api --fail --write-out $'\n%header{etag}') || return 1
+  serve_etag=${response##*$'\n'}
+  [[ "$serve_etag" =~ ^[0-9a-f]{64}$ ]] || return 1
+  serve_config=$(jq -cSe -s '
+    if length == 1 and (.[0] | type == "object" or type == "null")
+    then .[0] // {} else error("invalid Serve config") end
+  ' <<< "${response%$'\n'*}")
+}
+
 tidy_port() {
-  local port=$1 attempt kind remaining
-  # An off for an absent handler fails in the CLI. Re-read on each attempt
-  # because all Serve writers share the same config ETag.
+  local port=$1 attempt kind expected http_status
+  # Status 2 stops the entire cleanup on a changed or unverifiable snapshot.
   for attempt in 1 2 3; do
-    if kind=$(read_inventory "$port"); then
-      case "$kind" in
-        absent) return 0 ;;
-        unknown)
-          echo "rpi5-serve-tidy: unrecognized node handler on port $port" >&2
-          return 1
-          ;;
-      esac
-      # In 1.90.9 both TCP flags reach removeTCPServe, which rejects web ports.
-      # https://github.com/tailscale/tailscale/blob/v1.90.9/cmd/tailscale/cli/serve_v2.go#L1116-L1127
-      if "$TS" serve "--$kind=$port" off </dev/null &&
-          remaining=$(read_inventory "$port") && [[ "$remaining" == absent ]]; then
-        echo "rpi5-serve-tidy: removed node $(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]') port $port"
-        return 0
-      fi
+    if ! read_serve_config; then
+      echo "rpi5-serve-tidy: cannot verify Serve config before removing node port $port" >&2
+      return 2
+    fi
+    if [[ "$serve_config" != "$snapshot" ]]; then
+      echo "rpi5-serve-tidy: Serve config changed before removing node port $port" >&2
+      return 2
+    fi
+    kind=$(parse_inventory "$port" <<< "$serve_config") || return 1
+    case "$kind" in
+      absent) return 0 ;;
+      unknown)
+        echo "rpi5-serve-tidy: unrecognized node handler on port $port" >&2
+        return 1
+        ;;
+    esac
+
+    # Match Tailscale's removal of the Web port's Funnel entry and omission of
+    # empty maps. Foreground sessions and named Services are part of the snapshot.
+    expected=$(jq -cSe --arg port "$port" --arg hostport "$fqdn:$port" --arg kind "$kind" '
+      del(.TCP[$port]) | if .TCP == {} then del(.TCP) else . end
+      | if $kind == "tcp" then . else
+          del(.Web[$hostport], .AllowFunnel[$hostport])
+          | if .Web == {} then del(.Web) else . end
+          | if .AllowFunnel == {} then del(.AllowFunnel) else . end
+        end
+    ' <<< "$serve_config") || return 1
+    # Use the ETag of the config we just validated. The CLI's "serve off"
+    # fetches its own snapshot, which could already contain new handlers.
+    http_status=$(serve_api --output /dev/null --write-out '%{http_code}' \
+      --header "If-Match: $serve_etag" --header 'Content-Type: application/json' \
+      --data-binary @- <<< "$expected") || http_status=
+    if [[ "$http_status" == 412 ]]; then
+      echo "rpi5-serve-tidy: Serve config changed before removing node port $port" >&2
+      return 2
+    fi
+    if ! read_serve_config; then
+      echo "rpi5-serve-tidy: cannot verify Serve config after removing node port $port" >&2
+      return 2
+    fi
+    if [[ "$serve_config" == "$expected" ]]; then
+      snapshot=$expected
+      echo "rpi5-serve-tidy: removed node ${kind^^} port $port"
+      return 0
+    fi
+    if [[ "$http_status" == 200 || "$serve_config" != "$snapshot" ]]; then
+      echo "rpi5-serve-tidy: unexpected Serve config after removing node port $port" >&2
+      return 2
     fi
     if ((attempt < 3)); then sleep "${RETRY_SLEEP:-2}"; fi
   done
@@ -146,14 +188,28 @@ if ! fqdn=$(jq -er '.Self.DNSName | strings | rtrimstr(".") | select(length > 0)
 fi
 
 if [[ "$mode" == tidy ]]; then
+  if ! read_serve_config; then
+    echo "rpi5-serve-tidy: cannot read initial Serve config for node port 6333" >&2
+    exit 1
+  fi
+  snapshot=$serve_config
   result=0
   for port in 6333 8739 8742 8743 8744; do
-    tidy_port "$port" || result=1
+    if tidy_port "$port"; then
+      continue
+    else
+      if [[ $? == 2 ]]; then exit 1; fi
+      result=1
+    fi
   done
   exit "$result"
 fi
 
-inventory=$(read_inventory) || exit 1
+if ! status=$("$TS" serve status --json); then
+  echo "rpi5-serve: cannot read Serve status" >&2
+  exit 1
+fi
+inventory=$(parse_inventory <<< "$status") || exit 1
 violations=$(jq -r --argjson ports "$ALLOWED_PORTS" --argjson services "$ALLOWED_SERVICES" '
   ($ports | map(tostring)) as $expected
   | ((.ports - $expected)[] | "unexpected node port \(.)"),

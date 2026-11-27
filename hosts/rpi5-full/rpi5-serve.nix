@@ -2,6 +2,7 @@
 let
   allowedPorts = [ 3001 5678 8123 ];
   allowedServices = [ ];
+  allowlistName = "rpi5-serve-allowlist";
   script = mode: "${pkgs.bash}/bin/bash ${./rpi5-serve.sh} ${mode}";
   common = {
     after = [ "tailscaled.service" ];
@@ -15,6 +16,7 @@ in
     description = "Remove all handlers on the retired ports from the rpi5 Tailscale Serve node config";
     wantedBy = [ "multi-user.target" ];
     wants = [ "tailscaled.service" ];
+    path = common.path ++ [ pkgs.curl ];
     serviceConfig = common.serviceConfig // {
       ExecStart = script "tidy";
       RemainAfterExit = true;
@@ -25,13 +27,15 @@ in
   systemd.services.rpi5-serve-allowlist = common // {
     description = "Check rpi5 Tailscale Serve against its allowlist";
     after = common.after ++ [ "rpi5-serve-tidy.service" ];
-    onFailure = [ "vigil-failed.service" ];
+    onFailure = [ "vigil-failed@${allowlistName}.service" ];
     environment = common.environment // {
       ALLOWED_PORTS = builtins.toJSON allowedPorts;
       ALLOWED_SERVICES = builtins.toJSON allowedServices;
     };
     serviceConfig = common.serviceConfig // {
       ExecStart = script "allowlist";
+      # A healthy allowlist check rearms its own alert.
+      ExecStartPost = "${pkgs.util-linux}/bin/setpriv --reuid vigil --regid vigil --clear-groups -- ${pkgs.coreutils}/bin/rm -f /var/lib/vigil/nota-sent/${allowlistName}";
       TimeoutStartSec = "30s";
     };
   };

@@ -352,6 +352,19 @@ test('self failure suppresses repeats, survives corrupt global state and rearms 
   assert.equal(messages, 2);
 }));
 
+test('a Serve allowlist alert cannot suppress a Vigil engine failure', async () => harness(async h => {
+  const messages = [];
+  const options = { env: h.env, gazda: 'fixture-host', send: async (_method, { text }) => { messages.push(text); return true; } };
+  const serve = { ...options, name: 'rpi5-serve-allowlist' };
+  assert.equal(await failed(serve), 0);
+  assert.equal(await failed(serve), 0);
+  assert.equal(await failed(options), 0);
+  assert.equal(messages.length, 2);
+  assert.match(messages[0], /rpi5-serve-allowlist: picat/);
+  assert.match(messages[1], /vigil: failed/);
+  assert.deepEqual(fs.readdirSync(path.join(h.root, 'nota-sent')).sort(), ['rpi5-serve-allowlist', 'vigil']);
+}));
+
 test('a failed counts commit cannot rearm the self-failure notification', async () => harness(async h => {
   await failed({ env: h.env, gazda: 'fixture-host', send: async () => true });
   fs.mkdirSync(path.join(h.root, 'tick.counts.json'));
