@@ -19,8 +19,11 @@
 # Bytes changed after a check are served until the next check (root-only path).
 # A mapping left by an unclean shutdown can be reachable briefly at boot before the boot clear.
 # Serve writers on this host share one config ETag, so a concurrent write elsewhere can fail once (game writes retry 3x).
-# ExecStop is skipped if the boot run never started successfully. After rollback,
-# `tailscale serve status` must show no svc:game (the deploy handoff checks this).
+# ExecStop is skipped if the boot run never started successfully. After a rollback,
+# `tailscale serve status --json | jq '.Services["svc:game"]'` must be null (plain
+# `serve status` omits Service mappings); the deploy handoff checks this.
+# After 5 failed boot runs in an hour the unit stays failed (the alert has fired)
+# until someone restarts it.
 # The host must be approved for the service by hand in the admin console; the
 # tailnet policy has no services auto-approver on purpose.
 { config, lib, pkgs, ... }:

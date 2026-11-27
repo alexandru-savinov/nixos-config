@@ -42,12 +42,10 @@ fail() {
 }
 # stop: one clear attempt, no readiness wait (it may run at shutdown); boot clears again anyway.
 if [ "$mode" = stop ]; then clear_svc || exit 1; echo "svc-game: $SVC cleared (stop)"; exit 0; fi
-# Not Running: boot still tries to clear (a clear can succeed while Starting). verify does not:
-# a tailscaled hiccup must not take a valid, already-checked game offline until someone restarts it.
-if ! ready; then
-  [ "$mode" = boot ] && fail "tailscaled not Running after ${WAIT:-90}s"
-  echo "svc-game: tailscaled not Running after ${WAIT:-90}s (verify: nothing changed)" >&2; exit 1
-fi
+# boot waits for Running before any write; if it never gets there it still tries a clear
+# (a clear can succeed while Starting). verify does not wait: it writes only to clear a bad
+# file, so a tailscaled hiccup never takes a valid game offline, and a bad file is still revoked.
+if [ "$mode" = boot ] && ! ready; then fail "tailscaled not Running after ${WAIT:-90}s"; fi
 case "$SHA" in *[!0-9a-f]*|"") fail "pin is not a sha256";; esac
 [ ${#SHA} -eq 64 ] || fail "pin is not a sha256"
 if [ "$mode" = boot ]; then clear_svc || exit 1; fi

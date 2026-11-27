@@ -86,7 +86,9 @@ place; run bogus
 [ $rc -eq 2 ] && [ -z "$log" ] && ok || bad "unknown mode: rc=$rc log=$log"
 
 place; FAKE_NOT_RUNNING=1 PWAIT=2 run verify
-[ $rc -ne 0 ] && [ -z "$log" ] && ok || bad "verify while not Running changes nothing: rc=$rc log=$log"
+[ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify while not Running, valid file: no change: rc=$rc log=$log"
+place; chmod u+w "$T/game/$SHA.html"; printf 'jello game\n' > "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; FAKE_NOT_RUNNING=1 PWAIT=2 run verify
+[ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "verify while not Running, bad file: still revoked: rc=$rc log=$log"
 
 # the lock serialises writers: while it is held a run never reaches tailscale, and gives up
 place; exec 8>"$T/lock"; flock 8
