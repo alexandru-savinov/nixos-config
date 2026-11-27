@@ -1028,21 +1028,30 @@ class Runners(unittest.TestCase):
             fh.write(f"dev=0x1\ninode=123\noutput=- {timestamp}:99 0x514\n")
 
     def retained_log(self, timestamp="200.456", suffix=".1"):
+        with open(os.path.join(self.d, "audit.log"), "a"):
+            pass
         with open(os.path.join(self.d, "audit.log" + suffix), "w") as fh:
             fh.write(f"type=DAEMON_START msg=audit({timestamp}:1): auditd started\n")
 
     def recovery(self, status=12, first="", replay="", *, advances=True):
-        advance = 'echo re-anchored > "$cp"\n' if advances else ""
+        advance = ('event=$(sed -n "s/.*msg=audit(\\([^)]*\\)).*/\\1/p" "$input/audit.log")\n'
+                   'echo "output=- $event 0x4B0" > "$cp"\n') if advances else ""
         return self.ausearch(self.ADVANCE_PROLOGUE + f"""
-if [ -e "$cp" ]; then
+if [ -z "$input" ]; then
     {first or ':'}
     exit {status}
 fi
-test "$#" = 4 || exit 99
+echo "NOTE - using logs in $input/audit.log" >&2
+test ! -s "$input/audit.log" && exit 1
 {advance}
 {replay or ':'}
 exit 0
 """)
+
+    def assert_reanchored(self, timestamp="200.456", suffix=".1"):
+        file_id = sva.audit_file_id(os.path.join(self.d, "audit.log" + suffix))
+        expected = sva.audit_checkpoint_text(file_id, f"output=- {timestamp}:1 0x4B0")
+        self.assertEqual(slurp(self.cp), expected)
 
     def watchdog(self):
         return sva.main(["audit-watchdog", "--state-dir", self.sd, "--audit-log-dir", self.d])
@@ -1058,7 +1067,7 @@ exit 0
         original_inode = os.stat(stamp).st_ino
         rc, out = self.run_logged(self.recovery())
         self.assertEqual(rc, 0, out)
-        self.assertEqual(slurp(self.cp), "re-anchored\n")
+        self.assert_reanchored()
         entry = "from=100.123 to=200.456 cause=12\n"
         self.assertEqual(slurp(stamp), history + entry)
         self.assertEqual(os.stat(stamp).st_ino, original_inode)
@@ -1106,7 +1115,93 @@ exit 0
         rc, out = self.run_logged(search)
         self.assertEqual(rc, 1, out)
         self.assertEqual([h["serial"] for h in self.alarm_lines(out)], ["42"])
-        self.assertEqual(slurp(self.cp), "re-anchored\n")
+        self.assert_reanchored()
+
+    def test_killed_replay_resumes_from_last_classified_file_after_rotation(self):
+        import subprocess
+        import sys
+
+        self.checkpoint()
+        original_checkpoint = slurp(self.cp)
+        cursor = os.path.join(self.sd, "audit.replay")
+        def log_path(suffix):
+            return os.path.join(self.d, "audit.log" + suffix)
+
+        for suffix, serial in ((".2", 41), (".1", 42), ("", 43)):
+            with open(log_path(suffix), "w") as fh:
+                fh.write(login_reads_agenix(serial) + "\n")
+        oldest_id = sva.audit_file_id(log_path(".2"))
+        interrupted = os.path.join(self.d, "interrupted")
+        search = self.ausearch(self.ADVANCE_PROLOGUE + f"""
+test -n "$input" || exit 12
+echo "NOTE - using logs in $input/audit.log" >&2
+event=$(head -n 1 "$input/audit.log" | sed -n 's/.*msg=audit(\\([^)]*\\)).*/\\1/p')
+cat "$input/audit.log"
+printf 'output=- %s 0x514\\n' "$event" > "$cp"
+case "$event" in
+  *:42) if [ ! -e '{interrupted}' ]; then
+    touch '{interrupted}'
+    kill -KILL "$PPID"
+  fi;;
+esac
+""")
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        argv = [sys.executable, SCRIPT, "audit", "--ausearch", search, "--systemctl", systemctl,
+                "--require-active", "auditd.service", "--require-active", "audit-rules-nixos.service",
+                "--state-dir", self.sd, "--hold", "900", *self.injected()]
+        env = {**os.environ, "TMPDIR": self.d}
+        killed = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(killed.returncode, -9, killed.stdout + killed.stderr)
+        self.assertEqual([h["serial"] for h in self.alarm_lines(killed.stdout)], ["41"])
+        self.assertEqual(json.loads(slurp(cursor))["through"], oldest_id)
+        self.assertEqual(slurp(self.cp), original_checkpoint)
+        self.assertTrue(os.path.isfile(self.last))
+        self.assertFalse(os.path.exists(self.last_eval()))
+        for index in range(2, -1, -1):
+            os.rename(log_path(f".{index}" if index else ""), log_path(f".{index + 1}"))
+        with open(log_path(""), "w") as fh:
+            fh.write(login_reads_agenix(44) + "\n")
+
+        resumed = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(resumed.returncode, 1, resumed.stdout + resumed.stderr)
+        self.assertEqual([h["serial"] for h in self.alarm_lines(resumed.stdout)], ["42", "43", "44"])
+        self.assertEqual(slurp(self.log).count("--input-logs"), 1)
+        self.assertIn(":44 0x514", slurp(self.cp))
+        self.assertTrue(os.path.isfile(self.last_eval()))
+        self.assertFalse(os.path.exists(cursor))
+        self.assertEqual(len(slurp(os.path.join(self.sd, "audit.coverage-gap")).splitlines()), 1)
+
+    def test_replay_reassembles_event_across_rotated_logs(self):
+        self.checkpoint()
+        first, rest = login_reads_agenix(42).split("\n", 1)
+        for suffix, text in ((".2", first), (".1", rest), ("", "")):
+            with open(os.path.join(self.d, "audit.log" + suffix), "w") as fh:
+                fh.write(text + "\n" if text else "")
+        oldest_inode = os.stat(os.path.join(self.d, "audit.log.2")).st_ino
+        search = self.ausearch(self.ADVANCE_PROLOGUE + f"""
+test -n "$input" || exit 10
+if [ ! -e "$input/audit.log.1" ]; then
+    # The oldest file alone has no complete event.
+    echo 'output=- 0.000:0 0x0' > "$cp"
+    exit 1
+fi
+grep -Fxq 'inode={oldest_inode}' "$cp" || exit 99
+if [ -e "$input/audit.log.2" ]; then
+    # Re-reading the checkpoint event requires both halves, even though
+    # ausearch used the second file's inode when it wrote the checkpoint.
+    grep -q '^type=SYSCALL' "$input/audit.log.2" || exit 99
+    grep -q '^type=PROCTITLE' "$input/audit.log.1" || exit 99
+    exit 1
+fi
+cat "$input/audit.log.1" "$input/audit.log"
+echo 'output=- 1762790400.042:42 0x514' > "$cp"
+""")
+        rc, out = self.run_logged(search)
+        self.assertEqual(rc, 1, out)
+        hits = self.alarm_lines(out)
+        self.assertEqual([h["serial"] for h in hits], ["42"])
+        self.assertEqual(hits[0]["paths"], ["/run/agenix.d/3/example-one"])
+        self.assertIn(f"inode={oldest_inode}\n", slurp(self.cp))
 
     def test_new_coverage_evidence_gets_append_only_protection(self):
         self.checkpoint()
@@ -1233,6 +1328,20 @@ exit 0
         os.utime(heartbeat, (now - 1801, now - 1801))
         self.assertEqual(self.watchdog(), 0)
         self.assertEqual(os.stat(deadman).st_mtime, 1)
+
+    def test_watchdog_refreshes_all_healthy_stamps_left_by_a_previous_boot(self):
+        now = time.time()
+        self.retained_log(f"{now - 49 * 3600:.3f}")
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        signals = [os.path.join(self.sd, f"audit-{name}-clean")
+                   for name in ("deadman", "gap", "retention")]
+        for stamp in [heartbeat, *signals]:
+            with open(stamp, "w"):
+                pass
+            os.utime(stamp, (now - 20 * 60,) * 2)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertTrue(all(os.stat(stamp).st_mtime > now - 1 for stamp in signals))
+        self.assertLess(os.stat(heartbeat).st_mtime, now - 15 * 60)
 
     def test_audit_stamp_health_advances_on_hit_and_ages_on_evaluator_error(self):
         from unittest.mock import patch
@@ -1367,8 +1476,11 @@ exit 0
     # A fake ausearch that, like the real one, rewrites the file it was given
     # as --checkpoint when it finds events, and records what that file held.
     ADVANCE_PROLOGUE = (
-        'cp=; prev=\n'
-        'for x in "$@"; do [ "$prev" = --checkpoint ] && cp=$x; prev=$x; done\n'
+        'cp=; input=; prev=\n'
+        'for x in "$@"; do\n'
+        '    case "$prev" in --checkpoint) cp=$x;; --input) input=$x;; esac\n'
+        '    prev=$x\n'
+        'done\n'
     )
     ADVANCING = ADVANCE_PROLOGUE + (
         '{ [ -e "$cp" ] && cat "$cp" || echo absent; } >> %(seen)s\n'

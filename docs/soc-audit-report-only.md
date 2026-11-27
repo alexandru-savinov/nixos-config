@@ -23,6 +23,14 @@ the coverage incident by removing only
 run observes the acknowledgement. The evidence stamp remains in place.
 The evaluator applies `chattr +a` on filesystems that support it and waits
 for the gap record to be written before classifying replayed events.
+Replay adds one retained log at a time and saves its progress after classifying
+each chunk. A timed-out run resumes from that checkpoint. Only a completed
+evaluation refreshes `audit-clean`.
+
+Vigil starts the watchdog and waits for it before sampling the three stamps.
+This refreshes healthy stamps left over from before boot. The watchdog keeps
+its independent timer and the 30-minute heartbeat limit. Vigil can page on
+the first sample of a confirmed failure.
 
 An increase in the kernel audit `lost` counter within one boot pages
 through the same coverage-gap contract. Acknowledge it by removing

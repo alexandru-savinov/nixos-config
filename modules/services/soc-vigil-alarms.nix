@@ -202,6 +202,9 @@ in
         "audit-rules-nixos.service"
       ];
       serviceConfig = common // {
+        # Leave room for multiple retained-log chunks. Each completed chunk
+        # checkpoints independently so a later timeout can resume the replay.
+        TimeoutStartSec = "8m";
         ExecStart = lib.escapeShellArgs ([
           python
           "${script}"
@@ -227,10 +230,10 @@ in
           "audit-rules-nixos.service"
           "--hold"
           (toString cfg.auditHold)
-          # Two timer periods (one failed run in between is normal and must not
-          # read as lost coverage) + TimeoutStartSec + AccuracySec + slack.
+          # Covers two starts at the slower of the timer cadence or the
+          # timeout, with timer accuracy and slack for one intervening failure.
           "--max-gap"
-          "900"
+          "1200"
           "--disk-warn-bytes"
           (toString (cfg.auditDisk.warnGiB * 1073741824))
           "--disk-fail-bytes"
@@ -254,6 +257,10 @@ in
 
     systemd.services.soc-audit-watchdog = {
       description = "SOC audit evaluator liveness, coverage acknowledgement and retained log age";
+      # Refresh the stamps before the first (and each later) Vigil sample.
+      # The independent timer continues checking when Vigil is stopped.
+      wantedBy = [ "vigil.service" ];
+      before = [ "vigil.service" ];
       serviceConfig = common // {
         ExecStart = "${python} ${script} audit-watchdog";
         CapabilityBoundingSet = "";

@@ -603,6 +603,29 @@ test('the audit watchdog pages while the audit hit contract stays report-only', 
   assert.deepEqual(h.sent.map(e => [e.nume, e.tranzitie]), [['soc-audit-deadman', 'open']]);
 }));
 
+test('watchdog refresh before the first Vigil tick clears stale boot stamps and keeps first-sample paging', async () => harness(async h => {
+  const now = Date.parse('2026-09-20T12:00:00Z');
+  const signals = [['deadman', 'deadman'], ['coverage-gap', 'gap'], ['retention', 'retention']];
+  const stamps = signals.map(([, stamp]) => path.join(h.root, `audit-${stamp}-clean`));
+  const entries = signals.map(([name], i) => withStamp(socContract(`soc-audit-${name}.toml`, stamps[i])));
+  for (const stamp of stamps) {
+    fs.writeFileSync(stamp, '');
+    const beforeBoot = new Date(now - 20 * 60000);
+    fs.utimesSync(stamp, beforeBoot, beforeBoot);
+  }
+  // The unit runs the watchdog before Vigil samples. The 20-minute-old
+  // evaluator heartbeat still passes the watchdog's 30-minute test.
+  for (const stamp of stamps) fs.utimesSync(stamp, new Date(now), new Date(now));
+  await run(entries, h.options);
+  assert.deepEqual(h.lines.map(row => row.verdict), ['verde', 'verde', 'verde']);
+  assert.deepEqual(h.sent, []);
+
+  h.time(11 * 60000);
+  fs.utimesSync(stamps[0], 1, 1); // the watchdog now sees a 31-minute-old heartbeat
+  await run(entries, h.options);
+  assert.deepEqual(h.sent.map(e => [e.nume, e.tranzitie]), [['soc-audit-deadman', 'open']]);
+}));
+
 test('a latched audit coverage gap continues to page independently of later clean runs', async () => harness(async h => {
   const gap = path.join(h.root, 'audit-gap-clean');
   const health = path.join(h.root, 'audit-deadman-clean');

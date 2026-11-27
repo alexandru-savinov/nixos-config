@@ -1377,8 +1377,14 @@ let
           && (svc.serviceConfig.StateDirectoryMode or null) == "0755"
           && (svc.serviceConfig.UMask or null) == "0077";
         names = builtins.fromJSON choir.systemd.services.vigil.environment.VIGIL_PUBLIC_NAMES;
-        # "5min" / "2m" / "20m" -> minutes.
-        mins = str: lib.toInt (builtins.head (builtins.match "([0-9]+) ?(min|m)" str));
+        # "5min" / "2m" / "30s" -> seconds.
+        seconds = str:
+          let parts = builtins.match "([0-9]+) ?(min|m|s)" str;
+          in lib.toInt (builtins.elemAt parts 0) * (if builtins.elemAt parts 1 == "s" then 1 else 60);
+        startBound = timerName: svc:
+          let t = choir.systemd.timers.${timerName}.timerConfig;
+          in lib.max (seconds t.OnUnitActiveSec) (seconds svc.serviceConfig.TimeoutStartSec)
+            + seconds t.AccuracySec;
         units = choir.services.sancta-statusline-refresh.units;
 
         checks = {
@@ -1401,6 +1407,8 @@ let
           coverageAndRetentionPage =
             watchdogContract "soc-audit-coverage-gap" "audit-gap-clean"
             && watchdogContract "soc-audit-retention" "audit-retention-clean";
+          watchdogBeforeVigil = builtins.elem "vigil.service" watchdog.wantedBy
+            && builtins.elem "vigil.service" watchdog.before;
           auditRetention = with choir.security.auditd.settings;
             max_log_file == 64 && num_logs == 8 && max_log_file_action == "ROTATE"
             && space_left == 4096 && space_left_action == "syslog" && admin_space_left_action == "suspend";
@@ -1441,11 +1449,10 @@ let
 
           # A stamp is freshened only by a clean run's ExecStopPost and nothing
           # invalidates it before a run, so a hung or failing writer is bounded by
-          # age alone: timer interval + TimeoutStartSec must stay under each
-          # contract's threshold, or one slow run would flap the stamp.
+          # age alone. Allow for a full run and the longest interval between
+          # two starts, including the timer's accuracy window.
           stampAgeBound = lib.all
-            (u: mins choir.systemd.timers.${u.timer}.timerConfig.OnUnitActiveSec
-              + mins u.svc.serviceConfig.TimeoutStartSec < mins u.contract.prag)
+            (u: startBound u.timer u.svc + seconds u.svc.serviceConfig.TimeoutStartSec < seconds u.contract.prag)
             [
               { timer = "soc-alarm-audit"; svc = aSvc; contract = audit; }
               { timer = "soc-alarm-bans"; svc = bSvc; contract = bans; }
@@ -1453,13 +1460,12 @@ let
             ];
 
           # One failed run between two good ones is normal (picat_dupa = 2 absorbs
-          # it), so the coverage-gap limit must exceed two timer periods plus a
-          # run's timeout, or the run after any failure reads as lost coverage.
+          # it), so the coverage-gap limit must exceed two start intervals,
+          # including when a timeout overruns the scheduled tick.
           maxGapAboveTwoPeriods =
             let m = builtins.match ".*--max-gap ([0-9]+).*" (argv aSvc);
             in m != null
-              && lib.toInt (builtins.head m) * 1 > 60 * (2 * mins choir.systemd.timers.soc-alarm-audit.timerConfig.OnUnitActiveSec
-              + mins aSvc.serviceConfig.TimeoutStartSec);
+              && lib.toInt (builtins.head m) > 2 * startBound "soc-alarm-audit" aSvc;
 
           # Both run every 5 minutes from timers.target, as root oneshots.
           timers = lib.all

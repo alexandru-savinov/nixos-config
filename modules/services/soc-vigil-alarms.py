@@ -408,10 +408,11 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def run_ausearch(ausearch, checkpoint, output, *, recent=False):
+def run_ausearch(ausearch, checkpoint, output, *, recent=False, input_dir=None):
     # Passing a fresh checkpoint with no start filter tells ausearch to start
     # at its oldest retained file and save the last complete event it reads.
-    argv = [ausearch, "--input-logs", "--raw", "--checkpoint", checkpoint]
+    source = ["--input", input_dir] if input_dir else ["--input-logs"]
+    argv = [ausearch, *source, "--raw", "--checkpoint", checkpoint]
     if recent:
         argv += ["--start", "recent"]
     p = subprocess.run(argv, stdout=output, stderr=subprocess.PIPE,
@@ -419,6 +420,9 @@ def run_ausearch(ausearch, checkpoint, output, *, recent=False):
     has_output = output.tell() > 0
     output.seek(0)
     err = p.stderr.strip()
+    if input_dir:
+        note = f"NOTE - using logs in {input_dir}/audit.log"
+        err = "\n".join(line for line in err.splitlines() if line != note)
     if p.returncode == 0 and not err:
         return p.returncode, None
     if p.returncode == 1 and not has_output and err in ("", "<no matches>"):
@@ -466,17 +470,21 @@ def _write_durably(path: str, text: str) -> None:
     _fsync_dir(os.path.dirname(path))
 
 
+def audit_log_paths(directory):
+    files = set(os.listdir(directory))
+    chain = ["audit.log"]
+    while f"audit.log.{len(chain)}" in files:
+        chain.append(f"audit.log.{len(chain)}")
+    return [os.path.abspath(os.path.join(directory, name)) for name in reversed(chain)]
+
+
 def oldest_audit_record(directory):
     # Match ausearch's numbered rotation chain, starting at the oldest
     # contiguous member. A rotation may rename a file between list and open.
     for _ in range(2):
-        files = set(os.listdir(directory))
-        chain = ["audit.log"]
-        while f"audit.log.{len(chain)}" in files:
-            chain.append(f"audit.log.{len(chain)}")
         try:
-            for name in reversed(chain):
-                with open(os.path.join(directory, name), encoding="utf-8", errors="replace") as fh:
+            for path in audit_log_paths(directory):
+                with open(path, encoding="utf-8", errors="replace") as fh:
                     for line in fh:
                         record = _HEADER.match(line.strip())
                         if record:
@@ -484,6 +492,87 @@ def oldest_audit_record(directory):
         except FileNotFoundError:
             continue
     raise RuntimeError(f"no retained audit record readable in {directory}")
+
+
+def audit_file_id(path):
+    info = os.stat(path)
+    return [info.st_dev, info.st_ino]
+
+
+def audit_checkpoint_text(file_id, boundary):
+    dev, inode = file_id
+    return f"dev=0x{dev:X}\ninode={inode}\n{boundary}\n"
+
+
+def replay_checkpoint_anchor(paths, boundary):
+    match = re.fullmatch(r"output=(\S+) ([0-9]+\.[0-9]+:[0-9]+) 0x[0-9a-fA-F]+", boundary)
+    if not match:
+        raise RuntimeError("invalid ausearch replay checkpoint event")
+    node, event = match.groups()
+    if event == "0.000:0":  # ausearch has yet to emit a complete event
+        return 0
+    # Search the raw logs, since ausearch writes the final input file's inode
+    # even when the last complete event started in an earlier file. Keep that
+    # earlier file available so the next chunk can assemble the same event.
+    needle = f" msg=audit({event}):".encode()
+    prefix = (b"" if node == "-" else f"node={node} ".encode()) + b"type="
+    for index, path in enumerate(paths):
+        with open(path, "rb") as fh:
+            for line in fh:
+                offset = line.find(needle)
+                if offset >= 0 and line.startswith(prefix) and b" " not in line[len(prefix):offset]:
+                    return index
+    raise RuntimeError("ausearch replay checkpoint event missing from its input logs")
+
+
+def replay_audit(a, replay_state, staged, classify):
+    paths = audit_log_paths(a.audit_log_dir)
+    file_ids = [audit_file_id(path) for path in paths]
+    cursor = json.loads(_read_text(replay_state))
+    start = end = 0
+    boundary = None
+    if cursor:
+        if cursor["through"] in file_ids and cursor["anchor"] in file_ids:
+            # Rotation renames files. Resume by device and inode, and recheck
+            # the active file if it was the last committed chunk.
+            start = file_ids.index(cursor["anchor"])
+            end = min(file_ids.index(cursor["through"]) + 1, len(paths) - 1)
+            boundary = cursor["boundary"]
+        else:
+            _log("WARN audit replay cursor rotated out; restarting from the oldest retained log")
+
+    for end in range(end, len(paths)):
+        if boundary:
+            _write_durably(staged, audit_checkpoint_text(file_ids[start], boundary))
+        elif os.path.exists(staged):
+            os.unlink(staged)
+        # Each chunk adds one file. Keep the necessary overlap so ausearch
+        # can assemble events whose records straddle a rotation boundary.
+        chunk = paths[start:end + 1]
+        with tempfile.TemporaryDirectory() as input_dir, \
+                tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
+            for index, path in enumerate(reversed(chunk)):
+                name = f"audit.log.{index}" if index else "audit.log"
+                os.symlink(path, os.path.join(input_dir, name))
+            _, problem = run_ausearch(a.ausearch, staged, output, input_dir=input_dir)
+            if problem:
+                raise RuntimeError(problem)
+            result = _read_text(staged)
+            if not result:
+                raise RuntimeError("ausearch replay did not write a checkpoint")
+            boundary = result.splitlines()[-1]
+            next_start = start + replay_checkpoint_anchor(chunk, boundary)
+            if [audit_file_id(path) for path in chunk] != file_ids[start:end + 1]:
+                raise RuntimeError("audit logs rotated during replay chunk")
+            classify(output)
+        start = next_start
+        _write_durably(replay_state, json.dumps({
+            "through": file_ids[end], "anchor": file_ids[start], "boundary": boundary,
+        }))
+
+    if boundary == "output=- 0.000:0 0x0":
+        raise RuntimeError("ausearch replay found no complete event to checkpoint")
+    _write_durably(staged, audit_checkpoint_text(file_ids[start], boundary))
 
 
 def protect_gap_evidence(chattr, path):
@@ -778,6 +867,7 @@ def evaluate_audit(a) -> int:
         except KeyError:
             raise RuntimeError(f"named account {name!r} does not resolve (getpwnam)") from None
     checkpoint = os.path.join(a.state_dir, "audit.checkpoint")
+    replay_state = os.path.join(a.state_dir, "audit.replay")
     last_hit = os.path.join(a.state_dir, "audit.last-hit")
     # A quiet window is only evidence when the trail can record. auditd down,
     # or audit-rules-nixos failed (its ExecStopPost deletes EVERY rule), also
@@ -867,33 +957,41 @@ def evaluate_audit(a) -> int:
                 hit = True
 
     errors = []
-    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
-        status, problem = run_ausearch(a.ausearch, staged, output, recent=first_run)
-        mismatch = status in (10, 11, 12)
-        if mismatch:
-            try:
-                record_coverage_gap(a.state_dir, checkpoint, a.audit_log_dir, status, a.chattr)
-            except (OSError, RuntimeError, ValueError) as e:
-                # The canonical checkpoint is still stale. Do not re-emit
-                # this window on every retry while the evidence is unwritable.
-                raise RuntimeError(f"could not record checkpoint status {status}: {e}") from e
-        try:
-            if mismatch:
-                if os.path.exists(staged):
-                    os.unlink(staged)
+    earlier = set()
+    replaying = os.path.exists(replay_state)
+    problem = None
+    if not replaying:
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
+            status, problem = run_ausearch(a.ausearch, staged, output, recent=first_run)
+            replaying = status in (10, 11, 12)
+            if replaying:
+                try:
+                    record_coverage_gap(a.state_dir, checkpoint, a.audit_log_dir, status, a.chattr)
+                except (OSError, RuntimeError, ValueError) as e:
+                    # Leave the checkpoint and alarms alone until the gap record is durable.
+                    raise RuntimeError(f"could not record checkpoint status {status}: {e}") from e
+                _write_durably(replay_state, "null")
                 _log(f"ausearch checkpoint status {status}; replaying retained logs")
-                earlier = set()
-                classify(output, seen=earlier)
-                with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as replay:
-                    _, problem = run_ausearch(a.ausearch, staged, replay)
-                    classify(replay, prior=earlier)
-                if not problem and not os.path.exists(staged):
-                    problem = "ausearch replay found no complete event to checkpoint"
-            else:
-                classify(output)
-        except Exception:
+            try:
+                classify(output, seen=earlier if replaying else None)
+            except Exception:
+                start_hold()
+                raise
+
+    if replaying:
+        def classify_chunk(output):
+            try:
+                classify(output, prior=earlier)
+            except Exception:
+                start_hold()
+                raise
+            if hit or bad_count:
+                start_hold()
+
+        if hit or bad_count:
             start_hold()
-            raise
+        replay_audit(a, replay_state, staged, classify_chunk)
+        problem = None
     if problem:
         errors.append(problem)
     if hit or bad_count or gap is not None:
@@ -902,6 +1000,9 @@ def evaluate_audit(a) -> int:
     # gap record. The operator's acknowledgement is independent of progress.
     if not errors:
         commit_checkpoint()
+        if replaying:
+            os.unlink(replay_state)
+            _fsync_dir(a.state_dir)
         if os.path.exists(checkpoint) and not os.path.exists(installed):
             _write_durably(installed, f"{now:.0f}\n")
     if gap is not None:
