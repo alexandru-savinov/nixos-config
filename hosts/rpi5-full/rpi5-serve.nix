@@ -38,8 +38,10 @@ in
         ${pkgs.coreutils}/bin/rm -f /var/lib/vigil/nota-sent/${allowlistName}
     '';
     serviceConfig = common.serviceConfig // {
-      ExecStart = script "allowlist";
-      TimeoutStartSec = "30s";
+      # Allow 15s for starting retries and up to 6s per read in the final poll.
+      # Cap the script at 31s, leaving time for systemd and ExecStartPost.
+      ExecStart = "${pkgs.coreutils}/bin/timeout --kill-after=1s 30s ${script "allowlist"}";
+      TimeoutStartSec = "40s";
     };
   };
 
