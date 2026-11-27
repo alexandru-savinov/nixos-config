@@ -24,7 +24,7 @@ SHA=$(sha256sum "$T/content" | cut -d' ' -f1); LEN=$(stat -c %s "$T/content")
 run() { # run <mode>; sets rc, log, err
   : > "$T/log"
   env LOG="$T/log" TS="$T/bin/tailscale" SVC=svc:game DIR="$T/game" SHA="${PSHA:-$SHA}" LEN="${PLEN:-$LEN}" \
-    LOCK="$T/lock" WAIT="${PWAIT:-3}" EXPECT_OWNER="$(id -u)" FAKE_SERVE_FAIL="${FAKE_SERVE_FAIL:-}" \
+    LOCK="$T/lock" WAIT="${PWAIT:-3}" LOCKWAIT="${PLOCKWAIT:-120}" RETRY_SLEEP=0 EXPECT_OWNER="$(id -u)" FAKE_SERVE_FAIL="${FAKE_SERVE_FAIL:-}" \
     FAKE_CLEAR_FAIL="${FAKE_CLEAR_FAIL:-}" FAKE_NOT_RUNNING="${FAKE_NOT_RUNNING:-}" \
     bash "$SCRIPT" "$1" >/dev/null 2>"$T/err"
   rc=$?; log=$(cat "$T/log"); err=$(cat "$T/err")
@@ -34,7 +34,7 @@ SERVE="serve --service=svc:game --https=443 --yes $T/game/$SHA.html"
 CLR="serve clear svc:game"
 
 place; run verify
-[ $rc -eq 0 ] && [ "$log" = "$SERVE" ] && ok || bad "verify valid: rc=$rc log=$log err=$err"
+[ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify valid: no Serve write at all: rc=$rc log=$log err=$err"
 
 run boot
 [ $rc -eq 0 ] && [ "$log" = "$CLR"$'\n'"$SERVE" ] && ok || bad "boot: clear then serve: rc=$rc log=$log"
@@ -61,15 +61,17 @@ chmod -R u+w "$T/game"; rm -f "$T/game/"*; ln -s "$T/content" "$T/game/$SHA.html
 place; chmod 0444 "$T/game/$SHA.html"; run verify
 [ $rc -ne 0 ] && [ "$log" = "$CLR" ] && case "$err" in *"mode 0400"*) true;; *) false;; esac && ok || bad "mode 0444 refused: rc=$rc log=$log err=$err"
 
-place; FAKE_SERVE_FAIL=1 run verify
-[ $rc -ne 0 ] && case "$log" in *"$CLR"*) true;; *) false;; esac && ok || bad "serve failure clears: rc=$rc log=$log"
+place; FAKE_SERVE_FAIL=1 run boot
+[ $rc -ne 0 ] && [ "$(printf '%s\n' "$log" | grep -c -- "--service=svc:game")" = 3 ] && case "$log" in *"$CLR"*) true;; *) false;; esac && ok \
+  || bad "serve failure: 3 attempts, then clear: rc=$rc log=$log"
 
 place; chmod u+w "$T/game/$SHA.html"; printf 'jello game\n' > "$T/game/$SHA.html"; chmod 0400 "$T/game/$SHA.html"; FAKE_CLEAR_FAIL=1 run verify
 [ $rc -ne 0 ] && case "$err" in *"CLEAR FAILED"*) true;; *) false;; esac && case "$err" in *"cleared"*) false;; *) true;; esac && ok \
   || bad "failed clear is reported, not claimed: rc=$rc err=$err"
 
 place; FAKE_NOT_RUNNING=1 PWAIT=2 run boot
-[ $rc -ne 0 ] && [ -z "$log" ] && ok || bad "not Running: no Serve write, fail: rc=$rc log=$log"
+[ $rc -ne 0 ] && case "$log" in *"--service"*) false;; *) true;; esac && case "$log" in *"$CLR"*) true;; *) false;; esac && ok \
+  || bad "not Running: never serves, still tries a clear, fails: rc=$rc log=$log"
 
 place; PSHA=abc run verify
 [ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "short pin: rc=$rc log=$log"
@@ -79,11 +81,13 @@ place; PSHA=$(printf '%s' "$SHA" | tr 'a-f' 'A-F') run verify
 place; run bogus
 [ $rc -eq 2 ] && [ -z "$log" ] && ok || bad "unknown mode: rc=$rc log=$log"
 
-# the lock serialises writers: a held lock makes a run wait, then give up
+# the lock serialises writers: while it is held a run never reaches tailscale, and gives up
 place; exec 8>"$T/lock"; flock 8
-( sleep 2; flock -u 8 ) & run verify; wait
-[ $rc -eq 0 ] && ok || bad "run waits for the lock: rc=$rc err=$err"
+PLOCKWAIT=1 run boot
+[ $rc -ne 0 ] && [ -z "$log" ] && case "$err" in *"lock busy"*) true;; *) false;; esac && ok || bad "held lock blocks: rc=$rc log=$log err=$err"
 exec 8>&-
+place; run boot
+[ $rc -eq 0 ] && ok || bad "released lock: rc=$rc"
 
 for m in verify boot stop; do place; run $m; case "$log" in *reset*) bad "$m called a reset";; *) ok;; esac; done
 echo "svc-game tests: $pass passed, $failn failed"
