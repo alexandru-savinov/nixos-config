@@ -58,9 +58,12 @@ in
       description = "Tailscale Service name.";
     };
     dir = lib.mkOption {
-      type = lib.types.str;
+      # One canonical level under /var/lib (a root-owned parent): no "//", "/./", "/../"
+      # or trailing slash, so the path tailscaled stores equals the one verify compares,
+      # and no user-writable parent can swap the directory.
+      type = lib.types.strMatching "/var/lib/[a-z0-9][a-z0-9-]*";
       default = "/var/lib/svc-game";
-      description = "Root-owned 0700 directory holding <sha256>.html.";
+      description = "Root-owned 0700 directory holding <sha256>.html, directly under /var/lib.";
     };
     sha256 = lib.mkOption {
       type = lib.types.strMatching "[0-9a-f]{64}";
