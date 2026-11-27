@@ -17,7 +17,14 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     system.stateVersion = "25.11";
 
-    security.auditd.enable = true;
+    security.auditd = {
+      enable = true;
+      settings = {
+        max_log_file = 64;
+        num_logs = 8;
+        max_log_file_action = "ROTATE";
+      };
+    };
     security.audit = {
       enable = true;
       rules = [

@@ -105,6 +105,7 @@ import time
 
 WATCHED_KEYS = frozenset({"agenix-secrets", "sudoers"})
 UNSET_AUID = {"4294967295", "-1", "unset"}
+AUDIT_RETENTION_SECONDS = 48 * 60 * 60
 
 # Optional `node=<name> ` prefix: auditd writes it when name_format != none.
 _HEADER = re.compile(r"^(?:node=\S+ )?type=(\S+) msg=audit\(([0-9.]+):([0-9]+)\):\s?(.*)$")
@@ -1054,7 +1055,60 @@ def cmd_audit_stamp(a):
     return 0
 
 
+def audit_retention_config(path):
+    names = ("max_log_file", "num_logs")
+    settings = {}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            key, _, value = line.partition("#")[0].partition("=")
+            key, value = key.strip().lower(), value.strip()
+            if key not in names:
+                continue
+            if key in settings or not re.fullmatch(r"[0-9]+", value) or int(value) == 0:
+                raise ValueError(f"invalid or duplicate {key} in {path}")
+            settings[key] = int(value)
+    if not all(name in settings for name in names):
+        raise ValueError(f"expected max_log_file and num_logs in {path}")
+    return settings["max_log_file"], settings["num_logs"]
+
+
+def audit_retention_deadline(a, now):
+    size, count = audit_retention_config(a.auditd_conf)
+    stamp = os.path.join(a.state_dir, "audit.retention-armed")
+    stored = _read_text(stamp)
+    # Store the first-seen epoch, both cap settings and the grace duration.
+    armed_at, warmup = now, AUDIT_RETENTION_SECONDS
+    if stored is not None:
+        try:
+            epoch, old_size, old_count, warmup = stored.split()
+            armed_at = float(epoch)
+            old_size, old_count, warmup = int(old_size), int(old_count), int(warmup)
+            if (not 0 < armed_at <= now or min(old_size, old_count) < 1
+                    or warmup not in (0, AUDIT_RETENTION_SECONDS)):
+                raise ValueError
+        except ValueError:
+            raise ValueError(f"invalid retention arming stamp {stamp}") from None
+        if (size, count) == (old_size, old_count):
+            return armed_at + warmup
+        cap, old_cap = size * count, old_size * old_count
+        if cap > old_cap:
+            armed_at, warmup = now, AUDIT_RETENTION_SECONDS
+        elif cap < old_cap:
+            # Persist immediate enforcement across subsequent runs at this cap.
+            armed_at, warmup = now, 0
+            _log(f"audit retention: cap decreased from {old_cap} to {cap} MiB; armed immediately")
+    _write_durably(stamp, f"{armed_at} {size} {count} {warmup}\n")
+    return armed_at + warmup
+
+
 def cmd_audit_watchdog(a):
+    # Serialize the arming decision and signal publication for overlapping runs.
+    with open(os.path.join(a.state_dir, "audit-watchdog.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return evaluate_audit_watchdog(a)
+
+
+def evaluate_audit_watchdog(a):
     state = a.state_dir
     # Allow a new installation 30 minutes to produce its first heartbeat,
     # without resetting that grace period if audit-clean later disappears.
@@ -1080,8 +1134,14 @@ def cmd_audit_watchdog(a):
     write_signal(os.path.join(state, "audit-gap-clean"),
                  not any(os.path.lexists(os.path.join(state, name)) for name in coverage_incidents))
     try:
+        deadline = audit_retention_deadline(a, now)
+        warming = now < deadline
+        if warming:
+            until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(deadline))
+            _log(f"audit retention warming until {until}")
         oldest = oldest_audit_record(a.audit_log_dir)
-        retained = now - float(oldest) >= 48 * 60 * 60
+        age = now - float(oldest)
+        retained = warming or age >= AUDIT_RETENTION_SECONDS
         if not retained:
             _log(f"ALARM audit retention: oldest retained record {oldest} is younger than 48 hours")
     except (OSError, RuntimeError, ValueError) as e:
@@ -1198,6 +1258,7 @@ def main(argv: list[str]) -> int:
         parser.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
         if name == "audit-watchdog":
             parser.add_argument("--audit-log-dir", default="/var/log/audit")
+            parser.add_argument("--auditd-conf", default="/etc/audit/auditd.conf")
     a = ap.parse_args(argv)
     try:
         runners = {"audit": cmd_audit, "bans": cmd_bans, "audit-stamp": cmd_audit_stamp,

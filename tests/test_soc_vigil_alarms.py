@@ -692,6 +692,10 @@ class Runners(unittest.TestCase):
         fake_touch(self.fbin)
         self.bootid = os.path.join(self.d, "boot_id")
         self.auditd_state = os.path.join(self.d, "auditd.state")
+        self.auditd_conf = os.path.join(self.d, "auditd.conf")
+        self.retention_signal = os.path.join(self.sd, "audit-retention-clean")
+        self.retention_armed = os.path.join(self.sd, "audit.retention-armed")
+        self.retention_config(64, 8)
         self.chattr_calls = os.path.join(self.d, "chattr.calls")
         self.chattr = fake(self.d, "chattr", f'printf "%s\\n" "$@" >> "{self.chattr_calls}"\n')
         self.set_boot("boot-A")
@@ -1054,7 +1058,21 @@ exit 0
         self.assertEqual(slurp(self.cp), expected)
 
     def watchdog(self):
-        return sva.main(["audit-watchdog", "--state-dir", self.sd, "--audit-log-dir", self.d])
+        return sva.main(["audit-watchdog", "--state-dir", self.sd, "--audit-log-dir", self.d,
+                         "--auditd-conf", self.auditd_conf])
+
+    def retention_config(self, size, count):
+        with open(self.auditd_conf, "w") as fh:
+            fh.write(f"# auditd settings\nmax_log_file = {size}\nnum_logs = {count}\n")
+
+    def arming_state(self):
+        epoch, size, count, warmup = slurp(self.retention_armed).split()
+        return float(epoch), int(size), int(count), int(warmup)
+
+    def watchdog_at(self, now):
+        with mock.patch.object(sva.time, "time", return_value=now), mock.patch.object(sva, "_log") as log:
+            self.assertEqual(self.watchdog(), 0)
+        return "\n".join(call.args[0] for call in log.call_args_list)
 
     def test_status_12_appends_once_pages_and_recovers_without_ack(self):
         self.checkpoint()
@@ -1305,29 +1323,96 @@ echo 'output=- 1762790400.042:42 0x514' > "$cp"
         self.assertEqual(rc, 1)
         self.assertEqual([h["serial"] for h in self.alarm_lines(out)], ["5"])
 
-    def test_watchdog_pages_on_stale_or_missing_success_and_short_retention(self):
+    def test_watchdog_pages_on_stale_or_missing_success(self):
         now = time.time()
         heartbeat = os.path.join(self.sd, "audit-clean")
         deadman = os.path.join(self.sd, "audit-deadman-clean")
-        retention = os.path.join(self.sd, "audit-retention-clean")
-        self.retained_log(f"{now - 47 * 3600:.3f}")
         self.retained_log(f"{now:.3f}", suffix="")
         self.assertEqual(self.watchdog(), 0)
         self.assertGreater(os.stat(deadman).st_mtime, 1)
-        self.assertEqual(os.stat(retention).st_mtime, 1)
         first_check = os.path.join(self.sd, "audit-watchdog.started")
         os.utime(first_check, (now - 1801, now - 1801))
         self.assertEqual(self.watchdog(), 0)
         self.assertEqual(os.stat(deadman).st_mtime, 1)
         with open(heartbeat, "w"):
             pass
-        self.retained_log(f"{now - 49 * 3600:.3f}", suffix=".2")
         self.assertEqual(self.watchdog(), 0)
         self.assertGreater(os.stat(deadman).st_mtime, 1)
-        self.assertGreater(os.stat(retention).st_mtime, 1)
         os.utime(heartbeat, (now - 1801, now - 1801))
         self.assertEqual(self.watchdog(), 0)
         self.assertEqual(os.stat(deadman).st_mtime, 1)
+
+    def test_fresh_retention_stays_green_and_keeps_its_deadline_across_runs(self):
+        armed_at = 1_800_000_000
+        self.retained_log(str(armed_at))
+        warming = "retention warming until 2027-01-17T08:00:00Z"
+        self.assertIn(warming, self.watchdog_at(armed_at))
+        self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+        stamp = slurp(self.retention_armed)
+        self.assertEqual(self.arming_state(), (armed_at, 64, 8, 172800))
+        os.utime(self.retention_armed, (12345, 12345))
+        for hours in (24, 47):
+            with self.subTest(hours=hours):
+                self.assertIn(warming, self.watchdog_at(armed_at + hours * 3600))
+                self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+                self.assertEqual(slurp(self.retention_armed), stamp)
+                self.assertEqual(os.stat(self.retention_armed).st_mtime, 12345)
+
+    def test_armed_retention_pages_on_young_records_and_recovers_at_48_hours(self):
+        armed_at = 1_800_000_000
+        self.retained_log(str(armed_at))
+        self.watchdog_at(armed_at)
+        for hours in (48, 49):
+            with self.subTest(hours=hours):
+                now = armed_at + hours * 3600
+                self.retained_log(str(now - 47 * 3600))
+                out = self.watchdog_at(now)
+                self.assertIn("younger than 48 hours", out)
+                self.assertNotIn("retention warming", out)
+                self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+        self.retained_log(str(now - 48 * 3600), suffix=".2")
+        self.assertNotIn("ALARM audit retention", self.watchdog_at(now))
+        self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+
+    def test_retention_cap_increase_rearms_and_decrease_enforces_immediately(self):
+        armed_at = 1_800_000_000
+        self.retained_log(str(armed_at))
+        self.watchdog_at(armed_at)
+        now = armed_at + 49 * 3600
+        self.retained_log(str(now))
+        self.watchdog_at(now)
+        self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+        self.retention_config(128, 8)
+        self.assertIn("retention warming until", self.watchdog_at(now))
+        self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+        self.assertEqual(self.arming_state(), (now, 128, 8, 172800))
+        self.retention_config(256, 4)
+        self.assertIn("retention warming until", self.watchdog_at(now + 1))
+        self.assertEqual(self.arming_state(), (now, 256, 4, 172800))
+        self.retention_config(128, 4)
+        for offset in (2, 3):
+            out = self.watchdog_at(now + offset)
+            self.assertIn("younger than 48 hours", out)
+            self.assertNotIn("retention warming", out)
+            self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+            self.assertEqual(self.arming_state(), (now + 2, 128, 4, 0))
+
+    def test_unreadable_retention_stays_red_during_warmup(self):
+        out = self.watchdog_at(1_800_000_000)
+        self.assertIn("retention warming until", out)
+        self.assertIn("ALARM audit retention: no retained audit record readable", out)
+        self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+
+    def test_invalid_retention_stamp_stays_red_without_rearming(self):
+        now = 1_800_000_000
+        self.retained_log(str(now))
+        with open(self.retention_armed, "w") as fh:
+            fh.write("corrupt")
+        out = self.watchdog_at(now)
+        self.assertIn("invalid retention arming stamp", out)
+        self.assertNotIn("retention warming", out)
+        self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+        self.assertEqual(slurp(self.retention_armed), "corrupt")
 
     def test_watchdog_refreshes_all_healthy_stamps_left_by_a_previous_boot(self):
         now = time.time()
