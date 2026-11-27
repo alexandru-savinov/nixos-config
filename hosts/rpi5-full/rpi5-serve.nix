@@ -32,10 +32,13 @@ in
       ALLOWED_PORTS = builtins.toJSON allowedPorts;
       ALLOWED_SERVICES = builtins.toJSON allowedServices;
     };
+    # A healthy allowlist check rearms its own alert.
+    postStart = ''
+      exec ${pkgs.util-linux}/bin/setpriv --reuid vigil --regid vigil --clear-groups -- \
+        ${pkgs.coreutils}/bin/rm -f /var/lib/vigil/nota-sent/${allowlistName}
+    '';
     serviceConfig = common.serviceConfig // {
       ExecStart = script "allowlist";
-      # A healthy allowlist check rearms its own alert.
-      ExecStartPost = "${pkgs.util-linux}/bin/setpriv --reuid vigil --regid vigil --clear-groups -- ${pkgs.coreutils}/bin/rm -f /var/lib/vigil/nota-sent/${allowlistName}";
       TimeoutStartSec = "30s";
     };
   };

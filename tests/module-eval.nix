@@ -3000,15 +3000,19 @@ let
     rpi5-serve-alert-identity =
       let
         units = self.nixosConfigurations.rpi5-full.config.systemd.services;
-        reset = units.rpi5-serve-allowlist.serviceConfig.ExecStartPost;
-        inherit (nixpkgs.lib) hasInfix hasSuffix;
+        allowlist = units.rpi5-serve-allowlist;
+        reset = allowlist.serviceConfig.ExecStartPost;
+        inherit (nixpkgs.lib) hasInfix hasPrefix hasSuffix;
       in
-      if units.rpi5-serve-allowlist.onFailure == [ "vigil-failed@rpi5-serve-allowlist.service" ]
+      if allowlist.onFailure == [ "vigil-failed@rpi5-serve-allowlist.service" ]
         && units.vigil.onFailure == [ "vigil-failed.service" ]
         && hasSuffix "/bin/vigil failed %i" units."vigil-failed@".serviceConfig.ExecStart
         && hasSuffix "/bin/vigil failed" units.vigil-failed.serviceConfig.ExecStart
-        && hasInfix "/bin/setpriv --reuid vigil --regid vigil --clear-groups -- " reset
-        && hasSuffix "/bin/rm -f /var/lib/vigil/nota-sent/rpi5-serve-allowlist" reset
+        && builtins.length reset == 1
+        && hasPrefix "/nix/store/" (builtins.head reset)
+        && hasSuffix "/bin/rpi5-serve-allowlist-post-start" (builtins.head reset)
+        && hasInfix "/bin/setpriv --reuid vigil --regid vigil --clear-groups -- " allowlist.postStart
+        && hasSuffix "/bin/rm -f /var/lib/vigil/nota-sent/rpi5-serve-allowlist\n" allowlist.postStart
       then true
       else builtins.throw "FAIL: rpi5 Serve allowlist must use a distinct alert identity from Vigil";
 
