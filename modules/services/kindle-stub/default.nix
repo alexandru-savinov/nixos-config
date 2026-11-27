@@ -47,11 +47,21 @@ let
 
   reader = import ./reader.nix { inherit pkgs; };
 
-  fwRule = "-p tcp -s ${cfg.allowedSubnet} --dport ${toString cfg.port} -j nixos-fw-accept";
+  listenAddress = "${cfg.bindAddress}:${toString cfg.port}";
+  fwRule = "-p tcp -s ${cfg.allowedSubnet} -d ${cfg.bindAddress} --dport ${toString cfg.port} -j nixos-fw-accept";
+  kindleOnly = {
+    IPAddressAllow = [ cfg.allowedSubnet ];
+    IPAddressDeny = "any";
+  };
 in
 {
   options.customModules.kindleStub = {
     enable = lib.mkEnableOption "the Kindle Wi-Fi check stub for the isolated kindle VLAN";
+
+    bindAddress = lib.mkOption {
+      type = lib.types.strMatching "[0-9]{1,3}(\\.[0-9]{1,3}){3}";
+      description = "Local IPv4 address reached by the Kindle. Use its VLAN address when the host has one.";
+    };
 
     allowedSubnet = lib.mkOption {
       type = lib.types.str;
@@ -79,17 +89,31 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
+        assertion = cfg.bindAddress != "0.0.0.0";
+        message = "customModules.kindleStub.bindAddress must name a single local address.";
+      }
+      {
         assertion = !config.networking.nftables.enable;
         message = "customModules.kindleStub opens its port with iptables extraCommands, which the nftables firewall backend ignores.";
       }
     ];
 
+    systemd.sockets.kindle-stub = {
+      description = "Kindle Wi-Fi check stub listener on ${listenAddress}";
+      wantedBy = [ "sockets.target" ];
+      # PID 1 binds even port 80 and passes the socket to unprivileged Node.
+      # Filter here as well as on the service: inherited sockets use this unit's filter.
+      socketConfig = kindleOnly // {
+        ListenStream = listenAddress;
+        FreeBind = true; # The LAN address may arrive by DHCP after sockets.target.
+      };
+    };
+
     systemd.services.kindle-stub = {
       description = "Kindle Wi-Fi check stub for the kindle VLAN";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      partOf = [ "kindle-stub.socket" ];
       environment = {
-        PORT = toString cfg.port;
         # systemd creates it; with DynamicUser it lives at /var/lib/private/kindle-reader.
         STATE_DIR = "/var/lib/kindle-reader";
         READER_DIR = "${reader}";
@@ -97,16 +121,16 @@ in
         SUBNET_PREFIX = subnetPrefix;
         IMG_DIR = cfg.imagesDir;
       };
-      serviceConfig = {
+      serviceConfig = kindleOnly // {
         ExecStart = "${lib.getExe pkgs.nodejs} ${./server.js}";
+        Sockets = "kindle-stub.socket";
         StateDirectory = "kindle-reader";
         StateDirectoryMode = "0700";
         Restart = "always";
         RestartSec = 5;
 
         DynamicUser = true;
-        AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
-        CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+        CapabilityBoundingSet = "";
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
@@ -124,11 +148,6 @@ in
         RestrictSUIDSGID = true;
         LockPersonality = true;
         SystemCallArchitectures = "native";
-
-        # Second boundary, independent of the iptables rule below and of tailscale0 being a
-        # trusted interface: the service's own sockets may only talk to the kindle subnet.
-        IPAddressAllow = [ cfg.allowedSubnet ];
-        IPAddressDeny = "any";
       };
     };
 

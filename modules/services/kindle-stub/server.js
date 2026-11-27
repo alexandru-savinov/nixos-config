@@ -1,8 +1,8 @@
 // Kindle stub + reader for the isolated «kindle» VLAN. Node-side only: the
 // browser JS lives in page.tpl.html and must stay ES5 (Kindle WebKit 534).
 //
-// Environment (set by the NixOS module; overridable for off-port tests):
-//   PORT           listen port
+// systemd passes the listening socket as fd 3 (LISTEN_PID and LISTEN_FDS).
+// Environment set by the NixOS module:
 //   STATE_DIR      where the server copy of the reading position lives
 //   READER_DIR     generated shelf (shelf.html, b-<slug>.html, books.json, book/*.html)
 //   WIFISTUB       file with the UUID body the Kindle Wi-Fi check expects
@@ -13,7 +13,10 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const PORT = parseInt(process.env.PORT || "80", 10);
+if (process.env.LISTEN_PID !== String(process.pid) || process.env.LISTEN_FDS !== "1") {
+  console.error("kindle-stub requires one systemd listening socket");
+  process.exit(1);
+}
 const STATE_DIR = process.env.STATE_DIR;
 const READER_DIR = process.env.READER_DIR;
 const PREFIX = process.env.SUBNET_PREFIX || "192.168.30.";
@@ -102,7 +105,7 @@ function send(r, code, body, type) {
   r.end(b);
 }
 
-http.createServer(function (q, r) {
+const server = http.createServer(function (q, r) {
   const url = q.url || "";
   const qi = url.indexOf("?");
   const p = qi < 0 ? url : url.slice(0, qi);
@@ -156,7 +159,8 @@ http.createServer(function (q, r) {
     r.end();
   }
   console.log(ip + " " + q.method + " " + url.slice(0, 200) + " " + r.statusCode);
-// Not 127.0.0.1: the Kindle reaches this host over the LAN. The nixos-fw rule is the gate.
-}).listen(PORT, "0.0.0.0", function () {
-  console.log("kindle-stub listening on :" + PORT);
+});
+server.listen({ fd: 3 }, function () {
+  const { address, port } = server.address();
+  console.log("kindle-stub listening on " + address + ":" + port);
 });

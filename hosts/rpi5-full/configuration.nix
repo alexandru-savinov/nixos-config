@@ -72,6 +72,7 @@ in
     ../../modules/services/codex.nix
     ../../modules/services/kindle-stub
     ../../modules/services/vigil.nix
+    ./rpi5-serve.nix
     ../sancta-choir/studio-n8n-gate.nix # shared fact: is choir's studio n8n on (sq085)
 
     # Open-WebUI and Qdrant disabled — too heavy for RPi5 right now
@@ -127,7 +128,11 @@ in
   customModules.codex.enable = true;
 
   # Answers the Kindle's Wi-Fi check for the isolated «kindle» VLAN (192.168.30.0/24).
-  customModules.kindleStub.enable = true;
+  # UniFi routes that subnet to the Pi's LAN address. The Pi has no VLAN address.
+  customModules.kindleStub = {
+    enable = true;
+    bindAddress = "192.168.1.37";
+  };
 
   # Package overrides for memory-constrained ARM builds
   nixpkgs.overlays = [

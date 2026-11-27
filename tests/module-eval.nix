@@ -2985,6 +2985,41 @@ let
       then true
       else builtins.throw "FAIL: svc-game units not as reviewed";
 
+    rpi5-serve-and-kindle =
+      let
+        cfg = self.nixosConfigurations.rpi5-full.config;
+        inherit (cfg.systemd) services sockets timers;
+        tidy = services.rpi5-serve-tidy;
+        allowlist = services.rpi5-serve-allowlist;
+        kindle = services.kindle-stub.serviceConfig;
+        listener = sockets.kindle-stub.socketConfig;
+        firewallRule = "-p tcp -s 192.168.30.0/24 -d 192.168.1.37 --dport 80 -j nixos-fw-accept";
+        inherit (nixpkgs.lib) hasInfix hasSuffix;
+      in
+      if tidy.serviceConfig.Type == "oneshot" && tidy.serviceConfig.RemainAfterExit
+        && builtins.elem "multi-user.target" tidy.wantedBy
+        && builtins.elem "tailscaled.service" tidy.after
+        && hasSuffix " tidy" tidy.serviceConfig.ExecStart
+        && allowlist.serviceConfig.Type == "oneshot" && allowlist.wantedBy == [ ]
+        && hasSuffix " allowlist" allowlist.serviceConfig.ExecStart
+        && allowlist.environment.ALLOWED_PORTS == "[3001,5678,8123]"
+        && allowlist.environment.ALLOWED_SERVICES == "[]"
+        && allowlist.onFailure == [ "vigil-failed.service" ] && services ? vigil-failed
+        && builtins.elem "rpi5-serve-tidy.service" allowlist.after
+        && builtins.elem "timers.target" timers.rpi5-serve-allowlist.wantedBy
+        && timers.rpi5-serve-allowlist.timerConfig.OnUnitActiveSec == "15min"
+        && kindle.DynamicUser && kindle.NoNewPrivileges && kindle.ProtectHome && kindle.PrivateTmp
+        && kindle.ProtectSystem == "strict" && kindle.CapabilityBoundingSet == ""
+        && !(kindle ? AmbientCapabilities)
+        && kindle.Sockets == "kindle-stub.socket"
+        && listener.ListenStream == "192.168.1.37:80"
+        && listener.IPAddressAllow == [ "192.168.30.0/24" ] && listener.IPAddressDeny == "any"
+        && kindle.IPAddressAllow == listener.IPAddressAllow && kindle.IPAddressDeny == listener.IPAddressDeny
+        && hasInfix "iptables -I nixos-fw ${firewallRule}" cfg.networking.firewall.extraCommands
+        && hasInfix "iptables -D nixos-fw ${firewallRule}" cfg.networking.firewall.extraStopCommands
+      then true
+      else builtins.throw "FAIL: rpi5 Serve cleanup, allowlist, or Kindle listener wiring";
+
     # The stage-4 dead-man is installed, its wrapper sets every tool as an
     # absolute store path, and the config never schedules it (no unit or timer
     # by name, and no service runs it); it is armed by hand as a transient timer.
