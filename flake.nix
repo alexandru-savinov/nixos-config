@@ -6,7 +6,7 @@
     # nixos-25.05 has n8n 1.91.3 (vulnerable); nixos-25.11 has n8n 1.123.23 (patched)
     # Also resolves Home Manager version mismatch (#264): nixos-raspberrypi
     # already uses nixpkgs 25.11, so this aligns all hosts.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.11";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     # Codex CLI only (customModules.codex). Tracks the nixpkgs-unstable
     # branch, which gets new codex releases days before nixos-unstable, so
