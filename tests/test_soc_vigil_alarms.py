@@ -1013,60 +1013,187 @@ class Runners(unittest.TestCase):
             fh.write(text)
         return f"cat {fixture}\n"
 
-    def test_checkpoint_mismatch_is_an_error_not_a_silent_retry(self):
-        # Was: a silent retry from the checkpoint's timestamp, exit 0.
-        open(self.cp, "w").close()
-        a = self.ausearch('case "$*" in *"--start checkpoint"*) exit 1;; esac\nexit 12\n')
-        self.assertEqual(self.audit(a), 2)
-        args = slurp(self.log).splitlines()
-        self.assertEqual(len(args), 2)
-        self.assertNotIn("--start recent", args[0])
-        self.assertIn("--start checkpoint", args[1])
-        self.assertTrue(os.path.exists(os.path.join(self.sd, "audit.checkpoint-mismatch")))
+    def checkpoint(self, timestamp="100.123"):
+        with open(self.cp, "w") as fh:
+            fh.write(f"dev=0x1\ninode=123\noutput=- {timestamp}:99 0x514\n")
 
-    def test_checkpoint_mismatch_keeps_the_hits_of_the_retry_as_alarms(self):
-        for status in (10, 11, 12):
-            for f in os.listdir(self.sd):
-                os.unlink(os.path.join(self.sd, f))
-            open(self.cp, "w").close()
-            body = self.fixture_cmd(login_reads_agenix() + "\n")
-            a = self.ausearch(f'case "$*" in *"--start checkpoint"*) {body};; esac\nexit {status}\n')
-            rc, out = self.run_logged(a)
-            self.assertEqual(rc, 2, status)
-            self.assertIn("ALARM audit", out)
-            self.assertTrue(os.path.exists(self.last), "a retry hit starts the hold")
+    def retained_log(self, timestamp="200.456", suffix=".1"):
+        with open(os.path.join(self.d, "audit.log" + suffix), "w") as fh:
+            fh.write(f"type=DAEMON_START msg=audit({timestamp}:1): auditd started\n")
 
-    def test_checkpoint_mismatch_stays_an_error_until_reconciled(self):
-        open(self.cp, "w").close()
-        bad = self.ausearch('case "$*" in *"--start checkpoint"*) exit 1;; esac\nexit 12\n')
-        self.assertEqual(self.audit(bad), 2)
-        # Next runs are quiet and well-formed, but nothing reconciled it.
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
-        os.unlink(os.path.join(self.sd, "audit.checkpoint-mismatch"))
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 1)  # hold from the mismatch run
-        with open(self.last, "w") as fh:
-            fh.write(f"{time.time() - 901:.0f}\n")
+    def recovery(self, status=12, first="", replay="", *, advances=True):
+        advance = 'echo re-anchored > "$cp"\n' if advances else ""
+        return self.ausearch(self.ADVANCE_PROLOGUE + f"""
+if [ -e "$cp" ]; then
+    {first or ':'}
+    exit {status}
+fi
+test "$#" = 4 || exit 99
+{advance}
+{replay or ':'}
+exit 0
+""")
+
+    def watchdog(self):
+        return sva.main(["audit-watchdog", "--state-dir", self.sd, "--audit-log-dir", self.d])
+
+    def test_status_12_appends_once_pages_and_recovers_without_ack(self):
+        self.checkpoint()
+        self.retained_log()
+        marker = os.path.join(self.sd, "audit.checkpoint-mismatch")
+        stamp = os.path.join(self.sd, "audit.coverage-gap")
+        history = "existing F15 evidence\n"
+        with open(stamp, "w") as fh:
+            fh.write(history)
+        original_inode = os.stat(stamp).st_ino
+        rc, out = self.run_logged(self.recovery())
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(slurp(self.cp), "re-anchored\n")
+        entry = "from=100.123 to=200.456 cause=12\n"
+        self.assertEqual(slurp(stamp), history + entry)
+        self.assertEqual(os.stat(stamp).st_ino, original_inode)
+        self.assertTrue(os.path.isfile(marker))
+        self.assertEqual(self.watchdog(), 0)
+        gap_signal = os.path.join(self.sd, "audit-gap-clean")
+        self.assertEqual(os.stat(gap_signal).st_mtime, 1)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(gap_signal).st_mtime, 1)
+        self.assertEqual(slurp(stamp), history + entry)
+        os.unlink(marker)  # operator acknowledgement
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(gap_signal).st_mtime, 1)
+        self.assertEqual(slurp(stamp), history + entry)
+
+    def test_gap_retry_after_append_does_not_repeat_the_record_after_rotation(self):
+        self.checkpoint()
+        self.retained_log()
+        stamp = os.path.join(self.sd, "audit.coverage-gap")
+        self.assertEqual(self.audit(self.recovery(advances=False)), 2)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n")
+        self.retained_log("300.789")
+        self.assertEqual(self.audit(self.recovery()), 0)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n")
+        self.checkpoint("250.123")
+        self.assertEqual(self.audit(self.recovery()), 0)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n"
+                                      "from=250.123 to=300.789 cause=12\n")
+
+    def test_short_gap_append_is_completed_without_overwriting_history(self):
+        self.checkpoint()
+        self.retained_log()
+        stamp = os.path.join(self.sd, "audit.coverage-gap")
+        append = os.write
+
+        def short_write(fd, data):
+            return append(fd, data[:7])
+
+        with mock.patch.object(sva.os, "write", side_effect=short_write):
+            self.assertEqual(self.audit(self.recovery()), 2)
+        self.assertEqual(slurp(stamp), "from=10")
+        self.assertEqual(self.audit(self.recovery()), 0)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n")
+
+    def test_replay_batch_boundary_preserves_complete_audit_events(self):
+        self.checkpoint()
+        self.retained_log()
+        ordinary = "".join(
+            f"type=DAEMON_START msg=audit(200.456:{i}): auditd started\n"
+            for i in range(4095)
+        )
+        body = self.fixture_cmd(ordinary + login_reads_agenix() + "\n")
+        rc, out = self.run_logged(self.recovery(replay=body))
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(len(self.alarm_lines(out)), 1)
+
+    def test_coverage_stamp_io_is_append_only(self):
+        import subprocess
+        with open(SCRIPT) as fh:
+            source = fh.read()
+        # The path has a single reference and its writer only opens in append mode.
+        refs = subprocess.run(["grep", "-nF", '"audit.coverage-gap"', SCRIPT],
+                              check=True, text=True, capture_output=True).stdout.splitlines()
+        self.assertEqual(len(refs), 1)
+        self.assertIn('stamp = os.path.join(state, "audit.coverage-gap")', refs[0])
+        writer = source.split("def record_coverage_gap(", 1)[1].split("\ndef ", 1)[0]
+        grep = subprocess.run(["grep", "-En", r"unlink|truncate|remove|rename|O_TRUNC|replace\(|open\(stamp.*[\"']w"],
+                              input=writer, text=True, capture_output=True)
+        self.assertEqual(grep.returncode, 1, grep.stdout)
+        self.assertIn("os.O_APPEND", writer)
+
+    def test_checkpoint_status_10_and_11_replay_and_classify_hits(self):
+        self.retained_log()
+        for status in (10, 11):
+            with self.subTest(status=status):
+                if status == 10:
+                    with open(self.cp, "w") as fh:
+                        fh.write("corrupt\n")
+                else:
+                    self.checkpoint()
+                body = self.fixture_cmd(login_reads_agenix() + "\n")
+                rc, out = self.run_logged(self.recovery(status, replay=body))
+                self.assertEqual(rc, 1, out)
+                self.assertEqual(len(self.alarm_lines(out)), 1)
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.coverage-gap")),
+                         "from=unknown to=200.456 cause=10\nfrom=100.123 to=200.456 cause=11\n")
 
     def test_mismatch_keeps_the_first_attempts_records_next_to_the_retrys(self):
-        open(self.cp, "w").close()
+        self.checkpoint()
+        self.retained_log()
         first = self.fixture_cmd(login_reads_agenix(1) + "\n")
         second = os.path.join(self.d, "second")
-        with open(second, "w") as fh:  # the retry repeats serial 1 and adds 2
+        with open(second, "w") as fh:
             fh.write(login_reads_agenix(1) + "\n----\n" + login_reads_agenix(2) + "\n")
-        a = self.ausearch(f'case "$*" in *"--start checkpoint"*) cat {second};; *) {first};; esac\nexit 11\n')
-        rc, out = self.run_logged(a)
-        self.assertEqual(rc, 2)
+        rc, out = self.run_logged(self.recovery(11, first=first, replay=f"cat {second}"))
+        self.assertEqual(rc, 1)
         self.assertEqual(sorted(h["serial"] for h in self.alarm_lines(out)), ["1", "2"])
 
     def test_mismatch_with_a_quiet_retry_still_alarms_on_the_first_attempt(self):
-        open(self.cp, "w").close()
+        self.checkpoint()
+        self.retained_log()
         first = self.fixture_cmd(login_reads_agenix(5) + "\n")
-        a = self.ausearch(f'case "$*" in *"--start checkpoint"*) exit 1;; *) {first};; esac\nexit 11\n')
-        rc, out = self.run_logged(a)
-        self.assertEqual(rc, 2)
+        rc, out = self.run_logged(self.recovery(11, first=first))
+        self.assertEqual(rc, 1)
         self.assertEqual([h["serial"] for h in self.alarm_lines(out)], ["5"])
+
+    def test_watchdog_pages_on_stale_or_missing_success_and_short_retention(self):
+        now = time.time()
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        retention = os.path.join(self.sd, "audit-retention-clean")
+        self.retained_log(f"{now - 47 * 3600:.3f}")
+        self.retained_log(f"{now:.3f}", suffix="")
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(deadman).st_mtime, 1)
+        self.assertEqual(os.stat(retention).st_mtime, 1)
+        first_check = os.path.join(self.sd, "audit-watchdog.started")
+        os.utime(first_check, (now - 1801, now - 1801))
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(deadman).st_mtime, 1)
+        with open(heartbeat, "w"):
+            pass
+        self.retained_log(f"{now - 49 * 3600:.3f}", suffix=".2")
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(deadman).st_mtime, 1)
+        self.assertGreater(os.stat(retention).st_mtime, 1)
+        os.utime(heartbeat, (now - 1801, now - 1801))
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(deadman).st_mtime, 1)
+
+    def test_audit_stamp_health_advances_on_hit_and_ages_on_evaluator_error(self):
+        from unittest.mock import patch
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        hits = os.path.join(self.sd, "audit-hits-clean")
+        for code, status in (("exited", "1"), ("exited", "2"), ("killed", "9")):
+            with patch.dict(os.environ, {"EXIT_CODE": code, "EXIT_STATUS": status,
+                                         "SANCTA_DOCTRINE_STAMP": hits}):
+                self.assertEqual(sva.main(["audit-stamp", "--state-dir", self.sd]), 0)
+            self.assertEqual(os.stat(hits).st_mtime, 1)
+            if status == "1":
+                self.assertGreater(os.stat(heartbeat).st_mtime, 1)
+                os.utime(heartbeat, (2345, 2345))
+            else:
+                self.assertEqual(os.stat(heartbeat).st_mtime, 2345)
 
     # ── evaluation boundary and coverage gap ──
     def last_eval(self):
@@ -1185,9 +1312,11 @@ class Runners(unittest.TestCase):
     # ── the checkpoint moves only after the outcome is on disk ──
     # A fake ausearch that, like the real one, rewrites the file it was given
     # as --checkpoint when it finds events, and records what that file held.
-    ADVANCING = (
+    ADVANCE_PROLOGUE = (
         'cp=; prev=\n'
         'for x in "$@"; do [ "$prev" = --checkpoint ] && cp=$x; prev=$x; done\n'
+    )
+    ADVANCING = ADVANCE_PROLOGUE + (
         '{ [ -e "$cp" ] && cat "$cp" || echo absent; } >> %(seen)s\n'
         'echo new > "$cp"\n'
         'cat %(fixture)s\n'

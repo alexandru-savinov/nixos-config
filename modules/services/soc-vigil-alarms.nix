@@ -7,59 +7,12 @@
 # the audit log is root-only, cscli/fail2ban-client need the engines'
 # credentials, and vigil on sancta-choir executes no commands (cmdAllow = []).
 #
-# So this is the doctrine-guard pattern: a root oneshot on a 5-minute timer
-# evaluates one rule (soc-vigil-alarms.py, where THE RULES are written out
-# exactly and unit-tested from fixtures in tests/test_soc_vigil_alarms.py)
-# and a stamp script run as ExecStopPost turns the exit status into file
-# mtimes: now when clean, epoch+1s otherwise. vigil reads them with its file
-# `age` check — a stat, nothing more. The evaluators never write a stamp; the
-# freshening touch is the last action of a clean run, and an unclean one
-# (including a timeout, SIGKILL or OOM) is invalidated by the same hook.
-#
-#   soc-alarm-audit  -> auditStampPath      -> vigil-contracts/soc-audit.toml
-#                       (sancta-doctrine-guard-stamp.sh, reused: any non-clean
-#                       exit, a hit or an error, turns it red)
-#   soc-alarm-bans   -> bansStampPath       -> vigil-contracts/soc-bans.toml
-#                    -> bansHealthStampPath -> vigil-contracts/soc-bans-health.toml
-#                       (soc-bans-stamp.sh, two stamps: a ban, exit 1, reds the
-#                       paging bans stamp; an evaluator error, exit 2, reds only
-#                       the health stamp; both together, exit 3, red both)
-#
-# Paging is per contract (`page` in the TOML, mirrored by the paging.* options
-# and pinned by tests/module-eval.nix). In the initial report-only rollout the
-# audit and bans-health contracts are recorded and shown on the dashboard but
-# not sent; bans hits are sent.
-#
-# NOISE IS THE DESIGN CONSTRAINT. Two choices carry it, both in the script:
-#
-#   * Audit fires only for a LOGIN auid. Services reading their agenix
-#     secrets at start (auid unset) and nixos-rebuild's activation (run via
-#     systemd-run, auid unset) stay silent by construction. A login-attributed
-#     sudoers write is always a hit; whether /etc/sudoers matches the current
-#     system's copy is logged on the ALARM line as context only.
-#
-#   * Audit is "since the last run" (ausearch --checkpoint): one event raises
-#     the stamp red for `auditHold`, then it clears BY ITSELF. Not "red until
-#     acknowledged": an ack path would be a new write surface into a root
-#     unit's state, and vigil already keeps the incident it opened (it closes
-#     only after 30 min of green), so the human has the event either way. The
-#     hold exists because vigil ticks every 5 min and opens after
-#     picat_dupa = 2 red ticks; a red stamp lasting a single 5-minute window
-#     could fall between ticks and alarm nobody.
-#
-#   * Bans are STATE, not events: the stamp is red for as long as a home
-#     address is banned/decided and clears when the ban expires or is lifted.
-#
-# Fail-closed: an engine that cannot be read (ausearch/cscli/fail2ban error)
-# exits 2 and the audit stamp (or, for bans, the health stamp) goes red.
-# picat_dupa = 2 absorbs one bad run (e.g. crowdsec restarting under a
-# deploy); a detector that stays blind for two vigil ticks is reported, never
-# trusted. A stamp that could not be written at all ages out: timer interval
-# plus TimeoutStartSec stay under the contracts' 20 minute threshold
-# (tests/module-eval.nix).
-#
-# Zero other notifications: no OnFailure= here. The only paths out are the
-# vigil contracts and the status bar's unit list (configuration.nix).
+# Root oneshots classify on five-minute timers. Vigil reads their outcomes
+# through age contracts, without access to the audit log or engine credentials.
+# Audit hits hold the hit stamp red for auditHold. An independent watchdog
+# pages on stale evaluator success, short audit retention, and any coverage
+# gap whose marker still awaits operator acknowledgement.
+# Ban hits and evaluator health have separate paging stamps.
 { config, lib, pkgs, ... }:
 
 let
@@ -67,7 +20,6 @@ let
   cfg = config.services.soc-vigil-alarms;
   stateDir = "soc-vigil-alarms";
   script = ./soc-vigil-alarms.py;
-  stampScript = ./sancta-doctrine-guard-stamp.sh;
   bansStampScript = ./soc-bans-stamp.sh;
   python = "${pkgs.python3}/bin/python3";
 
@@ -90,7 +42,6 @@ let
 
   common = {
     Type = "oneshot";
-    ExecStopPost = "${pkgs.bash}/bin/bash ${stampScript}";
     StateDirectory = stateDir;
     # 0755 so the unprivileged vigil user can stat the stamps; UMask keeps
     # every FILE (checkpoint, last-hit, stamps) 0600 — stat needs no read bit.
@@ -136,21 +87,11 @@ in
         type = types.bool;
         default = false;
         description = ''
-          Whether a red soc-audit contract (rule hits and evaluator errors)
-          is sent to Telegram. Initial report-only rollout: off, so those
+          Whether a soc-audit rule hit is sent to Telegram. Off, so hits
           land in the journal and on the dashboard only. The switch itself is
           `page` in hosts/sancta-choir/vigil-contracts/soc-audit.toml (vigil
           contracts are static files); tests/module-eval.nix fails if the two
           disagree.
-        '';
-      };
-      bansHealth = mkOption {
-        type = types.bool;
-        default = false;
-        description = ''
-          Whether a red soc-bans-health contract (the bans evaluator could not
-          evaluate) is sent to Telegram. Initial report-only rollout: off.
-          Mirrors `page` in vigil-contracts/soc-bans-health.toml.
         '';
       };
       bans = mkOption {
@@ -210,7 +151,7 @@ in
     auditStampPath = mkOption {
       type = types.str;
       readOnly = true;
-      default = "/var/lib/${stateDir}/audit-clean";
+      default = "/var/lib/${stateDir}/audit-hits-clean";
       description = "Audit alarm outcome as one mtime; read by vigil-contracts/soc-audit.toml (module-eval pins the equality).";
     };
 
@@ -298,15 +239,22 @@ in
         ++ lib.concatMap (n: [ "--named-account" n ]) cfg.namedAccounts);
         # The checkpoint and last-hit files live in $STATE_DIRECTORY (set by
         # StateDirectory=), so no off-store path appears in ExecStart.
-        Environment = [
-          "SANCTA_DOCTRINE_STAMP=${cfg.auditStampPath}"
-        ];
-        # Reads /var/log/audit (root-owned, so owner bits suffice). The one
-        # capability is CAP_AUDIT_CONTROL: auditctl -s / -l query the kernel
-        # audit state over a netlink socket, hence AF_NETLINK.
-        CapabilityBoundingSet = [ "CAP_AUDIT_CONTROL" ];
+        ExecStopPost = "${python} ${script} audit-stamp";
+        Environment = [ "SANCTA_DOCTRINE_STAMP=${cfg.auditStampPath}" ];
+        # AUDIT_CONTROL queries auditctl over netlink. DAC_OVERRIDE lets us
+        # append to the existing root-owned 0400, +a F15 evidence file.
+        CapabilityBoundingSet = [ "CAP_AUDIT_CONTROL" "CAP_DAC_OVERRIDE" ];
         PrivateNetwork = true;
         RestrictAddressFamilies = [ "AF_UNIX" "AF_NETLINK" ];
+      };
+    };
+
+    systemd.services.soc-audit-watchdog = {
+      description = "SOC audit evaluator liveness, coverage acknowledgement and retained log age";
+      serviceConfig = common // {
+        ExecStart = "${python} ${script} audit-watchdog";
+        CapabilityBoundingSet = "";
+        PrivateNetwork = true;
       };
     };
 
@@ -315,7 +263,7 @@ in
       after = [ "crowdsec.service" "fail2ban.service" ];
       serviceConfig = common // {
         # Two stamps: a ban turns soc-bans red (pages); an evaluator error
-        # turns soc-bans-health red (journal and dashboard only).
+        # turns the separate soc-bans-health paging contract red.
         ExecStopPost = "${pkgs.bash}/bin/bash ${bansStampScript}";
         ExecStart = lib.escapeShellArgs [
           python
@@ -354,6 +302,7 @@ in
       };
     };
 
+    systemd.timers.soc-audit-watchdog = timer "Check liveness and retention independently of the audit evaluator";
     systemd.timers.soc-alarm-audit = timer "SOC alarm: audit trail, every 5 minutes";
     systemd.timers.soc-alarm-bans = timer "SOC alarm: home-address bans, every 5 minutes";
   };

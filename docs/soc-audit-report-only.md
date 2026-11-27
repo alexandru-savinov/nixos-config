@@ -1,0 +1,23 @@
+# Choir report-only Vigil contracts
+
+Inventory and read-only systemd status as of 2026-11-27 at approximately
+17:33 EET. The two deployed evaluators had both run successfully. Systemd
+reported each completed oneshot as inactive with main exit status 0.
+
+| Contract | Deployed target | Evaluator | Last observed successful run (EET) | Paging after hardening |
+| --- | --- | --- | --- | --- |
+| `soc-audit` | `/var/lib/soc-vigil-alarms/audit-clean` | `soc-alarm-audit.service` | 2026-11-27 17:29:42 | Hits remain report-only on `audit-hits-clean`. The independent `soc-audit-watchdog.timer` pages through `soc-audit-deadman` when `audit-clean` is older than 30 minutes. A successful evaluation refreshes that heartbeat even when it reports a hit. |
+| `soc-bans-health` | `/var/lib/soc-vigil-alarms/bans-health-clean` | `soc-alarm-bans.service` | 2026-11-27 17:29:14 | The existing health contract pages. |
+
+After hardening, `soc-audit` is the only Choir contract with `page = false`.
+The module evaluation checks the configured directories and requires a
+paging health path for each report-only contract it finds.
+
+A checkpoint recovery records `from` and `to` as audit epoch timestamps
+and `cause` as the ausearch exit status in
+`/var/lib/soc-vigil-alarms/audit.coverage-gap`. Status 10 can leave the
+checkpoint timestamp unreadable, recorded as `from=unknown`. After
+reviewing the retained evidence and gap record, an operator acknowledges
+the coverage incident by removing only
+`/var/lib/soc-vigil-alarms/audit.checkpoint-mismatch`. The next watchdog
+run observes the acknowledgement. The evidence stamp remains in place.

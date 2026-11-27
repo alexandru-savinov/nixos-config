@@ -1,0 +1,12 @@
+[contract]
+nume = "soc-audit-retention"
+ce = "Security: oldest retained audit record is younger than 48 hours or unreadable"
+driver = "operational"
+verifica = "age"
+tinta = "/var/lib/soc-vigil-alarms/audit-retention-clean"
+picat_dupa = 1
+prag = "15m"
+page = true
+
+[spune]
+nivel = "incident"

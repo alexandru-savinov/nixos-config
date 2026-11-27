@@ -1,17 +1,14 @@
 """soc-vigil-alarms — the two SOC alarms vigil cannot compute itself.
 
-The SOC plan allows vigil exactly three alarms: a CrowdSec ban on a home
-address, an auditd hit on /run/agenix or /etc/sudoers, and disk over
-threshold. Disk is a plain vigil `disk` contract. The other two need root (the
-audit log is 0700 root; cscli and fail2ban-client need the engines'
-credentials), and vigil on sancta-choir runs no commands (cmdAllow = []). So
-each alarm is evaluated here, by a root oneshot, and reported to vigil through
-ONE file mtime that the shared stamp script writes (see
-sancta-doctrine-guard-stamp.sh): exit 0 -> mtime now, anything else -> epoch+1s.
+Root oneshots classify audit records and ban decisions. Vigil reads age
+signals for hits, evaluator health, audit coverage gaps and log retention
+without reading the audit trail or engine credentials.
 
-Exit codes: 0 clean, 1 ALARM, 2 the evaluator could not evaluate. 1 and 2 both
-turn the stamp red: a detector that cannot see is reported, not trusted
-(fail-closed; the reason is in the journal, never in the stamp).
+Audit exit codes: 0 clean, 1 a hit is on hold, 2 evaluator error. Both
+successful outcomes refresh audit-clean. The independent watchdog pages
+when that heartbeat is more than 30 minutes old, including during an
+evaluator error or a stopped timer.
+Bans use exit 3 for a hit and a source error in the same run.
 
 The classification functions (`audit_hits`, `home_bans`) are pure — text in,
 verdicts out — so tests/test_soc_vigil_alarms.py can drive both arms of every
@@ -69,12 +66,12 @@ THE NAMED-ACCOUNT RULE (opt-in: --named-account NAME, repeatable; none = off):
 EVALUATOR ERRORS (exit 2) on the audit side, besides unparseable lines:
   auditctl -s/-l unhealthy (see check_trail); ausearch exit 1 with stdout,
   exit 0 with stderr, or any other failure (the window is read again, not
-  consumed); a checkpoint status 10/11/12 (the retry's events are still
-  classified; the error persists until audit.checkpoint-mismatch is removed
-  by an operator); a missing checkpoint once audit.installed exists (the
+  consumed); a missing checkpoint once audit.installed exists (the
   marker is written when a checkpoint is first committed; a missing one
   before that is the first run); a SYSCALL record lacking arch, syscall,
   success, exe or key; a PATH record in an event with no SYSCALL record.
+  Checkpoint statuses 10/11/12 trigger a retained-log replay and a separate
+  incident until an operator removes audit.checkpoint-mismatch.
 
 THE BAN RULE (exact):
   Fires iff any address in `neverBan` (soc-in-a-box; the same list fail2ban
@@ -92,6 +89,7 @@ THE BAN RULE (exact):
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import ipaddress
 import json
@@ -101,6 +99,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 WATCHED_KEYS = frozenset({"agenix-secrets", "sudoers"})
@@ -408,72 +407,42 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def run_ausearch(ausearch: str, checkpoint: str, first_run: bool = False) -> tuple[str, list[str], bool]:
-    """Events since the checkpoint: (stdout, problems, checkpoint_mismatch).
-
-    ausearch rewrites `checkpoint` in place when it finds events, so cmd_audit
-    hands it a staged COPY and commits that copy only after the window's
-    outcome is recorded. stdout is always returned, even next to a problem, so
-    the events in it are still classified; a non-empty `problems` means the
-    window cannot be called clean and must not be consumed.
-    """
-    # --input-logs + stdin=/dev/null: ausearch reads STDIN instead of the
-    # logs whenever fd 0 is a pipe (ausearch.c is_pipe), and then never saves
-    # a checkpoint. Force the logs regardless of how this is started.
-    base = [ausearch, "--input-logs", "--raw", "--checkpoint", checkpoint]
-    # First run ever (no checkpoint and no install marker, decided by the
-    # caller): start ten minutes back instead of replaying the whole trail, so
-    # deploying this unit does not page for history.
-    first = ["--start", "recent"] if first_run else []
-
-    def run(extra):
-        # errors="replace": a stray non-UTF-8 byte must become one bad line
-        # (reported below), not a decode error that hides the whole window.
-        return subprocess.run(base + extra, capture_output=True, encoding="utf-8",
-                              errors="replace", stdin=subprocess.DEVNULL)
-
-    problems: list[str] = []
-    mismatch = False
-    earlier = ""  # what the first attempt printed before a checkpoint retry
-    p = run(first)
-    if p.returncode in (10, 11, 12):
-        earlier = p.stdout
-        # Rotated log or a damaged checkpoint. The timestamp retry still reads
-        # the window (its events are classified and any hit is an ALARM), but
-        # the mismatch itself is an evaluator error until it is reconciled.
-        mismatch = True
-        problems.append(f"ausearch checkpoint status {p.returncode}: checkpoint does not match the logs")
-        _log(f"ausearch checkpoint status {p.returncode}; reading from its timestamp")
-        p = run(["--start", "checkpoint"])
+def run_ausearch(ausearch, checkpoint, output, *, recent=False):
+    # Passing a fresh checkpoint with no start filter tells ausearch to start
+    # at its oldest retained file and save the last complete event it reads.
+    argv = [ausearch, "--input-logs", "--raw", "--checkpoint", checkpoint]
+    if recent:
+        argv += ["--start", "recent"]
+    p = subprocess.run(argv, stdout=output, stderr=subprocess.PIPE,
+                       encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+    has_output = output.tell() > 0
+    output.seek(0)
     err = p.stderr.strip()
-    if p.returncode == 0:
-        # A successful ausearch has nothing to say on stderr.
-        if err:
-            problems.append(f"ausearch exited 0 with stderr: {err[:300]}")
-    elif p.returncode == 1 and not p.stdout.strip() and err in ("", "<no matches>"):
-        # 1 means "nothing found" OR an argument / file error. In --raw mode
-        # the nothing-found exit is SILENT (audit 4.1.2 src/ausearch.c main():
-        # `if (report_format != RPT_RAW) fprintf(stderr, "<no matches>\n")`),
-        # while every error path in process_logs/process_file and option
-        # parsing writes to stderr. So: exit 1 with empty stdout and empty
-        # stderr is a quiet window. ("<no matches>" alone is accepted too, in
-        # case a later audit prints it in raw mode.)
-        pass
-    elif p.returncode == 1 and p.stdout.strip():
-        problems.append(f"ausearch exited 1 with output on stdout: {p.stdout.strip()[:80]!r}")
-    else:
-        problems.append(f"ausearch exited {p.returncode}: {err[:300]}")
-    out = p.stdout
-    if earlier:
-        # Keep the first attempt's records next to the retry's, once each.
-        seen, lines = set(), []
-        for line in (earlier + "\n" + out).split("\n"):
-            if line.strip() and line in seen:
-                continue
-            seen.add(line)
-            lines.append(line)
-        out = "\n".join(lines)
-    return out, problems, mismatch
+    if p.returncode == 0 and not err:
+        return p.returncode, None
+    if p.returncode == 1 and not has_output and err in ("", "<no matches>"):
+        return p.returncode, None
+    if p.returncode == 1 and has_output:
+        return p.returncode, "ausearch exited 1 with output on stdout"
+    return p.returncode, f"ausearch exited {p.returncode}" + (f": {err[:300]}" if err else "")
+
+
+def audit_batches(output):
+    # A retained-log replay can be hundreds of MiB. Ausearch emits each
+    # complete event contiguously; batch only between events.
+    lines = []
+    previous = None
+    for line in output:
+        record = _HEADER.match(line.strip())
+        if record:
+            event = record.group(2, 3)
+            if len(lines) >= 4096 and event != previous:
+                yield "".join(lines)
+                lines.clear()
+            previous = event
+        lines.append(line)
+    if lines:
+        yield "".join(lines)
 
 
 def _fsync_dir(path: str) -> None:
@@ -494,6 +463,65 @@ def _write_durably(path: str, text: str) -> None:
         os.fsync(fh.fileno())
     os.replace(tmp, path)
     _fsync_dir(os.path.dirname(path))
+
+
+def oldest_audit_record(directory):
+    # Match ausearch's numbered rotation chain, starting at the oldest
+    # contiguous member. A rotation may rename a file between list and open.
+    for _ in range(2):
+        files = set(os.listdir(directory))
+        chain = ["audit.log"]
+        while f"audit.log.{len(chain)}" in files:
+            chain.append(f"audit.log.{len(chain)}")
+        try:
+            for name in reversed(chain):
+                with open(os.path.join(directory, name), encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        record = _HEADER.match(line.strip())
+                        if record:
+                            return record.group(2)
+        except FileNotFoundError:
+            continue
+    raise RuntimeError(f"no retained audit record readable in {directory}")
+
+
+def record_coverage_gap(state, checkpoint, log_dir, status):
+    marker = os.path.join(state, "audit.checkpoint-mismatch")
+    if not os.path.lexists(marker):
+        _write_durably(marker, f"{time.time():.0f}\n")
+
+    stamp = os.path.join(state, "audit.coverage-gap")
+    pending = os.path.join(state, "audit.gap-pending")
+    identity = [os.stat(checkpoint).st_ino, _sha256(checkpoint)]
+    saved = json.loads(_read_text(pending) or "null")
+    fd = os.open(stamp, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        end = os.fstat(fd).st_size
+        if saved and saved["checkpoint"] == identity:
+            offset, entry = saved["offset"], saved["entry"]
+        else:
+            # Status 10 can mean that the original timestamp is unreadable.
+            with open(checkpoint, encoding="utf-8", errors="replace") as fh:
+                match = re.search(r"^output=\S+ ([0-9]+\.[0-9]+):", fh.read(), re.MULTILINE)
+            start = match.group(1) if match else "unknown"
+            oldest = oldest_audit_record(log_dir)
+            prefix = "\n" if end and os.pread(fd, 1, end - 1) != b"\n" else ""
+            offset = end
+            entry = f"{prefix}from={start} to={oldest} cause={status}\n"
+            _write_durably(pending, json.dumps({"checkpoint": identity, "offset": offset, "entry": entry}))
+        # Persist intent before appending. Retry the same record, even if the
+        # oldest retained log moved or a crash interrupted the write.
+        data = entry.encode()
+        written = end - offset
+        if not (0 <= written <= len(data)) or os.pread(fd, written, offset) != data[:written]:
+            raise RuntimeError("coverage gap stamp changed during an unfinished append")
+        if written < len(data) and os.write(fd, data[written:]) != len(data) - written:
+            raise RuntimeError("short coverage gap stamp append")
+        os.fsync(fd)
+        _fsync_dir(state)
+    finally:
+        os.close(fd)
+    _log("AUDIT COVERAGE GAP " + entry.strip())
 
 
 def _sha256(path: str) -> str:
@@ -668,16 +696,9 @@ def check_trail(a, last_lost_path: str, start_hold) -> str | None:
 
 
 def check_stamp(a, ran_marker: str, stamps: list[str] | None = None) -> None:
-    """The stamp is the only thing vigil reads. Once a run has completed here
-    (`ran_marker`), a missing stamp is an evaluator error: this run exits 2,
-    the stamp script writes the stamp already invalid, and vigil reads red
-    instead of an absent file (which it reads as unreadable, a note).
-
-    The evaluator never touches a stamp's mtime. The freshening touch is the
-    last action of a clean run (the unit's ExecStopPost), and a run that does
-    not end clean is invalidated there too (ExecStopPost runs after a
-    timeout, SIGKILL or OOM as well). A stamp that could not be written at all
-    just ages out: the contracts' 20 minute threshold bounds that."""
+    """Require an outcome stamp once the evaluator has run. ExecStopPost
+    recreates a missing stamp with an invalid mtime so the next evaluation
+    can proceed. The evaluator itself leaves these outcomes untouched."""
     stamps = stamps if stamps is not None else [a.stamp]
     if not all(stamps):
         raise RuntimeError("no stamp path (set --stamp / SANCTA_DOCTRINE_STAMP, and --health-stamp / SOC_HEALTH_STAMP for bans)")
@@ -692,9 +713,14 @@ def mark_ran(ran_marker: str) -> None:
 
 
 def cmd_audit(a) -> int:
-    # systemd's StateDirectory= exports STATE_DIRECTORY; tests pass --state-dir.
     if not a.state_dir or not os.path.isdir(a.state_dir):
         raise RuntimeError("no state directory (set --state-dir or STATE_DIRECTORY)")
+    with open(os.path.join(a.state_dir, "audit.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return evaluate_audit(a)
+
+
+def evaluate_audit(a) -> int:
     # Resolved first, every run: a name that does not resolve is an evaluator
     # error (KeyError -> exit 2), never a silently inert rule.
     admins = {}
@@ -731,7 +757,6 @@ def cmd_audit(a) -> int:
     last_eval = os.path.join(a.state_dir, "audit.last-eval")
     check_stamp(a, ran_marker)
     installed = os.path.join(a.state_dir, "audit.installed")
-    mismatch_flag = os.path.join(a.state_dir, "audit.checkpoint-mismatch")
     staged = checkpoint + ".next"
     if os.path.exists(checkpoint):
         shutil.copyfile(checkpoint, staged)
@@ -746,9 +771,8 @@ def cmd_audit(a) -> int:
     if first_run and os.path.exists(installed):
         raise RuntimeError("audit checkpoint is missing but the install marker exists "
                            "(checkpoint removed or lost; not treated as a first run)")
-    raw, problems, mismatch = run_ausearch(a.ausearch, staged, first_run)
-    now = time.time()
     previous_eval = _read_text(last_eval)
+    now = time.time()
     gap = None
     if previous_eval is not None:
         try:
@@ -768,45 +792,74 @@ def cmd_audit(a) -> int:
             os.replace(staged, checkpoint)
             _fsync_dir(a.state_dir)
 
-    try:
-        hits, bad = audit_scan(raw, admins)
-        if any("sudoers" in h["keys"] for h in hits):
-            context = sudoers_context(a)
+    hit = False
+    bad_count = 0
+    first_bad = None
+    sudoers_checked = False
+    context = None
+
+    def classify(output, seen=None, prior=()):
+        nonlocal hit, bad_count, first_bad, sudoers_checked, context
+        for batch in audit_batches(output):
+            hits, bad = audit_scan(batch, admins)
+            if bad:
+                bad_count += len(bad)
+                first_bad = first_bad or bad[0]
             for h in hits:
                 if "sudoers" in h["keys"]:
+                    if not sudoers_checked:
+                        context = sudoers_context(a)
+                        sudoers_checked = True
                     h["sudoers_matches_generation"] = context
-    except Exception:
-        # Could not classify at all: red for the hold, and the checkpoint
-        # stays put so this window is classified again once that works.
+                line = json.dumps(h, sort_keys=True)
+                if line not in prior:
+                    _log("ALARM audit " + line)
+                if seen is not None:
+                    seen.add(line)
+                hit = True
+
+    errors = []
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
+        status, problem = run_ausearch(a.ausearch, staged, output, recent=first_run)
+        mismatch = status in (10, 11, 12)
+        try:
+            if mismatch:
+                try:
+                    record_coverage_gap(a.state_dir, checkpoint, a.audit_log_dir, status)
+                except (OSError, RuntimeError, ValueError) as e:
+                    errors.append(f"could not record checkpoint status {status}: {e}")
+                if os.path.exists(staged):
+                    os.unlink(staged)
+                _log(f"ausearch checkpoint status {status}; replaying retained logs")
+                earlier = set()
+                classify(output, seen=earlier)
+                with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as replay:
+                    _, problem = run_ausearch(a.ausearch, staged, replay)
+                    classify(replay, prior=earlier)
+                if not problem and not os.path.exists(staged):
+                    problem = "ausearch replay found no complete event to checkpoint"
+            else:
+                classify(output)
+        except Exception:
+            start_hold()
+            raise
+    if problem:
+        errors.append(problem)
+    if hit or bad_count or gap is not None:
         start_hold()
-        raise
-    for h in hits:
-        _log("ALARM audit " + json.dumps(h, sort_keys=True))
-    # A window with an unreadable line may have held a hit: it starts the
-    # hold too, instead of one 5-minute red blip that picat_dupa = 2 absorbs.
-    if hits or bad or mismatch or gap is not None:
-        start_hold()
-    if mismatch:
-        # Stays an evaluator error until an operator reconciles it (reads the
-        # window by hand, then removes this file).
-        _write_durably(mismatch_flag, f"{now:.0f}\n")
-    # An ausearch anomaly leaves the window unconsumed: it is read again, a
-    # repeated ALARM line rather than a lost one. A mismatch is the exception:
-    # the retry's checkpoint is committed and the flag above carries the error.
-    if not [p for p in problems if "checkpoint status" not in p]:
+    # Commit only after classifying the retained window and persisting its
+    # gap record. The operator's acknowledgement is independent of progress.
+    if not errors:
         commit_checkpoint()
         if os.path.exists(checkpoint) and not os.path.exists(installed):
             _write_durably(installed, f"{now:.0f}\n")
-    errors = list(problems)
     if gap is not None:
         errors.append(f"coverage gap: {gap:.0f}s since the last evaluation (limit {a.max_gap}s); "
                       "events in between may not have been read")
     if trail_problem:
         errors.append(trail_problem)
-    if bad:
-        errors.append(f"{len(bad)} unparseable line(s); first: {bad[0]}")
-    if os.path.exists(mismatch_flag) and not mismatch:
-        errors.append(f"audit checkpoint mismatch not reconciled (remove {mismatch_flag} after checking the window)")
+    if bad_count:
+        errors.append(f"{bad_count} unparseable line(s); first: {first_bad}")
     if errors:
         raise RuntimeError("; ".join(errors))
     # Stay red for a hold window after the last hit, then clear by itself.
@@ -822,6 +875,63 @@ def cmd_audit(a) -> int:
         _log(f"audit: red, last hit {max(0.0, now - last):.0f}s ago (hold {a.hold}s)")
         return 1
     _log("audit: clean")
+    return 0
+
+
+def write_signal(path, healthy):
+    # Publish the verdict atomically so Vigil never sees a transient fresh
+    # mtime while a failing check is writing its signal.
+    tmp = path + ".signal"
+    with open(tmp, "wb"):
+        pass
+    if not healthy:
+        os.utime(tmp, (1, 1))
+    os.replace(tmp, path)
+
+
+def cmd_audit_stamp(a):
+    code = os.environ.get("EXIT_CODE")
+    status = os.environ.get("EXIT_STATUS")
+    hits = os.environ.get("SANCTA_DOCTRINE_STAMP") or os.path.join(a.state_dir, "audit-hits-clean")
+    if code == "exited" and status in ("0", "1"):
+        write_signal(hits, status == "0")
+        write_signal(os.path.join(a.state_dir, "audit-clean"), True)
+    elif not os.path.lexists(hits):
+        # Repair a missing outcome so the next evaluation can proceed.
+        write_signal(hits, False)
+    return 0
+
+
+def cmd_audit_watchdog(a):
+    state = a.state_dir
+    # Allow a new installation 30 minutes to produce its first heartbeat,
+    # without resetting that grace period if audit-clean later disappears.
+    first_check = os.path.join(state, "audit-watchdog.started")
+    mark_ran(first_check)
+    heartbeat = os.path.join(state, "audit-clean")
+    try:
+        last_success = os.stat(heartbeat).st_mtime
+    except FileNotFoundError:
+        last_success = os.stat(first_check).st_mtime
+    except OSError:
+        last_success = 1
+    now = time.time()
+    healthy = 0 <= now - last_success <= 30 * 60
+    if not healthy:
+        _log("ALARM audit evaluator: audit-clean missing or older than 30 minutes")
+    write_signal(os.path.join(state, "audit-deadman-clean"), healthy)
+
+    marker = os.path.join(state, "audit.checkpoint-mismatch")
+    write_signal(os.path.join(state, "audit-gap-clean"), not os.path.lexists(marker))
+    try:
+        oldest = oldest_audit_record(a.audit_log_dir)
+        retained = now - float(oldest) >= 48 * 60 * 60
+        if not retained:
+            _log(f"ALARM audit retention: oldest retained record {oldest} is younger than 48 hours")
+    except (OSError, RuntimeError, ValueError) as e:
+        _log(f"ALARM audit retention: {e}")
+        retained = False
+    write_signal(os.path.join(state, "audit-retention-clean"), retained)
     return 0
 
 
@@ -925,9 +1035,16 @@ def main(argv: list[str]) -> int:
     # The second outcome: an evaluator that could not evaluate (exit 2) is
     # reported here, not on the bans stamp (see soc-bans-stamp.sh).
     bn.add_argument("--health-stamp", default=os.environ.get("SOC_HEALTH_STAMP"))
+    for name in ("audit-stamp", "audit-watchdog"):
+        parser = sub.add_parser(name)
+        parser.add_argument("--state-dir", default=os.environ.get("STATE_DIRECTORY"))
+        if name == "audit-watchdog":
+            parser.add_argument("--audit-log-dir", default="/var/log/audit")
     a = ap.parse_args(argv)
     try:
-        return cmd_audit(a) if a.cmd == "audit" else cmd_bans(a)
+        runners = {"audit": cmd_audit, "bans": cmd_bans, "audit-stamp": cmd_audit_stamp,
+                   "audit-watchdog": cmd_audit_watchdog}
+        return runners[a.cmd](a)
     except Exception as e:  # noqa: BLE001 — any failure to evaluate is reported, never trusted
         _log(f"EVALUATOR ERROR ({a.cmd}): {type(e).__name__}: {e}")
         return 2
