@@ -13,6 +13,7 @@ bash_path=$(command -v bash)
 { printf '#!%s\n' "$bash_path"; cat <<'FAKE'
 set -euo pipefail
 printf '%s\n' "$*" >> "$CALLS"
+if [[ "${SLOW_READ:-}" == "$*" ]]; then sleep 6; fi
 case "$*" in
   'status --json --peers=false')
     backend=${BACKEND:-Running}
@@ -250,15 +251,28 @@ echo 'PASS allowlist fails when the node DNS name is empty (exit 1)'
 BACKEND=NeedsLogin run 1 allowlist 'tailscaled is not Running'
 printf '%s\n' 'status --json --peers=false' | diff -u - "$CALLS"
 echo 'PASS allowlist fails when tailscaled needs login (exit 1)'
+fixture "${live[@]}" > "$STATUS"
+SLOW_READ='status --json --peers=false' run 1 allowlist 'backend status is unreadable'
+printf '%s\n' 'status --json --peers=false' | diff -u - "$CALLS"
+echo 'PASS allowlist fails when the backend read times out (exit 1)'
+SLOW_READ='serve status --json' check_allowlist 1 'cannot read Serve status' 'fails when the Serve read times out'
 echo 'null' > "$STATUS"
 SETTLE=0 check_allowlist 1 'missing required node port 3001' 'rejects null Serve config with no settle window'
 echo '{}' > "$STATUS"
 SETTLE=0 check_allowlist 1 'missing required node port 8123' 'rejects empty Serve config with no settle window'
 fixture 5678 8123 > "$STATUS"
 fixture "${live[@]}" > "$STATUS.4"
-check_allowlist 0 'allowlist: ok' 'accepts the required port when it appears on the third poll' 4
+run 0 allowlist 'allowlist: ok'
+assert_writes
+echo 'PASS allowlist accepts a required port that appears during settling (exit 0)'
 rm "$STATUS.4"
-SETTLE=2 check_allowlist 1 'missing required node port 3001' 'fails after settling when a required port never appears' 3
+SETTLE=3 run 1 allowlist 'missing required node port 3001'
+if (( $(grep -Fxc 'serve status --json' "$CALLS") < 2 )); then
+  echo 'FAIL: allowlist did not retry a missing port during settling' >&2
+  exit 1
+fi
+assert_writes
+echo 'PASS allowlist retries and fails when a required port never appears (exit 1)'
 
 fixture 5678 8123 9443 > "$STATUS"
 check_allowlist 1 'unexpected node port 9443' 'rejects an extra port immediately even when a required port is missing'

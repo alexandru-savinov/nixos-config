@@ -83,8 +83,12 @@ parse_inventory() {
 }
 
 running_status() {
-  "$TS" status --json --peers=false 2>/dev/null |
+  "$@" status --json --peers=false 2>/dev/null |
     jq -esc 'select(length == 1) | .[0] | select(.BackendState == "Running")' 2>/dev/null
+}
+
+allowlist_read() {
+  timeout --kill-after=1 5 "$TS" "$@"
 }
 
 node_fqdn() {
@@ -97,7 +101,7 @@ node_fqdn() {
 wait_running() {
   local attempt
   for ((attempt = 0; attempt < ${WAIT:-90}; attempt++)); do
-    if running_status; then
+    if running_status "$TS"; then
       return 0
     fi
     sleep "${POLL_SLEEP:-1}"
@@ -203,14 +207,15 @@ if [[ "$mode" == tidy ]]; then
 fi
 
 settle=${SETTLE:-15}
-SECONDS=0
+# Only start retries within the settle window. Each poll has two bounded reads.
+settle_deadline=$(( ${EPOCHREALTIME/./} + settle * 1000000 ))
 while :; do
-  if ! backend=$(running_status); then
+  if ! backend=$(running_status allowlist_read); then
     echo "rpi5-serve-allowlist: tailscaled is not Running or backend status is unreadable" >&2
     exit 1
   fi
   fqdn=$(node_fqdn <<< "$backend") || exit 1
-  if ! status=$("$TS" serve status --json); then
+  if ! status=$(allowlist_read serve status --json); then
     echo "rpi5-serve: cannot read Serve status" >&2
     exit 1
   fi
@@ -231,8 +236,8 @@ while :; do
       ;;
     missing)
       # tailscaled can briefly omit required entries while applying tidy's write.
-      if ((SECONDS < settle)); then
-        sleep 1 || exit 1
+      if (( ${EPOCHREALTIME/./} < settle_deadline )) && sleep 1 &&
+        (( ${EPOCHREALTIME/./} < settle_deadline )); then
         continue
       fi
       ;;
