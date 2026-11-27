@@ -2987,6 +2987,16 @@ let
       then true
       else builtins.throw "FAIL: svc-game units not as reviewed";
 
+    # The svc-game dir option accepts only one canonical level under /var/lib.
+    sancta-choir-svc-game-dir-type =
+      let
+        t = self.nixosConfigurations.sancta-choir.options.sancta.svcGame.dir.type;
+        bad = [ "/var/lib//x" "/var/lib/./x" "/var/lib/../x" "/var/lib/x/" "/var/lib/x/y" "/tmp/x" "var/lib/x" "/var/lib/X" "/var/lib/" ];
+      in
+      if t.check "/var/lib/svc-game" && !(builtins.any t.check bad)
+      then true
+      else builtins.throw "FAIL: svc-game dir type accepts a non-canonical path";
+
     # The stage-4 dead-man is installed, its wrapper sets every tool as an
     # absolute store path, and the config never schedules it (no unit or timer
     # by name, and no service runs it); it is armed by hand as a transient timer.
