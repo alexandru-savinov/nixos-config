@@ -1338,6 +1338,9 @@ let
         bansHealth = schema.parse ../hosts/sancta-choir/vigil-contracts/soc-bans-health.toml;
         watchdog = choir.systemd.services.soc-audit-watchdog;
         watchdogTimer = choir.systemd.timers.soc-audit-watchdog;
+        auditTimer = choir.systemd.timers.soc-alarm-audit.timerConfig;
+        auditBootGrace = seconds auditTimer.OnBootSec + seconds auditTimer.AccuracySec
+          + seconds aSvc.serviceConfig.TimeoutStartSec;
         publicContracts = lib.concatMap
           (dir: map (name: schema.parse (dir + "/${name}"))
             (lib.filter (lib.hasSuffix ".toml") (builtins.attrNames (builtins.readDir dir))))
@@ -1353,7 +1356,7 @@ let
         pagingHealth = {
           soc-audit = audit.tinta == alarms.auditStampPath
             && lib.hasSuffix " audit-stamp" aSvc.serviceConfig.ExecStopPost
-            && lib.hasSuffix " audit-watchdog" watchdog.serviceConfig.ExecStart
+            && lib.hasSuffix " audit-watchdog --boot-grace-seconds ${toString auditBootGrace}" watchdog.serviceConfig.ExecStart
             && watchdogContract "soc-audit-deadman" "audit-deadman-clean"
             && builtins.elem "timers.target" watchdogTimer.wantedBy
             && !(watchdogTimer.timerConfig ? Unit)

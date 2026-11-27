@@ -6,7 +6,7 @@ reported each completed oneshot as inactive with main exit status 0.
 
 | Contract | Deployed target | Evaluator | Last observed successful run (EET) | Paging after hardening |
 | --- | --- | --- | --- | --- |
-| `soc-audit` | `/var/lib/soc-vigil-alarms/audit-clean` | `soc-alarm-audit.service` | 2026-11-27 17:29:42 | Hits remain report-only on `audit-hits-clean`. The independent `soc-audit-watchdog.timer` pages through `soc-audit-deadman` when `audit-clean` is older than 30 minutes or auditd reports it has stopped recording. A successful evaluation refreshes that heartbeat even when it reports a hit. |
+| `soc-audit` | `/var/lib/soc-vigil-alarms/audit-clean` | `soc-alarm-audit.service` | 2026-11-27 17:29:42 | Hits remain report-only on `audit-hits-clean`. The independent `soc-audit-watchdog.timer` pages through `soc-audit-deadman` when the evaluator misses its heartbeat deadline or auditd reports it has stopped recording. A successful evaluation refreshes `audit-clean` even when it reports a hit. |
 | `soc-bans-health` | `/var/lib/soc-vigil-alarms/bans-health-clean` | `soc-alarm-bans.service` | 2026-11-27 17:29:14 | The existing health contract pages. |
 
 After hardening, `soc-audit` is the only Choir contract with `page = false`.
@@ -28,9 +28,15 @@ each chunk. A timed-out run resumes from that checkpoint. Only a completed
 evaluation refreshes `audit-clean`.
 
 Vigil starts the watchdog and waits for it before sampling the three stamps.
-This refreshes healthy stamps left over from before boot. The watchdog keeps
-its independent timer and the 30-minute heartbeat limit. Vigil can page on
-the first sample of a confirmed failure.
+The watchdog uses the kernel's boot time to exclude downtime from the
+heartbeat deadline. Until the first successful evaluation on the current
+boot, the deadline is boot time plus the evaluator's startup grace (its
+`OnBootSec`, `AccuracySec`, and `TimeoutStartSec`, currently 11 minutes and
+30 seconds) plus 30 minutes. A new installation on a running host gets at
+least 30 minutes from the watchdog's first check. After a successful
+evaluation, the deadline is 30 minutes after the last success. Vigil can
+page on the first sample of a confirmed failure, including an auditd
+recording failure during startup.
 
 An increase in the kernel audit `lost` counter within one boot pages
 through the same coverage-gap contract. Acknowledge it by removing

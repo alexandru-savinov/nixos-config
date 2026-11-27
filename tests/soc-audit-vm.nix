@@ -3,6 +3,8 @@
 let
   vigil = pkgs.callPackage ../pkgs/vigil.nix { };
   deadman = ../hosts/sancta-choir/vigil-contracts/soc-audit-deadman.toml;
+  # Keep the backdated 31-minute heartbeat on this boot without waiting in the VM.
+  procStat = pkgs.writeText "soc-audit-test-proc-stat" "btime 1\n";
   capturePage = pkgs.writeShellScript "capture-soc-page" ''
     if [ "''${2:-}" != --chataction ]; then
       ${pkgs.coreutils}/bin/cat >> /tmp/soc-pages
@@ -49,6 +51,7 @@ pkgs.testers.runNixOSTest {
       auditDisk.warnGiB = 1;
       auditDisk.failGiB = 1;
     };
+    systemd.services.soc-audit-watchdog.serviceConfig.BindReadOnlyPaths = [ "${procStat}:/proc/stat" ];
     systemd.timers.soc-audit-watchdog.timerConfig = {
       OnBootSec = lib.mkForce "1s";
       OnUnitActiveSec = lib.mkForce "2s";

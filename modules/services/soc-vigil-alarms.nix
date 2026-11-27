@@ -22,6 +22,9 @@ let
   script = ./soc-vigil-alarms.py;
   bansStampScript = ./soc-bans-stamp.sh;
   python = "${pkgs.python3}/bin/python3";
+  timerBootDelaySec = 3 * 60;
+  timerAccuracySec = 30;
+  auditStartTimeoutSec = 8 * 60;
 
   # The nixpkgs crowdsec module's wrapper (it adds -c=<its generated config>).
   cscli = lib.findFirst (p: (p.name or "") == "cscli") null config.environment.systemPackages;
@@ -72,9 +75,9 @@ let
     inherit description;
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnBootSec = "3min";
+      OnBootSec = "${toString timerBootDelaySec}s";
       OnUnitActiveSec = "5min";
-      AccuracySec = "30s";
+      AccuracySec = "${toString timerAccuracySec}s";
     };
   };
 in
@@ -204,7 +207,7 @@ in
       serviceConfig = common // {
         # Leave room for multiple retained-log chunks. Each completed chunk
         # checkpoints independently so a later timeout can resume the replay.
-        TimeoutStartSec = "8m";
+        TimeoutStartSec = "${toString auditStartTimeoutSec}s";
         ExecStart = lib.escapeShellArgs ([
           python
           "${script}"
@@ -262,7 +265,14 @@ in
       wantedBy = [ "vigil.service" ];
       before = [ "vigil.service" ];
       serviceConfig = common // {
-        ExecStart = "${python} ${script} audit-watchdog";
+        ExecStart = lib.escapeShellArgs [
+          python
+          "${script}"
+          "audit-watchdog"
+          "--boot-grace-seconds"
+          # Allow the first scheduled evaluation its full start timeout.
+          (toString (timerBootDelaySec + timerAccuracySec + auditStartTimeoutSec))
+        ];
         CapabilityBoundingSet = "";
         PrivateNetwork = true;
       };

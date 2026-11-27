@@ -691,6 +691,8 @@ class Runners(unittest.TestCase):
         os.mkdir(self.fbin)
         fake_touch(self.fbin)
         self.bootid = os.path.join(self.d, "boot_id")
+        self.boot_time = 1_700_000_000
+        self.boot_grace_seconds = 690
         self.auditd_state = os.path.join(self.d, "auditd.state")
         self.auditd_conf = os.path.join(self.d, "auditd.conf")
         self.retention_signal = os.path.join(self.sd, "audit-retention-clean")
@@ -1058,8 +1060,10 @@ exit 0
         self.assertEqual(slurp(self.cp), expected)
 
     def watchdog(self):
-        return sva.main(["audit-watchdog", "--state-dir", self.sd, "--audit-log-dir", self.d,
-                         "--auditd-conf", self.auditd_conf])
+        with mock.patch.object(sva, "read_boot_time", return_value=self.boot_time):
+            return sva.main(["audit-watchdog", "--state-dir", self.sd, "--audit-log-dir", self.d,
+                             "--auditd-conf", self.auditd_conf,
+                             "--boot-grace-seconds", str(self.boot_grace_seconds)])
 
     def retention_config(self, size, count):
         with open(self.auditd_conf, "w") as fh:
@@ -1342,6 +1346,52 @@ echo 'output=- 1762790400.042:42 0x514' > "$cp"
         self.assertEqual(self.watchdog(), 0)
         self.assertEqual(os.stat(deadman).st_mtime, 1)
 
+    def test_watchdog_does_not_page_during_boot_grace_after_long_downtime(self):
+        now = int(time.time())
+        self.boot_time = now - 120
+        self.retained_log(str(now))
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        with open(heartbeat, "w"):
+            pass
+        os.utime(heartbeat, (self.boot_time - 86400,) * 2)
+
+        self.assertNotIn("ALARM audit evaluator", self.watchdog_at(now))
+        self.assertGreater(os.stat(deadman).st_mtime, 1)
+
+    def test_watchdog_pages_after_boot_grace_and_timeout_without_a_success(self):
+        self.boot_time = int(time.time())
+        deadline = self.boot_time + self.boot_grace_seconds + 30 * 60
+        self.retained_log(str(self.boot_time))
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        with open(heartbeat, "w"):
+            pass
+        os.utime(heartbeat, (self.boot_time - 86400,) * 2)
+
+        for has_old_heartbeat in (True, False):
+            with self.subTest(has_old_heartbeat=has_old_heartbeat):
+                if not has_old_heartbeat:
+                    os.unlink(heartbeat)
+                self.assertNotIn("ALARM audit evaluator", self.watchdog_at(deadline))
+                self.assertGreater(os.stat(deadman).st_mtime, 1)
+                self.assertIn("ALARM audit evaluator", self.watchdog_at(deadline + 1))
+                self.assertEqual(os.stat(deadman).st_mtime, 1)
+
+    def test_watchdog_pages_after_31_minutes_since_a_success_on_this_boot(self):
+        now = int(time.time())
+        last_success = now - 31 * 60
+        self.boot_time = last_success - 3 * 60
+        self.retained_log(str(now))
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        with open(heartbeat, "w"):
+            pass
+        os.utime(heartbeat, (last_success,) * 2)
+
+        self.assertIn("ALARM audit evaluator", self.watchdog_at(now))
+        self.assertEqual(os.stat(deadman).st_mtime, 1)
+
     def test_fresh_retention_stays_green_and_keeps_its_deadline_across_runs(self):
         armed_at = 1_800_000_000
         self.retained_log(str(armed_at))
@@ -1416,6 +1466,7 @@ echo 'output=- 1762790400.042:42 0x514' > "$cp"
 
     def test_watchdog_refreshes_all_healthy_stamps_left_by_a_previous_boot(self):
         now = time.time()
+        self.boot_time = int(now) - 120
         self.retained_log(f"{now - 49 * 3600:.3f}")
         heartbeat = os.path.join(self.sd, "audit-clean")
         signals = [os.path.join(self.sd, f"audit-{name}-clean")
@@ -1423,10 +1474,10 @@ echo 'output=- 1762790400.042:42 0x514' > "$cp"
         for stamp in [heartbeat, *signals]:
             with open(stamp, "w"):
                 pass
-            os.utime(stamp, (now - 20 * 60,) * 2)
+            os.utime(stamp, (now - 60 * 60,) * 2)
         self.assertEqual(self.watchdog(), 0)
         self.assertTrue(all(os.stat(stamp).st_mtime > now - 1 for stamp in signals))
-        self.assertLess(os.stat(heartbeat).st_mtime, now - 15 * 60)
+        self.assertLess(os.stat(heartbeat).st_mtime, self.boot_time)
 
     def test_audit_stamp_health_advances_on_hit_and_ages_on_evaluator_error(self):
         from unittest.mock import patch
@@ -1764,6 +1815,7 @@ echo 'output=- 1762790400.042:42 0x514' > "$cp"
         self.assertEqual(slurp(self.log + ".auditctl").splitlines(), ["-s", "-l", "--signal state"])
 
     def test_suspended_auditd_stops_heartbeat_and_pages_even_with_free_disk(self):
+        self.boot_time = int(time.time()) - 120
         self.retained_log(f"{time.time() - 49 * 3600:.3f}", suffix="")
         heartbeat = os.path.join(self.sd, "audit-clean")
         deadman = os.path.join(self.sd, "audit-deadman-clean")

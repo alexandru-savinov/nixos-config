@@ -6,8 +6,8 @@ without reading the audit trail or engine credentials.
 
 Audit exit codes: 0 clean, 1 a hit is on hold, 2 evaluator error. Both
 successful outcomes refresh audit-clean. The independent watchdog pages
-when that heartbeat is more than 30 minutes old or auditd reports that it
-has stopped recording.
+after 30 minutes without a heartbeat, with startup grace for the first
+success after boot. An auditd recording failure pages immediately.
 Bans use exit 3 for a hit and a source error in the same run.
 
 The classification functions (`audit_hits`, `home_bans`) are pure — text in,
@@ -1108,23 +1108,45 @@ def cmd_audit_watchdog(a):
         return evaluate_audit_watchdog(a)
 
 
+def read_boot_time():
+    with open("/proc/stat", encoding="ascii") as fh:
+        for line in fh:
+            name, _, value = line.partition(" ")
+            if name == "btime":
+                return int(value)
+    raise ValueError("missing btime in /proc/stat")
+
+
+def audit_heartbeat_healthy(a, first_check):
+    boot_time = read_boot_time()
+    try:
+        reference = os.stat(os.path.join(a.state_dir, "audit-clean")).st_mtime
+    except FileNotFoundError:
+        # An installation on an already running host gets its own initial window.
+        reference = os.stat(first_check).st_mtime
+        grace = a.boot_grace_seconds
+    else:
+        # Once the evaluator has succeeded on this boot, enforce the usual limit.
+        grace = a.boot_grace_seconds if reference < boot_time else 0
+    now = time.time()
+    if not 0 < boot_time <= now:
+        raise ValueError("invalid btime in /proc/stat")
+    deadline = max(reference, boot_time + grace) + 30 * 60
+    return reference <= now <= deadline
+
+
 def evaluate_audit_watchdog(a):
     state = a.state_dir
-    # Allow a new installation 30 minutes to produce its first heartbeat,
-    # without resetting that grace period if audit-clean later disappears.
+    # Persist the initial window across watchdog runs and heartbeat loss.
     first_check = os.path.join(state, "audit-watchdog.started")
     mark_ran(first_check)
-    heartbeat = os.path.join(state, "audit-clean")
     try:
-        last_success = os.stat(heartbeat).st_mtime
-    except FileNotFoundError:
-        last_success = os.stat(first_check).st_mtime
-    except OSError:
-        last_success = 1
-    now = time.time()
-    healthy = 0 <= now - last_success <= 30 * 60
-    if not healthy:
-        _log("ALARM audit evaluator: audit-clean missing or older than 30 minutes")
+        healthy = audit_heartbeat_healthy(a, first_check)
+        if not healthy:
+            _log("ALARM audit evaluator: audit-clean missing or stale")
+    except (OSError, ValueError) as e:
+        _log(f"ALARM audit evaluator: cannot check heartbeat: {e}")
+        healthy = False
     recording = not os.path.lexists(os.path.join(state, "audit.recording-unhealthy"))
     if not recording:
         _log("ALARM audit evaluator: auditd is not recording")
@@ -1133,6 +1155,7 @@ def evaluate_audit_watchdog(a):
     coverage_incidents = ("audit.checkpoint-mismatch", "audit.kernel-loss")
     write_signal(os.path.join(state, "audit-gap-clean"),
                  not any(os.path.lexists(os.path.join(state, name)) for name in coverage_incidents))
+    now = time.time()
     try:
         deadline = audit_retention_deadline(a, now)
         warming = now < deadline
@@ -1259,6 +1282,7 @@ def main(argv: list[str]) -> int:
         if name == "audit-watchdog":
             parser.add_argument("--audit-log-dir", default="/var/log/audit")
             parser.add_argument("--auditd-conf", default="/etc/audit/auditd.conf")
+            parser.add_argument("--boot-grace-seconds", type=int, required=True)
     a = ap.parse_args(argv)
     try:
         runners = {"audit": cmd_audit, "bans": cmd_bans, "audit-stamp": cmd_audit_stamp,
