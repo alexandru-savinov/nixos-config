@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Tidy removes all handlers on the retired ports from the node Serve config.
 # TS is the tailscale binary. The allowlist is passed as two JSON arrays.
 set -uo pipefail
 
@@ -15,7 +16,7 @@ read_inventory() {
     return 1
   fi
 
-  jq -escr --arg mode "$mode" --arg port "${1:-}" --arg fqdn "${fqdn:-}" '
+  jq -escr --arg mode "$mode" --arg port "${1:-}" --arg fqdn "$fqdn" '
     def object:
       if type == "object" then . else error("expected object") end;
     def config_map:
@@ -55,10 +56,12 @@ read_inventory() {
 
     def node_configs:
       object | ., (.Foreground | config_map | .[] | node_configs);
-    def checked_ports:
+    def checked_ports($node_fqdn):
       (.TCP | config_map | map_values(tcp_kind)) as $tcp
       | [ .Web | config_map | to_entries[] | (.key | web_port) as $port
-          | if (.value | valid_web) and ($tcp[$port] == "http" or $tcp[$port] == "https")
+          | if $node_fqdn != null and .key != ($node_fqdn + ":" + $port)
+            then error("unexpected Web hostname at \(.key), expected \($node_fqdn)")
+            elif (.value | valid_web) and ($tcp[$port] == "http" or $tcp[$port] == "https")
             then $port else error("malformed Web handler at \(.key)") end ] as $web_ports
       | [ $tcp | to_entries[] | .key as $port
           | if .value == "tcp" or (.value != "unknown" and ($web_ports | index($port)) != null)
@@ -75,8 +78,9 @@ read_inventory() {
         [node_configs] as $nodes
         | [$nodes[] | .Services | config_map | to_entries[]] as $services
         | [($nodes[], ($services[].value | object)) | check_funnel]
-        | [$services[].value | checked_ports]
-        | {ports: ([$nodes[] | checked_ports[]] | unique),
+        # Named Services have their own DNS names and are checked by service name.
+        | [$services[].value | checked_ports(null)]
+        | {ports: ([$nodes[] | checked_ports($fqdn)[]] | unique),
            services: ([$services[].key] | unique)}
       end
   ' <<< "$status" || {
@@ -131,10 +135,17 @@ tidy_port() {
 
 if [[ "$mode" == tidy ]]; then
   backend=$(wait_running) || exit 1
-  if ! fqdn=$(jq -er '.Self.DNSName | rtrimstr(".") | select(length > 0)' <<< "$backend"); then
-    echo "rpi5-serve-tidy: cannot determine the node DNS name" >&2
-    exit 1
-  fi
+elif ! backend=$(running_status); then
+  echo "rpi5-serve-allowlist: tailscaled is not Running or backend status is unreadable" >&2
+  exit 1
+fi
+
+if ! fqdn=$(jq -er '.Self.DNSName | strings | rtrimstr(".") | select(length > 0)' <<< "$backend"); then
+  echo "rpi5-serve-$mode: cannot determine the node DNS name" >&2
+  exit 1
+fi
+
+if [[ "$mode" == tidy ]]; then
   result=0
   for port in 6333 8739 8742 8743 8744; do
     tidy_port "$port" || result=1
@@ -142,10 +153,6 @@ if [[ "$mode" == tidy ]]; then
   exit "$result"
 fi
 
-if ! running_status >/dev/null; then
-  echo "rpi5-serve-allowlist: tailscaled is not Running or backend status is unreadable" >&2
-  exit 1
-fi
 inventory=$(read_inventory) || exit 1
 violations=$(jq -r --argjson ports "$ALLOWED_PORTS" --argjson services "$ALLOWED_SERVICES" '
   ($ports | map(tostring)) as $expected

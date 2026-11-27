@@ -12,7 +12,7 @@ let
 in
 {
   systemd.services.rpi5-serve-tidy = common // {
-    description = "Remove retired rpi5 Tailscale Serve node handlers";
+    description = "Remove all handlers on the retired ports from the rpi5 Tailscale Serve node config";
     wantedBy = [ "multi-user.target" ];
     wants = [ "tailscaled.service" ];
     serviceConfig = common.serviceConfig // {

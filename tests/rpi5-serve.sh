@@ -19,7 +19,8 @@ case "$*" in
         if [[ -f "$STATUS.polled" ]]; then echo '{"BackendState":"Running","Self":{"DNSName":"rpi5.example."}}'
         else touch "$STATUS.polled"; echo '{"BackendState":"Starting"}'; fi
         ;;
-      *) jq -nc --arg state "${BACKEND:-Running}" '{BackendState: $state, Self: {DNSName: "rpi5.example."}}' ;;
+      *) jq -nc --arg state "${BACKEND:-Running}" --arg dns "${SELF_DNS_NAME-rpi5.example.}" \
+           '{BackendState: $state, Self: {DNSName: $dns}}' ;;
     esac
     ;;
   'serve status --json') cat "$STATUS" ;;
@@ -146,6 +147,18 @@ check_allowlist() {
 
 fixture "${live[@]}" > "$STATUS"
 check_allowlist 0 'allowlist: ok' 'accepts the three approved ports'
+fixture "${live[@]}" | jq '.Web |= with_entries(.key |= sub("^rpi5\\.example:"; "old-rpi5.example:"))' > "$STATUS"
+check_allowlist 1 'unexpected Web hostname at old-rpi5.example:3001' 'rejects all approved ports under a stale hostname'
+SELF_DNS_NAME=old-rpi5.example. check_allowlist 0 'allowlist: ok' 'uses the FQDN returned by tailscale status'
+fixture "${live[@]}" | jq '.Web["old-rpi5.example:3001"] = .Web["rpi5.example:3001"]' > "$STATUS"
+check_allowlist 1 'unexpected Web hostname at old-rpi5.example:3001' 'rejects a stale Web key alongside the current one'
+fixture "${live[@]}" | jq '.Foreground.fixture = {
+  TCP: {"3001": .TCP["3001"]}, Web: {"old-rpi5.example:3001": .Web["rpi5.example:3001"]}
+}' > "$STATUS"
+check_allowlist 1 'unexpected Web hostname at old-rpi5.example:3001' 'rejects a stale foreground Web key'
+SELF_DNS_NAME= run 1 allowlist 'cannot determine the node DNS name'
+printf '%s\n' 'status --json --peers=false' | diff -u - "$CALLS"
+echo 'PASS allowlist fails when the node DNS name is empty (exit 1)'
 BACKEND=NeedsLogin run 1 allowlist 'tailscaled is not Running'
 printf '%s\n' 'status --json --peers=false' | diff -u - "$CALLS"
 echo 'PASS allowlist fails when tailscaled needs login (exit 1)'
@@ -178,6 +191,10 @@ check_allowlist 1 'unexpected node port 9443' 'rejects an extra foreground port'
 fixture "${live[@]}" | jq '.Services["svc:nixframe"].TCP["443"] = {TCPForward: "127.0.0.1:443"}' > "$STATUS"
 check_allowlist 1 'unexpected Service svc:nixframe' 'rejects an undeclared Service'
 ALLOWED_SERVICES='["svc:nixframe"]' check_allowlist 0 'allowlist: ok' 'accepts declared Service with its own port'
+fixture "${live[@]}" | jq '.Services["svc:nixframe"] = {
+  TCP: {"443": {HTTPS: true}}, Web: {"nixframe.example:443": {Handlers: {"/": {Text: "ok"}}}}
+}' > "$STATUS"
+ALLOWED_SERVICES='["svc:nixframe"]' check_allowlist 0 'allowlist: ok' 'accepts declared Service with its own Web hostname'
 rm "$STATUS"
 check_allowlist 1 'cannot read Serve status' 'fails on unreadable status'
 echo '{"TCP":false}' > "$STATUS"
