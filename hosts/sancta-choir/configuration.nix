@@ -584,8 +584,8 @@
   # The bytes are not in this repo; only their pin. See svc-game.nix.
   sancta.svcGame = {
     enable = true;
-    sha256 = "68579f993b1030fc774a1a70e37bad97a915cb289cafb0cf31c23ca0d044bc9f";
-    length = 372698; # provisional pin, replaced at the final freeze
+    sha256 = "79305180088d5396241053aca73615a6476e4319689badc72c93e61c5b62e5ac";
+    length = 604179;
     onFailureUnit = "sancta-soul-mirror-alert@%N.service";
   };
 
