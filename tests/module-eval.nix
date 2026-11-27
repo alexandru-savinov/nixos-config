@@ -2975,8 +2975,14 @@ let
         && builtins.elem "sancta-membrane-serve.service" b.after
         && !(builtins.elem "sancta-membrane-serve.service" b.wants)
         && b.environment.LOCK == v.environment.LOCK
+        && !(b.environment ? EXPECT_OWNER) && !(v.environment ? EXPECT_OWNER)
         && b.environment.SHA == g.sha256 && b.environment.LEN == toString g.length
         && v.environment.SHA == g.sha256
+        && g.verifyStatusFailureThreshold == 3
+        && v.environment.VERIFY_STATUS_FAILURE_THRESHOLD == toString g.verifyStatusFailureThreshold
+        && v.serviceConfig.RuntimeDirectory == "svc-game-verify"
+        && v.serviceConfig.RuntimeDirectoryMode == "0700"
+        && v.serviceConfig.RuntimeDirectoryPreserve == "yes"
         && nixpkgs.lib.hasPrefix "/nix/store/" b.environment.TS
         && b.onFailure == [ "sancta-soul-mirror-alert@%N.service" ]
         && v.onFailure == b.onFailure
