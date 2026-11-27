@@ -239,3 +239,34 @@ jobs:
               run: |
                 out=$(nix build --no-link --print-out-paths .#packages.aarch64-linux.agterm-zmx-host)
                 "$out/bin/sessions" --help
+
+    build-aarch64:
+        name: Build aarch64 Configs
+        runs-on: ubuntu-24.04-arm
+        needs: check
+        timeout-minutes: 90
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+              with:
+                  # Match nix.settings in hosts/rpi5/configuration.nix, inherited by rpi5-full.
+                  extra_nix_config: |
+                      experimental-features = nix-command flakes
+                      substituters = https://cache.nixos.org https://nixos-raspberrypi.cachix.org
+                      trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nixos-raspberrypi.cachix.org-1:4iMO9LXa8BqhU+Rpg6LQKiGa2lsNh/j2oiYLNOQ5sPI=
+
+            - name: Check Raspberry Pi cache
+              if: hashFiles('scripts/pi-cache-miss.sh') != ''
+              continue-on-error: true
+              shell: bash
+              run: bash scripts/pi-cache-miss.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+            - name: Build rpi5-full and rpi5 (aarch64-linux)
+              run: |
+                  nix build -L --no-link \
+                    .#nixosConfigurations.rpi5-full.config.system.build.toplevel \
+                    .#nixosConfigurations.rpi5.config.system.build.toplevel
