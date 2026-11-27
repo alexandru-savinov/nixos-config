@@ -16,22 +16,29 @@ case "$*" in
   'status --json --peers=false')
     case "${BACKEND:-Running}" in
       delayed)
-        if [[ -f "$STATUS.polled" ]]; then echo '{"BackendState":"Running"}'
+        if [[ -f "$STATUS.polled" ]]; then echo '{"BackendState":"Running","Self":{"DNSName":"rpi5.example."}}'
         else touch "$STATUS.polled"; echo '{"BackendState":"Starting"}'; fi
         ;;
-      *) jq -nc --arg state "${BACKEND:-Running}" '{BackendState: $state}' ;;
+      *) jq -nc --arg state "${BACKEND:-Running}" '{BackendState: $state, Self: {DNSName: "rpi5.example."}}' ;;
     esac
     ;;
   'serve status --json') cat "$STATUS" ;;
-  'serve --https='*' off')
-    port=${2#--https=}
+  'serve --https='*' off'|'serve --http='*' off'|'serve --tcp='*' off')
+    port=${2#*=}
     [[ "${FAIL_PORT:-}" != "$port" ]] || exit 1
     if [[ "${RETRY_PORT:-}" == "$port" && ! -f "$STATUS.retried" ]]; then
       touch "$STATUS.retried"
       exit 1
     fi
-    jq -e --arg port "$port" '.TCP | has($port)' "$STATUS" >/dev/null
-    jq --arg port "$port" 'del(.TCP[$port], .Web["rpi5.example:" + $port])' "$STATUS" > "$STATUS.next"
+    jq -e --arg port "$port" --arg flag "${2%%=*}" '
+      .TCP[$port] as $tcp
+      | if $flag == "--tcp" then $tcp != null and $tcp.HTTP != true and $tcp.HTTPS != true
+        else ($tcp.HTTP == true or $tcp.HTTPS == true) and (.Web["rpi5.example:" + $port].Handlers | length > 0)
+        end
+    ' "$STATUS" >/dev/null
+    jq --arg port "$port" --arg flag "${2%%=*}" '
+      del(.TCP[$port]) | if $flag == "--tcp" then . else del(.Web["rpi5.example:" + $port]) end
+    ' "$STATUS" > "$STATUS.next"
     mv "$STATUS.next" "$STATUS"
     ;;
   *) echo "unexpected tailscale command: $*" >&2; exit 99 ;;
@@ -61,8 +68,11 @@ run() {
 
 assert_writes() {
   # Compare every non-read command, so this also catches an attempted reset.
-  local port
-  for port in "$@"; do printf 'serve --https=%s off\n' "$port"; done > "$tmp/expected"
+  local target
+  for target in "$@"; do
+    [[ "$target" == *=* ]] || target="https=$target"
+    printf 'serve --%s off\n' "$target"
+  done > "$tmp/expected"
   awk '$0 != "status --json --peers=false" && $0 != "serve status --json"' "$CALLS" > "$tmp/writes"
   diff -u "$tmp/expected" "$tmp/writes"
 }
@@ -86,6 +96,32 @@ assert_writes
 diff -u "$tmp/kept" "$STATUS"
 echo 'PASS tidy rerun is idempotent (exit 0)'
 
+fixture "${live[@]}" 6333 | jq '.TCP["6333"] = {HTTP: true}' > "$STATUS"
+run 0 tidy 'removed node HTTP port 6333'
+assert_writes http=6333
+fixture "${live[@]}" | diff -u - "$STATUS"
+echo 'PASS tidy uses HTTP removal for a plain-HTTP handler (exit 0)'
+
+fixture "${live[@]}" | jq '.TCP["6333"] = {TCPForward: "127.0.0.1:6333"}' > "$STATUS"
+run 0 tidy 'removed node TCP port 6333'
+assert_writes tcp=6333
+fixture "${live[@]}" | diff -u - "$STATUS"
+echo 'PASS tidy uses TCP removal for a TCP-only forward (exit 0)'
+
+fixture "${live[@]}" 6333 | jq 'del(.Web["rpi5.example:6333"])' > "$STATUS"
+cp "$STATUS" "$tmp/ambiguous"
+run 1 tidy 'unrecognized node handler on port 6333'
+assert_writes
+diff -u "$tmp/ambiguous" "$STATUS"
+echo 'PASS tidy preserves an HTTPS marker without a Web handler (exit 1)'
+
+fixture "${live[@]}" 6333 | jq '.Web["other.example:6333"] = .Web["rpi5.example:6333"] | del(.Web["rpi5.example:6333"])' > "$STATUS"
+cp "$STATUS" "$tmp/ambiguous"
+run 1 tidy 'unrecognized node handler on port 6333'
+assert_writes
+diff -u "$tmp/ambiguous" "$STATUS"
+echo 'PASS tidy preserves a Web handler for a different hostname (exit 1)'
+
 cp "$tmp/full" "$STATUS"
 RETRY_PORT=6333 run 0 tidy 'removed node HTTPS port 6333'
 assert_writes 6333 "${dead[@]}"
@@ -93,7 +129,7 @@ diff -u "$tmp/kept" "$STATUS"
 echo 'PASS tidy retries a transient write failure (exit 0)'
 
 cp "$tmp/full" "$STATUS"
-FAIL_PORT=6333 run 1 tidy 'could not clear node HTTPS port 6333 after 3 attempts'
+FAIL_PORT=6333 run 1 tidy 'could not clear node port 6333 after 3 attempts'
 assert_writes 6333 6333 "${dead[@]}"
 fixture "${live[@]}" 6333 | jq -S "$keep" | diff -u - <(jq -S . "$STATUS")
 echo 'PASS tidy caps retries and still clears the other ports (exit 1)'
@@ -104,21 +140,42 @@ echo 'PASS tidy makes no Serve calls before Running (exit 1)'
 
 check_allowlist() {
   run "$1" allowlist "$2"
-  printf '%s\n' 'serve status --json' | diff -u - "$CALLS"
+  printf '%s\n' 'status --json --peers=false' 'serve status --json' | diff -u - "$CALLS"
   echo "PASS allowlist $3 (exit $1)"
 }
 
 fixture "${live[@]}" > "$STATUS"
 check_allowlist 0 'allowlist: ok' 'accepts the three approved ports'
+BACKEND=NeedsLogin run 1 allowlist 'tailscaled is not Running'
+printf '%s\n' 'status --json --peers=false' | diff -u - "$CALLS"
+echo 'PASS allowlist fails when tailscaled needs login (exit 1)'
 echo 'null' > "$STATUS"
-check_allowlist 0 'allowlist: ok' 'accepts empty Serve config'
-fixture "${live[@]}" 9443 | jq 'del(.Web["rpi5.example:9443"])' > "$STATUS"
+check_allowlist 1 'missing required node port 3001' 'rejects null Serve config'
+echo '{}' > "$STATUS"
+check_allowlist 1 'missing required node port 8123' 'rejects empty Serve config'
+fixture 3001 8123 > "$STATUS"
+check_allowlist 1 'missing required node port 5678' 'rejects a single missing required port'
+echo '{"TCP":{"3001":false}}' > "$STATUS"
+check_allowlist 1 'malformed TCP handler on port 3001' 'rejects a non-object TCP entry'
+fixture "${live[@]}" | jq 'del(.Web["rpi5.example:3001"].Handlers)' > "$STATUS"
+check_allowlist 1 'malformed Web handler at rpi5.example:3001' 'rejects a Web entry without Handlers'
+fixture "${live[@]}" | jq 'del(.Web["rpi5.example:3001"])' > "$STATUS"
+check_allowlist 1 'malformed TCP handler on port 3001' 'rejects an HTTPS port without a Web entry'
+fixture "${live[@]}" | jq '.AllowFunnel["rpi5.example:3001"] = true' > "$STATUS"
+check_allowlist 1 'Funnel enabled at rpi5.example:3001' 'rejects Funnel on an approved port'
+fixture "${live[@]}" | jq '.AllowFunnel["rpi5.example:3001"] = false' > "$STATUS"
+check_allowlist 0 'allowlist: ok' 'accepts an explicitly disabled Funnel entry'
+fixture "${live[@]}" | jq '.Foreground.fixture.AllowFunnel["rpi5.example:443"] = true' > "$STATUS"
+check_allowlist 1 'Funnel enabled at rpi5.example:443' 'rejects a foreground Funnel entry'
+fixture "${live[@]}" | jq '.TCP["9443"] = {TCPForward: "127.0.0.1:9443"}' > "$STATUS"
 check_allowlist 1 'unexpected node port 9443' 'rejects an extra TCP port'
+fixture "${live[@]}" 9443 > "$STATUS"
+check_allowlist 1 'unexpected node port 9443' 'rejects an extra HTTPS port'
 fixture "${live[@]}" 9443 | jq 'del(.TCP["9443"])' > "$STATUS"
-check_allowlist 1 'unexpected node port 9443' 'rejects an extra Web port'
-echo '{"Foreground":{"fixture":{"TCP":{"9443":{"HTTPS":true}}}}}' > "$STATUS"
+check_allowlist 1 'malformed Web handler at rpi5.example:9443' 'rejects a Web entry without TCP'
+fixture "${live[@]}" | jq '.Foreground.fixture.TCP["9443"] = {TCPForward: "127.0.0.1:9443"}' > "$STATUS"
 check_allowlist 1 'unexpected node port 9443' 'rejects an extra foreground port'
-echo '{"Services":{"svc:nixframe":{"TCP":{"443":{"HTTPS":true}}}}}' > "$STATUS"
+fixture "${live[@]}" | jq '.Services["svc:nixframe"].TCP["443"] = {TCPForward: "127.0.0.1:443"}' > "$STATUS"
 check_allowlist 1 'unexpected Service svc:nixframe' 'rejects an undeclared Service'
 ALLOWED_SERVICES='["svc:nixframe"]' check_allowlist 0 'allowlist: ok' 'accepts declared Service with its own port'
 rm "$STATUS"

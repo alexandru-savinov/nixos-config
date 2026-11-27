@@ -113,6 +113,10 @@ in
       description = "Kindle Wi-Fi check stub for the kindle VLAN";
       wantedBy = [ "multi-user.target" ];
       partOf = [ "kindle-stub.socket" ];
+      # NixOS switches skip socket-only changes. Restart both units so the
+      # eager service starts with the new listener.
+      restartTriggers = [ config.systemd.units."kindle-stub.socket".unit ];
+      notSocketActivated = true;
       environment = {
         # systemd creates it; with DynamicUser it lives at /var/lib/private/kindle-reader.
         STATE_DIR = "/var/lib/kindle-reader";

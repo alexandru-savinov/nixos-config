@@ -2987,12 +2987,18 @@ let
 
     rpi5-serve-and-kindle =
       let
-        cfg = self.nixosConfigurations.rpi5-full.config;
+        base = self.nixosConfigurations.rpi5-full;
+        cfg = base.config;
         inherit (cfg.systemd) services sockets timers;
         tidy = services.rpi5-serve-tidy;
         allowlist = services.rpi5-serve-allowlist;
-        kindle = services.kindle-stub.serviceConfig;
+        kindleService = services.kindle-stub;
+        kindle = kindleService.serviceConfig;
         listener = sockets.kindle-stub.socketConfig;
+        restartTrigger = c: c.systemd.services.kindle-stub.unitConfig.X-Restart-Triggers;
+        withListener = settings: (base.extendModules {
+          modules = [{ customModules.kindleStub = settings; }];
+        }).config;
         firewallRule = "-p tcp -s 192.168.30.0/24 -d 192.168.1.37 --dport 80 -j nixos-fw-accept";
         inherit (nixpkgs.lib) hasInfix hasSuffix;
       in
@@ -3012,6 +3018,10 @@ let
         && kindle.ProtectSystem == "strict" && kindle.CapabilityBoundingSet == ""
         && !(kindle ? AmbientCapabilities)
         && kindle.Sockets == "kindle-stub.socket"
+        && kindleService.notSocketActivated
+        && kindleService.restartTriggers == [ cfg.systemd.units."kindle-stub.socket".unit ]
+        && restartTrigger cfg != restartTrigger (withListener { bindAddress = nixpkgs.lib.mkForce "192.168.1.38"; })
+        && restartTrigger cfg != restartTrigger (withListener { port = 8080; })
         && listener.ListenStream == "192.168.1.37:80"
         && listener.IPAddressAllow == [ "192.168.30.0/24" ] && listener.IPAddressDeny == "any"
         && kindle.IPAddressAllow == listener.IPAddressAllow && kindle.IPAddressDeny == listener.IPAddressDeny
