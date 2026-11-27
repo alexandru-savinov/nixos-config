@@ -51,7 +51,9 @@ const config = { web: { address: '127.0.0.1', port },
   suites: variants.map(variant => ({ ...suite, name: variant, group: `fixture-${variant}`, interval: '1h',
     endpoints: suite.endpoints.map((e, i) => ({ ...e,
       url: `http://127.0.0.1:${fixture.address().port}/${variant}/${i}`,
-      client: { timeout: '100ms' },
+      // Only the deliberately delayed request gets the short deadline; every other
+      // request keeps the production client, so a scheduling stall cannot fail 'healthy'.
+      client: variant === 'timeout' && i === 1 ? { ...e.client, timeout: '100ms' } : e.client,
     })),
   })),
 };
