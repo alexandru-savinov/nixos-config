@@ -8,8 +8,8 @@ export TS="$tmp/tailscale" CALLS="$tmp/calls" STATUS="$tmp/status.json"
 export ALLOWED_PORTS='[3001,5678,8123]' ALLOWED_SERVICES='[]'
 export WAIT=3 POLL_SLEEP=0 RETRY_SLEEP=0
 
-cat > "$TS" <<'FAKE'
-#!/usr/bin/env bash
+# The Nix sandbox has no /usr/bin/env: give the fake the resolved bash as its shebang.
+{ printf '#!%s\n' "$(command -v bash)"; cat <<'FAKE'
 set -euo pipefail
 printf '%s\n' "$*" >> "$CALLS"
 case "$*" in
@@ -45,6 +45,7 @@ case "$*" in
   *) echo "unexpected tailscale command: $*" >&2; exit 99 ;;
 esac
 FAKE
+} > "$TS"
 chmod +x "$TS"
 
 fixture() {
