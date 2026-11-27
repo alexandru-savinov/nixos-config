@@ -3,19 +3,26 @@
 # Inputs (environment): TS (tailscale binary), SVC (service name), DIR (root-owned 0700 dir),
 # SHA (expected sha256, 64 hex), LEN (expected length in bytes), LOCK (lock file),
 # WAIT (seconds to wait for tailscaled to be Running; default 90), LOCKWAIT (default 120).
-# Argument: boot | verify | stop.
+# Argument: boot | verify | stop | stop-post.
 #   boot    clear the service first (tailscaled persists Serve config across reboots), then verify and serve.
 #           This mode adds the mapping, and the unit clears it on stop or failed start.
 #   verify  check the pinned file and any existing mapping, then clear and fail on mismatch.
 #           A manual clear or a `serve drain` stays in effect.
 #   stop    clear the service (unit stop, module disabled, rollback)
+#   stop-post  clear the service when systemd reports a failed run.
 # It touches only $SVC: never a whole-config reset, never another port or service.
 # Residual (accepted): tailscaled reopens the file on each request, so bytes changed after a check
 # are served until the next check. The 0700 root dir and the 0400 root file limit that to root.
 set -u
 mode=${1:-verify}
-f="$DIR/$SHA.html"
-case "$mode" in boot|verify|stop) ;; *) echo "svc-game: unknown mode $mode" >&2; exit 2;; esac
+case "$mode" in
+  boot|verify|stop) ;;
+  stop-post)
+    if [ "${SERVICE_RESULT:-}" = success ]; then exit 0; fi
+    mode=stop
+    ;;
+  *) echo "svc-game: unknown mode $mode" >&2; exit 2;;
+esac
 
 # One writer at a time: the boot run and the timer's verify run can overlap on the first switch.
 exec 9>"$LOCK" || { echo "svc-game: cannot open lock" >&2; exit 1; }
@@ -51,6 +58,7 @@ if [ "$mode" = boot ]; then clear_svc || exit 1; fi
 dir=$DIR
 # A trailing slash would make the symlink check follow the link.
 while [[ "$dir" == ?*/ ]]; do dir=${dir%/}; done
+f="$dir/$SHA.html"
 [ -L "$dir" ] && fail "directory is a symlink"
 [ -d "$dir" ] || fail "directory missing or invalid"
 own=$(stat -c '%u %a' -- "$dir") || fail "cannot stat directory"
@@ -72,7 +80,8 @@ if [ "$mode" = verify ]; then
   jq -e --arg svc "$SVC" --arg file "$f" '
     .Services[$svc]
     | . == null or (
-        (.Web | type == "object" and length > 0)
+        .TCP == {"443": {HTTPS: true}}
+        and (.Web | type == "object" and length > 0)
         and all(.Web[]; .Handlers == {"/": {Path: $file}})
       )
     ' <<< "$status" >/dev/null 2>&1 || fail "Serve mapping does not match the pinned file"

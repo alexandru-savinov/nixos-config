@@ -2971,7 +2971,7 @@ let
         && b.serviceConfig.RemainAfterExit
         && b.serviceConfig.Restart == "on-failure"
         && nixpkgs.lib.hasSuffix " stop" b.serviceConfig.ExecStop
-        && nixpkgs.lib.hasSuffix " stop" b.serviceConfig.ExecStopPost
+        && nixpkgs.lib.hasSuffix " stop-post" b.serviceConfig.ExecStopPost
         && builtins.elem "sancta-membrane-serve.service" b.after
         && !(builtins.elem "sancta-membrane-serve.service" b.wants)
         && b.environment.LOCK == v.environment.LOCK

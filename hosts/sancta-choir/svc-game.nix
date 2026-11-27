@@ -101,7 +101,7 @@ in
         RemainAfterExit = true;
         ExecStart = script "boot";
         ExecStop = script "stop";
-        ExecStopPost = script "stop";
+        ExecStopPost = script "stop-post";
         Restart = "on-failure";
         RestartSec = "60s";
       };

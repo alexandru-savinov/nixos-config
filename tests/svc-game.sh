@@ -10,6 +10,7 @@ bad() { echo "FAIL: $1"; failn=$((failn+1)); }
 mkdir -p "$T/bin" "$T/game"
 chmod 0700 "$T/game"
 { printf '#!%s\n' "$(command -v bash)"; cat <<'F'
+printf '%s\n' "$*" >> "$CALL_LOG"
 case "$*" in
   "status --json --peers=false") if [ "${FAKE_NOT_RUNNING:-}" = 1 ]; then echo '{"BackendState":"Starting"}'; else echo '{"BackendState":"Running"}'; fi; exit 0;;
   "serve status --json")
@@ -28,10 +29,12 @@ printf 'hello game\n' > "$T/content"
 SHA=$(sha256sum "$T/content" | cut -d' ' -f1); LEN=$(stat -c %s "$T/content")
 run() { # run <mode>; sets rc, log, err
   : > "$T/log"
-  env LOG="$T/log" TS="$T/bin/tailscale" SVC=svc:game DIR="$T/game" SHA="${PSHA:-$SHA}" LEN="${PLEN:-$LEN}" \
+  : > "$T/calls"
+  env LOG="$T/log" CALL_LOG="$T/calls" TS="$T/bin/tailscale" SVC=svc:game DIR="${PDIR:-$T/game}" SHA="${PSHA:-$SHA}" LEN="${PLEN:-$LEN}" \
     LOCK="$T/lock" WAIT="${PWAIT:-3}" LOCKWAIT="${PLOCKWAIT:-120}" RETRY_SLEEP=0 EXPECT_OWNER="$(id -u)" FAKE_SERVE_FAIL="${FAKE_SERVE_FAIL:-}" \
     FAKE_CLEAR_FAIL="${FAKE_CLEAR_FAIL:-}" FAKE_NOT_RUNNING="${FAKE_NOT_RUNNING:-}" \
     FAKE_SERVE_STATUS_JSON="${FAKE_SERVE_STATUS_JSON-"{}"}" FAKE_SERVE_STATUS_FAIL="${FAKE_SERVE_STATUS_FAIL:-}" \
+    SERVICE_RESULT="${SERVICE_RESULT:-}" \
     bash "$SCRIPT" "$1" >/dev/null 2>"$T/err"
   rc=$?; log=$(cat "$T/log"); err=$(cat "$T/err")
 }
@@ -53,6 +56,15 @@ game_status=$(serve_status "$(jq -cn --arg path "$T/game/$SHA.html" '{Path: $pat
 FAKE_SERVE_STATUS_JSON="$game_status" run verify
 [ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify pinned mapping: rc=$rc log=$log err=$err"
 
+PDIR="$T/game/" FAKE_SERVE_STATUS_JSON="$game_status" run verify
+[ $rc -eq 0 ] && [ -z "$log" ] && ok || bad "verify directory with trailing slash: rc=$rc log=$log err=$err"
+
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].TCP["8443"] = {HTTPS: true}' <<< "$game_status") run verify
+[ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify extra TCP port: rc=$rc log=$log err=$err"
+
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].TCP["443"] = {HTTP: true}' <<< "$game_status") run verify
+[ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify plain HTTP on 443: rc=$rc log=$log err=$err"
+
 FAKE_SERVE_STATUS_JSON=$(serve_status '{"Path":"/another.html"}') run verify
 [ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify wrong mapping: rc=$rc log=$log err=$err"
 
@@ -62,7 +74,7 @@ FAKE_SERVE_STATUS_JSON=$(serve_status '{"Proxy":"http://127.0.0.1:8080/"}') run 
 FAKE_SERVE_STATUS_JSON=$(serve_status '{"Text":"hello"}') run verify
 [ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify text mapping: rc=$rc log=$log err=$err"
 
-FAKE_SERVE_STATUS_JSON='{"Services":{"svc:game":{"Web":[]}}}' run verify
+FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web = []' <<< "$game_status") run verify
 [ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify malformed mapping: rc=$rc log=$log err=$err"
 
 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web["other.example.ts.net:443"].Handlers["/"].Path = "/another.html"' <<< "$game_status") run verify
@@ -80,6 +92,11 @@ FAKE_NOT_RUNNING=1 run stop
 [ $rc -eq 0 ] && [ "$log" = "$CLR" ] && ok || bad "stop does not wait for Running: rc=$rc log=$log"
 FAKE_CLEAR_FAIL=1 run stop
 [ $rc -ne 0 ] && ok || bad "stop with a failed clear must fail"
+
+SERVICE_RESULT=success run stop-post
+[ $rc -eq 0 ] && [ ! -s "$T/calls" ] && ok || bad "stop-post after success: rc=$rc calls=$(cat "$T/calls") err=$err"
+SERVICE_RESULT=exit-code run stop-post
+[ $rc -eq 0 ] && [ "$log" = "$CLR" ] && ok || bad "stop-post after failure: rc=$rc log=$log err=$err"
 
 chmod -R u+w "$T/game"; rm -f "$T/game/"*; run verify
 [ $rc -ne 0 ] && [ "$log" = "$CLR" ] && ok || bad "missing: rc=$rc log=$log"
