@@ -409,6 +409,8 @@
           # Pinned-file Tailscale Service: serves only matching bytes, clears only its own service.
           svc-game = import ./tests/svc-game.nix { inherit pkgs; };
 
+          rpi5-serve = import ./tests/rpi5-serve.nix { inherit pkgs; };
+
           # The report must come from successful schema-validated action output.
           claude-review-report = import ./tests/claude-review-report.nix { inherit pkgs; };
 

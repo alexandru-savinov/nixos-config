@@ -3003,6 +3003,69 @@ let
       then true
       else builtins.throw "FAIL: svc-game dir type accepts a non-canonical path";
 
+    rpi5-serve-alert-identity =
+      let
+        units = self.nixosConfigurations.rpi5-full.config.systemd.services;
+        allowlist = units.rpi5-serve-allowlist;
+        reset = allowlist.serviceConfig.ExecStartPost;
+        inherit (nixpkgs.lib) hasInfix hasPrefix hasSuffix;
+      in
+      if allowlist.onFailure == [ "vigil-failed@rpi5-serve-allowlist.service" ]
+        && units.vigil.onFailure == [ "vigil-failed.service" ]
+        && hasSuffix "/bin/vigil failed %i" units."vigil-failed@".serviceConfig.ExecStart
+        && hasSuffix "/bin/vigil failed" units.vigil-failed.serviceConfig.ExecStart
+        && builtins.length reset == 1
+        && hasPrefix "/nix/store/" (builtins.head reset)
+        && hasSuffix "/bin/rpi5-serve-allowlist-post-start" (builtins.head reset)
+        && hasInfix "/bin/setpriv --reuid vigil --regid vigil --clear-groups -- " allowlist.postStart
+        && hasSuffix "/bin/rm -f /var/lib/vigil/nota-sent/rpi5-serve-allowlist\n" allowlist.postStart
+      then true
+      else builtins.throw "FAIL: rpi5 Serve allowlist must use a distinct alert identity from Vigil";
+
+    rpi5-serve-and-kindle =
+      let
+        base = self.nixosConfigurations.rpi5-full;
+        cfg = base.config;
+        inherit (cfg.systemd) services sockets timers;
+        tidy = services.rpi5-serve-tidy;
+        allowlist = services.rpi5-serve-allowlist;
+        kindleService = services.kindle-stub;
+        kindle = kindleService.serviceConfig;
+        listener = sockets.kindle-stub.socketConfig;
+        restartTrigger = c: c.systemd.services.kindle-stub.unitConfig.X-Restart-Triggers;
+        withListener = settings: (base.extendModules {
+          modules = [{ customModules.kindleStub = settings; }];
+        }).config;
+        firewallRule = "-p tcp -s 192.168.30.0/24 -d 192.168.1.37 --dport 80 -j nixos-fw-accept";
+        inherit (nixpkgs.lib) hasInfix hasSuffix;
+      in
+      if tidy.serviceConfig.Type == "oneshot" && tidy.serviceConfig.RemainAfterExit
+        && builtins.elem "multi-user.target" tidy.wantedBy
+        && builtins.elem "tailscaled.service" tidy.after
+        && hasSuffix " tidy" tidy.serviceConfig.ExecStart
+        && allowlist.serviceConfig.Type == "oneshot" && allowlist.wantedBy == [ ]
+        && hasSuffix " allowlist" allowlist.serviceConfig.ExecStart
+        && allowlist.environment.ALLOWED_PORTS == "[3001,5678,8123]"
+        && allowlist.environment.ALLOWED_SERVICES == "[]"
+        && builtins.elem "rpi5-serve-tidy.service" allowlist.after
+        && builtins.elem "timers.target" timers.rpi5-serve-allowlist.wantedBy
+        && timers.rpi5-serve-allowlist.timerConfig.OnUnitActiveSec == "15min"
+        && kindle.DynamicUser && kindle.NoNewPrivileges && kindle.ProtectHome && kindle.PrivateTmp
+        && kindle.ProtectSystem == "strict" && kindle.CapabilityBoundingSet == ""
+        && !(kindle ? AmbientCapabilities)
+        && kindle.Sockets == "kindle-stub.socket"
+        && kindleService.notSocketActivated
+        && kindleService.restartTriggers == [ cfg.systemd.units."kindle-stub.socket".unit ]
+        && restartTrigger cfg != restartTrigger (withListener { bindAddress = nixpkgs.lib.mkForce "192.168.1.38"; })
+        && restartTrigger cfg != restartTrigger (withListener { port = 8080; })
+        && listener.ListenStream == "192.168.1.37:80"
+        && listener.IPAddressAllow == [ "192.168.30.0/24" ] && listener.IPAddressDeny == "any"
+        && kindle.IPAddressAllow == listener.IPAddressAllow && kindle.IPAddressDeny == listener.IPAddressDeny
+        && hasInfix "iptables -I nixos-fw ${firewallRule}" cfg.networking.firewall.extraCommands
+        && hasInfix "iptables -D nixos-fw ${firewallRule}" cfg.networking.firewall.extraStopCommands
+      then true
+      else builtins.throw "FAIL: rpi5 Serve cleanup, allowlist, or Kindle listener wiring";
+
     # The stage-4 dead-man is installed, its wrapper sets every tool as an
     # absolute store path, and the config never schedules it (no unit or timer
     # by name, and no service runs it); it is armed by hand as a transient timer.

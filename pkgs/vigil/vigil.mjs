@@ -6,9 +6,10 @@ import { iso, namedPath, readJson, stateRoot } from './lib/common.mjs';
 
 export async function failed(options = {}) {
   const env = options.env || process.env;
-  const marker = readJson(namedPath(stateRoot(env), 'nota-sent', 'vigil'));
+  const name = options.name ?? 'vigil';
+  const marker = readJson(namedPath(stateRoot(env), 'nota-sent', name));
   return (await import('./vigil-say.mjs')).say({
-    gazda: options.gazda || os.hostname(), nume: 'vigil', verdict: 'failed', tranzitie: 'open', nivel: 'nota',
+    gazda: options.gazda || os.hostname(), nume: name, verdict: name === 'vigil' ? 'failed' : 'picat', tranzitie: 'open', nivel: 'nota',
     event_id: randomUUID(), incident_id: marker?.incident_id || iso(), occurred_at: iso(),
   }, { ...options, env });
 }
@@ -22,9 +23,9 @@ export async function main(args = process.argv.slice(2)) {
   if (command === 'say') return (await import('./vigil-say.mjs')).main(rest);
   if (command === 'tick') return (await import('./vigil-tick.mjs')).main(rest);
   if (command === 'validate-public') return (await import('./lib/public-contracts.mjs')).validatePublic(rest);
-  if (command === 'failed' && !rest.length) {
+  if (command === 'failed' && rest.length <= 1) {
     try {
-      return await failed();
+      return await failed({ name: rest[0] });
     } catch { process.stderr.write('vigil: failure-event-invalid\n'); return 2; }
   }
   process.stderr.write('usage: vigil check|say|tick|failed|validate-public|autoproba\n');
