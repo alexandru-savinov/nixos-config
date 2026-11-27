@@ -90,6 +90,7 @@
     ../../modules/services/sancta-archive-deadman.nix # the one archive watcher that does NOT need the soul mount
     ../../modules/services/sancta-absent-guard.nix # the clock the house's absence guard never had
     ../../modules/services/sancta-soc-page.nix # rebuild + gate the private SOC page daily
+    ./svc-game.nix # one pinned static file as a Tailscale Service (bytes placed by hand)
     ../../modules/services/claude-code-managed-settings.nix # bar/clock/memory-index hooks a session cannot erase
     ../../modules/services/observation-tools.nix # vnStat + Lynis, observation only
     ../../modules/services/vulnix-nightly.nix # nightly CVE scan of the running system, report stays local
@@ -569,6 +570,15 @@
   # bin/gallery-shot's hardcoded and only permitted origin — a structural gate,
   # "so Sancta cannot, not so it promises not to" — and killing it as a duplicate
   # would remove Sancta's own eyes on what it renders. Second role, not stray copy.
+  # A pinned static file served as the Tailscale Service svc:game (its own origin).
+  # The bytes are not in this repo; only their pin. See svc-game.nix.
+  sancta.svcGame = {
+    enable = true;
+    sha256 = "68579f993b1030fc774a1a70e37bad97a915cb289cafb0cf31c23ca0d044bc9f";
+    length = 372698; # provisional pin, replaced at the final freeze
+    onFailureUnit = "sancta-soul-mirror-alert@%N.service";
+  };
+
   services.sancta-gallery = {
     enable = true;
     galleryDir = "/var/lib/sancta/.claude/index/gallery";

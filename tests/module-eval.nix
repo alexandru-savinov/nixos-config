@@ -2952,6 +2952,39 @@ let
       then true
       else builtins.throw "FAIL: auto-fix-vscode-server not scoped:\n${unit}";
 
+    # The pinned-file service on choir clears first, retries on failure, and stays
+    # loaded on success. Stopping it then clears the service. Boot and verify share
+    # one lock and run the reviewed script with the pin. A timer re-verifies, failure
+    # alerts, and nothing couples it to tailscaled's lifecycle (no Requires,
+    # BindsTo or PartOf), so a failed check never stops tailscaled or blocks it.
+    sancta-choir-svc-game =
+      let
+        cfg = self.nixosConfigurations.sancta-choir.config;
+        g = cfg.sancta.svcGame;
+        b = cfg.systemd.services.svc-game;
+        v = cfg.systemd.services.svc-game-verify;
+        t = cfg.systemd.timers.svc-game-verify;
+        coupled = s: (s.requires or [ ]) != [ ] || (s.bindsTo or [ ]) != [ ] || (s.partOf or [ ]) != [ ];
+      in
+      if g.enable && g.service == "svc:game"
+        && nixpkgs.lib.hasSuffix " boot" b.serviceConfig.ExecStart
+        && nixpkgs.lib.hasSuffix " verify" v.serviceConfig.ExecStart
+        && b.serviceConfig.RemainAfterExit
+        && b.serviceConfig.Restart == "on-failure"
+        && nixpkgs.lib.hasSuffix " stop" b.serviceConfig.ExecStop
+        && b.environment.LOCK == v.environment.LOCK
+        && b.environment.SHA == g.sha256 && b.environment.LEN == toString g.length
+        && v.environment.SHA == g.sha256
+        && nixpkgs.lib.hasPrefix "/nix/store/" b.environment.TS
+        && b.onFailure == [ "sancta-soul-mirror-alert@%N.service" ]
+        && v.onFailure == b.onFailure
+        && !(coupled b) && !(coupled v)
+        && builtins.elem "timers.target" t.wantedBy
+        && builtins.elem "d ${g.dir} 0700 root root -" cfg.systemd.tmpfiles.rules
+        && !(nixpkgs.lib.hasInfix "serve reset" (builtins.readFile ../hosts/sancta-choir/svc-game.sh))
+      then true
+      else builtins.throw "FAIL: svc-game units not as reviewed";
+
     # The stage-4 dead-man is installed, its wrapper sets every tool as an
     # absolute store path, and the config never schedules it (no unit or timer
     # by name, and no service runs it); it is armed by hand as a transient timer.
