@@ -14,6 +14,7 @@ the script's store path.
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import tempfile
 import time
@@ -631,7 +632,7 @@ def slurp(path):
 def fake(dirpath, name, body):
     path = os.path.join(dirpath, name)
     with open(path, "w") as fh:
-        fh.write("#!/bin/sh\n" + body)
+        fh.write(f"#!{os.path.realpath(shutil.which('bash'))}\n" + body)
     os.chmod(path, stat.S_IRWXU)
     return path
 
@@ -690,6 +691,15 @@ class Runners(unittest.TestCase):
         os.mkdir(self.fbin)
         fake_touch(self.fbin)
         self.bootid = os.path.join(self.d, "boot_id")
+        self.boot_time = 1_700_000_000
+        self.boot_grace_seconds = 690
+        self.auditd_state = os.path.join(self.d, "auditd.state")
+        self.auditd_conf = os.path.join(self.d, "auditd.conf")
+        self.retention_signal = os.path.join(self.sd, "audit-retention-clean")
+        self.retention_armed = os.path.join(self.sd, "audit.retention-armed")
+        self.retention_config(64, 8)
+        self.chattr_calls = os.path.join(self.d, "chattr.calls")
+        self.chattr = fake(self.d, "chattr", f'printf "%s\\n" "$@" >> "{self.chattr_calls}"\n')
         self.set_boot("boot-A")
         for gen in ("gen1", "gen2"):
             os.makedirs(os.path.join(self.d, gen, "etc"))
@@ -719,7 +729,8 @@ class Runners(unittest.TestCase):
 
     def injected(self):
         return ["--current-system", self.cs, "--etc-sudoers", self.sudoers,
-                "--auditctl", self.auditctl, "--stamp", self.stamp,
+                "--auditctl", self.auditctl, "--auditd-state-file", self.auditd_state,
+                "--chattr", self.chattr, "--stamp", self.stamp,
                 "--expect-watch", "/run/agenix:rwa:agenix-secrets", "--expect-watch", "/etc/sudoers:wa:sudoers",
                 "--boot-id-file", self.bootid, "--audit-log-dir", self.d,
                 "--deploy-flag", os.path.join(self.d, "deploy-deadman-armed"),
@@ -730,8 +741,11 @@ class Runners(unittest.TestCase):
         with open(self.bootid, "w") as fh:
             fh.write(ident + "\n")
 
-    def make_auditctl(self, *, enabled=1, lost=0, pid=1, rules=None, status_exit=0, rules_exit=0):
+    def make_auditctl(self, *, enabled=1, lost=0, pid=1, rules=None, status_exit=0, rules_exit=0,
+                      suspended="no", dump_state=True):
         rules = HEALTHY_RULES if rules is None else rules
+        state_report = (f'printf "writing to logs = yes\\nlogging suspended = {suspended}\\n" > "{self.auditd_state}"'
+                        if dump_state else ":")
         return fake(self.d, "auditctl", (
             f'echo "$@" >> {self.log}.auditctl\n'
             'case "$1" in\n'
@@ -739,6 +753,8 @@ class Runners(unittest.TestCase):
             f'      printf "enabled {enabled}\\nfailure 1\\npid {pid}\\nrate_limit 0\\nbacklog_limit 8192\\nlost {lost}\\nbacklog 0\\n";;\n'
             f'  -l) [ {rules_exit} -ne 0 ] && {{ echo boom >&2; exit {rules_exit}; }}\n'
             f"      cat <<'E'\n{rules}E\n;;\n"
+            '  --signal) [ "$2" = state ] || exit 99\n'
+            f'      {state_report};;\n'
             'esac\n'
         ))
 
@@ -1013,60 +1029,470 @@ class Runners(unittest.TestCase):
             fh.write(text)
         return f"cat {fixture}\n"
 
-    def test_checkpoint_mismatch_is_an_error_not_a_silent_retry(self):
-        # Was: a silent retry from the checkpoint's timestamp, exit 0.
-        open(self.cp, "w").close()
-        a = self.ausearch('case "$*" in *"--start checkpoint"*) exit 1;; esac\nexit 12\n')
-        self.assertEqual(self.audit(a), 2)
-        args = slurp(self.log).splitlines()
-        self.assertEqual(len(args), 2)
-        self.assertNotIn("--start recent", args[0])
-        self.assertIn("--start checkpoint", args[1])
-        self.assertTrue(os.path.exists(os.path.join(self.sd, "audit.checkpoint-mismatch")))
+    def checkpoint(self, timestamp="100.123"):
+        with open(self.cp, "w") as fh:
+            fh.write(f"dev=0x1\ninode=123\noutput=- {timestamp}:99 0x514\n")
 
-    def test_checkpoint_mismatch_keeps_the_hits_of_the_retry_as_alarms(self):
-        for status in (10, 11, 12):
-            for f in os.listdir(self.sd):
-                os.unlink(os.path.join(self.sd, f))
-            open(self.cp, "w").close()
-            body = self.fixture_cmd(login_reads_agenix() + "\n")
-            a = self.ausearch(f'case "$*" in *"--start checkpoint"*) {body};; esac\nexit {status}\n')
-            rc, out = self.run_logged(a)
-            self.assertEqual(rc, 2, status)
-            self.assertIn("ALARM audit", out)
-            self.assertTrue(os.path.exists(self.last), "a retry hit starts the hold")
+    def retained_log(self, timestamp="200.456", suffix=".1"):
+        with open(os.path.join(self.d, "audit.log"), "a"):
+            pass
+        with open(os.path.join(self.d, "audit.log" + suffix), "w") as fh:
+            fh.write(f"type=DAEMON_START msg=audit({timestamp}:1): auditd started\n")
 
-    def test_checkpoint_mismatch_stays_an_error_until_reconciled(self):
-        open(self.cp, "w").close()
-        bad = self.ausearch('case "$*" in *"--start checkpoint"*) exit 1;; esac\nexit 12\n')
-        self.assertEqual(self.audit(bad), 2)
-        # Next runs are quiet and well-formed, but nothing reconciled it.
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 2)
-        os.unlink(os.path.join(self.sd, "audit.checkpoint-mismatch"))
-        self.assertEqual(self.audit(self.ausearch(QUIET)), 1)  # hold from the mismatch run
-        with open(self.last, "w") as fh:
-            fh.write(f"{time.time() - 901:.0f}\n")
+    def recovery(self, status=12, first="", replay="", *, advances=True):
+        advance = ('event=$(sed -n "s/.*msg=audit(\\([^)]*\\)).*/\\1/p" "$input/audit.log")\n'
+                   'echo "output=- $event 0x4B0" > "$cp"\n') if advances else ""
+        return self.ausearch(self.ADVANCE_PROLOGUE + f"""
+if [ -z "$input" ]; then
+    {first or ':'}
+    exit {status}
+fi
+echo "NOTE - using logs in $input/audit.log" >&2
+test ! -s "$input/audit.log" && exit 1
+{advance}
+{replay or ':'}
+exit 0
+""")
+
+    def assert_reanchored(self, timestamp="200.456", suffix=".1"):
+        file_id = sva.audit_file_id(os.path.join(self.d, "audit.log" + suffix))
+        expected = sva.audit_checkpoint_text(file_id, f"output=- {timestamp}:1 0x4B0")
+        self.assertEqual(slurp(self.cp), expected)
+
+    def watchdog(self):
+        with mock.patch.object(sva, "read_boot_time", return_value=self.boot_time):
+            return sva.main(["audit-watchdog", "--state-dir", self.sd, "--audit-log-dir", self.d,
+                             "--auditd-conf", self.auditd_conf,
+                             "--boot-grace-seconds", str(self.boot_grace_seconds)])
+
+    def retention_config(self, size, count):
+        with open(self.auditd_conf, "w") as fh:
+            fh.write(f"# auditd settings\nmax_log_file = {size}\nnum_logs = {count}\n")
+
+    def arming_state(self):
+        epoch, size, count, warmup = slurp(self.retention_armed).split()
+        return float(epoch), int(size), int(count), int(warmup)
+
+    def watchdog_at(self, now):
+        with mock.patch.object(sva.time, "time", return_value=now), mock.patch.object(sva, "_log") as log:
+            self.assertEqual(self.watchdog(), 0)
+        return "\n".join(call.args[0] for call in log.call_args_list)
+
+    def test_status_12_appends_once_pages_and_recovers_without_ack(self):
+        self.checkpoint()
+        self.retained_log()
+        marker = os.path.join(self.sd, "audit.checkpoint-mismatch")
+        stamp = os.path.join(self.sd, "audit.coverage-gap")
+        history = "existing F15 evidence\n"
+        with open(stamp, "w") as fh:
+            fh.write(history)
+        original_inode = os.stat(stamp).st_ino
+        rc, out = self.run_logged(self.recovery())
+        self.assertEqual(rc, 0, out)
+        self.assert_reanchored()
+        entry = "from=100.123 to=200.456 cause=12\n"
+        self.assertEqual(slurp(stamp), history + entry)
+        self.assertEqual(os.stat(stamp).st_ino, original_inode)
+        self.assertTrue(os.path.isfile(marker))
+        self.assertEqual(self.watchdog(), 0)
+        gap_signal = os.path.join(self.sd, "audit-gap-clean")
+        self.assertEqual(os.stat(gap_signal).st_mtime, 1)
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(gap_signal).st_mtime, 1)
+        self.assertEqual(slurp(stamp), history + entry)
+        os.unlink(marker)  # operator acknowledgement
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(gap_signal).st_mtime, 1)
+        self.assertEqual(slurp(stamp), history + entry)
+
+    def test_gap_retry_after_append_does_not_repeat_the_record_after_rotation(self):
+        self.checkpoint()
+        self.retained_log()
+        stamp = os.path.join(self.sd, "audit.coverage-gap")
+        self.assertEqual(self.audit(self.recovery(advances=False)), 2)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n")
+        self.retained_log("300.789")
+        self.assertEqual(self.audit(self.recovery()), 0)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n")
+        self.checkpoint("250.123")
+        self.assertEqual(self.audit(self.recovery()), 0)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n"
+                                      "from=250.123 to=300.789 cause=12\n")
+
+    def test_status_12_with_unwritable_gap_evidence_does_not_reemit_alarms(self):
+        self.checkpoint()
+        original = slurp(self.cp)
+        self.retained_log()
+        gap = os.path.join(self.sd, "audit.coverage-gap")
+        os.mkdir(gap)  # deterministic append failure, even when run as root
+        hit = self.fixture_cmd(login_reads_agenix(42) + "\n")
+        search = self.recovery(first=hit, replay=hit)
+        attempts = [self.run_logged(search) for _ in range(3)]
+        self.assertEqual([rc for rc, _ in attempts], [2, 2, 2])
+        self.assertEqual(slurp(self.cp), original)
+        self.assertTrue(all("could not record checkpoint status 12" in out for _, out in attempts))
+        self.assertEqual([len(self.alarm_lines(out)) for _, out in attempts], [0, 0, 0])
+        os.rmdir(gap)
+        rc, out = self.run_logged(search)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual([h["serial"] for h in self.alarm_lines(out)], ["42"])
+        self.assert_reanchored()
+
+    def test_killed_replay_resumes_from_last_classified_file_after_rotation(self):
+        import subprocess
+        import sys
+
+        self.checkpoint()
+        original_checkpoint = slurp(self.cp)
+        cursor = os.path.join(self.sd, "audit.replay")
+        def log_path(suffix):
+            return os.path.join(self.d, "audit.log" + suffix)
+
+        for suffix, serial in ((".2", 41), (".1", 42), ("", 43)):
+            with open(log_path(suffix), "w") as fh:
+                fh.write(login_reads_agenix(serial) + "\n")
+        oldest_id = sva.audit_file_id(log_path(".2"))
+        interrupted = os.path.join(self.d, "interrupted")
+        search = self.ausearch(self.ADVANCE_PROLOGUE + f"""
+test -n "$input" || exit 12
+echo "NOTE - using logs in $input/audit.log" >&2
+event=$(head -n 1 "$input/audit.log" | sed -n 's/.*msg=audit(\\([^)]*\\)).*/\\1/p')
+cat "$input/audit.log"
+printf 'output=- %s 0x514\\n' "$event" > "$cp"
+case "$event" in
+  *:42) if [ ! -e '{interrupted}' ]; then
+    touch '{interrupted}'
+    kill -KILL "$PPID"
+  fi;;
+esac
+""")
+        systemctl = fake(self.d, "systemctl", "exit 0\n")
+        argv = [sys.executable, SCRIPT, "audit", "--ausearch", search, "--systemctl", systemctl,
+                "--require-active", "auditd.service", "--require-active", "audit-rules-nixos.service",
+                "--state-dir", self.sd, "--hold", "900", *self.injected()]
+        env = {**os.environ, "TMPDIR": self.d}
+        killed = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(killed.returncode, -9, killed.stdout + killed.stderr)
+        self.assertEqual([h["serial"] for h in self.alarm_lines(killed.stdout)], ["41"])
+        self.assertEqual(json.loads(slurp(cursor))["through"], oldest_id)
+        self.assertEqual(slurp(self.cp), original_checkpoint)
+        self.assertTrue(os.path.isfile(self.last))
+        self.assertFalse(os.path.exists(self.last_eval()))
+        for index in range(2, -1, -1):
+            os.rename(log_path(f".{index}" if index else ""), log_path(f".{index + 1}"))
+        with open(log_path(""), "w") as fh:
+            fh.write(login_reads_agenix(44) + "\n")
+
+        resumed = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(resumed.returncode, 1, resumed.stdout + resumed.stderr)
+        self.assertEqual([h["serial"] for h in self.alarm_lines(resumed.stdout)], ["42", "43", "44"])
+        self.assertEqual(slurp(self.log).count("--input-logs"), 1)
+        self.assertIn(":44 0x514", slurp(self.cp))
+        self.assertTrue(os.path.isfile(self.last_eval()))
+        self.assertFalse(os.path.exists(cursor))
+        self.assertEqual(len(slurp(os.path.join(self.sd, "audit.coverage-gap")).splitlines()), 1)
+
+    def test_replay_reassembles_event_across_rotated_logs(self):
+        self.checkpoint()
+        first, rest = login_reads_agenix(42).split("\n", 1)
+        for suffix, text in ((".2", first), (".1", rest), ("", "")):
+            with open(os.path.join(self.d, "audit.log" + suffix), "w") as fh:
+                fh.write(text + "\n" if text else "")
+        oldest_inode = os.stat(os.path.join(self.d, "audit.log.2")).st_ino
+        search = self.ausearch(self.ADVANCE_PROLOGUE + f"""
+test -n "$input" || exit 10
+if [ ! -e "$input/audit.log.1" ]; then
+    # The oldest file alone has no complete event.
+    echo 'output=- 0.000:0 0x0' > "$cp"
+    exit 1
+fi
+grep -Fxq 'inode={oldest_inode}' "$cp" || exit 99
+if [ -e "$input/audit.log.2" ]; then
+    # Re-reading the checkpoint event requires both halves, even though
+    # ausearch used the second file's inode when it wrote the checkpoint.
+    grep -q '^type=SYSCALL' "$input/audit.log.2" || exit 99
+    grep -q '^type=PROCTITLE' "$input/audit.log.1" || exit 99
+    exit 1
+fi
+cat "$input/audit.log.1" "$input/audit.log"
+echo 'output=- 1762790400.042:42 0x514' > "$cp"
+""")
+        rc, out = self.run_logged(search)
+        self.assertEqual(rc, 1, out)
+        hits = self.alarm_lines(out)
+        self.assertEqual([h["serial"] for h in hits], ["42"])
+        self.assertEqual(hits[0]["paths"], ["/run/agenix.d/3/example-one"])
+        self.assertIn(f"inode={oldest_inode}\n", slurp(self.cp))
+
+    def test_new_coverage_evidence_gets_append_only_protection(self):
+        self.checkpoint()
+        self.retained_log()
+        path = os.path.join(self.sd, "audit.coverage-gap")
+        self.assertEqual(self.audit(self.recovery()), 0)
+        calls = slurp(self.chattr_calls).splitlines() if os.path.exists(self.chattr_calls) else []
+        self.assertEqual(calls, ["+a", path])
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(slurp(path), "from=100.123 to=200.456 cause=12\n")
+
+    def test_coverage_append_only_fallback_requires_an_unsupported_filesystem(self):
+        self.checkpoint()
+        self.retained_log()
+        stamp = os.path.join(self.sd, "audit.coverage-gap")
+        self.chattr = fake(self.d, "chattr", 'echo "$0: Operation not permitted while setting flags on $2" >&2\nexit 1\n')
+        rc, out = self.run_logged(self.recovery())
+        self.assertEqual(rc, 2, out)
+        self.assertIn("chattr +a exited 1", out)
+        self.assertEqual(slurp(stamp), "")
+        self.chattr = fake(self.d, "chattr", 'echo "$0: Operation not supported while setting flags on $2" >&2\nexit 1\n')
+        rc, out = self.run_logged(self.recovery())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("filesystem does not support chattr +a", out)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n")
+
+    def test_short_gap_append_is_completed_without_overwriting_history(self):
+        self.checkpoint()
+        self.retained_log()
+        stamp = os.path.join(self.sd, "audit.coverage-gap")
+        append = os.write
+
+        def short_write(fd, data):
+            return append(fd, data[:7])
+
+        with mock.patch.object(sva.os, "write", side_effect=short_write):
+            self.assertEqual(self.audit(self.recovery()), 2)
+        self.assertEqual(slurp(stamp), "from=10")
+        self.assertEqual(self.audit(self.recovery()), 0)
+        self.assertEqual(slurp(stamp), "from=100.123 to=200.456 cause=12\n")
+
+    def test_replay_batch_boundary_preserves_complete_audit_events(self):
+        self.checkpoint()
+        self.retained_log()
+        ordinary = "".join(
+            f"type=DAEMON_START msg=audit(200.456:{i}): auditd started\n"
+            for i in range(4095)
+        )
+        body = self.fixture_cmd(ordinary + login_reads_agenix() + "\n")
+        rc, out = self.run_logged(self.recovery(replay=body))
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(len(self.alarm_lines(out)), 1)
+
+    def test_coverage_stamp_io_is_append_only(self):
+        import subprocess
+        with open(SCRIPT) as fh:
+            source = fh.read()
+        # The path has a single reference and its writer only opens in append mode.
+        refs = subprocess.run(["grep", "-nF", '"audit.coverage-gap"', SCRIPT],
+                              check=True, text=True, capture_output=True).stdout.splitlines()
+        self.assertEqual(len(refs), 1)
+        self.assertIn('stamp = os.path.join(state, "audit.coverage-gap")', refs[0])
+        writer = source.split("def record_coverage_gap(", 1)[1].split("\ndef ", 1)[0]
+        grep = subprocess.run(["grep", "-En", r"unlink|truncate|remove|rename|O_TRUNC|replace\(|open\(stamp.*[\"']w"],
+                              input=writer, text=True, capture_output=True)
+        self.assertEqual(grep.returncode, 1, grep.stdout)
+        self.assertIn("os.O_APPEND", writer)
+
+    def test_checkpoint_status_10_and_11_replay_and_classify_hits(self):
+        self.retained_log()
+        for status in (10, 11):
+            with self.subTest(status=status):
+                if status == 10:
+                    with open(self.cp, "w") as fh:
+                        fh.write("corrupt\n")
+                else:
+                    self.checkpoint()
+                body = self.fixture_cmd(login_reads_agenix() + "\n")
+                rc, out = self.run_logged(self.recovery(status, replay=body))
+                self.assertEqual(rc, 1, out)
+                self.assertEqual(len(self.alarm_lines(out)), 1)
+        self.assertEqual(slurp(os.path.join(self.sd, "audit.coverage-gap")),
+                         "from=unknown to=200.456 cause=10\nfrom=100.123 to=200.456 cause=11\n")
 
     def test_mismatch_keeps_the_first_attempts_records_next_to_the_retrys(self):
-        open(self.cp, "w").close()
+        self.checkpoint()
+        self.retained_log()
         first = self.fixture_cmd(login_reads_agenix(1) + "\n")
         second = os.path.join(self.d, "second")
-        with open(second, "w") as fh:  # the retry repeats serial 1 and adds 2
+        with open(second, "w") as fh:
             fh.write(login_reads_agenix(1) + "\n----\n" + login_reads_agenix(2) + "\n")
-        a = self.ausearch(f'case "$*" in *"--start checkpoint"*) cat {second};; *) {first};; esac\nexit 11\n')
-        rc, out = self.run_logged(a)
-        self.assertEqual(rc, 2)
+        rc, out = self.run_logged(self.recovery(11, first=first, replay=f"cat {second}"))
+        self.assertEqual(rc, 1)
         self.assertEqual(sorted(h["serial"] for h in self.alarm_lines(out)), ["1", "2"])
 
     def test_mismatch_with_a_quiet_retry_still_alarms_on_the_first_attempt(self):
-        open(self.cp, "w").close()
+        self.checkpoint()
+        self.retained_log()
         first = self.fixture_cmd(login_reads_agenix(5) + "\n")
-        a = self.ausearch(f'case "$*" in *"--start checkpoint"*) exit 1;; *) {first};; esac\nexit 11\n')
-        rc, out = self.run_logged(a)
-        self.assertEqual(rc, 2)
+        rc, out = self.run_logged(self.recovery(11, first=first))
+        self.assertEqual(rc, 1)
         self.assertEqual([h["serial"] for h in self.alarm_lines(out)], ["5"])
+
+    def test_watchdog_pages_on_stale_or_missing_success(self):
+        now = time.time()
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        self.retained_log(f"{now:.3f}", suffix="")
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(deadman).st_mtime, 1)
+        first_check = os.path.join(self.sd, "audit-watchdog.started")
+        os.utime(first_check, (now - 1801, now - 1801))
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(deadman).st_mtime, 1)
+        with open(heartbeat, "w"):
+            pass
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(deadman).st_mtime, 1)
+        os.utime(heartbeat, (now - 1801, now - 1801))
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(deadman).st_mtime, 1)
+
+    def test_watchdog_does_not_page_during_boot_grace_after_long_downtime(self):
+        now = int(time.time())
+        self.boot_time = now - 120
+        self.retained_log(str(now))
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        with open(heartbeat, "w"):
+            pass
+        os.utime(heartbeat, (self.boot_time - 86400,) * 2)
+
+        self.assertNotIn("ALARM audit evaluator", self.watchdog_at(now))
+        self.assertGreater(os.stat(deadman).st_mtime, 1)
+
+    def test_watchdog_pages_after_boot_grace_and_timeout_without_a_success(self):
+        self.boot_time = int(time.time())
+        deadline = self.boot_time + self.boot_grace_seconds + 30 * 60
+        self.retained_log(str(self.boot_time))
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        with open(heartbeat, "w"):
+            pass
+        os.utime(heartbeat, (self.boot_time - 86400,) * 2)
+
+        for has_old_heartbeat in (True, False):
+            with self.subTest(has_old_heartbeat=has_old_heartbeat):
+                if not has_old_heartbeat:
+                    os.unlink(heartbeat)
+                self.assertNotIn("ALARM audit evaluator", self.watchdog_at(deadline))
+                self.assertGreater(os.stat(deadman).st_mtime, 1)
+                self.assertIn("ALARM audit evaluator", self.watchdog_at(deadline + 1))
+                self.assertEqual(os.stat(deadman).st_mtime, 1)
+
+    def test_watchdog_pages_after_31_minutes_since_a_success_on_this_boot(self):
+        now = int(time.time())
+        last_success = now - 31 * 60
+        self.boot_time = last_success - 3 * 60
+        self.retained_log(str(now))
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+        with open(heartbeat, "w"):
+            pass
+        os.utime(heartbeat, (last_success,) * 2)
+
+        self.assertIn("ALARM audit evaluator", self.watchdog_at(now))
+        self.assertEqual(os.stat(deadman).st_mtime, 1)
+
+    def test_fresh_retention_stays_green_and_keeps_its_deadline_across_runs(self):
+        armed_at = 1_800_000_000
+        self.retained_log(str(armed_at))
+        warming = "retention warming until 2027-01-17T08:00:00Z"
+        self.assertIn(warming, self.watchdog_at(armed_at))
+        self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+        stamp = slurp(self.retention_armed)
+        self.assertEqual(self.arming_state(), (armed_at, 64, 8, 172800))
+        os.utime(self.retention_armed, (12345, 12345))
+        for hours in (24, 47):
+            with self.subTest(hours=hours):
+                self.assertIn(warming, self.watchdog_at(armed_at + hours * 3600))
+                self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+                self.assertEqual(slurp(self.retention_armed), stamp)
+                self.assertEqual(os.stat(self.retention_armed).st_mtime, 12345)
+
+    def test_armed_retention_pages_on_young_records_and_recovers_at_48_hours(self):
+        armed_at = 1_800_000_000
+        self.retained_log(str(armed_at))
+        self.watchdog_at(armed_at)
+        for hours in (48, 49):
+            with self.subTest(hours=hours):
+                now = armed_at + hours * 3600
+                self.retained_log(str(now - 47 * 3600))
+                out = self.watchdog_at(now)
+                self.assertIn("younger than 48 hours", out)
+                self.assertNotIn("retention warming", out)
+                self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+        self.retained_log(str(now - 48 * 3600), suffix=".2")
+        self.assertNotIn("ALARM audit retention", self.watchdog_at(now))
+        self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+
+    def test_retention_cap_increase_rearms_and_decrease_enforces_immediately(self):
+        armed_at = 1_800_000_000
+        self.retained_log(str(armed_at))
+        self.watchdog_at(armed_at)
+        now = armed_at + 49 * 3600
+        self.retained_log(str(now))
+        self.watchdog_at(now)
+        self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+        self.retention_config(128, 8)
+        self.assertIn("retention warming until", self.watchdog_at(now))
+        self.assertGreater(os.stat(self.retention_signal).st_mtime, 1)
+        self.assertEqual(self.arming_state(), (now, 128, 8, 172800))
+        self.retention_config(256, 4)
+        self.assertIn("retention warming until", self.watchdog_at(now + 1))
+        self.assertEqual(self.arming_state(), (now, 256, 4, 172800))
+        self.retention_config(128, 4)
+        for offset in (2, 3):
+            out = self.watchdog_at(now + offset)
+            self.assertIn("younger than 48 hours", out)
+            self.assertNotIn("retention warming", out)
+            self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+            self.assertEqual(self.arming_state(), (now + 2, 128, 4, 0))
+
+    def test_unreadable_retention_stays_red_during_warmup(self):
+        out = self.watchdog_at(1_800_000_000)
+        self.assertIn("retention warming until", out)
+        self.assertIn("ALARM audit retention: no retained audit record readable", out)
+        self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+
+    def test_invalid_retention_stamp_stays_red_without_rearming(self):
+        now = 1_800_000_000
+        self.retained_log(str(now))
+        with open(self.retention_armed, "w") as fh:
+            fh.write("corrupt")
+        out = self.watchdog_at(now)
+        self.assertIn("invalid retention arming stamp", out)
+        self.assertNotIn("retention warming", out)
+        self.assertEqual(os.stat(self.retention_signal).st_mtime, 1)
+        self.assertEqual(slurp(self.retention_armed), "corrupt")
+
+    def test_watchdog_refreshes_all_healthy_stamps_left_by_a_previous_boot(self):
+        now = time.time()
+        self.boot_time = int(now) - 120
+        self.retained_log(f"{now - 49 * 3600:.3f}")
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        signals = [os.path.join(self.sd, f"audit-{name}-clean")
+                   for name in ("deadman", "gap", "retention")]
+        for stamp in [heartbeat, *signals]:
+            with open(stamp, "w"):
+                pass
+            os.utime(stamp, (now - 60 * 60,) * 2)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertTrue(all(os.stat(stamp).st_mtime > now - 1 for stamp in signals))
+        self.assertLess(os.stat(heartbeat).st_mtime, self.boot_time)
+
+    def test_audit_stamp_health_advances_on_hit_and_ages_on_evaluator_error(self):
+        from unittest.mock import patch
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        hits = os.path.join(self.sd, "audit-hits-clean")
+        for code, status in (("exited", "1"), ("exited", "2"), ("killed", "9")):
+            with patch.dict(os.environ, {"EXIT_CODE": code, "EXIT_STATUS": status,
+                                         "SANCTA_DOCTRINE_STAMP": hits}):
+                self.assertEqual(sva.main(["audit-stamp", "--state-dir", self.sd]), 0)
+            self.assertEqual(os.stat(hits).st_mtime, 1)
+            if status == "1":
+                self.assertGreater(os.stat(heartbeat).st_mtime, 1)
+                os.utime(heartbeat, (2345, 2345))
+            else:
+                self.assertEqual(os.stat(heartbeat).st_mtime, 2345)
 
     # ── evaluation boundary and coverage gap ──
     def last_eval(self):
@@ -1185,9 +1611,14 @@ class Runners(unittest.TestCase):
     # ── the checkpoint moves only after the outcome is on disk ──
     # A fake ausearch that, like the real one, rewrites the file it was given
     # as --checkpoint when it finds events, and records what that file held.
-    ADVANCING = (
-        'cp=; prev=\n'
-        'for x in "$@"; do [ "$prev" = --checkpoint ] && cp=$x; prev=$x; done\n'
+    ADVANCE_PROLOGUE = (
+        'cp=; input=; prev=\n'
+        'for x in "$@"; do\n'
+        '    case "$prev" in --checkpoint) cp=$x;; --input) input=$x;; esac\n'
+        '    prev=$x\n'
+        'done\n'
+    )
+    ADVANCING = ADVANCE_PROLOGUE + (
         '{ [ -e "$cp" ] && cat "$cp" || echo absent; } >> %(seen)s\n'
         'echo new > "$cp"\n'
         'cat %(fixture)s\n'
@@ -1381,7 +1812,49 @@ class Runners(unittest.TestCase):
     # ── trail health: auditctl -s / -l, before a quiet window is accepted ──
     def test_trail_health_checked_before_a_quiet_window(self):
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
-        self.assertEqual(slurp(self.log + ".auditctl").split(), ["-s", "-l"])
+        self.assertEqual(slurp(self.log + ".auditctl").splitlines(), ["-s", "-l", "--signal state"])
+
+    def test_suspended_auditd_stops_heartbeat_and_pages_even_with_free_disk(self):
+        self.boot_time = int(time.time()) - 120
+        self.retained_log(f"{time.time() - 49 * 3600:.3f}", suffix="")
+        heartbeat = os.path.join(self.sd, "audit-clean")
+        deadman = os.path.join(self.sd, "audit-deadman-clean")
+
+        def publish(rc):
+            with mock.patch.dict(os.environ, {"EXIT_CODE": "exited", "EXIT_STATUS": str(rc),
+                                             "SANCTA_DOCTRINE_STAMP": self.stamp}):
+                self.assertEqual(sva.main(["audit-stamp", "--state-dir", self.sd]), 0)
+
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        publish(0)
+        before = os.stat(heartbeat).st_mtime_ns
+        self.auditctl = self.make_auditctl(suspended="yes")
+        rc, out = self.audit_with_disk(free_gib=50)
+        publish(rc)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("logging suspended", out)
+        self.assertEqual(os.stat(heartbeat).st_mtime_ns, before)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(deadman).st_mtime, 1)
+        rc, out = self.audit_with_disk(free_gib=4)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("logging suspended", out)
+        self.auditctl = self.make_auditctl()
+        self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+        publish(0)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(deadman).st_mtime, 1)
+
+    def test_stale_healthy_auditd_report_is_an_evaluator_error(self):
+        quiet = self.ausearch(QUIET)
+        self.assertEqual(self.audit(quiet), 0)
+        os.unlink(self.log)
+        self.auditctl = self.make_auditctl(dump_state=False)
+        with mock.patch.object(sva.time, "monotonic", side_effect=[0, 1, 6]):
+            rc, out = self.run_logged(quiet)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("did not write a fresh recording state", out)
+        self.assertFalse(os.path.exists(self.log), "ausearch must not use a stale health report")
 
     def test_auditing_disabled_is_an_error(self):
         self.auditctl = self.make_auditctl(enabled=0)
@@ -1439,6 +1912,28 @@ class Runners(unittest.TestCase):
         with open(self.last, "w") as fh:
             fh.write(f"{time.time() - 901:.0f}\n")
         self.assertEqual(self.audit(self.ausearch(QUIET)), 0)
+
+    def test_kernel_loss_pages_after_the_hold_and_across_reboot_until_acknowledged(self):
+        self.retained_log(f"{time.time() - 49 * 3600:.3f}", suffix="")
+        signal = os.path.join(self.sd, "audit-gap-clean")
+        quiet = self.ausearch(QUIET)
+        self.assertEqual(self.audit(quiet), 0)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(signal).st_mtime, 1)
+        self.auditctl = self.make_auditctl(lost=2)
+        self.assertEqual(self.audit(quiet), 2)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(signal).st_mtime, 1)
+        with open(self.last, "w") as fh:
+            fh.write(f"{time.time() - 901:.0f}\n")
+        self.set_boot("boot-B")
+        self.auditctl = self.make_auditctl()
+        self.assertEqual(self.audit(quiet), 0)
+        self.assertEqual(self.watchdog(), 0)
+        self.assertEqual(os.stat(signal).st_mtime, 1)
+        os.unlink(os.path.join(self.sd, "audit.kernel-loss"))
+        self.assertEqual(self.watchdog(), 0)
+        self.assertGreater(os.stat(signal).st_mtime, 1)
 
     def test_a_loss_during_a_deploy_stays_red_and_is_annotated(self):
         # The deploy flag is context, never an exemption.

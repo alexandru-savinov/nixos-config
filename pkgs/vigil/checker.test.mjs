@@ -564,7 +564,7 @@ const socContract = (file, tinta) => ({
 });
 const withStamp = ({ contract: c, tinta }) => ({ contract: { ...c, tinta } });
 
-test('a stale soc-bans stamp reds the PAGING contract; a stale health stamp never pages', async () => harness(async h => {
+test('stale ban and evaluator health stamps page through separate contracts', async () => harness(async h => {
   const bansStamp = path.join(h.root, 'bans-clean');
   const healthStamp = path.join(h.root, 'bans-health-clean');
   for (const file of [bansStamp, healthStamp]) {
@@ -575,15 +575,15 @@ test('a stale soc-bans stamp reds the PAGING contract; a stale health stamp neve
   }
   const entries = [withStamp(socContract('soc-bans.toml', bansStamp)), withStamp(socContract('soc-bans-health.toml', healthStamp))];
   assert.equal(entries[0].contract.page, true);
-  assert.equal(entries[1].contract.page, false);
+  assert.equal(entries[1].contract.page, true);
   await run(entries, h.options);                 // real age check, no inspect override
   assert.equal(h.lines.find(l => l.nume === 'soc-bans').verdict, 'picat');
   assert.equal(h.lines.find(l => l.nume === 'soc-bans').motiv, 'age-stale');
   h.time(300000);
   await run(entries, h.options);
   assert.match(h.state().contracts['soc-bans'].open, /^2026-/, 'incident opens after picat_dupa = 2 stale samples');
-  assert.deepEqual(h.sent.map(e => `${e.nume}/${e.tranzitie}`), ['soc-bans/open'], 'paged; the health contract is not');
-  assert.match(h.state().contracts['soc-bans-health'].open, /^2026-/, 'but its incident is recorded');
+  assert.deepEqual(h.sent.map(e => `${e.nume}/${e.tranzitie}`), ['soc-bans/open', 'soc-bans-health/open']);
+  assert.match(h.state().contracts['soc-bans-health'].open, /^2026-/, 'health also opens an incident');
 }));
 
 test('a fresh soc-bans stamp is green and sends nothing', async () => harness(async h => {
@@ -594,4 +594,66 @@ test('a fresh soc-bans stamp is green and sends nothing', async () => harness(as
   await run([withStamp(socContract('soc-bans.toml', stamp))], h.options);
   assert.equal(h.lines[0].verdict, 'verde');
   assert.deepEqual(h.sent, []);
+}));
+
+test('the audit watchdog pages while the audit hit contract stays report-only', async () => harness(async h => {
+  const now = Date.parse('2026-09-20T12:00:00Z');
+  const hits = path.join(h.root, 'audit-hits-clean');
+  const deadman = path.join(h.root, 'audit-deadman-clean');
+  for (const file of [hits, deadman]) fs.writeFileSync(file, '');
+  fs.utimesSync(hits, 1, 1);
+  fs.utimesSync(deadman, new Date(now), new Date(now));
+  const entries = [withStamp(socContract('soc-audit.toml', hits)),
+    withStamp(socContract('soc-audit-deadman.toml', deadman))];
+  await run(entries, h.options);
+  h.time(300000);
+  await run(entries, h.options);
+  assert.equal(h.state().contracts['soc-audit'].verdict, 'picat');
+  assert.deepEqual(h.sent, []);
+
+  fs.utimesSync(deadman, 1, 1);
+  await run(entries, h.options);
+  assert.deepEqual(h.sent.map(e => [e.nume, e.tranzitie]), [['soc-audit-deadman', 'open']]);
+}));
+
+test('watchdog refresh before the first Vigil tick clears stale boot stamps and keeps first-sample paging', async () => harness(async h => {
+  const now = Date.parse('2026-09-20T12:00:00Z');
+  const signals = [['deadman', 'deadman'], ['coverage-gap', 'gap'], ['retention', 'retention']];
+  const stamps = signals.map(([, stamp]) => path.join(h.root, `audit-${stamp}-clean`));
+  const entries = signals.map(([name], i) => withStamp(socContract(`soc-audit-${name}.toml`, stamps[i])));
+  for (const stamp of stamps) {
+    fs.writeFileSync(stamp, '');
+    const beforeBoot = new Date(now - 20 * 60000);
+    fs.utimesSync(stamp, beforeBoot, beforeBoot);
+  }
+  // The unit runs the watchdog before Vigil samples. The 20-minute-old
+  // evaluator heartbeat still passes the watchdog's 30-minute test.
+  for (const stamp of stamps) fs.utimesSync(stamp, new Date(now), new Date(now));
+  await run(entries, h.options);
+  assert.deepEqual(h.lines.map(row => row.verdict), ['verde', 'verde', 'verde']);
+  assert.deepEqual(h.sent, []);
+
+  h.time(11 * 60000);
+  fs.utimesSync(stamps[0], 1, 1); // the watchdog now sees a 31-minute-old heartbeat
+  await run(entries, h.options);
+  assert.deepEqual(h.sent.map(e => [e.nume, e.tranzitie]), [['soc-audit-deadman', 'open']]);
+}));
+
+test('a latched audit coverage gap continues to page independently of later clean runs', async () => harness(async h => {
+  const gap = path.join(h.root, 'audit-gap-clean');
+  const health = path.join(h.root, 'audit-deadman-clean');
+  fs.writeFileSync(gap, '');
+  fs.writeFileSync(health, '');
+  fs.utimesSync(gap, 1, 1);
+  const entries = [withStamp(socContract('soc-audit-coverage-gap.toml', gap)),
+    withStamp(socContract('soc-audit-deadman.toml', health))];
+  const now = Date.parse('2026-09-20T12:00:00Z');
+  for (let minute = 0; minute <= 40; minute += 5) {
+    const healthyAt = new Date(now + minute * 60000);
+    fs.utimesSync(health, healthyAt, healthyAt);
+    await run(entries, h.options);
+    h.time(300000);
+  }
+  assert.deepEqual(h.sent.map(e => [e.nume, e.tranzitie]), [['soc-audit-coverage-gap', 'open']]);
+  assert.equal(h.state().contracts['soc-audit-coverage-gap'].verdict, 'picat');
 }));
