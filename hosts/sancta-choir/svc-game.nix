@@ -11,17 +11,16 @@
 # The unit verifies length and sha256 before serving and uses `serve clear <svc>`
 # to remove its own mapping. On a mismatch or a missing file it tries to clear
 # the mapping and fails. tailscaled persists Serve config across reboots, so boot
-# clears first. A timer re-verifies, and stopping a successfully started boot
-# unit clears the mapping. Boot and verify share a lock and wait for tailscaled
-# to be Running before checking the file.
+# clears first. A timer re-verifies the file and any existing mapping. The boot
+# unit clears the mapping on stop or failed start. Boot and verify share a lock,
+# and boot waits for tailscaled to be Running before checking the file.
 #
 # Accepted residuals
 # Bytes changed after a check are served until the next check (root-only path).
 # A mapping left by an unclean shutdown can be reachable briefly at boot before the boot clear.
 # Serve writers on this host share one config ETag, so a concurrent write elsewhere can fail once (game writes retry 3x).
-# ExecStop is skipped if the boot run never started successfully. After a rollback,
-# `tailscale serve status --json | jq '.Services["svc:game"]'` must be null (plain
-# `serve status` omits Service mappings); the deploy handoff checks this.
+# After a rollback, the deploy handoff checks that
+# `tailscale serve status --json | jq '.Services["svc:game"]'` returns null.
 # After 5 failed boot runs in an hour the unit stays failed (the alert has fired)
 # until someone restarts it.
 # The host must be approved for the service by hand in the admin console; the
@@ -74,7 +73,7 @@ in
     verifyInterval = lib.mkOption {
       type = lib.types.str;
       default = "15min";
-      description = "How often the timer re-verifies the bytes.";
+      description = "How often the timer re-verifies the file and its Serve mapping.";
     };
     onFailureUnit = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -91,6 +90,8 @@ in
     systemd.services.svc-game = common // {
       description = "Serve the pinned file as ${cfg.service} (boot run)";
       wantedBy = [ "multi-user.target" ];
+      # The membrane writes the same Serve config ETag during boot.
+      after = common.after ++ [ "sancta-membrane-serve.service" ];
       restartTriggers = [ cfg.sha256 (toString cfg.length) ./svc-game.sh ];
       unitConfig = {
         StartLimitIntervalSec = 3600;
@@ -100,6 +101,7 @@ in
         RemainAfterExit = true;
         ExecStart = script "boot";
         ExecStop = script "stop";
+        ExecStopPost = script "stop";
         Restart = "on-failure";
         RestartSec = "60s";
       };

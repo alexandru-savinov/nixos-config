@@ -570,15 +570,6 @@
   # bin/gallery-shot's hardcoded and only permitted origin — a structural gate,
   # "so Sancta cannot, not so it promises not to" — and killing it as a duplicate
   # would remove Sancta's own eyes on what it renders. Second role, not stray copy.
-  # A pinned static file served as the Tailscale Service svc:game (its own origin).
-  # The bytes are not in this repo; only their pin. See svc-game.nix.
-  sancta.svcGame = {
-    enable = true;
-    sha256 = "68579f993b1030fc774a1a70e37bad97a915cb289cafb0cf31c23ca0d044bc9f";
-    length = 372698; # provisional pin, replaced at the final freeze
-    onFailureUnit = "sancta-soul-mirror-alert@%N.service";
-  };
-
   services.sancta-gallery = {
     enable = true;
     galleryDir = "/var/lib/sancta/.claude/index/gallery";
@@ -586,6 +577,15 @@
     group = "sancta";
     bind = "100.94.191.54";
     requiresMount = "/var/lib/sancta/.claude";
+    onFailureUnit = "sancta-soul-mirror-alert@%N.service";
+  };
+
+  # A pinned static file served as the Tailscale Service svc:game (its own origin).
+  # The bytes are not in this repo; only their pin. See svc-game.nix.
+  sancta.svcGame = {
+    enable = true;
+    sha256 = "68579f993b1030fc774a1a70e37bad97a915cb289cafb0cf31c23ca0d044bc9f";
+    length = 372698; # provisional pin, replaced at the final freeze
     onFailureUnit = "sancta-soul-mirror-alert@%N.service";
   };
 
