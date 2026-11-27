@@ -10,8 +10,8 @@
 # Root oneshots classify on five-minute timers. Vigil reads their outcomes
 # through age contracts, without access to the audit log or engine credentials.
 # Audit hits hold the hit stamp red for auditHold. An independent watchdog
-# pages on stale evaluator success, short audit retention, and any coverage
-# gap whose marker still awaits operator acknowledgement.
+# pages on stale evaluator success, auditd suspension, short audit retention,
+# and coverage incidents awaiting operator acknowledgement.
 # Ban hits and evaluator health have separate paging stamps.
 { config, lib, pkgs, ... }:
 
@@ -219,6 +219,8 @@ in
           # agenix-secrets and sudoers watches loaded (--expect-watch below).
           "--auditctl"
           "${pkgs.audit}/bin/auditctl"
+          "--chattr"
+          "${pkgs.e2fsprogs}/bin/chattr"
           "--require-active"
           "auditd.service"
           "--require-active"
@@ -243,7 +245,8 @@ in
         Environment = [ "SANCTA_DOCTRINE_STAMP=${cfg.auditStampPath}" ];
         # AUDIT_CONTROL queries auditctl over netlink. DAC_OVERRIDE lets us
         # append to the existing root-owned 0400, +a F15 evidence file.
-        CapabilityBoundingSet = [ "CAP_AUDIT_CONTROL" "CAP_DAC_OVERRIDE" ];
+        # LINUX_IMMUTABLE lets chattr set the append-only flag on gap evidence.
+        CapabilityBoundingSet = [ "CAP_AUDIT_CONTROL" "CAP_DAC_OVERRIDE" "CAP_LINUX_IMMUTABLE" ];
         PrivateNetwork = true;
         RestrictAddressFamilies = [ "AF_UNIX" "AF_NETLINK" ];
       };

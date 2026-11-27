@@ -6,8 +6,8 @@ without reading the audit trail or engine credentials.
 
 Audit exit codes: 0 clean, 1 a hit is on hold, 2 evaluator error. Both
 successful outcomes refresh audit-clean. The independent watchdog pages
-when that heartbeat is more than 30 minutes old, including during an
-evaluator error or a stopped timer.
+when that heartbeat is more than 30 minutes old or auditd reports that it
+has stopped recording.
 Bans use exit 3 for a hit and a source error in the same run.
 
 The classification functions (`audit_hits`, `home_bans`) are pure — text in,
@@ -64,7 +64,8 @@ THE NAMED-ACCOUNT RULE (opt-in: --named-account NAME, repeatable; none = off):
   share its checkpoint, staging and commit-after-log properties.
 
 EVALUATOR ERRORS (exit 2) on the audit side, besides unparseable lines:
-  auditctl -s/-l unhealthy (see check_trail); ausearch exit 1 with stdout,
+  auditctl -s/-l or auditd's state report unhealthy (see check_trail);
+  ausearch exit 1 with stdout,
   exit 0 with stderr, or any other failure (the window is read again, not
   consumed); a missing checkpoint once audit.installed exists (the
   marker is written when a checkpoint is first committed; a missing one
@@ -485,7 +486,19 @@ def oldest_audit_record(directory):
     raise RuntimeError(f"no retained audit record readable in {directory}")
 
 
-def record_coverage_gap(state, checkpoint, log_dir, status):
+def protect_gap_evidence(chattr, path):
+    result = subprocess.run([chattr, "+a", path], capture_output=True, text=True,
+                            stdin=subprocess.DEVNULL, env={**os.environ, "LC_ALL": "C"})
+    if result.returncode:
+        detail = result.stderr.strip()
+        error = detail.removeprefix(f"{chattr}: ")
+        if error.startswith(("Operation not supported ", "Inappropriate ioctl for device ")):
+            _log(f"WARN audit coverage gap: filesystem does not support chattr +a: {detail}")
+        else:
+            raise RuntimeError(f"chattr +a exited {result.returncode}: {detail[:300]}")
+
+
+def record_coverage_gap(state, checkpoint, log_dir, status, chattr):
     marker = os.path.join(state, "audit.checkpoint-mismatch")
     if not os.path.lexists(marker):
         _write_durably(marker, f"{time.time():.0f}\n")
@@ -496,6 +509,9 @@ def record_coverage_gap(state, checkpoint, log_dir, status):
     saved = json.loads(_read_text(pending) or "null")
     fd = os.open(stamp, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
+        # Also protect an existing file if creation was interrupted or it
+        # predates the flag. Keep the original inode and contents.
+        protect_gap_evidence(chattr, stamp)
         end = os.fstat(fd).st_size
         if saved and saved["checkpoint"] == identity:
             offset, entry = saved["offset"], saved["entry"]
@@ -550,12 +566,43 @@ def sudoers_context(a) -> bool | None:
         return None
 
 
-def _auditctl(a, flag: str) -> str:
-    p = subprocess.run([a.auditctl, flag], capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL)
+def _auditctl(a, *args: str) -> str:
+    p = subprocess.run([a.auditctl, *args], capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, timeout=10)
     if p.returncode != 0:
-        raise RuntimeError(f"auditctl {flag} exited {p.returncode}: {p.stderr.strip()[:300]}")
+        raise RuntimeError(f"auditctl {' '.join(args)} exited {p.returncode}: {p.stderr.strip()[:300]}")
     return p.stdout
+
+
+def check_auditd_recording(a):
+    # auditctl -s reports kernel state. Auditd can stay registered and
+    # consume events while suspending writes, even after disk space returns.
+    try:
+        previous = os.stat(a.auditd_state_file).st_mtime_ns
+    except FileNotFoundError:
+        previous = None
+    _auditctl(a, "--signal", "state")
+    deadline = time.monotonic() + 5
+    marker = os.path.join(a.state_dir, "audit.recording-unhealthy")
+    while time.monotonic() < deadline:
+        try:
+            with open(a.auditd_state_file, encoding="utf-8") as report:
+                if os.fstat(report.fileno()).st_mtime_ns != previous:
+                    lines = set(report.read().splitlines())
+                    for reason in ("logging suspended = yes", "writing to logs = no"):
+                        if reason in lines:
+                            mark_ran(marker)
+                            raise RuntimeError(f"auditd not recording: {reason}")
+                    if {"writing to logs = yes", "logging suspended = no"} <= lines:
+                        try:
+                            os.unlink(marker)
+                        except FileNotFoundError:
+                            pass
+                        return
+        except FileNotFoundError:
+            pass
+        time.sleep(0.05)
+    raise RuntimeError(f"auditd did not write a fresh recording state to {a.auditd_state_file}")
 
 
 def audit_status(text: str) -> tuple[int, int, int]:
@@ -646,22 +693,13 @@ def check_disk(a) -> None:
 
 def check_trail(a, last_lost_path: str, start_hold) -> str | None:
     """Trail health, checked on every evaluation before a quiet window is
-    accepted: auditing enabled, a live auditd pid, exactly the expected watch
-    rules loaded, and a lost counter that never moves except at a boot.
-    Returns a problem to report after the window was read (the loss counter
-    moved); raises when the trail cannot record."""
-    check_disk(a)
+    accepted. Returns a problem to report after reading the window if the
+    kernel lost counter moved. Raises when the trail cannot record."""
     enabled, lost, pid = audit_status(_auditctl(a, "-s"))
     if enabled not in (1, 2):
         raise RuntimeError(f"audit trail not recording: auditctl -s enabled={enabled}")
     if pid == 0:
         raise RuntimeError("audit trail not recording: no auditd registered with the kernel (pid 0)")
-    if not a.expect_watch:
-        raise RuntimeError("no --expect-watch given: cannot prove the watch rules are loaded")
-    loaded = loaded_rules(_auditctl(a, "-l"))
-    missing = [spec for spec in a.expect_watch if not (expected_rule_lines(spec) & loaded)]
-    if missing:
-        raise RuntimeError("audit watch rule(s) not loaded exactly as expected: " + ", ".join(missing))
     boot = _read_text(a.boot_id_file)
     if not boot:
         raise RuntimeError(f"boot id unreadable ({a.boot_id_file})")
@@ -674,8 +712,10 @@ def check_trail(a, last_lost_path: str, start_hold) -> str | None:
     problem = None
     if previous is not None and lost != previous:
         # The kernel counter only grows within a boot: a rise is dropped
-        # events, a fall is state this check cannot trust. Hold red, then
-        # record the new value so the hold carries the signal.
+        # events, a fall is state this check cannot trust. Persist the loss
+        # incident before advancing the baseline so a retry can still page.
+        if lost > previous:
+            mark_ran(os.path.join(a.state_dir, "audit.kernel-loss"))
         problem = (f"audit trail lost {lost - previous} event(s) since the last evaluation"
                    if lost > previous else
                    f"audit lost counter fell from {previous} to {lost} within one boot")
@@ -692,6 +732,14 @@ def check_trail(a, last_lost_path: str, start_hold) -> str | None:
         start_hold()
     if previous != lost or stored is None or not stored.startswith(boot):
         _write_durably(last_lost_path, f"{boot} {lost}\n")
+    if not a.expect_watch:
+        raise RuntimeError("no --expect-watch given: cannot prove the watch rules are loaded")
+    loaded = loaded_rules(_auditctl(a, "-l"))
+    missing = [spec for spec in a.expect_watch if not (expected_rule_lines(spec) & loaded)]
+    if missing:
+        raise RuntimeError("audit watch rule(s) not loaded exactly as expected: " + ", ".join(missing))
+    check_auditd_recording(a)
+    check_disk(a)
     return problem
 
 
@@ -734,8 +782,8 @@ def evaluate_audit(a) -> int:
     # A quiet window is only evidence when the trail can record. auditd down,
     # or audit-rules-nixos failed (its ExecStopPost deletes EVERY rule), also
     # yields a silent exit 1 from ausearch; without this gate that blind state
-    # would read clean forever. Not proven here: rules deleted by hand while
-    # both units stay active (needs root, and root can stop auditd anyway).
+    # would read clean forever. check_trail also verifies the kernel rules
+    # and auditd's current recording state.
     if not a.require_active:
         raise RuntimeError("no --require-active unit given: cannot prove the trail is live")
     # One call PER unit: with several units `systemctl is-active` exits 0 if
@@ -822,12 +870,15 @@ def evaluate_audit(a) -> int:
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
         status, problem = run_ausearch(a.ausearch, staged, output, recent=first_run)
         mismatch = status in (10, 11, 12)
+        if mismatch:
+            try:
+                record_coverage_gap(a.state_dir, checkpoint, a.audit_log_dir, status, a.chattr)
+            except (OSError, RuntimeError, ValueError) as e:
+                # The canonical checkpoint is still stale. Do not re-emit
+                # this window on every retry while the evidence is unwritable.
+                raise RuntimeError(f"could not record checkpoint status {status}: {e}") from e
         try:
             if mismatch:
-                try:
-                    record_coverage_gap(a.state_dir, checkpoint, a.audit_log_dir, status)
-                except (OSError, RuntimeError, ValueError) as e:
-                    errors.append(f"could not record checkpoint status {status}: {e}")
                 if os.path.exists(staged):
                     os.unlink(staged)
                 _log(f"ausearch checkpoint status {status}; replaying retained logs")
@@ -919,10 +970,14 @@ def cmd_audit_watchdog(a):
     healthy = 0 <= now - last_success <= 30 * 60
     if not healthy:
         _log("ALARM audit evaluator: audit-clean missing or older than 30 minutes")
-    write_signal(os.path.join(state, "audit-deadman-clean"), healthy)
+    recording = not os.path.lexists(os.path.join(state, "audit.recording-unhealthy"))
+    if not recording:
+        _log("ALARM audit evaluator: auditd is not recording")
+    write_signal(os.path.join(state, "audit-deadman-clean"), healthy and recording)
 
-    marker = os.path.join(state, "audit.checkpoint-mismatch")
-    write_signal(os.path.join(state, "audit-gap-clean"), not os.path.lexists(marker))
+    coverage_incidents = ("audit.checkpoint-mismatch", "audit.kernel-loss")
+    write_signal(os.path.join(state, "audit-gap-clean"),
+                 not any(os.path.lexists(os.path.join(state, name)) for name in coverage_incidents))
     try:
         oldest = oldest_audit_record(a.audit_log_dir)
         retained = now - float(oldest) >= 48 * 60 * 60
@@ -1000,6 +1055,8 @@ def main(argv: list[str]) -> int:
     au.add_argument("--ausearch", required=True)
     au.add_argument("--systemctl", required=True)
     au.add_argument("--auditctl", required=True)
+    au.add_argument("--auditd-state-file", default="/run/audit/auditd.state")
+    au.add_argument("--chattr", required=True)
     au.add_argument("--stamp", default=os.environ.get("SANCTA_DOCTRINE_STAMP"))
     # PATH:PERM:KEY, one per watch rule that must be loaded exactly; the unit
     # derives them from config.security.audit.rules.

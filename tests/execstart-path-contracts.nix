@@ -124,8 +124,8 @@
         # and `--expect-watch /etc/sudoers:wa:…`: the watch rules the
         # evaluator expects `auditctl -l` to print, compared as text, never
         # executed. Every command the script runs (ausearch, auditctl,
-        # systemctl) is passed in as a full store path (--ausearch,
-        # --auditctl, --systemctl), and it calls nothing by bare name, so
+        # systemctl, chattr) is passed in as a full store path, and it calls
+        # nothing by bare name, so
         # `commands = []` is a fact. If the script ever runs a bare command,
         # this entry must grow with it.
         soc-alarm-audit = {

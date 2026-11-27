@@ -1364,6 +1364,7 @@ let
         aSvc = choir.systemd.services.soc-alarm-audit;
         bSvc = choir.systemd.services.soc-alarm-bans;
         argv = svc: svc.serviceConfig.ExecStart;
+        chattr = builtins.unsafeDiscardStringContext "${self.nixosConfigurations.sancta-choir.pkgs.e2fsprogs}/bin/chattr";
         envOf = svc: svc.serviceConfig.Environment or [ ];
         whitelist = (builtins.head choir.services.crowdsec.localConfig.parsers.s02Enrich).whitelist.cidr;
         ignoreIP = choir.services.fail2ban.ignoreIP;
@@ -1474,7 +1475,8 @@ let
           # The audit evaluator needs no network. The ban
           # evaluator only loopback (LAPI) and one read capability.
           auditSandbox = (aSvc.serviceConfig.PrivateNetwork or false)
-            && aSvc.serviceConfig.CapabilityBoundingSet == [ "CAP_AUDIT_CONTROL" "CAP_DAC_OVERRIDE" ]
+            && lib.hasInfix "--chattr ${chattr}" (argv aSvc)
+            && aSvc.serviceConfig.CapabilityBoundingSet == [ "CAP_AUDIT_CONTROL" "CAP_DAC_OVERRIDE" "CAP_LINUX_IMMUTABLE" ]
             && aSvc.serviceConfig.ProtectSystem == "strict";
           bansSandbox = bSvc.serviceConfig.IPAddressDeny == "any"
             && bSvc.serviceConfig.IPAddressAllow == "localhost"

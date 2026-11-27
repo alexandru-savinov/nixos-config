@@ -5,7 +5,7 @@
 
 pkgs.runCommand "soc-vigil-alarms-tests"
 {
-  nativeBuildInputs = [ pkgs.python3 ];
+  nativeBuildInputs = [ pkgs.bash pkgs.python3 ];
 }
   ''
     set -euo pipefail
