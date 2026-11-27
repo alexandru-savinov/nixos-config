@@ -113,16 +113,20 @@ if [ "$mode" = verify ]; then
   reset_status=0
   rm -f -- "$miss_file" || reset_status=$?
   if [ "$mapping" != null ]; then
+    # Match the full HTTPS file mapping using its current Web key before checking the hostname.
+    jq -e --arg file "$f" '
+      (.Web | keys_unsorted[0]) as $hostport
+      | ($hostport | endswith(":443"))
+        and . == {TCP: {"443": {HTTPS: true}}, Web: {($hostport): {Handlers: {"/": {Path: $file}}}}}
+      ' <<< "$mapping" >/dev/null 2>&1 || fail "Serve mapping does not match the pinned file"
     # Tailscale 1.90.9 derives the service's host from its name and CurrentTailnet.MagicDNSSuffix.
     if ! suffix=$(tailscale_cli "$ts_timeout" status --json --peers=false 2>/dev/null \
       | jq -er '.CurrentTailnet.MagicDNSSuffix | select(type == "string" and length > 0)' 2>/dev/null); then
       echo "svc-game: cannot verify Serve mapping because the tailnet DNS suffix is unavailable" >&2
       exit 1
     fi
-    # ServiceConfig has TCP, Web and an optional Tun. Require exactly the HTTPS file mapping.
-    jq -e --arg hostport "${SVC#svc:}.$suffix:443" --arg file "$f" '
-      . == {TCP: {"443": {HTTPS: true}}, Web: {($hostport): {Handlers: {"/": {Path: $file}}}}}
-      ' <<< "$mapping" >/dev/null 2>&1 || fail "Serve mapping does not match the pinned file"
+    jq -e --arg hostport "${SVC#svc:}.$suffix:443" '.Web | has($hostport)' \
+      <<< "$mapping" >/dev/null 2>&1 || fail "Serve mapping does not match the pinned file"
   fi
   [ "$reset_status" -eq 0 ] || exit 1
   echo "svc-game: verify ok, $SHA ($LEN bytes)"

@@ -81,6 +81,22 @@ FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON="$game_status" run verify
 [ $rc -eq 1 ] && [ -z "$log" ] && [[ "$err" == *"tailnet DNS suffix is unavailable"* ]] && ok \
   || bad "verify with no tailnet DNS suffix: rc=$rc log=$log err=$err"
 
+expected_calls="serve status --json"$'\n'"$CLR"
+FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].TCP["443"] = {HTTP: true}' <<< "$game_status") run verify
+calls=$(cat "$T/calls")
+[ $rc -eq 1 ] && [ "$calls" = "$expected_calls" ] && ok \
+  || bad "verify plain HTTP without DNS suffix: rc=$rc calls=$calls err=$err"
+
+FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON=$(serve_status '{"Path":"/another.html"}') run verify
+calls=$(cat "$T/calls")
+[ $rc -eq 1 ] && [ "$calls" = "$expected_calls" ] && ok \
+  || bad "verify wrong file without DNS suffix: rc=$rc calls=$calls err=$err"
+
+FAKE_NOT_RUNNING=1 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].Web |= with_entries(.key = "game.example.ts.net:8443")' <<< "$game_status") run verify
+calls=$(cat "$T/calls")
+[ $rc -eq 1 ] && [ "$calls" = "$expected_calls" ] && ok \
+  || bad "verify wrong Web port without DNS suffix: rc=$rc calls=$calls err=$err"
+
 FAKE_SERVE_STATUS_JSON=$(jq -c '.Services["svc:game"].TCP["8443"] = {HTTPS: true}' <<< "$game_status") run verify
 [ $rc -eq 1 ] && [ "$log" = "$CLR" ] && ok || bad "verify extra TCP port: rc=$rc log=$log err=$err"
 
